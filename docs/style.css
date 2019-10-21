@@ -1,0 +1,18 @@
+section.cover .cover-main>p:last-child a:last-child {
+	border: 1px solid var(--theme-color,#42b983);
+    border-radius: 2rem;
+    box-sizing: border-box;
+    color: var(--theme-color,#42b983);
+    display: inline-block;
+    font-size: 1.05rem;
+    letter-spacing: .1rem;
+    margin: .5rem 1rem;
+    padding: .75em 2rem;
+    text-decoration: none;
+    transition: all .15s ease;
+	background-color: transparent;
+}
+section.cover .cover-main>p:last-child a:first-child {
+    background-color: var(--theme-color,#42b983);
+    color: #fff;
+}
