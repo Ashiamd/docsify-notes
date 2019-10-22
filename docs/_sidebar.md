@@ -9,4 +9,6 @@
       * [官方入门教程学习](/study/React/官方入门教程学习) 
     * **Vue**
       * [Vue源码学习](/study/Vue/Vue源码学习)
+    * Python
+      + [Python数据处理](/study/Python/python数据处理)
 * 暂无更多...
