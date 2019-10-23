@@ -8,4 +8,5 @@
 * [LeetCode](/study/LeetCode_Study)
 * [React](/study/React)
 * [Vue](/study/Vue)
+* [Python](/study/Python)
 
