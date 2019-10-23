@@ -505,27 +505,76 @@
 2. 聚焦函数
    + 常用的聚集函数
 
-   | 函数           | 描述                  |
-   | -------------- | --------------------- |
-   | sum            | 求和                  |
-   | mean           | 算数平均值            |
-   | min、max       | 最小值和最大值        |
-   | argmin、argmax | 最小值和最大值的索引  |
-   | cumsum         | 从0开始向前累加各元素 |
-   | cumprod        | 从1开始向前累乘各元素 |
+   <escape>
+   
+   <table class="tg">
+     <tr>
+       <th class="tg-c3ow">函数</th>
+       <th class="tg-0pky">描述</th>
+     </tr>
+     <tr>
+       <td class="tg-c3ow">sum</td>
+       <td class="tg-0pky">求和</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">mean</td>
+       <td class="tg-0pky">算数平均值</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">min、max</td>
+       <td class="tg-0pky">最小值和最大值</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">argmin、argmax</td>
+       <td class="tg-0pky">最小值和最大值的索引</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">cumsum</td>
+       <td class="tg-0pky">从0开始向前累加各元素</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">cumprod</td>
+       <td class="tg-0pky">从1开始向前累乘各元素</td>
+     </tr>
+   </table>
+   
+   </escape>
 
 #### 2.2.3 随机数组生成函数
 
 + 常用函数
 
-  | 函数    | 描述                                           |
-  | ------- | ---------------------------------------------- |
-  | random  | 随机产生[0,1)之间的浮点值                      |
-  | randint | 随机生成给定范围的一组整数                     |
-  | uniform | 随机生成给定范围内服从均匀分布的一组浮点数     |
-  | choice  | 在给定的序列内随机选择元素                     |
-  | normal  | 随机生成一组服从给定均值和方差的正态分布随机数 |
-
+  <escape>
+  
+  <table class="tg">
+    <tr>
+      <th class="tg-c3ow">函数</th>
+      <th class="tg-0pky">描述</th>
+    </tr>
+  <tr>
+      <td class="tg-c3ow">random</td>
+      <td class="tg-0pky">随机产生[0,1)之间的浮点值</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">randint</td>
+      <td class="tg-0pky">随机生成给定范围的一组整数</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">uniform</td>
+      <td class="tg-0pky">随机生成给定范围内服从均匀分布的一组浮点数</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">choice</td>
+      <td class="tg-0pky">在给定的序列内随机选择元素</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">normal</td>
+      <td class="tg-0pky">随机生成一组服从给定均值和方差的正态分布随机数</td>
+    </tr>
+  </table>
+  
+  </escape>
+  
   ```python
   # 生成5*6的二维随机整数，随机数的取值是0或1
   np.random.randint(0,2,size = (5,6))
@@ -1075,14 +1124,40 @@ print(students)
 
    + 下表列出最常用的通配符
 
-     | 通配符 | 描述           |
-     | ------ | -------------- |
-     | \s     | 空格等空白字符 |
-     | \S     | 非空白字符     |
-     | \t     | 制表符         |
-     | \n     | 换行符         |
-     | \d     | 数字           |
-     | \D     | 非数字字符     |
+   <escape>
+
+   <table class="tg">
+     <tr>
+       <th class="tg-c3ow">通配符</th>
+       <th class="tg-0pky">描述</th>
+     </tr>
+     <tr>
+       <td class="tg-c3ow">\s</td>
+       <td class="tg-0pky">空格等空白字符</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">\S</td>
+       <td class="tg-0pky">非空白字符</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">\t</td>
+       <td class="tg-0pky">制表符</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">\n</td>
+       <td class="tg-0pky">换行符</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">\d</td>
+       <td class="tg-0pky">数字</td>
+     </tr>
+     <tr>
+       <td class="tg-0lax">\D</td>
+       <td class="tg-0lax">非数字字符</td>
+     </tr>
+   </table>
+
+   </escape>
 
    以下是读取txt文件的例子，和读取csv文件没有本质区别
 
@@ -1355,14 +1430,40 @@ DataFrame可以实现与DataFrame、Series或标量之间的算数运算
 
 + DataFrame算术运算
 
-  | 运算符                    | 描述                                |
-  | ------------------------- | ----------------------------------- |
-  | df.T                      | DataFrame转置                       |
-  | df1 + df2                 | 按照行列索引相加，得到并集，NaN填充 |
-  | df1.add(df2,fill_value=0) | 按照行列索引相加，NaN用指定值填充   |
-  | df1.add/sub/mul/div       | 四则运算                            |
-  | df - sr                   | DataFrame的所有行同时减去Series     |
-  | df * n                    | 所有元素乘以n                       |
+  <escape>
+
+  <table class="tg">
+    <tr>
+      <th class="tg-c3ow">运算符</th>
+      <th class="tg-0pky">描述</th>
+    </tr>
+    <tr>
+      <td class="tg-c3ow">df.T</td>
+      <td class="tg-0pky">DataFrame转置</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">df1 + df2</td>
+      <td class="tg-0pky">按照行列索引相加，得到并集，NaN填充</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">df1.add(df2,fill_value=0)</td>
+      <td class="tg-0pky">按照行列索引相加，NaN用指定值填充</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">df1.add/sub/mul/div</td>
+      <td class="tg-0pky">四则运算</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">df - sr</td>
+      <td class="tg-0pky">DataFrame的所有行同时减去Series</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">df * n</td>
+      <td class="tg-0lax">所有元素乘以n</td>
+    </tr>
+  </table>
+
+  </escape>
 
 + DataFrame元素级的函数运算可以通过Numpy的一元通用函数(ufunc)实现，格式如下
 
@@ -1383,24 +1484,74 @@ DataFrame可以实现与DataFrame、Series或标量之间的算数运算
 
 #### 3.6.2 统计函数
 
-pandas的常用统计函数，包括Series和DataFrame
++ pandas的常用统计函数，包括Series和DataFrame
 
-| 函数                           | 描述                               |
-| ------------------------------ | ---------------------------------- |
-| sr.value_counts()              | 统计频数                           |
-| sr.describe()                  | 返回基本统计量和分位数             |
-| sr1.corr(sr2)                  | sr1与sr2的相关系统                 |
-| df.count()                     | 统计每列数据的个数                 |
-| df.max()、df.min()             | 最大值和最小值                     |
-| dif.idxmax()、dif.idxmin()     | 最大值、最小值对应的索引           |
-| df.sum()                       | 按行或列求和                       |
-| df.mean()、df.median()         | 计算均值、中位数                   |
-| df.quantile()                  | 计算给定的四分位数                 |
-| df.var()、df.std()             | 计算方差、标准差                   |
-| df.mode()                      | 计算众数                           |
-| df.cumsum()                    | 从0开始向前累加各元素              |
-| df.cow()                       | 计算协方差矩阵                     |
-| pd.crosstab(df[col1],df[col2]) | pandas函数，交叉表，计算分组的频数 |
+  <escape>
+
+  <table class="tg">
+    <tr>
+      <th class="tg-c3ow">函数</th>
+      <th class="tg-0pky">描述</th>
+    </tr>
+    <tr>
+      <td class="tg-c3ow">sr.value_counts()</td>
+      <td class="tg-0pky">统计频数</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">sr.describe()</td>
+      <td class="tg-0pky">返回基本统计量和分位数</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">sr1.corr(sr2)</td>
+      <td class="tg-0pky">sr1与sr2的相关系统</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">df.count()</td>
+      <td class="tg-0pky">统计每列数据的个数</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">df.max()、df.min()</td>
+      <td class="tg-0pky">最大值和最小值</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">dif.idxmax()、dif.idxmin()</td>
+      <td class="tg-0lax">最大值、最小值对应的索引</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">df.sum()</td>
+      <td class="tg-0lax">按行或列求和</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">df.mean()、df.median()</td>
+      <td class="tg-0lax">计算均值、中位数</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">df.quantile()</td>
+      <td class="tg-0lax">计算给定的四分位数</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">df.var()、df.std()</td>
+      <td class="tg-0lax">计算方差、标准差</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">df.mode()</td>
+      <td class="tg-0lax">计算众数</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">df.cumsum()</td>
+      <td class="tg-0lax">从0开始向前累加各元素</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">df.cow()</td>
+      <td class="tg-0lax">计算协方差矩阵</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">pd.crosstab(df[col1],df[col2])</td>
+      <td class="tg-0lax">pandas函数，交叉表，计算分组的频数</td>
+    </tr>
+  </table>
+
+  </escape>
 
 ```python
 stu = pd.read_excel('data/studentsInfo.xlsx','Group3',index_col=0)
