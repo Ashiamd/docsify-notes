@@ -491,16 +491,48 @@
 
    + 常用的二元函数
 
-   | 函数            | 描述                                                         |
-   | --------------- | ------------------------------------------------------------ |
-   | add             | 将数据中对应的元素相加                                       |
-   | subtract        | 从第一个数组中践去第二个数组中的元素                         |
-   | multiply        | 数组元素相乘                                                 |
-   | divide          | 数组对应元素相除                                             |
-   | power           | 对第一个数组中的元素A，根据第二个数组中的相应元素B，计算A^B^ |
-   | mod             | 元素级的求模运算                                             |
-   | copysign        | 将第二个数组中的值的符号复制给第一个数组中的值               |
-   | equal,not_equal | 执行元素级的比较运算，产生布尔型数组                         |
+   <escape>
+
+   <table class="tg">
+     <tr>
+       <th class="tg-c3ow">函数</th>
+       <th class="tg-0pky">描述</th>
+     </tr>
+     <tr>
+       <td class="tg-c3ow">add</td>
+       <td class="tg-0pky">将数据中对应的元素相加</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">subtract</td>
+       <td class="tg-0pky">从第一个数组中践去第二个数组中的元素</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">multiply</td>
+       <td class="tg-0pky">数组元素相乘</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">divide</td>
+       <td class="tg-0pky">数组对应元素相除</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">power</td>
+       <td class="tg-0pky">对第一个数组中的元素A，根据第二个数组中的相应元素B，计算AB</td>
+     </tr>
+     <tr>
+       <td class="tg-0lax">mod</td>
+       <td class="tg-0lax">元素级的求模运算</td>
+     </tr>
+     <tr>
+       <td class="tg-0lax">copysign</td>
+       <td class="tg-0lax">将第二个数组中的值的符号复制给第一个数组中的值</td>
+     </tr>
+     <tr>
+       <td class="tg-0lax">equal,not_equal</td>
+       <td class="tg-0lax">执行元素级的比较运算，产生布尔型数组</td>
+     </tr>
+   </table>
+
+   </escape>
 
 2. 聚焦函数
    + 常用的聚集函数
