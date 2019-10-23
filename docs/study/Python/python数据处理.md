@@ -442,17 +442,52 @@
 
    + 常用的一元函数(eg: np.abs(arr)等 )
 
-   | 函数                            | 描述                                              |
-   | ------------------------------- | ------------------------------------------------- |
-   | abs、fabs                       | 计算整数、浮点数或负数的绝对值                    |
-   | sqrt                            | 计算各元素的平方根                                |
-   | square                          | 计算各元素的平方                                  |
-   | exp                             | 计算各元素的指数                                  |
-   | log、log10                      | 自然对数、底数为10的log                           |
-   | sign                            | 计算各元素的正负号                                |
-   | ceil                            | 计算各元素的ceiling值，即大于或等于该值的最小整数 |
-   | floor                           | 计算各元素的floor值，即小于或等于该值的最大整数   |
-   | cos、cosh、sin、sinh、tan、tanh | 普通和双曲型三角函数                              |
+   <escape>
+
+   <table class="tg">
+     <tr>
+       <th class="tg-c3ow">函数</th>
+       <th class="tg-0pky">描述</th>
+     </tr>
+     <tr>
+       <td class="tg-c3ow">abs、fabs</td>
+       <td class="tg-0pky">计算整数、浮点数或负数的绝对值</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">sqrt</td>
+       <td class="tg-0pky">计算各元素的平方根</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">square</td>
+       <td class="tg-0pky">计算各元素的平方</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">exp</td>
+       <td class="tg-0pky">计算各元素的指数</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">log、log10</td>
+       <td class="tg-0pky">自然对数、底数为10的log</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">sign</td>
+       <td class="tg-0pky">计算各元素的正负号</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">ceil</td>
+       <td class="tg-0pky">计算各元素的ceiling值，即大于或等于该值的最小整数</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">floor</td>
+       <td class="tg-0pky">计算各元素的floor值，即小于或等于该值的最大整数</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">cos、cosh、sin、sinh、tan、tanh</td>
+       <td class="tg-0pky">普通和双曲型三角函数</td>
+     </tr>
+   </table>
+
+   </escape>
 
    + 常用的二元函数
 
