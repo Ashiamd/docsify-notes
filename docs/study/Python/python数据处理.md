@@ -571,6 +571,34 @@
    </table>
    
    </escape>
+   
+   + 聚焦函数的使用样例(下面数据看看就好，主要了解参数)
+   
+   ```python
+   #导入numpy
+   import numpy as np
+   
+   #创建一维数组
+   names = np.array(['王微', '肖良英', '方绮雯', '刘旭阳','钱易铭'])
+   subjects = np.array(['Math', 'English', 'Python', 'Chinese','Art', 'Database', 'Physics'])
+   #创建二维数组
+   scores = np.array([[70,85,77,90,82,84,89],[60,64,80,75,80,92,90],[90,93,88,87,86,90,91],[80,82,91,88,83,86,80],[88,72,78,90,91,73,80]])
+   
+   # 1)统计不同科目的成绩总分
+   # 首先利用布尔型数组选择“王微”的所有成绩，然后使用求平均值函数mean()
+   scores.sum(axis = 0) # 按列求和
+   # array([388, 396, 414, 430, 422, 425, 430])
+   
+   # 2)求“王微”所有课程成绩的平均分
+   scores[names == '王微'].mean()
+   # 82.42857142857143
+   
+   # 3)查询英语考试成绩最高的同学的姓名
+   names[ scores[:,subjects == 'English'].argmax() ]
+   # argmax()函数能返回特定元素的下标。首先通过列筛选得到由所有学生英语成绩组成的一维数组，接着通过argmax()函数返回一维数组中最高分的索引值，最后利用该索引值在names数组中查找到该学生的姓名
+   ```
+   
+   > 对于二维数组对象，可以指定聚集函数是在行上操作还是在列上操作。**当参数axis为0时，函数操作的对象是同一列不同行的数组元素；当参数axis为1时，函数操作的对象是同一行不同列的数组元素**。
 
 #### 2.2.3 随机数组生成函数
 
@@ -1686,6 +1714,618 @@ stu[['身高','体重','成绩']].corr() # 多列数据之间的相关性
 成绩	0.080587	-0.072305	1.000000
 """
 ```
+
+## 第4章 数据可视化
+
+### 4.1 Python绘图基础
+
+> Python的Matplotlib是专门用于开发二维(包括三维)图表的工具包，可以实现图像元素精细化控制，绘制专业的分析图表，是目前应用最广泛的数据可视化工具。pandas封装了Matplotlib的主要绘图功能，利用Series和DataFrame对象的数据组织特点简便、快捷地创建标准化图表
+
+#### 4.1.1 认识基本图形
+
+​	按照数据值特性，常用可视图形大致可以分为以下3类：
+
+​	1）展示离散数据：散点图、柱状图、饼图等
+
+​	2）展示连续数据：直方图、箱型图、折线图、半对数图等
+
+​	3）展示数据的区域或空间分布：统计地图、曲面图等
+
+#### 4.1.2 pandas快速绘图
+
+​	pandas基于Series和DataFrame绘图非常简单，只要3个步骤：
+
+​	1）导入Matplotlib、pandas：导入Matplotlib用于图形显示
+
+​	2）准备数据：使用Series或DataFrame封装数据
+
+​	3）绘图：调用Series.plot()或DataFrame.plot()函数完成绘图
+
+```python
+# 将绘图显示在控制台console
+%matplotlib inline
+import matplotlib.pyplot as plt
+from pandas import DataFrame
+gdp = [41.3,48.9,54.0,59.5,64.4,68.9,74.4]
+data = DataFrame({'GDP: Trillion':gdp}, index=['2010','2011','2012','2013','2014','2015','2016'])
+print(data)
+data.plot()
+plt.show() # 显示图形
+
+"""
+绘图显示需要自行编写类似的代码查看结果
+      GDP: Trillion
+2010           41.3
+2011           48.9
+2012           54.0
+2013           59.5
+2014           64.4
+2015           68.9
+2016           74.4
+"""
+```
+
+​	pandas默认的plot()函数完成了图形的主要信息绘制，但<u>添加各类图元信息，如标题、图例、刻度标签及注释等，或者选择图形的展示类别、控制颜色、位置等，则需要在plot()函数中对相关参数进行设置</u>。
+
++ 下面列举DataFrame.plot()函数的常用参数，Series.plot()的多数参数与之类似
+
+  <escape>
+
+  <table class="tg">
+    <tr>
+      <th class="tg-c3ow">参数名</th>
+      <th class="tg-0pky">说明</th>
+    </tr>
+    <tr>
+      <td class="tg-0lax">x</td>
+      <td class="tg-0lax">x轴数据，默认值为None</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">y</td>
+      <td class="tg-0lax">y轴数据，默认值为None</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">kind</td>
+      <td class="tg-0lax">绘图类型。'line'：折线图，默认值；'bar'：垂直柱状图；'barh':水平柱状图；‘hist’：直方图；<br>‘box’：箱型图；'kde'：Kernel核密度估计图；'density'与kde相同；‘pie’：饼图；‘scatter’：散点图</td>
+    </tr>
+    <tr>
+      <td class="tg-c3ow">title</td>
+      <td class="tg-0pky">图形标题，字符串</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">color</td>
+      <td class="tg-0pky">画笔颜色。用颜色缩写，如'r'、'b'，或者RBG值，如#CECECE。<br>主要颜色缩写：‘b’:blue; 'c':cyan; 'g':green; 'k':black; 'm':magenta; 'r':red; 'w':white; 'y':yellow</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">grid</td>
+      <td class="tg-0pky">图形是否有网络，默认值为None</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">fontsize</td>
+      <td class="tg-0pky">坐标轴(包括x轴和y轴)刻度的字体大小。整数，默认值为None</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">alpha</td>
+      <td class="tg-0pky">图表的透明度，值为0~1，值越大颜色越深</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">use_index</td>
+      <td class="tg-0pky">默认为True，用索引作为x轴刻度</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">linewidth</td>
+      <td class="tg-0pky">绘图线宽</td>
+    </tr>
+    <tr>
+      <td class="tg-0pky">linestyle</td>
+      <td class="tg-0pky">绘图线型。'-'：实线；‘- -’：破折线；‘-.’：点画线；‘:’虚线</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">marker</td>
+      <td class="tg-0lax">标记风格。‘.’：点；‘,’：像素(极小点)；’o‘:实心圆；’v‘:倒三角；’^‘：上三角；’&gt;‘:右三角；’&lt;‘:左三角；<br>’1‘：下花三角；’2‘：上花三角；’3‘：左花三角；’4‘：右花三角；’s‘：实心方形；’p‘：实星五角；<br>'*'：星形；'h/H'：竖/横六边形；’|‘：垂直线；’+‘：十字；’x‘：x；'D'：菱形；’d‘：瘦菱形</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">xlim、ylim</td>
+      <td class="tg-0lax">x轴、y轴的范围，二元组表示最小值和最大值</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">ax</td>
+      <td class="tg-0lax">axes对象</td>
+    </tr>
+  </table>
+
+  </escape>
+
+  ```python
+  """
+  为上面一个绘图的data.plot()函数增加相关参数，自行运行查看效果
+  """
+  # 将绘图显示在控制台console
+  %matplotlib inline
+  import matplotlib.pyplot as plt
+  from pandas import DataFrame
+  gdp = [41.3,48.9,54.0,59.5,64.4,68.9,74.4]
+  data = DataFrame({'GDP: Trillion':gdp}, index=['2010','2011','2012','2013','2014','2015','2016'])
+  data.plot(title='2010~2016 GDP',linewidth=2, marker='o', linestyle='dashed',color='r', grid=True,alpha=0.9,use_index=True,yticks=[35,40,45,50,55,60,65,70,75])
+  plt.show() # 显示图形
+  ```
+
+#### 4.1.3 Matplotlib精细绘图
+
+​	pandas绘图简单直接，可以完成基本的标准图形绘制，但如果需要更细致地控制图表样式，如添加标注、在一幅图中包括多幅子图等，必须使用Matplotlib提供的基础函数。
+
+1. 绘图
+
+   使用Matplotlib绘图，需要4个步骤：
+
+   1）导入Matplotlib。导入绘图工具包Matplotlib的pyplot模块。
+
+   2）**创建figure对象。Matplotlib的图像都位于figure对象内**。
+
+   3）绘图。利用pyplot的绘图命令或pandas绘图命令。其中plot()是主要的绘图函数，可实现基本绘图。
+
+   4）设置图元。<u>使用pyplot的图元设置函数，实现图形精细控制</u>。
+
+   ```python
+   %matplotlib inline
+   import matplotlib.pyplot as plt # 导入绘图库
+   plt.figure() # 创建绘图对象
+   GDPdata = [41.3,48.9,54.0,59.5,64.4,68.9,74.4] # 准备绘图的序列数据
+   plt.plot(GDPdata,color="red",linewidth=2,linestyle='dashed',marker='o',label='GDP') # 绘图
+   # 精细设置图元
+   plt.title('2010~2016 GDP: Trillion')
+   plt.xlim(0,6) # x轴绘图范围（两头闭区间）
+   plt.ylim(35,75) # y轴绘图范围
+   plt.xticks(range(0,7),('2010','2011','2012','2013','2014','2015','2016')) # 将x轴刻度映射为字符串
+   plt.legend(loc='upper right') # 在右上角显示图例说明
+   plt.grid() # 显示网格线
+   plt.show() # 显示并关闭绘图
+   """
+   使用matplotlib.pyplot库，图形绘制完成后再通过plt.show()函数显示图形并关闭此次绘图
+   """
+   ```
+
+2.  多子图
+
+   ​	**figure对象可以绘制多个子图**，以便从不同角度观察数据。<u>首先在figure对象创建子图对象axes，然后在子图上绘制图形</u>，绘图使用pyplot或axes对象提供的各种绘图命令，也可以使用pandas绘图。
+
+   >【Python】 【绘图】plt.figure()的使用
+   >
+   > https://blog.csdn.net/m0_37362454/article/details/81511427
+   >
+   >python使用matplotlib:subplot绘制多个子图 
+   >
+   > https://www.cnblogs.com/xiaoboge/p/9683056.html 
+
+   ```python
+   # 创建子图的函数如下：
+   figure.add_subplot(numRows, numCols, plotNum)
+   """
+   参数说明：
+   numRows：绘图区被分成numRows行
+   numCols：绘图区被分成numCols列
+   plotNum：创建的axes对象所在的区域
+   """
+   
+   """
+   用多个子图绘制2010-2016年的GDP状况
+   """
+   %matplotlib inline
+   from pandas import Series
+   data = Series([41.3,48.9,54.0,59.5,64.4,68.9,74.4], 
+                 index=['2010','2011','2012','2013','2014','2015','2016'])
+   fig=plt.figure(figsize=(6,6)) #figsize定义图形大小
+   ax1=fig.add_subplot(2,1,1)   #创建子图1 
+   ax1.plot(data)               #用AxesSubplot绘制折线图
+   ax2=fig.add_subplot(2,2,3)   #创建子图2 
+   data.plot(kind='bar',use_index=True,fontsize='small',ax=ax2)#用pandas绘柱状图
+   ax3=fig.add_subplot(2,2,4)   #创建子图3 
+   data.plot(kind='box',fontsize='small',xticks=[],ax=ax3) #用pandas绘柱状图
+   ```
+
+3. 设置图元属性和说明
+
+   ​	Matplotlib提供了<u>对图中各种图元信息增加和设置</u>的功能，常用图元设置函数如下，具体参数参见官方文档资料。
+
+   <escape>
+
+   <table class="tg">
+     <tr>
+       <th class="tg-c3ow">函数</th>
+       <th class="tg-0pky">说明</th>
+     </tr>
+     <tr>
+       <td class="tg-0lax">plt.title</td>
+       <td class="tg-0lax">设置图标题</td>
+     </tr>
+     <tr>
+       <td class="tg-0lax">plt.xlabel、plt.ylabel</td>
+       <td class="tg-0lax">设置x轴、y轴标题</td>
+     </tr>
+     <tr>
+       <td class="tg-0lax">plt.xlim、plt.ylim</td>
+       <td class="tg-0lax">设置x轴、y轴刻度范围</td>
+     </tr>
+     <tr>
+       <td class="tg-c3ow">plt.xticks、plt.yticks</td>
+       <td class="tg-0pky">设置x轴、y轴刻度值</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">plt.legend</td>
+       <td class="tg-0pky">添加图例说明</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">plt.grid</td>
+       <td class="tg-0pky">显示网格线</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">plt.text</td>
+       <td class="tg-0pky">添加注释文字</td>
+     </tr>
+     <tr>
+       <td class="tg-0pky">plt.annotate</td>
+       <td class="tg-0pky">添加注释</td>
+     </tr>
+   </table>
+
+   </escape>
+
+   ```python
+   %matplotlib inline
+   import matplotlib.pyplot as plt #导入matplotlib.pyplot
+   import pandas as pd
+   from pandas import Series
+   data=Series([41.3,48.9,54.0,59.5,64.4,68.9,74.4], index=['2010','2011','2012','2013','2014','2015','2016'])
+   data.plot(title='2010-2016 GDP',LineWidth=2, marker='o', linestyle='dashed',color='r',grid=True,alpha=0.9)
+   plt.annotate('turning point',xy=(1,48.5),xytext=(1.8,42), arrowprops=dict(arrowstyle='->'))
+   plt.text(1.8,70,'GDP keeps booming!',fontsize='larger')
+   plt.xlabel('Year',fontsize=12)
+   plt.ylabel('GDP Increment Speed(%)',fontsize=12)
+   
+   """
+   #将绘制图形保存到文件
+   plt.savefig("2010-2016GDP.png",dpi=200,bbox_inches='tight')
+   plt.show()  #注意保存文件需在显示之前
+   """
+   ```
+
+4. 保存图表到文件
+
+   可以将创建的图表保存到文件中，函数格式如下
+
+   ```python
+   figure.savefig(filename, dpi, bbox_inches)
+   plt.savefig(filename, dpi, bbox_inches)
+   """
+   参数说明：
+   filename:文件路径及文件名，文件类型可以是jpg、png、pdf、svg、ps等
+   dpi：图片分辨率，每英寸点数，默认值为100
+   bbox_inches：图表需保存的部分，设置为"tight"可以剪除当前图表周围的空白部分
+   """
+   plt.savefig('2010-2016GDP.jpg',dpi=400,bbox_inches='tight')
+   # savefig()函数必须在show()函数前使用方能保存当前图像
+   ```
+
+   + **savefig()函数必须在show()函数前使用方能保存当前图像**
+
+### 4.2 可视化数据探索
+
+#### 4.2.1 绘制常用图形
+
+​	数据探索中常用的图形有曲线图、散点图、柱状图等，每种图形的特点及适应性各不相同。本节绘制实现以pandas绘图函数为主，辅以Matplotlib的一些函数
+
+1. 函数绘图
+
+   ​	函数y=f(x)描述了变量y随自变量x的变化过程。通过函数视图可以直观地观察两个变量之间的关系，也可以为线性或逻辑回归等模型提供结果展示。绘制函数plt.plot()根据给定的x坐标值数组，以及对应的y坐标值数组绘图。x的采样值越多，绘制的曲线越精确。
+
+   ```python
+   %matplotlib inline
+   import numpy as np
+   x = np.linspace(0,6.28,50) # start, end, num-points
+   y = np.sin(x) # #计算y=sin(x)数组
+   plt.plot(x,y,color='r') # 用红色绘图y=sin(x)
+   plt.plot(x,np.exp(-x),c='b') # 用蓝色绘图y=exp(-x)
+   ```
+
+2. 散点图(Scatter Diagram)
+
+   ​	散点图描述两个一维数据序列之间的关系，可以表示两个指标的相关关系。它将两组数据分别作为点的横坐标和纵坐标。通过散点图可以分析两个数据序列之间是否具有线性关系，辅助线性或逻辑回归算法建立合理的预测模型
+
+   + 散点图的绘制函数：
+
+   ```python
+   DataFrame.plot(kind='scatter',x,y,title,grid,xlim,ylim,label,...)
+   DataFrame.plot.scatter(x,y,title,grid,xlim,ylim,label,...)
+   """
+   参数说明
+   x：DataFrame中x轴对应的数据列名
+   y：DataFrame中y轴对应的数据列名
+   label:图例标签
+   """
+   
+   """
+   Matplotlib的scatter()函数也可以绘制散点图，这时各种图元的设置需要采用独立的语句实现
+   """
+   plt.scatter(x,y,...)
+   """
+   参数说明：
+   x:x轴对应的数据列表或一维数组
+   y:y轴对应的数据列表或一维数组
+   """
+   ```
+
+   + 散点图例子，这里不上传文件，了解下参数使用就好了
+
+   ```python
+   %matplotlib inline
+   stdata = pd.read_csv('data\students.csv')      #读文件
+   stdata.plot(kind='scatter',x='Height',y='Weight',title='Students Body Shape', marker='*',grid=True, xlim=[150,200], ylim=[40,80], label='(Height,Weight)')    #绘图
+   plt.show()
+   """
+   使用Height列作为散点图的x轴，Weight列作为散点图y轴；
+   限制x显示范围[150,200],y显示范围[40,80]
+   label设置‘(Height,Weight)’作为图例标签的文字
+   """
+   
+   #将数据按性别分组，分别绘制散点图
+   #将数据按男生和女生分组
+   data1= stdata[stdata['Gender'] == 'male']  #筛选出男生
+   data2= stdata[stdata['Gender'] == 'female']  #筛选出女生
+   #分组绘制男生、女生的散点图
+   plt.figure()
+   plt.scatter(data1['Height'],data1['Weight'],c='r',marker='s',label='Male')   
+   plt.scatter(data2['Height'],data2['Weight'],c='b',marker='^',label='Female') 
+   plt.xlim(150,200)                 #x轴范围
+   plt.ylim(40,80)              #y轴范围
+   plt.title('Student Body')    #标题
+   plt.xlabel('Weight')             #x轴标题
+   plt.ylabel('Height')             #y轴标题
+   plt.grid()                         #网格线
+   plt.legend(loc='upper right')  #图例显示位置
+   plt.show()
+   ```
+
+   + 绘制散点图矩阵
+
+   ```python
+   """
+   在数据探索时，可能需要同时观察多组数据之间的关系，可以绘制散点图矩阵。
+   pandas提供了scatter_matrix()函数实现此功能
+   """
+   pd.plotting.scatter_matrix(data,diagonal, ...)
+   """
+   参数说明：
+   data：包含多列数据的DataFrame对象
+   diagonal：对角线上的图形类型。通常放置该列数据的密度图或直方图
+   """
+   
+   data = stdata[['Height','Weight','Age','Score']] # 准备数据
+   pd.plotting.scatter_matrix(data,diagonal='kde',color='k') # 绘图
+   ```
+
+3. 柱状图(Bar Chart)
+
+   ​	柱状图用多个柱体描述单个总体处于不同状态的数量，并按状态序列的顺序排序，柱体高度或长度与该状态下的数量成正比。
+
+   ​	柱状图易于展示数据的大小和比较数据之间的差别，还能用来表示均值和方差估计。按照排列方式的不同，可分为垂直柱状图和水平柱状图。按照表达总体的个数可分为单式柱状图和复式柱状图。**把多个总体同一状态的直条叠加在一起称为堆叠柱状图**。
+
+   + pandas使用plot()函数绘制柱状图，格式如下：
+
+     ```python
+     Series.plot(kind,xerr,yerr,stacked,...)
+     DataFrame.plot(kind,xerr,yerr,stacked,...)
+     """
+     参数说明：
+     kind:‘bar’为垂直柱状图;'barh'为水平柱状图
+     xerr,yerr:x轴、y轴的轴向误差线
+     stacked:是否为堆叠图，默认为False
+     rot:刻度标签旋转度数，值为0-360
+     
+     Series和DataFrame的索引会自动作为x轴或y轴的刻度
+     """
+     ```
+
+   + 柱状图的例子,不上传文件，只需搞懂参数即可
+
+     ```python
+     import matplotlib.pyplot as plt #导入matplotlib.pyplot
+     import pandas as pd
+     import numpy as np
+     
+     #3. 柱状图 
+     #例4-7：绘制出生人口性别比较图
+     
+     data = pd.read_csv('data\population.csv', index_col ='Year') 
+     data1 = data[['Boys','Girls']]
+     mean = np.mean(data1,axis=0)      #计算均值
+     std = np.std(data1,axis=0)        #计算标准差     
+     #创建图
+     fig = plt.figure(figsize = (6,2)) #设置图片大小
+     plt.subplots_adjust(wspace = 0.6) #设置两个图之间的纵向间隔
+     #绘制均值的垂直和水平柱状图，标准差使用误差线来表示
+     ax1 = fig.add_subplot(1, 2, 1)
+     mean.plot(kind='bar',yerr=std,color='cadetblue',title = 'Average of Births', rot=45, ax=ax1)
+     ax2 = fig.add_subplot(1, 2, 2)
+     mean.plot(kind='barh',xerr=std,color='cadetblue',title = 'Average of Births', ax=ax2)
+     plt.show()
+     
+     #绘制复式柱状图和堆叠柱状图
+     data1.plot(kind='bar',title = 'Births of Boys & Girls')
+     data1.plot(kind='bar', stacked=True,title = 'Births of Boys & Girls')
+     plt.show()
+     """
+     print(data)
+           Total   Boys  Girls   Ratio
+     Year                             
+     2010    1592   862    730  117.94
+     2011    1604   867    737  117.78
+     2012    1635   884    751  117.70
+     2013    1640   886    754  117.60
+     2014    1683   903    780  115.88
+     2015    1655   880    775  113.51
+     2016    1786   947    839  112.88
+     """
+     ```
+
+4.  折线图
+
+   ​	折线图用线条描述事物的发展变化及趋势。横、纵坐标轴上都使用算数刻度的则先图称为**普通折线图，反映事物变化趋势**。一个坐标轴使用算数刻度、另一个坐标轴使用对数刻度的折线图称为**半对数折线图，反应事物变化速度**。
+
+   ​	当比较的两种或多种事物的数据值域相差较大时，用半对数折线图可确切反映出指标“相对增长量”的变化关系。
+
+   >例如，GDP和人均可支配收入有一定的相关性。但两者不在一个数量级，GDP在几十万亿间变化，人均可支配收入在几万元间变化，两者的“绝对增长量”相差较远；“相对增长量”却各自保持相对稳定的范围，用半对数折线图可以直观看出变化速度。
+
+   + **绘制半对数折线图需要在plot()函数中设置参数logx或logy为True**
+
+   ```python
+   data = pd.read_csv('data/GDP.csv',index_col = 'Year') # 读取数据
+   # 绘制GDP和Income的折线图
+   data.plot(title='GDP & Income',linewidth=2,marker='o',linestyle='dashed',grid=True,use_index=True)
+   
+   # 绘制GDP和Income的半对数折线图
+   data.plot(logy=True,LineWidth=2,marker='o',linestyle='dashed',color='G')
+   """
+   print(data)
+                  GDP  Income
+   Year                      
+   2006  2.190000e+13  0.6416
+   2007  2.700000e+13  0.7572
+   2008  3.200000e+13  0.8707
+   2009  3.490000e+13  0.9514
+   2010  4.130000e+13  1.0919
+   2011  4.890000e+13  1.3134
+   2012  5.400000e+13  1.4699
+   2013  5.950000e+13  1.6190
+   2014  6.440000e+13  1.7778
+   2015  6.890000e+13  1.9397
+   2016  7.440000e+13  2.3821
+   """
+   
+   """
+   有兴趣的存储上面数据后运行会发现，普通折线图可以看出GDP增长趋势，但Income值太小，在相同刻度下无法反应其变化；使用半对数图，则可以看出人均可支配收入随GDP增长，其增长速度超过了GDP增长速度。
+   """
+   ```
+
+5. 直方图(Histogram)
+
+   ​	直方图用于描述总体的频数分布情况。它将横坐标按区间个数等分，每个区间上长方形的高度表示该区间样本的频率，面积表示频数。直方图的外观和柱状图相似，但表达含义不同。柱状图的一个柱体高度表示横坐标某点对应的数据值，柱体间有间隔；直方图的一个柱体表示一个区间对应的样本个数，柱体间无分割。
+
+   + pandas使用plot()函数绘制直方图，格式如下:
+
+   ```python
+   Series.plot(kind='hist',bins,normed,...)
+   """
+   参数说明：
+   bins：横坐标区间个数
+   normed：是否标准化直方图，默认值为False
+   """
+   ```
+
+   + 直方图例子：在直方图中，分箱的数量与数据集大小和分布本身有关，通过改变分箱bins的数量，可以改变分布的离散化程度。
+
+   ```python
+   stdata = pd.read_csv('data/students.csv') # 读文件
+   stdata['Height'].plot(kind='hist',bins=6,title='Students Height Distribution')
+   ```
+
+6. 密度图(Kernel Density Estimate)
+
+   ​	密度图基于样本数据，采用平滑的峰值函数(称为"核")来拟合概率密度函数，对真实的概率分布曲线进行模拟。有很多种核函数，默认采用高斯核。
+
+   ​	密度图经常和直方图画在一起，这时直方图需要标准化，以便与估计的概率密度进行对比。
+
+   + pandas使用plot()函数绘制概率密度函数曲线，格式如下：
+
+   ```python
+   Series.plot(kind='kde', style, ...)
+   """
+   参数说明：
+   style：风格字符串，包括颜色和线型，如'k--','r-'
+   """
+   ```
+
+   + 密度图使用样例，看看参数使用就好了.
+
+   ```python
+   stdata['Height'].plot(kind='hist',bins=6,normed=True,title='Students Height Distribution') # 绘制直方图
+   stdata['Height'].plot(kind='kde',title='Students Height Distribution',xlim=[155,185],style= 'k--') # 绘制密度图
+   ```
+
+7. 饼图(Pie Chart)
+
+   ​	饼图又称扇形图，描述总体的样本值构成比。它以一个圆的面积表示总体，以各扇形面积表示一类样本占总体的百分数。饼图可以清楚地反应出部分与部分、部分与整体之间的数量关系。
+
+   + pandas使用plot()函数绘制饼图，格式如下：
+
+   ```python
+   Series.plot(kind='pie',explode,shadow,startangle,autopct, ...)
+   """
+   参数说明：
+   explode:列表，表示各扇形块离开中心的距离
+   shadow:扇形块是否有阴影，默认值为False
+   startangle:起始绘制角度，默认从x轴正方向逆时针开始
+   autopct:百分比格式，可用format字符串或format function，'%1.1f%%'指小数点前后各1位(不足空格补齐)
+   """
+   ```
+
+   + 饼图示例
+   
+   ```python
+   # 准备数据，计算各类广告投入费用总和
+   data = pd.read_csv('data/advertising.csv')
+   piedata = data[['TV','Weibo','WeChat']]
+   datasum = piedata.sum()
+   # 绘制饼图
+   datasum.plot(kind='pie',figsize=(6,6),title='Advertising Expenditure',
+                fontsize=14,explode=[0,0.2,0],shadow=True,startangle=60,autopct='%1.1f%%')
+   ```
+
+8. 箱型图(Box Plot)
+
+   ​	<u>箱型图又称盒式图，适于表达数据的**分位数**分布</u>，帮助找到异常值。它将样本居中的50%值域用一个长方形表示，较小和较大的四分之一值域更用一根线表示，异常值用'o'表示。
+
+   + pandas可以使用plot()函数绘制箱型图，格式如下：
+
+   ```python
+   Series.plot(kind='box', ...)
+   ```
+
+   + Series.plot绘制箱型图示例
+
+   ```python
+   import matplotlib.pyplot as plt
+   import pandas as pd
+   data = pd.read_csv('data\Advertising.csv')
+   advdata = data[['TV','Weibo','WeChat']]
+   advdata.plot(kind='box', figsize=(6,6), title='Advertising Expenditure')
+   plt.show()
+   ```
+
+   ​	观察箱型图，可以快速确定一个样本是否有利于进行分组判别。再分配直方图和密度图就可以更完整地观察数据的分布。
+
+   ​	pandas也提供了专门绘制箱型图的函数boxplot(),方便将观察样本按照其他特征进行分组对比，格式如下：
+
+   ```python
+   DataFrame.boxplot(by, ...)
+   # by: 用于分组的别名
+   ```
+
+   + 使用示例：
+
+   ```python
+   stdata = pd.read_csv('data\students.csv')
+   stdata1 = stdata[['Gender','Score']]
+   stdata1.boxplot(by='Gender',figsize=(6,6))
+   plt.show()
+   ```
+
+#### 4.2.2 绘制数据地图
+
+​	将总体样本的数量与地域上的分布情况用各种几何图形、实物形象或不同线纹、颜色等在地图上表示出来的图形，称为数据地图。它可以直观地描述某种现象的地域分布。
+
+​	Basemap是Matplotlib的扩展工具包，可以处理地理数据，但Anaconda3中没有包含，需要下载和安装pyproj和basemap工具包后方可导入。
+
+​	这里不展开作笔记了，因为用得也不多，感兴趣的可以再查查。
 
 
 
