@@ -1,4 +1,4 @@
-# python数据处理
+python数据处理
 
 > 笔记所记录的内容大部分出至《数据科学技术与应用》,还有些是我学习中遇到的问题，穿插其中补充。
 
@@ -2326,6 +2326,838 @@ plt.show() # 显示图形
 ​	Basemap是Matplotlib的扩展工具包，可以处理地理数据，但Anaconda3中没有包含，需要下载和安装pyproj和basemap工具包后方可导入。
 
 ​	这里不展开作笔记了，因为用得也不多，感兴趣的可以再查查。
+
+## 第五章 机器学习建模分析
+
+​	经过数据探索得到数据集属性的特征及相互之间的关系，如需进一步描述数据集的总体特性，并预测未来产生的新数据，则需要位数据集建立模型。目前主要的建模途径是使用机器学习的算法，让计算机从数据中自主学习产生模型。本章主要介绍机器学习的基本概念，机器学习的常用算法及如何应用Python提供的机器学习算法库scikit-learn实现数据建模和预测分析。
+
+### 5.1 机器学习概述
+
+#### 5.1.1 机器学习与人工智能
+
++ 人工智能(Artificial Intelligence, AI)是研究计算机模拟人的某些思维过程和智能行为(如学习、推理、思考、规划等)的学科，主要包括计算机实现智能的原理、制造类似于人脑智能的计算机，使计算机能实现更高层次的应用。<u>人工智能领域包括机器人、机器学习、计算机视觉、图像识别、自然语言处理和专家系统等，涉及计算机科学、数学、语言学、心理学和哲学等多个学科</u>。
+
++ 机器学习(Machine Learning, ML)是人工智能的分支。机器学习方法利用既有的经验，完成某种既定任务，并在此过程中不断改善自身性能。**通常按照机器学习的任务，将其分为有监督的学习(Supervised Learning)、无监督的学习(Unsupervised Learning)两大类方法**。
+  
+  + 有监督的学习利用经验(历史数据)，学习表示事物的模型，关注利用模型预测未来数据，一般包括**分类问题(Classification)和回归问题(Regression)**。
+  
+    1. <u>分类问题是对事物所属类别的判别，类型的数量是已知的</u>。例如，识别鸟，根据鸟的身长、各部分羽毛的颜色、翅膀的大小等多种特征来确定其种类；垃圾邮件判别，根据邮箱的发件、收件人、标题、内容关键字、附件、时间等特征决定是否为垃圾邮件。
+    2. <u>回归问题的预测目标是连续变量</u>。例如，根据父、母的身高预测孩子的身高；根据企业的各项财务指标预测其资产收益率。
+  
+  + 无监督的学习倾向于对事物本身特性的分析，常见问题包括**数据降维(Dimensionality Reduction)和聚类问题(Clustering)**。
+  
+    1. <u>数据降维是对描述事物的特征数量进行压缩的方法</u>。例如，描述学生，记录了每个人的性别、身高、体重、选修课程、技能、业余爱好、购物习惯等特征。面向特定的分析目标职业生涯规划，只需选取与之相关的特征进行分析，去掉无关数据，降低处理的复杂度。
+  
+    2. <u>聚类问题的目标也是将事物划分成不同的类别，与分类问题的不同之处是事先并不知道类别的数量，它根据事物之间的相似性，将相似的事物归为一簇</u>。例如，电子商务网站对客户群的划分，将具有类似背景与购买习惯的用户视为异类，即可有针对性地投放广告。
+  
+    > 在解决实际领域问题时，通常现根据应用背景和分析目标，将应用转换成以上某类问题及组合问题，然后选用合适的学习算法训练模型。
+
+#### 5.1.2 Python机器学习方法库
+
+​	scikit-learn是目前最广泛的开源方法库，它基于Numpy、SciPy、pandas和Matplotlib开发，封装了大量经典及最新的机器学习模型，是一个简单且高效的机器学习和数据挖掘工具。
+
+​	scikit-learn的基本功能分为：分类、回归、聚类、数据降维、模型选择和数据预处理等六部分，详细讲解、参数说明需要自行查阅官方文档。
+
+### 5.2 回归分析
+
+#### 5.2.1 回归分析原理
+
+​	回归分析是一种预测性的建模分析技术，它通过样本数据学习目标变量和自变量之间的因果关系，建立数学表示模型，基于新的自变量，此模型可预测相应的目标变量。
+
+​	常用的回归方法有<u>线性回归(Linear Regression)、逻辑回归(Logistic Regression)和多项式回归(Polynomial Regression)</u>.
+$$
+y=f(x)~,~f(x)=ω_1x_1+ω_2x_2+···+ω_dx_d+b
+$$
+
++ 线性回归问题举例：
+
+  将销量y表示为电视x<sub>1</sub>、微博x<sub>2</sub>和微信x<sub>3</sub>等渠道广告投入量的线性组合函数。
+
++ 求解线性回归模型利用统计学的“最小二乘法”，使得线性模型预测所有的训练数据时误差平方和最小。如果使用非线性组合函数，也就是多项式回归，通常模型的预测误差更小，但计算复杂度增加。
+
+#### 5.2.2 回归分析实现
+
+scikit-learn使用LinearRegression类构造回归分析模型，相关函数格式如下：
+
++ 模型初始化
+
+  ```python
+  linreg = LinearRegression()
+  ```
+
++ 模型学习
+
+  ```python
+  linreg.fit(X, y)
+  ```
+
++ 模型预测
+
+  ```python
+  y = linreg,predict(X)
+  ```
+
++ 参数说明
+
+  ```python
+  X[m,n]:自变量二维数组，m为样本数，n为特征项个数，数值型。
+  y[n]:目标变量一维数组，数值型。
+  ```
+
++ 获取线性回归模型的截距和回归系数
+
+  ```python
+  linreg.intercept_ , linreg.coef_
+  ```
+
++ 示例代码，主要就看看语句调用和参数使用
+
+```python
+#广告收益预测分析，回归分析方法
+
+#1.从文件中读入数据，忽略第0行
+import numpy as np
+import pandas as pd
+filename = 'data/advertising.csv'
+data = pd.read_csv(filename, index_col = 0)
+#print(data.iloc[0:5, :].values)
+print(data[0:5])
+
+#导入绘图库
+import matplotlib.pyplot as plt
+#2.绘制自变量与目标变量之间的散点图,电视广告与销量之间的关联
+data.plot(kind='scatter',x='TV',y='Sales',title='Sales with Advertising on TV')
+plt.xlabel("TV")
+plt.ylabel("sales")
+plt.show()
+
+#微博广告与销量之间的关联
+data.plot(kind='scatter',x='Weibo',y='Sales',title='Sales with Advertising on Weibo')
+plt.xlabel("Weibo")
+plt.ylabel("sales")
+plt.show()
+
+#微信广告与销量之间的关联
+data.plot(kind='scatter',x='WeChat',y='Sales',title='Sales with Advertising on WeChat')
+plt.xlabel("WeChat")
+plt.ylabel("sales")
+plt.show()
+
+#3. 建立3个自变量与目标变量的线性回归模型，计算误差。
+X = data.iloc[:,0:3].values.astype(float)
+y = data.iloc[:,3].values.astype(float)
+from sklearn.linear_model import LinearRegression
+linreg = LinearRegression()  
+linreg.fit(X, y)
+#输出线性回归模型的截距和回归系数
+print (linreg.intercept_, linreg.coef_)
+
+#4.保存回归模型导文件，以便后续加载使用
+from sklearn.externals import joblib
+joblib.dump(linreg, 'linreg.pkl')   #保存至文件
+
+#重新加载预测数据
+import numpy as np
+load_linreg = joblib.load('linreg.pkl')  #从文件读取模型
+new_X = np.array([[130.1,87.8,69.2]])
+print("6月广告投入：",new_X)
+print("预期销售：",load_linreg.predict(new_X) ) #使用模型预测
+```
+
+#### 5.2.3 回归分析性能评估
+
+​	从直观上分析，回归模型的预测误差越小越好，通常采用均方根误差(Root Mean Squared Error, RMSE)计算误差。
+
+![img](res/img/Python5.2.3-1.png)
+
+​	式中，n为样本的个数；y<sub>i</sub>为样本目标变量的真实值；另一个y为使用回归模型预测的目标变量值。在统计学中，使用模型的决定系数R<sup>2</sup>来衡量模型预测能力。
+
+![img](res/img/Python5.2.3-2.png)
+
+式中，右上角的y表示y<sub>i</sub>的均值。
+
+​	R<sup>2</sup>的数值范围为0~1,表示目标变量的预测值和实际值之间的相关程度，也可以理解为模型中目标变量的值有百分之多少能够用自变量来解释。R<sup>2</sup>值越大，表示预测效果越好，如果值为1，则可以说回归模型完美地拟合了实际数据。
+
+​	通常将在原始数据集上学习获得的回归模型用于预测新数据时性能会降低，因为线性函数的参数已经尽可能地拟合已知数据，如果未知地数据具有与训练集中数据不一样的特性，会导致预测值与真实值产生较大的偏差。
+
+​	**有监督的学习**为了更准确地评价模型性能，通常将原始的数据切分为两部分:**训练集和测试集**。在训练集上学习获得回归模型，然后用于测试集(视为未知数据)。在测试集上的性能指标将更好地反映模型应用于未知数据的效果。
+
+​	scikit-learn的model_selection类提供数据集的切分方法，metrics类实现了scikit-learn包中各类机器学习算法的性能评估。功能实现函数格式如下:
+
++ 数据集分割：
+
+  ```python
+  X_learn,X_test,y_train,y_test = 
+  model_selection.train_test_split(X, y, test_size, random_state)
+  ```
+
+  > 参数说明：
+  >
+  > test_size:0~1,测试集的比例
+  > random_state:随机数种子，1为每次得到相同的样本划分，否则每次划分不一样
+
++ 误差RMSE计算：
+
+  ```python
+  err = metrics.mean_squared_error(y, y_pred)
+  ```
+
+  > 参数说明：
+  >
+  > y:真实目标值
+  >
+  > y_pred:模型预测目标值
+
++ 决定系数计算：
+
+  ```python
+  decision_score = linreg.score(X, y)
+  ```
+
++ 切分训练集和测试集进行回归模型学习及分析性能评估的例子
+
+  ```python
+  # 性能评估
+  
+  #1. 将数据集分割为训练集和测试集
+  from sklearn import model_selection
+  X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size=0.35, random_state=1)
+  
+  #2. 在训练集上学习回归模型，在训练集和测试集上计算误差。
+  linregTr = LinearRegression() 
+  linregTr.fit(X_train, y_train)
+  print (linregTr.intercept_, linregTr.coef_)
+  
+  #3.计算模型性能
+  from sklearn import metrics
+  y_train_pred = linregTr.predict(X_train)
+  y_test_pred = linregTr.predict(X_test)
+  train_err = metrics.mean_squared_error(y_train, y_train_pred) 
+  test_err = metrics.mean_squared_error(y_test, y_test_pred) 
+  print( 'The mean squar error of train and test are: {:.2f}, {:.2f}'.format(train_err, test_err) )
+  
+  predict_score =linregTr.score(X_test,y_test)
+  print('The decision coeficient is:{:.2f} '.format(predict_score) )
+  
+  #4. 使用所有数据训练的模型性能测试
+  predict_score1 =linreg.score(X_test,y_test)
+  print('The decision coeficient of model trained with all is: {:.2f} '.format(predict_score1) )
+  y_test_pred1 = linreg.predict(X_test)
+  test_err1 = metrics.mean_squared_error(y_test, y_test_pred1) 
+  print( 'The mean squar error of test with all: {:.2f}'.format(test_err1) )
+  ```
+
+  ### 5.3 分类分析
+
+  #### 5.3.1 分类学习原理
+
+  ​	分类学习是最常见的监督学习问题，分类预测的结果可以是二分类问题，也可以是多分类问题。手机短信程序根据短信的特征，如发短信、收信人范围、内容关键字等预测是否属于群发垃圾短信以便自动屏蔽，这是一个典型的二分类问题。停车场计费系统根据扫描的车牌图像，识别出车牌上的每个字母和数字，以便自动记录。计算机判别图像中切割出的每一小块图像对应是36类(26个大写字母+10个数字)中的哪一类，这是一个多分类的问题。
+
+  ​	在分类学习(也称训练)过程中，采用不同的学习算法可以得到不同的分类器，常用的分类算法有很多，如决策树(Decision Tree)、贝叶斯分类、KNN(K近邻)、支持向量机(Support Vector Machine， SVM)、神经网络(Neural Network)和集成学习(Ensemble Learning)等。本节以决策树和SVM两种学习算法为例，介绍分类学习的基本思路和应用方法。
+
+  ​	分类器的预测准确度通过性能评估来确定。将数据集上每个样本的特征值输入分类器，分类器输出结果(也就是预测类别)。计算每个样本真实类对应的预测类，得到混淆矩阵(Confusion Matrix)
+
+  <escape>
+
+  <table class="tg">
+    <tr>
+      <th class="tg-0pky">真实类\预测类</th>
+      <th class="tg-0lax">Class=Yes</th>
+      <th class="tg-0lax">Class=No</th>
+    </tr>
+    <tr>
+      <td class="tg-0lax">Class=Yes(正例)</td>
+      <td class="tg-0lax">a</td>
+      <td class="tg-0lax">b</td>
+    </tr>
+    <tr>
+      <td class="tg-0lax">Class=No(反例)</td>
+      <td class="tg-0lax">c</td>
+      <td class="tg-0lax">d</td>
+    </tr>
+  </table>
+
+  </escape>
+
+  基于混淆矩阵，准确率(Accuracy)计算所有数据中被正确预测的比例
+
+![img](res/img/Python5.3.1-1.png)
+
+​		在实际问题中，很多时候更关心模型对某一特定类别的预测能力，如银行更关心无法偿还贷款的客户是否被预测出来。使用精确率(Precession)、召回率(Recall)和F1-measure对分类器的性能进行评估更有效
+
+​		精确率是对精确性的度量，计算预测为Yes类的样本中，真实类是Yes的比例
+
+​				Precission = a / ( a + c )
+
+​		召回率是覆盖面的度量，计算真实类为Yes的样本中，被正确预测的比例：
+
+​				Recall = a / ( a + b )
+
+​		F1计算精确率和召回率的调和平均数
+
+​				F1 = 2a / (2a + b + c)
+
+​		通常如果学习算法致力于提高分类模型的精确率，意味着得到的模型判别正例时使用更严格的筛选条件，就容易导致筛选出的整理较少，召回率降低。因此，F1较高的模型具有更高的使用价值，常被用来衡量模型的优劣。不同的应用可能对精确率和召回率的关注度不同，可以按照实际需求选用衡量指标。
+
+#### 5.3.2 决策树
+
+1. 决策树原理
+
+2. 决策树分类实现
+
+   ​	scikit-learn的DecisionTreeClassifier类实现决策树分类器学习，支持二分类和多分类问题。分类性能评估同样采用metrics类实现。相关实现函数格式如下：
+
+   + 模型初始化：
+
+     ```python
+     clf = tree.DecisionTreeClassifier()
+     ```
+
+   + 模型学习：
+
+     ```python
+     clf.fit(X,y)
+     ```
+
+   + Accuracy计算：
+
+     ```python
+     clf.score(X,y)
+     ```
+
+   + 模型预测：
+
+     ```python
+     predicted_y = clf.predict(X)
+     ```
+
+   + 混淆矩阵计算：
+
+     ```python
+     metrics.confusion_matrix(y,predicted_y)
+     ```
+
+   + 分类性能报告：
+
+     ```python
+     metrics.classification_report(y,predicted_y)
+     ```
+
+     > 参数说明：
+     >
+     > X[m,n]:样本特征二维数组，m为样本数，n为特征项个数，数值型。
+     >
+     > y[n]:分类标签的一维数组，必须为整数。
+
+   + 决策树例子：使用scikit-learn建立决策树为银行货款偿还的数据集构成分类器，并评估分类器的性能。
+
+     ```python
+     #银行贷款偿还决策树分析
+     
+     #读入数据
+     import pandas as pd
+     
+     filename = 'data/bankdebt.csv'
+     data = pd.read_csv(filename, nrows = 5, index_col = 0, header = None)
+     print(data.values)
+     #data = pd.read_csv(filename, header = None)
+     
+     #数据预处理
+     data = pd.read_csv(filename, index_col = 0, header = None)
+     data.loc[data[1] == 'Yes',1 ] = 1
+     data.loc[data[1] == 'No',1 ] = 0
+     data.loc[data[4] == 'Yes',4 ] = 1
+     data.loc[data[4] == 'No',4 ] = 0
+     data.loc[data[2] == 'Single',2 ] = 1
+     data.loc[data[2] == 'Married',2 ] = 2
+     data.loc[data[2] == 'Divorced',2] = 3
+     print( data.loc[1:5,:] )
+     
+     
+     #取data前4列数据作为特征属性值,最后一列作为分类值
+     X = data.loc[ :, 1:3 ].values.astype(float)
+     y = data.loc[ :, 4].values.astype(int)
+     
+     #训练模型，预测样本分类
+     from sklearn import tree
+     clf = tree.DecisionTreeClassifier()
+     clf = clf.fit(X, y)
+     clf.score(X,y)
+     
+     #评估分类器性能,计算混淆矩阵，Precision 和 Recall
+     predicted_y = clf.predict(X)
+     from sklearn import metrics
+     print(metrics.classification_report(y, predicted_y))
+     print('Confusion matrix:' )
+     print( metrics.confusion_matrix(y, predicted_y) )
+     
+     #生成并显示决策树图
+     featureName =['House', 'Marital', 'Income']
+     className = ['Cheat','Not Cheat']
+     
+     """
+     [['Yes' 'Single' 12.5 'No']
+      ['No' 'Married' 10.0 'No']
+      ['No' 'Single' 7.0 'No']
+      ['Yes' 'Married' 12.0 'No']
+      ['No' 'Divorced' 9.5 'Yes']]
+        1  2     3  4
+     0               
+     1  1  1  12.5  0
+     2  0  2  10.0  0
+     3  0  1   7.0  0
+     4  1  2  12.0  0
+     5  0  3   9.5  1
+                   precision    recall  f1-score   support
+     
+                0       1.00      1.00      1.00        10
+                1       1.00      1.00      1.00         5
+     
+         accuracy                           1.00        15
+        macro avg       1.00      1.00      1.00        15
+     weighted avg       1.00      1.00      1.00        15
+     
+     Confusion matrix:
+     [[10  0]
+      [ 0  5]]
+     """
+     ```
+
+#### 5.3.3 支持向量机
+
+1. 支持向量机原理
+
+   支持向量机(Support Vector Machine,SVM)是基于数学优化方法的分类学习算法，它的基本思想是将数据看作多维空间的点，求解一个最优的超平面，将两种不同类别的点分割开来。
+
+2. SVM实现
+
+   scikit-learn的SupportVectorClassification类实现SVM分类，只支持二分类，多分类问题需要转化为多个二分类问题处理。
+
+   + SVM分类器的初始化函数如下：
+
+     ```python
+     clf = svm.SVC(kernel=, gamma, C,...)
+     ```
+
+     > 参数说明：
+     >
+     > kernel:使用的核函数。'linear'为线性核函数、‘poly’为多项式核函数、'rbf'为高斯核函数、'sigmoid'为Logistic核函数
+     >
+     > gamma:'poly'、'rbf'或‘sigmoid’的核函数，一般取值为(0,1)
+     >
+     > C:误差项的惩罚参数，一般取10<sup>n</sup>，如1、0.1、0.01等
+     >
+     > SVM分类实现其他的函数与决策树一致，不再单独说明
+
+   + SVM使用例子：建立SVM模型预测银行客户是否接受推荐的投资计划，并评估分类器的性能。
+
+     ```python
+     #银行投资业务推广SVM分析
+     
+     #读入数据
+     import pandas as pd
+     
+     filename = 'data/bankpep.csv'
+     data = pd.read_csv(filename, index_col = 'id')
+     print( data.iloc[0:5,:])
+     
+     #将最数据中的‘YES’和‘NO'转换成代表分类的整数 1 和 0
+     seq = ['married', 'car', 'save_act', 'current_act', 'mortgage', 'pep']
+     for feature in seq :  # 逐个特征进行替换
+         data.loc[ data[feature] == 'YES', feature ] =1
+         data.loc[ data[feature] == 'NO', feature ] =0
+     
+     #将性别转换为整数1和0
+     data.loc[ data['sex'] == 'FEMALE', 'sex'] =1
+     data.loc[ data['sex'] == 'MALE', 'sex'] =0
+     print(data[0:5])
+     
+     #将离散特征数据进行独热编码，转换为dummies矩阵
+     dumm_reg = pd.get_dummies( data['region'], prefix='region' )
+     #print(dumm_reg[0:5])
+     
+     dumm_child = pd.get_dummies( data['children'], prefix='children' )
+     #print(dumm_child[0:5])
+     
+     #删除dataframe中原来的两列后再 jion dummies
+     df1 = data.drop(['region','children'], axis = 1)
+     #print( df1[0:5])
+     df2 = df1.join([dumm_reg,dumm_child], how='outer')
+     print( df2[0:2])
+     
+     #准备训练输入变量
+     X = df2.drop(['pep'], axis=1).values.astype(float)
+     #X = df2.iloc[:,:-1].values.astype(float)
+     y = df2['pep'].values.astype(int)
+     print("X.shape", X.shape)
+     print(X[0:2,:])
+     print(y[0:2])
+     
+     #训练模型，评价分类器性能
+     from sklearn import svm
+     from sklearn import metrics
+     clf = svm.SVC(kernel='rbf', gamma=0.6, C = 1.0)
+     clf.fit(X, y)
+     print( "Accuracy：",clf.score(X, y) )
+     y_predicted = clf.predict(X)
+     print( metrics.classification_report(y, y_predicted) )
+     
+     #将数据集拆分为训练集和测试集，在测试集上查看分类效果
+     from sklearn import model_selection
+     
+     X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size=0.3, random_state=1)
+     clf = svm.SVC(kernel='rbf', gamma=0.7, C = 1.0)
+     clf.fit(X_train, y_train)
+     print("Performance on training set:", clf.score(X_train, y_train) )
+     print("Performance on test set:", clf.score(X_test, y_test) )
+     
+     #对不同方差的数据标准化
+     from sklearn import preprocessing
+     X_scale = preprocessing.scale(X)
+     
+     #将标准化后的数据集拆分为训练集和测试集，在测试集上查看分类效果
+     X_train, X_test, y_train, y_test = model_selection.train_test_split(X_scale, y, test_size=0.3, random_state=1)
+     clf = svm.SVC(kernel='poly', gamma=0.6, C = 0.001)
+     clf.fit(X_train, y_train)
+     print( clf.score(X_test, y_test) )
+     
+     #查看在测试集上混淆矩阵，Precision、Recall和F1
+     y_predicted = clf.predict(X_test)
+     print("Classification report for %s" % clf)
+     
+     print (metrics.classification_report(y_test, y_predicted) )
+     print( "Confusion matrix:\n", metrics.confusion_matrix(y_test, y_predicted) )
+     
+     
+     """
+         age     sex      region   income married  children  car save_act  \
+     id                                                                          
+     ID12101   48  FEMALE  INNER_CITY  17546.0      NO         1   NO       NO   
+     ID12102   40    MALE        TOWN  30085.1     YES         3  YES       NO   
+     ID12103   51  FEMALE  INNER_CITY  16575.4     YES         0  YES      YES   
+     ID12104   23  FEMALE        TOWN  20375.4     YES         3   NO       NO   
+     ID12105   57  FEMALE       RURAL  50576.3     YES         0   NO      YES   
+     
+             current_act mortgage  pep  
+     id                                 
+     ID12101          NO       NO  YES  
+     ID12102         YES      YES   NO  
+     ID12103         YES       NO   NO  
+     ID12104         YES       NO   NO  
+     ID12105          NO       NO   NO  
+              age  sex      region   income  married  children  car  save_act  \
+     id                                                                         
+     ID12101   48    1  INNER_CITY  17546.0        0         1    0         0   
+     ID12102   40    0        TOWN  30085.1        1         3    1         0   
+     ID12103   51    1  INNER_CITY  16575.4        1         0    1         1   
+     ID12104   23    1        TOWN  20375.4        1         3    0         0   
+     ID12105   57    1       RURAL  50576.3        1         0    0         1   
+     
+              current_act  mortgage  pep  
+     id                                   
+     ID12101            0         0    1  
+     ID12102            1         1    0  
+     ID12103            1         0    0  
+     ID12104            1         0    0  
+     ID12105            0         0    0  
+              age  sex   income  married  car  save_act  current_act  mortgage  \
+     id                                                                          
+     ID12101   48    1  17546.0        0    0         0            0         0   
+     ID12102   40    0  30085.1        1    1         0            1         1   
+     
+              pep  region_INNER_CITY  region_RURAL  region_SUBURBAN  region_TOWN  \
+     id                                                                            
+     ID12101    1                  1             0                0            0   
+     ID12102    0                  0             0                0            1   
+     
+              children_0  children_1  children_2  children_3  
+     id                                                       
+     ID12101           0           1           0           0  
+     ID12102           0           0           0           1  
+     X.shape (600, 16)
+     [[4.80000e+01 1.00000e+00 1.75460e+04 0.00000e+00 0.00000e+00 0.00000e+00
+       0.00000e+00 0.00000e+00 1.00000e+00 0.00000e+00 0.00000e+00 0.00000e+00
+       0.00000e+00 1.00000e+00 0.00000e+00 0.00000e+00]
+      [4.00000e+01 0.00000e+00 3.00851e+04 1.00000e+00 1.00000e+00 0.00000e+00
+       1.00000e+00 1.00000e+00 0.00000e+00 0.00000e+00 0.00000e+00 1.00000e+00
+       0.00000e+00 0.00000e+00 0.00000e+00 1.00000e+00]]
+     [1 0]
+     Accuracy： 1.0
+                   precision    recall  f1-score   support
+     
+                0       1.00      1.00      1.00       326
+                1       1.00      1.00      1.00       274
+     
+         accuracy                           1.00       600
+        macro avg       1.00      1.00      1.00       600
+     weighted avg       1.00      1.00      1.00       600
+     
+     Performance on training set: 1.0
+     Performance on test set: 0.5555555555555556
+     0.8055555555555556
+     Classification report for SVC(C=0.001, cache_size=200, class_weight=None, coef0=0.0,
+         decision_function_shape='ovr', degree=3, gamma=0.6, kernel='poly',
+         max_iter=-1, probability=False, random_state=None, shrinking=True,
+         tol=0.001, verbose=False)
+                   precision    recall  f1-score   support
+     
+                0       0.83      0.82      0.82       100
+                1       0.78      0.79      0.78        80
+     
+         accuracy                           0.81       180
+        macro avg       0.80      0.80      0.80       180
+     weighted avg       0.81      0.81      0.81       180
+     
+     Confusion matrix:
+      [[82 18]
+      [17 63]]
+     """
+     ```
+
+### 5.4 聚类分析
+
+#### 5.4.1 聚类任务
+
+​	在监督学习中，训练样本包含了目标值，学习算法根据目标值学习预测模型。当数据集中没有分类标签信息时，只能根据数据内在性质及规律将其划分为若干个不相交的子集，每个子集称为一个"簇"(Cluster),这就是聚类方法(Clustering)
+
+​	聚类方法通常分为几大类：划分法(Partition)、层次法(Hierachical)、基于密度聚类(Density based)、基于图/网络聚类(Graph/Grid based)、基于模型聚类(Model based)等，每类下面又延伸出不同的具体算法。
+
+#### 5.4.2 K-means算法
+
+1. K-means算法原理
+
+   ​	K-means是划分法中最经典的算法。划分法的基本目标是：将数据聚为若干簇，簇内的点都足够近，簇间的点都足够远。它通过计算数据集中样本之间的距离，根据距离的远近将其划分为多个簇。K-means首先需要假定划分的簇数k，然后从数据集中任意选择k个样本作为各簇的中心。聚类过程如下：
+
+   ​	1）根据样本与簇中心的距离相似度，将数据集中的每个样本划分到与其最相似的一个簇。
+
+   ​	2）计算每个簇的中心（如该簇中所有样本的均值）。
+
+   ​	3）不断重复这一过程中直到每个簇的中心点不再变化。
+
+2. K-means聚类实现
+
+   scikit-learn的Cluster类提供聚类分析的方法，实现函数形式如下。
+
+   + 模型初始化
+
+   ```python
+   kmeans = KMeans(n_clusters)
+   ```
+
+   + 模型学习
+
+   ```python
+   kmeans.fit(X)
+   ```
+
+   > 参数说明：
+   >
+   > n_cluster:簇的个数
+   >
+   > X：样本二维数组，数值型
+
+   + 样例代码：
+
+   ```python
+   %matplotlib inline
+   #鸢尾花数据集聚类分析
+   
+   
+   #例5-5： 数据可视化分析，k-means聚类
+   #从数据集中读入数据
+   import pandas as pd
+   filename = 'data/iris.data'
+   data = pd.read_csv(filename, header = None)
+   data.columns = ['sepal length','sepal width','petal length','petal width','class']
+   data.iloc[0:5,:]
+   
+   #绘制散点图矩阵，观察特征维度的区分度
+   import matplotlib.pyplot as plt
+   pd.plotting.scatter_matrix(data, diagonal='hist')
+   plt.show()
+   
+   #生成k-means模型
+   X = data.iloc[:,0:4].values.astype(float)
+   from sklearn.cluster import KMeans
+   kmeans = KMeans(n_clusters=3)
+   kmeans.fit(X)
+   
+   #输出聚类结果，使用‘petal length'和’petal width’绘制散点图，即X的2、3列
+   print('means.labels_:\n',kmeans.labels_)
+   pd.plotting.scatter_matrix(data, c=kmeans.labels_, diagonal='hist')
+   plt.show()
+   
+   #比较数据类别标签与聚类结果 ARI（Adjusted Rand Index）
+   from sklearn import metrics
+   #将类名转换为整数值
+   data.loc[ data['class'] == 'Iris-setosa', 'class' ] = 0
+   data.loc[ data['class'] == 'Iris-versicolor', 'class' ] = 1
+   data.loc[ data['class'] == 'Iris-virginica', 'class' ] = 2
+   y = data['class'].values.astype(int)
+   print( 'ARI: ',metrics.adjusted_rand_score(y, kmeans.labels_) )
+   
+   print( kmeans.labels_ )
+   sc = metrics.silhouette_score( X, kmeans.labels_, metric='euclidean' )
+   print('silhouette_score: ',sc)
+   
+   #例5-6：“肘部”观察法，分析合理的簇值
+   clusters = [2,3,4,5,6,7,8]
+   sc_scores = []
+   #计算各个簇模型的轮廓系数
+   for i in clusters:
+       kmeans = KMeans( n_clusters = i).fit(X)
+       sc = metrics.silhouette_score( X, kmeans.labels_, metric='euclidean' )
+       sc_scores.append( sc )
+   
+   #绘制曲线图反应轮廓系数与簇数的关系
+   plt.plot(clusters, sc_scores, '*-')
+   plt.xlabel('Number of Clusters')
+   plt.ylabel('Sihouette Coefiicient Score')
+   plt.show()
+   
+   """
+   means.labels_:
+    [1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+    1 1 1 1 1 1 1 1 1 1 1 1 1 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2
+    2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 0 2 0 0 0 0 2 0 0 0 0
+    0 0 2 2 0 0 0 0 2 0 2 0 2 0 0 2 2 0 0 0 0 0 2 0 0 0 0 2 0 0 0 2 0 0 0 2 0
+    0 2]
+   ARI:  0.7302382722834697
+   [1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+    1 1 1 1 1 1 1 1 1 1 1 1 1 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2
+    2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 0 2 0 0 0 0 2 0 0 0 0
+    0 0 2 2 0 0 0 0 2 0 2 0 2 0 0 2 2 0 0 0 0 0 2 0 0 0 0 2 0 0 0 2 0 0 0 2 0
+    0 2]
+   silhouette_score:  0.5525919445499757
+   """
+   ```
+
+#### 5.4.3 聚类方法的性能评估
+
+1. 带有分类标签的数据集
+
+   ​	如鸢尾花数据集，带有分类标签，可以使用兰德指数(Adjusted Rand Index, ARI)评价聚类性能，它计算真实标签与聚类标签两种分布之间的相似性，取值范围为[0,1]。1表示最好的结果，即聚类类别和真实类别的分布完全一致。
+
+   ​	scikit-learn的metrics类提供adjusted_rand_score()函数来计算兰德指数
+
+2. 没有分类标签的数据集
+
+   ​	如果分类标签没有类别属性，常用轮廓系数(Sihouette Coefficient)来度量聚类的质量。轮廓系数同时考虑聚类结果的簇内凝聚度和簇间分离度，取值范围为[-1,1]，轮廓系数越大，表示聚类效果越好。
+
+   ​	scikit-learn的metrics类提供sihouette_score()函数来计算轮廓系数。
+
+3. 确定初始值k
+
+   ​	数据集没有已知类别，聚类的初始簇数k如何确定？通常我们尝试多个k值得到不同的聚类结果，然后比较这些结果的轮廓系数，选择合适的k作为最终模型。
+
+### 5.5 神经网络和深度学习
+
+#### 5.5.1 神经元与感知器
+
+#### 5.5.2 神经网络
+
+#### 5.5.3 神经网络分类实现
+
+​	scikit-learn从0.18以上的版本开始提供神经网络的学习算法库，MLPClassifier是一个基于多层前馈网络的分类器。模型初始化函数如下，学习与性能评估函数与其他分类方法相同。
+
++ 模型初始化：
+
+  ```python
+  mlp = MLPClassifier(solver,activation,hidden_layer_sizes,
+                     alpha,max_iter,random_state,...)
+  ```
+
+  > 参数说明：
+  >
+  > solver:优化权重的算法，{'lbfgs','sgd','adam'}，默认为'adam'
+  >
+  > activation:激活函数，{'identity','logistic','tanh','relu'}，默认为‘relu’
+  >
+  > hidden_layer_sizes:神经网络结构，表示元组，其中元组第n个元素值表示第n层的神经元个数。如(5,10,5)表示3隐层，每层的节点数分别为5、10和5
+  >
+  > alpha:正则化惩罚项参数，默认为0.0001
+  >
+  > max_iter:最大迭代次数，BP学习算法的学习次数
+  >
+  > random_state:随机数种子
+
++ 代码样例：使用神经网络实现鸢尾花数据集的分类分析
+
+  ```python
+  #前馈神经网络 鸢尾花数据集分类
+  
+  #从数据集中读入数据
+  import pandas as pd
+  filename = 'data\iris.data'
+  data = pd.read_csv(filename, header = None)
+  data.columns = ['sepal length','sepal width','petal length','petal width','class']
+  data.iloc[0:5,:]
+  
+  #计算数据集中每种类别样本数，并给出统计特征
+  print( data['class'].value_counts() )
+  data.groupby('class').mean()
+  data.groupby('class').var()
+  
+  #数据预处理
+  #convert classname to integer
+  data.loc[ data['class'] == 'Iris-setosa', 'class' ] = 0
+  data.loc[ data['class'] == 'Iris-versicolor', 'class' ] = 1
+  data.loc[ data['class'] == 'Iris-virginica', 'class' ] = 2
+  
+  import matplotlib.pyplot as plt
+  pd.plotting.scatter_matrix(data, c=data['class'].values, diagonal='hist')
+  plt.show()
+  
+  #data
+  X = data.iloc[:,0:4].values.astype(float)
+  y = data.iloc[:,4].values.astype(int)
+  
+  #训练神经网络分类器模型
+  from sklearn.neural_network import MLPClassifier
+  #创建一个2层隐层，每层5个结点
+  mlp = MLPClassifier(solver='lbfgs',alpha=1e-5,hidden_layer_sizes=(5, 5), random_state=1)
+  mlp.fit(X,y)
+  print("Train with complete data set: ",mlp.score(X,y))
+  
+  from sklearn import metrics
+  y_predicted = mlp.predict(X)
+  print("Classification report for %s" % mlp)
+  
+  print(metrics.classification_report(y, y_predicted) )
+  print( "Confusion matrix:\n", metrics.confusion_matrix(y, y_predicted) )
+  
+  """
+  Iris-versicolor    50
+  Iris-virginica     50
+  Iris-setosa        50
+  Name: class, dtype: int64
+  
+  Train with complete data set:  0.9866666666666667
+  Classification report for MLPClassifier(activation='relu', alpha=1e-05, batch_size='auto', beta_1=0.9,
+                beta_2=0.999, early_stopping=False, epsilon=1e-08,
+                hidden_layer_sizes=(5, 5), learning_rate='constant',
+                learning_rate_init=0.001, max_iter=200, momentum=0.9,
+                n_iter_no_change=10, nesterovs_momentum=True, power_t=0.5,
+                random_state=1, shuffle=True, solver='lbfgs', tol=0.0001,
+                validation_fraction=0.1, verbose=False, warm_start=False)
+                precision    recall  f1-score   support
+  
+             0       1.00      1.00      1.00        50
+             1       0.98      0.98      0.98        50
+             2       0.98      0.98      0.98        50
+  
+      accuracy                           0.99       150
+     macro avg       0.99      0.99      0.99       150
+  weighted avg       0.99      0.99      0.99       150
+  
+  Confusion matrix:
+   [[50  0  0]
+   [ 0 49  1]
+   [ 0  1 49]]
+  """
+  ```
+
+#### 5.5.4 深度学习
 
 
 
