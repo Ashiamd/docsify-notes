@@ -2649,8 +2649,26 @@ print("预期销售：",load_linreg.predict(new_X) ) #使用模型预测
      >
      > y[n]:分类标签的一维数组，必须为整数。
 
-   + 决策树例子：使用scikit-learn建立决策树为银行货款偿还的数据集构成分类器，并评估分类器的性能。
+   + 推荐一些文章
 
+     >决策树的基本概念
+     >
+     > https://www.cnblogs.com/xiemaycherry/p/10475067.html 
+     >
+     >一看就懂的信息熵
+     >
+     > https://www.cnblogs.com/IamJiangXiaoKun/p/9455689.html 
+     >
+     >[数据挖掘]朴素贝叶斯分类
+     >
+     > https://www.cnblogs.com/csguo/p/7804355.html 
+     >
+     >kNN算法：K最近邻(kNN，k-NearestNeighbor)分类算法
+     >
+     > https://www.cnblogs.com/jyroy/p/9427977.html 
+   
+   + 决策树例子：使用scikit-learn建立决策树为银行货款偿还的数据集构成分类器，并评估分类器的性能。
+   
      ```python
      #银行贷款偿还决策树分析
      
