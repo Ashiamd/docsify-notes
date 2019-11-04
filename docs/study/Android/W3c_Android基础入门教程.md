@@ -756,3 +756,1028 @@
       ps:我自己试了一下网上的键盘工具类，也是莫名其妙不起作用，文章这个就可以
 
 11. EditText光标位置的控制
+
+    >EditText提供setSelection()移动光标/选中部分文本
+    >
+    >setSelection(int index) 设置光标位置; 
+    >
+    >setSelection(int start,int stop)部分选中;
+    >
+    >使用setSelectAllOnFocus(true),让EditText获得焦点时选中所有内容
+
+12. 带表情的EditText的简单实现
+
+    使用SpannableString
+
+13. 带删除按钮的EditText
+
+    为EditText设置addTextChangedListener，然后重写TextWatcher（）里的抽象方法，这个用于监听输入框变化的；然后setCompoundDrawablesWithIntrinsicBounds设置小叉叉的图片；最后，重写onTouchEvent方法，如果点击区域是小叉叉图片的位置，清空文本！ 
+
+#### 2.3.3 Button(按钮)与ImageButton(图像按钮)
+
+> Button是TextView的子类。实际开发，按钮基本就是点击或弹起时变色。通过StateListDrawable这种Drawable资源来实现
+
+1. StateListDrawable简介：
+
+   > StateListDrawable是Drawable资源的一种，可以根据不同的状态，设置不同的图片效果，我们只需要讲Button的blackground属性设置为该drawable资源即可轻松实现，按下 按钮时不同的按钮颜色或背景！ 
+
+   可设置属性
+
+   >- **drawable**:引用的Drawable位图,我们可以把他放到最前面,就表示组件的正常状态~
+   >- **state_focused**:是否获得焦点
+   >- **state_window_focused**:是否获得窗口焦点
+   >- **state_enabled**:控件是否可用
+   >- **state_checkable**:控件可否被勾选,eg:checkbox
+   >- **state_checked**:控件是否被勾选
+   >- **state_selected**:控件是否被选择,针对有滚轮的情况
+   >- **state_pressed**:控件是否被按下
+   >- **state_active**:控件是否处于活动状态,eg:slidingTab
+   >- **state_single**:控件包含多个子控件时,确定是否只显示一个子控件
+   >- **state_first**:控件包含多个子控件时,确定第一个子控件是否处于显示状态
+   >- **state_middle**:控件包含多个子控件时,确定中间一个子控件是否处于显示状态
+   >- **state_last**:控件包含多个子控件时,确定最后一个子控件是否处于显示状态
+
+#### 2.3.4 ImageView(图像视图)
+
+主要需要了解的内容如下：
+
++ ImageView的src属性和blackground的区别；
++ adjustViewBounds设置图像缩放时是否按长宽比
++ scaleType设置缩放类型
++ 最简单的绘制圆形的ImageView
+
+1. src属性和background属性的区别
+
+   >在API文档中我们发现ImageView有两个可以设置图片的属性，分别是：src和background
+   >
+   >**常识：**
+   >
+   >①background通常指的都是**背景**,而src指的是**内容**!!
+   >
+   >②当使用**src**填入图片时,是按照图片大小**直接填充**,并**不会进行拉伸**
+   >
+   >而使用background填入图片,则是会根据ImageView给定的宽度来进行**拉伸**
+
+   我自己试了以下，src所在空间小的时候图片按原本比例缩小，所在空间大时，不变化；
+
+   background随着所在空间被拉伸(所以最好用.9.png图片，这样拉伸时不失真)
+
+2. 解决background拉伸导致图片变形的方法
+   + 如果动态加载，添加View时把大小写死
+   + xml布局方式，在drawable目录下新建xml使用\<bitmap\>位图对象
+
+3. 设置透明度
+
+4. Java代码中设置blackground和src属性
+
+   >  前景(对应src属性):**setImageDrawable**( );
+   > 背景(对应background属性):**setBackgroundDrawable**( ); 
+
+5. 使用adjustViewBounds设置缩放是否按照原图长宽比
+
+   >ImageView为我们提供了**adjustViewBounds**属性，用于设置缩放时是否保持原图长宽比！ 单独设置不起作用，需要配合**maxWidth**和**maxHeight**属性一起使用！而后面这两个属性 也是需要adjustViewBounds为true才会生效的~
+   >
+   >- android:maxHeight:设置ImageView的最大高度
+   >- android:maxWidth:设置ImageView的最大宽度
+
+6. scaleType设置缩放类型
+
+   >android:scaleType用于设置显示的图片如何缩放或者移动以适应ImageView的大小 Java代码中可以通过imageView.setScaleType(ImageView.ScaleType.CENTER);来设置~ 可选值如下：
+   >
+   >- **fitXY**:对图像的横向与纵向进行独立缩放,使得该图片完全适应ImageView,但是图片的横纵比可能会发生改变
+   >- **fitStart**:保持纵横比缩放图片,知道较长的边与Image的编程相等,缩放完成后将图片放在ImageView的左上角
+   >- **fitCenter**:同上,缩放后放于中间;
+   >- **fitEnd**:同上,缩放后放于右下角;
+   >- **center**:保持原图的大小，显示在ImageView的中心。当原图的size大于ImageView的size，超过部分裁剪处理。
+   >- **centerCrop**:保持横纵比缩放图片,知道完全覆盖ImageView,可能会出现图片的显示不完全
+   >- **centerInside**:保持横纵比缩放图片,直到ImageView能够完全地显示图片
+   >- **matrix**:默认值，不改变原图的大小，从ImageView的左上角开始绘制原图， 原图超过ImageView的部分作裁剪处理
+
+#### 2.3.5 RadioButton(单选按钮)&Checkbox(复选框)
+
+> 本节给大家带来的是Andoird基本UI控件中的RadioButton和Checkbox; 先说下本节要讲解的内容是：RadioButton和Checkbox的
+>**1.基本用法
+>2.事件处理；
+>3.自定义点击效果；
+>4.改变文字与选择框的相对位置；
+>5.修改文字与选择框的距离** 
+
+---
+
+##### 1.RadioButton
+
+>  如题单选按钮，就是只能够选中一个，所以我们需要把RadioButton放到RadioGroup按钮组中，从而实现 单选功能！先熟悉下如何使用RadioButton，一个简单的性别选择的例子： 另外我们可以为外层RadioGroup设置orientation属性然后设置RadioButton的排列方式，是竖直还是水平~ 
+
+##### 2.改变文字与选择框的相对位置
+
+>这个实现起来也很简单，还记得我们之前学TextView的时候用到的drawableXxx吗？ 要控制选择框的位置，两部即可！设置：
+>
+>**Step 1.** android:button="@null"
+>**Step 2.** android:drawableTop="@android:drawable/btn_radio"
+>当然我们可以把drawableXxx替换成自己喜欢的效果！
+
+##### 3. 修改文字与选择框的距离
+
+>  有时，我们可能需要调节文字与选择框之间的距离，让他们看起来稍微没那么挤，我们可以：
+> 1.在XML代码中控制： 使用android:paddingXxx = "xxx" 来控制距离
+> 2.在Java代码中，稍微好一点，动态计算paddingLeft! 
+
+```java
+rb.setButtonDrawable(R.drawable.rad_btn_selctor);
+int rb_paddingLeft = getResources().getDrawable(R.mipmap.ic_checkbox_checked).getIntrinsicWidth()+5; 
+rb.setPadding(rb_paddingLeft, 0, 0, 0);
+```
+
+####  2.3.6 开关按钮ToggleButton和开关Switch
+
+#### 2.3.7 ProgressBar
+
+常用属性：
+
+> - android:**max**：进度条的最大值
+> - android:**progress**：进度条已完成进度值
+> - android:**progressDrawable**：设置轨道对应的Drawable对象
+> - android:**indeterminate**：如果设置成true，则进度条不精确显示进度
+> - android:**indeterminateDrawable**：设置不显示进度的进度条的Drawable对象
+> - android:**indeterminateDuration**：设置不精确显示进度的持续时间
+> - android:**secondaryProgress**：二级进度条，类似于视频播放的一条是当前播放进度，一条是缓冲进度，前者通过progress属性进行设置！
+
+对应的java方法：
+
+> - **getMax**()：返回这个进度条的范围的上限
+> - **getProgress**()：返回进度
+> - **getSecondaryProgress**()：返回次要进度
+> - **incrementProgressBy**(int diff)：指定增加的进度
+> - **isIndeterminate**()：指示进度条是否在不确定模式下
+> - **setIndeterminate**(boolean indeterminate)：设置不确定模式下
+
+#### 2.3.8 SeekBar（拖动条）
+
+是ProgressBar的子类，且含有独特属性**android:thumb**,允许自定义滑块
+
+##### 1.SeekBar基本用法
+
+常用属性，java对应setXxx
+
+> **android:max**="100" //滑动条的最大值
+>
+> **android:progress**="60" //滑动条的当前值
+>
+> **android:secondaryProgress**="70" //二级滑动条的进度
+>
+> **android:thumb** = "@mipmap/sb_icon" //滑块的drawable
+
+SeekBar的事件，**SeekBar.OnSeekBarChangeListener** ,重写三个对应的方法： 
+
+> **onProgressChanged**：进度发生改变时会触发
+>
+> **onStartTrackingTouch**：按住SeekBar时会触发
+>
+> **onStopTrackingTouch**：放开SeekBar时触发
+
+#### 2.3.9 RatingBar（星级评分条）
+
+同样是ProgressBar的子类
+
+##### 1.相关属性、事件处理
+
+>  **android:isIndicator**：是否用作指示，用户无法更改，默认false
+> **android:numStars**：显示多少个星星，必须为整数
+> **android:rating**：默认评分值，必须为浮点数
+> **android:stepSize：** 评分每次增加的值，必须为浮点数 
+
+事件处理，只需为RatingBar设置**OnRatingBarChangeListener**事件，然后重写下**onRatingChanged()**方法即可
+
+```java
+public class MainActivity extends AppCompatActivity {
+    private RatingBar rb_normal;
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        rb_normal = (RatingBar) findViewById(R.id.rb_normal);
+        rb_normal.setOnRatingBarChangeListener(new RatingBar.OnRatingBarChangeListener() {
+            @Override
+            public void onRatingChanged(RatingBar ratingBar, float rating, boolean fromUser) {
+                Toast.makeText(MainActivity.this, "rating:" + String.valueOf(rating),
+                        Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+}
+```
+
+### 2.4 控件
+
+---
+
+#### 2.4.1 ScrollView(滚动条)
+
+##### 1. 滚动到底部
+
+> 我们可以直接利用ScrollView给我们提供的:**fullScroll()方法**：
+>
+> scrollView.fullScroll(ScrollView.**FOCUS_DOWN**);滚动到底部
+>
+> scrollView.fullScroll(ScrollView.**FOCUS_UP**);滚动到顶部
+>
+> 另外用这玩意的时候要小心异步的玩意，就是addView后，有可能还没有显示完， 如果这个时候直接调用该方法的话，可能会无效，这就需要自己写handler来更新了
+
+##### 2. 设置滚动的滑块图片
+
+> **垂直**方向滑块：android:**scrollbarThumbVertical**
+> **水平**方向滑块：android:**scrollbarThumbHorizontal** 
+
+##### 3. 隐藏滑块
+
+> 1.android:scrollbars="none"
+> 2.Java代码设置：scrollview.setVerticalScrollBarEnabled(false); 
+
+##### 4. 设置滚动速度
+
+> 这个并没有给我们提供可以直接设置的方法，我们需要自己继承ScrollView，然后重写一个 public void fling (int velocityY)的方法：
+>
+> ```java
+> @Override
+> public void fling(int velocityY) {
+>     super.fling(velocityY / 2);    //速度变为原来的一半
+> }
+> ```
+
+#### 2.4.2 Date & Time组件(上)
+
+##### 1. TextClock(文本时钟)
+
+>  TextClock是在Android 4.2(API 17)后推出的用来替代DigitalClock的一个控件！
+> TextClock可以以字符串格式显示当前的日期和时间，因此推荐在Android 4.2以后使用TextClock。
+> 这个控件推荐在24进制的android系统中使用，TextClock提供了两种不同的格式， 一种是在24进制中显示时间和日期，另一种是在12进制中显示时间和日期。大部分人喜欢默认的设置。 
+
+##### 2. AnalogClock(模拟时钟)
+
+##### 3. Chronometer(计时器)
+
+#### 2.4.3 Date & Time组件(下)
+
+几个原生的Date&Time组件，DatePicker(日期选择器),TimePicker(时间选择器),CalendarView(日期视图)
+
+##### 1. DatePicker(日期选择器)
+
+>- **android:calendarTextColor** ： 日历列表的文本的颜色
+>- **android:calendarViewShown**：是否显示日历视图
+>- **android:datePickerMode**：组件外观，可选值:spinner，calendar 前者效果如下，默认效果是后者
+>-  ![img](https://www.runoob.com/wp-content/uploads/2015/08/47223691.jpg)
+>- **android:dayOfWeekBackground**：顶部星期几的背景颜色
+>- **android:dayOfWeekTextAppearance**：顶部星期几的文字颜色
+>- **android:endYear**：去年(内容)比如2010
+>- **android:firstDayOfWeek**：设置日历列表以星期几开头
+>- **android:headerBackground**：整个头部的背景颜色
+>- **android:headerDayOfMonthTextAppearance**：头部日期字体的颜色
+>- **android:headerMonthTextAppearance**：头部月份的字体颜色
+>- **android:headerYearTextAppearance**：头部年的字体颜色
+>- **android:maxDate**：最大日期显示在这个日历视图mm / dd / yyyy格式
+>- **android:minDate**：最小日期显示在这个日历视图mm / dd / yyyy格式
+>- **android:spinnersShown**：是否显示spinner
+>- **android:startYear**：设置第一年(内容)，比如19940年
+>- **android:yearListItemTextAppearance**：列表的文本出现在列表中。
+>- **android:yearListSelectorColor**：年列表选择的颜色
+
+##### 2. TimePicker(时间选择器)
+
+>官方提供的属性只有一个：**android:timePickerMode**：组件外观，同样可选值为:spinner和clock(默认) 前者是旧版本的TimePicker~ 而他对应的监听事件是：***TimePicker.OnTimeChangedListener** 
+
+##### 3. CalendarView(日历视图)
+
+> - **android:firstDayOfWeek**：设置一个星期的第一天
+> - **android:maxDate** ：最大的日期显示在这个日历视图mm / dd / yyyy格式
+> - **android:minDate**：最小的日期显示在这个日历视图mm / dd / yyyy格式
+> - **android:weekDayTextAppearance**：工作日的文本出现在日历标题缩写
+
+处理上面的还有其他，但是都是被弃用的... 对应的日期改变事件是：**CalendarView.OnDateChangeListener**
+
+#### 2.4.4 Adaper基础讲解
+
+##### 1. MVC模式的简单理解
+
+ps：吐槽，这个教程的图，其实应该算MVP。不过现在常说的MVC其实就是MVP
+
+##### 2. Adapter概念解析
+
+ ![img](https://www.runoob.com/wp-content/uploads/2015/09/77919389.jpg) 
+
+实际开发常用的几个Adapter
+
+> - **BaseAdapter**：抽象类，实际开发中我们会继承这个类并且重写相关方法，用得最多的一个Adapter！
+> - **ArrayAdapter**：支持泛型操作，最简单的一个Adapter，只能展现一行文字~
+> - **SimpleAdapter**：同样具有良好扩展性的一个Adapter，可以自定义多种效果！
+> - **SimpleCursorAdapter**：用于显示简单文本类型的listView，一般在数据库那里会用到，不过有点过时， 不推荐使用！
+
+基本上用的最多的是BaseAdapter
+
+##### 3. 代码示例:
+
+1. 把数组存储到R.array里的方式，我这里莫名行不通
+
+```java
+public class MainActivity extends AppCompatActivity {
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        //要显示的数据
+        String[] strs = {"基神","B神","翔神","曹神","J神"};
+        //创建ArrayAdapter
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>
+                (this,android.R.layout.simple_expandable_list_item_1,strs);
+        //获取ListView对象，通过调用setAdapter方法为ListView设置Adapter设置适配器
+        ListView list_test = (ListView) findViewById(R.id.list_test);
+        list_test.setAdapter(adapter);
+    }
+}
+```
+
+2. ArrayAdapter支持泛型。
+
+3. ArrayAdapter中可用的几种系统自带模板
+
+   >  **simple_list_item_1** *: 单独一行的文本框*
+   >
+   >  ![img](https://www.runoob.com/wp-content/uploads/2015/09/6830803.jpg) 
+   >
+   > **simple_list_item_2** *: 两个文本框组成*
+   >
+   >  ![img](https://www.runoob.com/wp-content/uploads/2015/09/6996906.jpg) 
+   >
+   > **simple_list_item_checked** *: 每项都是由一个已选中的列表项* ![img](https://www.runoob.com/wp-content/uploads/2015/09/18189803.jpg) 
+   >
+   > **simple_list_item_multiple_choice** *: 都带有一个复选框* ![img](https://www.runoob.com/wp-content/uploads/2015/09/41311661.jpg) 
+   >
+   > **simple_list_item_single_choice** *: 都带有一个单选钮* 
+   >
+   >  ![img](https://www.runoob.com/wp-content/uploads/2015/09/34441475.jpg) 
+
+##### 2. SimpleAdapter使用示例：
+
+先写列表项的xml布局，再java调用
+
+列表项布局文件 **list_item.xml** 
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal">
+
+    <!-- 定义一个用于显示头像的ImageView -->
+    <ImageView
+        android:id="@+id/imgtou"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:baselineAlignBottom="true"
+        android:paddingLeft="8dp" />
+
+    <!-- 定义一个竖直方向的LinearLayout,把QQ呢称与说说的文本框设置出来 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/name"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingLeft="8dp"
+            android:textColor="#1D1D1C"
+            android:textSize="20sp" />
+
+        <TextView
+            android:id="@+id/says"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingLeft="8px"
+            android:textColor="#B4B4B9"
+            android:textSize="14sp" />
+
+    </LinearLayout>
+
+</LinearLayout>
+```
+
+MainActivity.java
+
+```java
+public class MainActivity extends AppCompatActivity {
+
+    private String[] names = new String[]{"B神", "基神", "曹神"};
+    private String[] says = new String[]{"无形被黑，最为致命", "大神好厉害~", "我将带头日狗~"};
+    private int[] imgIds = new int[]{R.mipmap.head_icon1, R.mipmap.head_icon2, R.mipmap.head_icon3};
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        List<Map<String, Object>> listitem = new ArrayList<Map<String, Object>>();
+        for (int i = 0; i < names.length; i++) {
+            Map<String, Object> showitem = new HashMap<String, Object>();
+            showitem.put("touxiang", imgIds[i]);
+            showitem.put("name", names[i]);
+            showitem.put("says", says[i]);
+            listitem.add(showitem);
+        }
+
+        //创建一个simpleAdapter
+        SimpleAdapter myAdapter = new SimpleAdapter(getApplicationContext(), listitem, R.layout.list_item, new String[]{"touxiang", "name", "says"}, new int[]{R.id.imgtou, R.id.name, R.id.says});
+        ListView listView = (ListView) findViewById(R.id.list_test);
+        listView.setAdapter(myAdapter);
+    }
+}
+```
+
+##### 3. SimpleCursorAdapter使用示例
+
+>  虽然这东西过时了，不过对于不怎么会SQLite的初学者来说，用起来还是蛮方便的！ 记得前面我们学ContentProivder写过的读取联系人的例子么？之前是通过打印Log的 方式显示出来，现在我们通过这个SimpleCursorAdapter把它显示到ListView上 
+
+#### 2.4.5 ListView简单实用
+
+>  *本节我们来继续学习没有讲完的UI控件部分， 回顾上一节，我们介绍了Adapter适配器的概念，然后学习了三个最简单的适配器的使用：*
+> *ArrayAdapter，SimpleAdapter和SimpleCursorAdapter，而本节给大家讲解的是第一个 需搭配Adapter使用的UI控件：ListView，不过在版本中被RecyclerView这个新控件替换掉了！*
+> *列表作为最常用的控件之一，还是有必要好好学习的，本节以一个初学者的角度来学习 ListView，ListView的属性，以及BaseAdapter简单定义，至于ListView优化这些， 我们一步步来~莫急！* 
+
+##### 1. 自定义BaseAdapter，然后绑定ListView的最简单例子
+
+##### 2. 表头表尾分割线的设置
+
+> listview作为一个列表控件，他和普通的列表一样，可以自己设置表头与表尾： 以及分割线，可供我们设置的属性如下：
+>
+> - **footerDividersEnabled**：是否在footerView(表尾)前绘制一个分隔条,默认为true
+> - **headerDividersEnabled**:是否在headerView(表头)前绘制一个分隔条,默认为true
+> - **divider**:设置分隔条,可以用颜色分割,也可以用drawable资源分割
+> - **dividerHeight**:设置分隔条的高度
+>
+> 翻遍了了API发现并没有可以直接设置ListView表头或者表尾的属性，只能在Java中写代码 进行设置了，可供我们调用的方法如下：
+>
+> - **addHeaderView(View v)**：添加headView(表头),括号中的参数是一个View对象
+> - **addFooterView(View v)**：添加footerView(表尾)，括号中的参数是一个View对象
+> - **addHeaderView(headView, null, false)**：和前面的区别：设置Header是否可以被选中
+> - **addFooterView(View,view,false)**：同上
+>
+> 对了，使用这个addHeaderView方法必须放在listview.setAdapter前面，否则会报错。
+
+##### 3. 列表从底部开始显示：stackFromBottom
+
+> stackFromBottom属性设置为true
+
+##### 4. 设置点击颜色cacheColorHint
+
+##### 5. 隐藏滑动条
+
+>  *android:scrollbars="none" 或者 setVerticalScrollBarEnabled(true)* 
+
+##### 2.4.6 BaseAdapter优化
+
+>  *上一节中我们学习了如何来使用一个ListView以及自定义一个简单的BaseAdapter，我们从代码 中可以看出比较重要的两个方法:getCount()和getView()，界面上有多少列就会调用多少次getView， 这个时候可能看出一些端倪，每次都是新inflate一个View，都要进行这个XML的解析，这样会 很浪费资源，当然，几十列或者几百列的列表并不能体现什么问题，但假如更多或者布局更加复杂？ 所以学习ListView的优化很重要，而本节针对的是BaseAdapter的优化，优化的两点有，复用convertView 以及使用ViewHolder重用组件，不用每次都findViewById，我们具体通过代码来体会吧！* 
+
+##### 1. 复用ConverView
+
+在BaseAdapter中
+
+public View getView(int position, View convertView, ViewGroup parent) 
+
+的参数convertView是系统提供给我们的可供复用的View的缓存对象，可以先判断是否有值，如果有值就不用再解析xml
+
+```java
+@Override
+public View getView(int position, View convertView, ViewGroup parent) {
+
+    if(convertView == null){
+        convertView = LayoutInflater.from(mContext).inflate(R.layout.item_list_animal,parent,false);
+    }
+
+    ImageView img_icon = (ImageView) convertView.findViewById(R.id.img_icon);
+    TextView txt_aName = (TextView) convertView.findViewById(R.id.txt_aName);
+    TextView txt_aSpeak = (TextView) convertView.findViewById(R.id.txt_aSpeak);
+
+    img_icon.setBackgroundResource(mData.get(position).getaIcon());
+    txt_aName.setText(mData.get(position).getaName());
+    txt_aSpeak.setText(mData.get(position).getaSpeak());
+    return convertView;
+}
+```
+
+##### 2. ViewHolder重用组件
+
+>  getView()会被调用多次，那么findViewById不一样得调用多次，而我们的ListView的Item 一般都是一样的布局，我们可以对这里在优化下，我们可以自己定义一个ViewHolder类来对这一部分进行性能优化！修改后的代码如下 
+
+```java
+@Override
+public View getView(int position, View convertView, ViewGroup parent) {
+    ViewHolder holder = null;
+    if(convertView == null){
+        convertView = LayoutInflater.from(mContext).inflate(R.layout.item_list_animal,parent,false);
+        holder = new ViewHolder();
+        holder.img_icon = (ImageView) convertView.findViewById(R.id.img_icon);
+        holder.txt_aName = (TextView) convertView.findViewById(R.id.txt_aName);
+        holder.txt_aSpeak = (TextView) convertView.findViewById(R.id.txt_aSpeak);
+        convertView.setTag(holder);   //将Holder存储到convertView中
+    }else{
+        holder = (ViewHolder) convertView.getTag();
+    }
+    holder.img_icon.setBackgroundResource(mData.get(position).getaIcon());
+    holder.txt_aName.setText(mData.get(position).getaName());
+    holder.txt_aSpeak.setText(mData.get(position).getaSpeak());
+    return convertView;
+}
+
+static class ViewHolder{
+    ImageView img_icon;
+    TextView txt_aName;
+    TextView txt_aSpeak;
+}
+```
+
+>  *没错就是这么简单，你以后BaseAdapter照着这个模板写就对了，哈哈，另外这个修饰ViewHolder的 static，关于是否定义成静态，跟里面的对象数目是没有关系的，加静态是为了在多个地方使用这个 Holder的时候，类只需加载一次，如果只是使用了一次，加不加也没所谓！——***Berial(B神)原话~** 
+
+#### 2.4.7 ListView的焦点问题
+
+-----
+
+> 如果你往ListView的Item中添加了Button，CheckBox，EditText等控件的话，你可能需要考虑 到一个问题：ListView的一个焦点问题！本节我们就来学习下解决这个问题的几个方法！
+>
+> 我们可以写个简答的listView，上面有一个Button，CheckBox，EditText，但是当我们点击发现， ListView的item点击不了，触发不了onItemClick的方法，也触发不了onItemLongClick方法， 这个就是ListView的一个焦点问题了！就是ListView的焦点被其他控件抢了，下面我们来看看如何 解决这个问题？
+
+##### 方法1：为抢占了控件的组件设置:android:focusable="false"
+
+>  *如题，只需为抢占了ListView Item焦点的控件设置***android:focusable="false"***即可解决这个问题 或者在代码中获得控件后调用：***setFocusable(false)** *!!另外，EditText却不行，如果我们设置了android:focusable="false"，这B可以获取焦点但是一下子 又失去了焦点，而且也不会弹出小键盘，暂不知道如何解决，听别人说是ListView的一个bug，如果 有知道解决方法的欢迎告知下，谢谢~* 
+
+##### 方法2：item根节点设置android:descendantFocusability="blocksDescendants"
+
+> 如题，在Item布局的根节点添加上述属性，**android:descendantFocusability="blocksDescendants"** 即可，另外该属性有三个可供选择的值：
+>
+> - **beforeDescendants**：viewgroup会优先其子类控件而获取到焦点
+> - **afterDescendants**：viewgroup只有当其子类控件不需要获取焦点时才获取焦点
+> - **blocksDescendants**：viewgroup会覆盖子类控件而直接获得焦点
+
+#### 2.4.8 ListView之checkbox错位问题解决
+
+##### 1. 问题发生的原因：
+
+ ![img](https://www.runoob.com/wp-content/uploads/2015/09/23101560K-0.jpg) 
+
+ ConvertView会缓存，就是因为这个原因 造成的checkbox错位，所以第一个解决方式就是，不重用这个ConvertView，或者 说每次getView都将这个ConvertView设置为null，但是如果需要显示的Item数目巨大的话， 这种方法就会显得非常臃肿，一般实际开发我们使用的是下面的解决方法： **找个东东来保存当前Item CheckBox的状态，初始化的时候进行判断，设置是否选中** 
+
+##### 2. 解决方法示例
+
+>  *好的存储这个Checkbox的方法有很多，你可以放到一个HashMap中， 每次初始化的时候根据postion取出对应的boolean值，然后再进行checkbox的状态设置； 
+
+  **checkbox监听器的方法要添加在初始化Checkbox状态的代码之前** 
+
+> 找了一篇相关文章，感觉不错
+>
+>  https://www.cnblogs.com/wujd/archive/2012/08/17/2635309.html 
+>
+> 个人感觉和Vue、React的组件复用类似，应该是内部处于优化考虑，会对一些缓存的部件重复利用，然而缓冲后的部件只有用户修改的属性会变化，其他的属性还是不变(比如复用了一个组件有个属性check=true,但是程序员以为这是一个新组件，默认check=false,其实是复用了之前的，导致出错)
+
+#### 2.4.9 ListView的数据更新问题
+
+>  *我们前面已经学习了ListView的一些基本用法咧，但是细心的你可能发现了，我们的数据 一开始定义好的，都是静态的，但是实际开发中，我们的数据往往都是动态变化的，比如 我增删该了某一列，那么列表显示的数据也应该进行同步的更新，那么本节我们就来探讨 下ListView数据更新的问题，包括全部更新，以及更新其中的一项，那么开始本节内容* 
+
+重点就是调用 *notifyDataSetChanged()* ，跟新View。
+
+> notifyDataSetChanged()方法会判断是否需要重新渲染，如果当前item没有必要重新渲染 是不会重新渲染的，如果某个Item的状态发生改变，都会导致View的重绘，而重绘的并不是 所有的Item，而是View状态发生变化的那个Item！所以我们直接notifyDataSetChange()方法 即可. 
+
+#### 2.5.0 构建一个可复用的自定义BaseAdapter
+
+> 视频链接
+>
+>  http://www.imooc.com/learn/372 
+
+#### 2.5.1 ListView Item多布局的实现
+
+>  *这里有个地方要注意的，convertView.setTag(R.id.Tag_APP,holder1);我们平时都直接 setTag(Object)的，这个是setTag的重载方法，参数是一个唯一的key以及后面的一个对象* .
+
+#### 2.5.2 GridView(网格视图)的基本使用
+
+##### 1. 相关属性
+
+> - **android:columnWidth**：设置列的宽度
+> - **android:gravity**：组件对其方式
+> - **android:horizontalSpacing**：水平方向每个单元格的间距
+> - **android:verticalSpacing**：垂直方向每个单元格的间距
+> - **android:numColumns**：设置列数
+> - **android:stretchMode**：设置拉伸模式，可选值如下： **none**：不拉伸；**spacingWidth**：拉伸元素间的间隔空隙 **columnWidth**：仅仅拉伸表格元素自身 **spacingWidthUniform**：既拉元素间距又拉伸他们之间的间隔空袭
+
+#### 2.5.3 Spinner(列表选项框)的基本使用
+
+##### 1. 相关属性
+
+>- **android:dropDownHorizontalOffset**：设置列表框的水平偏移距离
+>- **android:dropDownVerticalOffset**：设置列表框的水平竖直距离
+>- **android:dropDownSelector**：列表框被选中时的背景
+>- **android:dropDownWidth**：设置下拉列表框的宽度
+>- **android:gravity**：设置里面组件的对其方式
+>- **android:popupBackground**：设置列表框的背景
+>- **android:prompt**：设置对话框模式的列表框的提示信息(标题)，只能够引用string.xml 中的资源id,而不能直接写字符串
+>- **android:spinnerMode**：列表框的模式，有两个可选值： **dialog**：对话框风格的窗口 **dropdown**：下拉菜单风格的窗口(默认)
+>- 可选属性：**android:entries**：使用数组资源设置下拉列表框的列表项目
+
+##### 2. 使用示例
+
+有一个注意项
+
+> Spinner会默认选中第一个值，就是默认调用spinner.setSection(0), 你可以通过这个设置默认的选中值，另外，会触发一次OnItemSelectedListener 事件，暂时没找到解决方法，下面折衷的处理是：添加一个boolean值，然后设置 为false，在onItemSelected时进行判断，false说明是默认触发的，不做任何操作 将boolean值设置为true；true的话则正常触发事件
+
+#### 2.5.4 AutoCompleteTextView(自动完成文本框)的基本使用
+
+>  *本节继续来学习Adapter类的控件，这次带来的是AutoCompleteTextView(自动完成文本框)， 相信细心的你发现了，和Adapter搭边的控件，都可以自己定义item的样式，是吧！ 或者说每个Item的布局~想怎么玩就怎么玩~嗯，话不多说，开始本节内容~ 对了贴下官方API：*[AutoCompleteTextView](http://androiddoc.qiniudn.com/reference/android/widget/AutoCompleteTextView.html) 
+
+##### 1. 相关属性
+
+> - **android:completionHint**：设置下拉菜单中的提示标题
+> - **android:completionHintView**：定义提示视图中显示下拉菜单
+> - **android:completionThreshold**：指定用户至少输入多少个字符才会显示提示
+> - **android:dropDownAnchor**：设置下拉菜单的定位"锚点"组件，如果没有指定改属性， 将使用该TextView作为定位"锚点"组件
+> - **android:dropDownHeight**：设置下拉菜单的高度
+> - **android:dropDownWidth**：设置下拉菜单的宽度
+> - **android:dropDownHorizontalOffset**：指定下拉菜单与文本之间的水平间距
+> - **android:dropDownVerticalOffset**：指定下拉菜单与文本之间的竖直间距
+> - **android:dropDownSelector**：设置下拉菜单点击效果
+> - **android:popupBackground**：设置下拉菜单的背景
+
+另外其实还有个**MultiAutoCompleteTextView**(多提示项的自动完成文本框) 和这个AutoCompleteTextView作用差不多，属性也一样，具体区别在哪里， 我们在下面的代码中来体验~另外这两个都是全词匹配的，比如，小猪猪： 你输入小->会提示小猪猪，但是输入猪猪->却不会提示小猪猪 
+
+##### 2. 代码示例
+
+部分分析
+
+> 1. android:completionThreshold="1"：这里我们设置了输入一个字就显示提示
+> 2. android:completionHint="请输入搜索内容"：这是框框底部显示的文字，如果觉得丑 可以android:completionHintView设置一个View!
+> 3. android:dropDownHorizontalOffset="5dp"：设置了水平边距为5dp
+> 4. matv_content.setTokenizer(new MultiAutoCompleteTextView.CommaTokenizer()); setTokenizer是为其设置分隔符
+
+#### 2.5.5 ExpandableListView(可折叠列表)的基本使用
+
+##### 1. 相关属性
+
+> - **android:childDivider**：指定各组内子类表项之间的分隔条，图片不会完全显示， 分离子列表项的是一条直线
+> - **android:childIndicator**：显示在子列表旁边的Drawable对象，可以是一个图像
+> - **android:childIndicatorEnd**：子列表项指示符的结束约束位置
+> - **android:childIndicatorLeft**：子列表项指示符的左边约束位置
+> - **android:childIndicatorRight**：子列表项指示符的右边约束位置
+> - **android:childIndicatorStart**：子列表项指示符的开始约束位置
+> - **android:groupIndicator**：显示在组列表旁边的Drawable对象，可以是一个图像
+> - **android:indicatorEnd**：组列表项指示器的结束约束位置
+> - **android:indicatorLeft**：组列表项指示器的左边约束位置
+> - **android:indicatorRight**：组列表项指示器的右边约束位置
+> - **android:indicatorStart**：组列表项指示器的开始约束位置
+
+##### 2. 实现ExpandableAdapter的三种方式
+
+> **1.** 扩展**BaseExpandableListAdpter**实现ExpandableAdapter。
+>
+> **2.** 使用**SimpleExpandableListAdpater**将两个List集合包装成ExpandableAdapter
+>
+> **3.** 使用**simpleCursorTreeAdapter**将Cursor中的数据包装成SimpleCuroTreeAdapter 本节示例使用的是第一个，扩展BaseExpandableListAdpter，我们需要重写该类中的相关方法， 下面我们通过一个代码示例来体验下！
+
+注意点：
+
+> 核心是重写**BaseExpandableListAdpter**，其实和之前写的普通的BaseAdapter是类似的， 但是BaseExpandableListAdpter则分成了两部分：组和子列表，具体看代码你就知道了！
+>
+> 另外，有一点要注意的是，重写**isChildSelectable()**方法需要返回true，不然不会触发 子Item的点击事件！
+
+#### 2.5.6 ViewFlipper(翻转视图)的基本使用
+
+>  *本节给大家带了的是ViewFlipper，它是Android自带的一个多页面管理控件，且可以自动播放！ 和ViewPager不同，ViewPager是一页页的，而ViewFlipper则是一层层的，和ViewPager一样，很多时候， 用来实现进入应用后的引导页，或者用于图片轮播，本节我们就使用ViewFlipper写一个简单的图片 轮播的例子吧~官方API：*[ViewFlipper](http://androiddoc.qiniudn.com/reference/android/widget/ViewFlipper.html) 
+
+##### 1. 为ViewFlipper加入View的两种方法
+
+1. 静态导入，也就是XML实现其中每个页面的加载
+2. 动态导入，通过java的addView方法填充View
+
+##### 2. 常用的一些方法
+
+> - **setInAnimation**：设置View进入屏幕时使用的动画
+> - **setOutAnimation**：设置View退出屏幕时使用的动画
+> - **showNext**：调用该方法来显示ViewFlipper里的下一个View
+> - **showPrevious**：调用该方法来显示ViewFlipper的上一个View
+> - **setFilpInterval**：设置View之间切换的时间间隔
+> - **setFlipping**：使用上面设置的时间间隔来开始切换所有的View，切换会循环进行
+> - **stopFlipping**：停止View切换
+
+以后做图片轮播和引导页，可以考虑选择用这个实现
+
+#### 2.5.7 Toast(吐司)的基本使用
+
+##### 1. 直接调用Toast类的makeText()方法创建
+
+##### 2. 通过构造方法来定制Toast
+
+1. 定义一个带有图片的Toast
+2. Toast完全自定义
+
+#### 2.5.8 Notification(状态栏通知)详解
+
+> 本节带来的是Android中用于在状态栏显示通知信息的控件：Notification，相信大部分 学Android都对他都很熟悉，而网上很多关于Notification的使用教程都是基于2.x的，而 现在普遍的Android设备基本都在4.x以上，甚至是5.0以上的都有；他们各自的Notification 都是不一样的！而本节给大家讲解的是基于4.x以上的Notification，而5.0以上的Notification 我们会在进阶教程的Android 5.0新特性的章节进行讲解~
+>
+> 官方文档对Notification的一些介绍：
+>
+> **设计思想**：[Notifications in Android 4.4 and Lower](http://developer.android.com/design/patterns/notifications_k.html)
+>
+> **译文**：[通知](http://adchs.github.io/patterns/notifications.html)
+>
+> **API文档**：[Notification](http://developer.android.com/reference/android/app/Notification.html)
+>
+> 访问上述网站，可能需要梯子哦~
+
+##### 1. 设计文档部分解读
+
+1. Notification的基本布局
+
+    ![img](https://www.runoob.com/wp-content/uploads/2015/09/38056771.jpg) 
+
+   > 上面的组成元素依次是：
+   >
+   > - **Icon/Photo**：大图标
+   > - **Title/Name**：标题
+   > - **Message**：内容信息
+   > - **Timestamp**：通知时间，默认是系统发出通知的时间，也可以通过setWhen()来设置
+   > - **Secondary Icon**：小图标
+   > - **内容文字**，在小图标的左手边的一个文字
+
+2. 扩展布局、
+
+##### 2. Notification的基本使用流程
+
+> 状态通知栏主要涉及到2个类：Notification 和NotificationManager
+>
+> **Notification**：通知信息类，它里面对应了通知栏的各个属性
+>
+> **NotificationManager**：是状态栏通知的管理类，负责发通知、清除通知等操作。
+>
+> 使用的基本流程：
+>
+> - **Step 1.** 获得NotificationManager对象： NotificationManager mNManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+> - **Step 2.** 创建一个通知栏的Builder构造类： Notification.Builder mBuilder = new Notification.Builder(this);
+> - **Step 3.** 对Builder进行相关的设置，比如标题，内容，图标，动作等！
+> - **Step 4.**调用Builder的build()方法为notification赋值
+> - **Step 5**.调用NotificationManager的notify()方法发送通知！
+> - **PS:**另外我们还可以调用NotificationManager的cancel()方法取消通知
+
+##### 3. 设置相关的一些方法
+
+> Notification.Builder mBuilder = new Notification.Builder(this);
+>
+> 后再调用下述的相关的方法进行设置：(官方API文档：[Notification.Builder](http://androiddoc.qiniudn.com/reference/android/app/Notification.Builder.html)) 常用的方法如下：
+>
+> - **setContentTitle**(CharSequence)：设置标题
+>
+> - **setContentText**(CharSequence)：设置内容
+>
+> - **setSubText**(CharSequence)：设置内容下面一小行的文字
+>
+> - **setTicker**(CharSequence)：设置收到通知时在顶部显示的文字信息
+>
+> - **setWhen**(long)：设置通知时间，一般设置的是收到通知时的System.currentTimeMillis()
+>
+> - **setSmallIcon**(int)：设置右下角的小图标，在接收到通知的时候顶部也会显示这个小图标
+>
+> - **setLargeIcon**(Bitmap)：设置左边的大图标
+>
+> - **setAutoCancel**(boolean)：用户点击Notification点击面板后是否让通知取消(默认不取消)
+>
+> - **setDefaults**(int)：向通知添加声音、闪灯和振动效果的最简单、 使用默认（defaults）属性，可以组合多个属性，
+>   **Notification.DEFAULT_VIBRATE**(添加默认震动提醒)；
+>   **Notification.DEFAULT_SOUND**(添加默认声音提醒)；
+>   **Notification.DEFAULT_LIGHTS**(添加默认三色灯提醒)
+>   **Notification.DEFAULT_ALL**(添加默认以上3种全部提醒)
+>
+> - **setVibrate**(long[])：设置振动方式，比如：
+>   setVibrate(new long[] {0,300,500,700});延迟0ms，然后振动300ms，在延迟500ms， 接着再振动700ms，关于Vibrate用法后面会讲解！
+>
+> - **setLights**(int argb, int onMs, int offMs)：设置三色灯，参数依次是：灯光颜色， 亮持续时间，暗的时间，不是所有颜色都可以，这跟设备有关，有些手机还不带三色灯； 另外，还需要为Notification设置flags为Notification.FLAG_SHOW_LIGHTS才支持三色灯提醒！
+>
+> - **setSound**(Uri)：设置接收到通知时的铃声，可以用系统的，也可以自己设置，例子如下:
+>   .setDefaults(Notification.DEFAULT_SOUND) //获取默认铃声
+>   .setSound(Uri.parse("file:///sdcard/xx/xx.mp3")) //获取自定义铃声
+>   .setSound(Uri.withAppendedPath(Audio.Media.INTERNAL_CONTENT_URI, "5")) //获取Android多媒体库内的铃声
+>
+> - **setOngoing**(boolean)：设置为ture，表示它为一个正在进行的通知。他们通常是用来表示 一个后台任务,用户积极参与(如播放音乐)或以某种方式正在等待,因此占用设备(如一个文件下载, 同步操作,主动网络连接)
+>
+> - **setProgress**(int,int,boolean)：设置带进度条的通知 参数依次为：进度条最大数值，当前进度，进度是否不确定 如果为确定的进度条：调用setProgress(max, progress, false)来设置通知， 在更新进度的时候在此发起通知更新progress，并且在下载完成后要移除进度条 ，通过调用setProgress(0, 0, false)既可。如果为不确定（持续活动）的进度条， 这是在处理进度无法准确获知时显示活动正在持续，所以调用setProgress(0, 0, true) ，操作结束时，调用setProgress(0, 0, false)并更新通知以移除指示条
+>
+> - **setContentIntent**(PendingIntent)：PendingIntent和Intent略有不同，它可以设置执行次数， 主要用于远程服务通信、闹铃、通知、启动器、短信中，在一般情况下用的比较少。比如这里通过 Pending启动Activity：getActivity(Context, int, Intent, int)，当然还可以启动Service或者Broadcast PendingIntent的位标识符(第四个参数)：
+>   **FLAG_ONE_SHOT** 表示返回的PendingIntent仅能执行一次，执行完后自动取消
+>   **FLAG_NO_CREATE** 表示如果描述的PendingIntent不存在，并不创建相应的PendingIntent，而是返回NULL
+>   **FLAG_CANCEL_CURRENT** 表示相应的PendingIntent已经存在，则取消前者，然后创建新的PendingIntent， 这个有利于数据保持为最新的，可以用于即时通信的通信场景
+>   **FLAG_UPDATE_CURRENT** 表示更新的PendingIntent
+>   使用示例：
+>
+>   ```
+>   //点击后跳转Activity
+>   Intent intent = new Intent(context,XXX.class);  
+>   PendingIntent pendingIntent = PendingIntent.getActivity(context, 0, intent, 0);  
+>   mBuilder.setContentIntent(pendingIntent)  
+>   ```
+>
+>   
+>
+> - **setPriority**(int)：设置优先级：
+>
+>   | 优先级  | 用户                                                         |
+>   | :------ | :----------------------------------------------------------- |
+>   | MAX     | 重要而紧急的通知，通知用户这个事件是时间上紧迫的或者需要立即处理的。 |
+>   | HIGH    | 高优先级用于重要的通信内容，例如短消息或者聊天，这些都是对用户来说比较有兴趣的。 |
+>   | DEFAULT | 默认优先级用于没有特殊优先级分类的通知。                     |
+>   | LOW     | 低优先级可以通知用户但又不是很紧急的事件。                   |
+>   | MIN     | 用于后台消息 (例如天气或者位置信息)。最低优先级通知将只在状态栏显示图标，只有用户下拉通知抽屉才能看到内容。 |
+>
+>   对应属性：Notification.PRIORITY_HIGH...
+
+#### 2.5.9 AlertDialog(对话框)详解
+
+> 本节继续给大家带来是显示提示信息的第三个控件AlertDialog(对话框)，同时它也是其他 Dialog的的父类！比如ProgressDialog，TimePickerDialog等，而AlertDialog的父类是：Dialog！ 另外，不像前面学习的Toast和Notification，AlertDialog并不能直接new出来，如果你打开 AlertDialog的源码，会发现构造方法是protected的，如果我们要创建AlertDialog的话，我们 需要使用到该类中的一个静态内部类：public static class* **Builder**，然后来调用AlertDialog 里的相关方法，来对AlertDialog进行定制，最后调用show()方法来显示我们的AlertDialog对话框！ 好的，下面我们就来学习AlertDialog的基本用法，以及定制我们的AlertDialog！ 官方文档：[AlertDialog](http://androiddoc.qiniudn.com/reference/android/app/AlertDialog.html) 
+
+##### 1. 基本使用流程
+
+> - **Step 1**：创建**AlertDialog.Builder**对象；
+> - **Step 2**：调用**setIcon()**设置图标，**setTitle()**或**setCustomTitle()**设置标题；
+> - **Step 3**：设置对话框的内容：**setMessage()**还有其他方法来指定显示的内容；
+> - **Step 4**：调用**setPositive/Negative/NeutralButton()**设置：确定，取消，中立按钮；
+> - **Step 5**：调用**create()**方法创建这个对象，再调用**show()**方法将对话框显示出来；
+
+##### 2. 几种常用的对话框使用示例
+
+##### 3. 通过Builder的setView()定制显示的AlertDialog
+
+#### 2.6.0 其他几种常用对话框基本使用
+
+##### 1. ProgressDialog(进度条对话框)的基本使用
+
+> 我们创建进度条对话框的方式有两种：
+>
+> - **1**.直接调用ProgressDialog提供的静态方法show()显示
+> - **2**.创建ProgressDialog,再设置对话框的参数,最后show()出来
+
+##### 2. DatePickerDialog(日期选择对话框)与TimePickerDialog(时间选择对话框)
+
+> 先要说明一点： Date/TimePickerDialog只是供用户来选择日期时间,对于android系统的系统时间, 日期没有任何影响,google暂时没有公布系统日期时间设置的API, 如果要在app中设置的话,要重新编译android的系统源码，非常麻烦！
+>
+> 他们两个的构造方法非常相似： **DatePickerDialog**(上下文；DatePickerDialog.OnDateSetListener()监听器；年；月；日)
+> **TimePickerDialog**(上下文；TimePickerDialog.OnTimeSetListener()监听器；小时，分钟，是否采用24小时制)
+
+#### 2.6.1 PopupWindow(悬浮框)的基本使用
+
+> 本节给大家带来的是最后一个用于显示信息的UI控件——PopupWindow(悬浮框)，如果你想知道 他长什么样子，你可以打开你手机的QQ，长按列表中的某项，这个时候后弹出一个黑色的小 对话框，这种就是PopupWindow了，和AlertDialog对话框不同的是，他的位置可以是随意的；
+>
+> 另外AlertDialog是非堵塞线程的，而PopupWindow则是堵塞线程的！而官方有这样一句话来介绍 PopupWindow：
+>
+> **A popup window that can be used to display an arbitrary view. The popup window is**
+>
+> **a floating container that appears on top of the current activity.**
+>
+> 大概意思是：一个弹出窗口控件，可以用来显示任意View，而且会浮动在当前activity的顶部
+
+注意点：PopupWindow是线程阻塞的；AlertDialog是非线程阻塞的。
+
+##### 1. 相关方法的解读
+
+1. 几个常用的构造方法
+
+   > 我们在文档中可以看到，提供给我们的PopupWindow的构造方法有九种之多，这里只贴实际 开发中用得较多的几个构造方法：
+   >
+   > - **public PopupWindow (Context context)**
+   > - **public PopupWindow(View contentView, int width, int height)**
+   > - **public PopupWindow(View contentView)**
+   > - **public PopupWindow(View contentView, int width, int height, boolean focusable)**
+   >
+   > 参数就不用多解释了吧，contentView是PopupWindow显示的View，focusable是否显示焦点
+
+2. 常用的一些方法
+
+   > 下面介绍几个用得较多的一些方法，其他的可自行查阅文档：
+   >
+   > - **setContentView**(View contentView)：设置PopupWindow显示的View
+   > - **getContentView**()：获得PopupWindow显示的View
+   > - **showAsDropDown(View anchor)**：相对某个控件的位置（正左下方），无偏移
+   > - **showAsDropDown(View anchor, int xoff, int yoff)**：相对某个控件的位置，有偏移
+   > - **showAtLocation(View parent, int gravity, int x, int y)**： 相对于父控件的位置（例如正中央Gravity.CENTER，下方Gravity.BOTTOM等），可以设置偏移或无偏移 PS:parent这个参数只要是activity中的view就可以了！
+   > - **setWidth/setHeight**：设置宽高，也可以在构造方法那里指定好宽高， 除了可以写具体的值，还可以用WRAP_CONTENT或MATCH_PARENT， popupWindow的width和height属性直接和第一层View相对应。
+   > - **setFocusable(true)**：设置焦点，PopupWindow弹出后，所有的触屏和物理按键都由PopupWindows 处理。其他任何事件的响应都必须发生在PopupWindow消失之后，（home 等系统层面的事件除外）。 比如这样一个PopupWindow出现的时候，按back键首先是让PopupWindow消失，第二次按才是退出 activity，准确的说是想退出activity你得首先让PopupWindow消失，因为不并是任何情况下按back PopupWindow都会消失，必须在PopupWindow设置了背景的情况下 。
+   > - **setAnimationStyle(int)：**设置动画效果
+
+##### 2.6.2 菜单(Menu)
+
+> 本章给大家带来的是Android中的Menu(菜单)，而在Android中的菜单有如下几种：
+>
+> - **OptionMenu**：选项菜单，android中最常见的菜单，通过Menu键来调用
+> - **SubMenu**：子菜单，android中点击子菜单将弹出一个显示子菜单项的悬浮框， 子菜单不支持嵌套，即不能包括其他子菜单
+> - **ContextMenu**：上下文菜单，通过长按某个视图组件后出现的菜单，该组件需注册上下文菜单 本节我们来依依学习这几种菜单的用法~ PS：官方文档：[menus](http://androiddoc.qiniudn.com/guide/topics/ui/menus.html)
+
+##### 1. OptionMenu(选项菜单)
+
+> 答：非常简单，重写两个方法就好，其实这两个方法我们在创建项目的时候就会自动生成~ 他们分别是：
+>
+> - public boolean **onCreateOptionsMenu**(Menu menu)：调用OptionMenu，在这里完成菜单初始化
+> - public boolean **onOptionsItemSelected**(MenuItem item)：菜单项被选中时触发，这里完成事件处理
+>
+> 当然除了上面这两个方法我们可以重写外我们还可以重写这三个方法：
+>
+> - public void **onOptionsMenuClosed**(Menu menu)：菜单关闭会调用该方法
+> - public boolean **onPrepareOptionsMenu**(Menu menu)：选项菜单显示前会调用该方法， 可在这里进行菜单的调整(动态加载菜单列表)
+> - public boolean **onMenuOpened**(int featureId, Menu menu)：选项菜单打开以后会调用这个方法
+
+ 而加载菜单的方式有两种，一种是直接通过编写菜单XML文件，然后调用： **getMenuInflater().inflate(R.menu.menu_main, menu);**加载菜单 或者通过代码动态添加，onCreateOptionsMenu的参数menu，调用add方法添加 菜单，add(菜单项的组号，ID，排序号，标题)，<u>另外如果排序号是按添加顺序排序的话都填0即可</u>！ 
+
+##### 2. ContextMenu(上下文菜单)
+
+长按某个View后会出现的View，我们需要为这个View注册上下文菜单
+
+> - **Step 1**：重写onCreateContextMenu()方法
+> - **Step 2**：为view组件注册上下文菜单，使用registerForContextMenu()方法,参数是View
+> - **Step 3**：重写onContextItemSelected()方法为菜单项指定事件监听器
+
+建议使用XML实现菜单项
+
+##### 3. SubMenu(子菜单)
+
+就是在\<item\>里多嵌套一层\<menu\>
+
+##### 4. PopupMenu(弹出式菜单)
+
+ 一个类似于PopupWindow的东东，他可以很方便的在指定View下显示一个弹出菜单，而且 他的菜单选项可以来自于Menu资源 
+
+#### 2.6.3 ViewPager的简单使用
+
+>  *本节带来的是Android 3.0后引入的一个UI控件——ViewPager(视图滑动切换工具)，实在想不到 如何来称呼这个控件，他的大概功能：通过手势滑动可以完成View的切换，一般是用来做APP 的引导页或者实现图片轮播，因为是3.0后引入的，如果想在低版本下使用，就需要引入v4 兼容包哦~，我们也可以看到，ViewPager在：android.support.v4.view.ViewPager目录下~ 下面我们就来学习一下这个控件的基本用法~ 官方API文档：*[ViewPager](http://androiddoc.qiniudn.com/reference/android/support/v4/view/ViewPager.html) 
+
+##### 1. ViewPager的简单介绍
+
+> ViewPager就是一个简单的页面切换组件，我们可以往里面填充多个View，然后我们可以左 右滑动，从而切换不同的View，我们可以通过setPageTransformer()方法为我们的ViewPager 设置切换时的动画效果，当然，动画我们还没学到，所以我们把为ViewPager设置动画 放到下一章绘图与动画来讲解！和前面学的ListView，GridView一样，我们也需要一个Adapter (适配器)将我们的View和ViewPager进行绑定，而ViewPager则有一个特定的Adapter—— **PagerAdapter**！另外，Google官方是建议我们使用Fragment来填充ViewPager的，这样 可以更加方便的生成每个Page，以及管理每个Page的生命周期！给我们提供了两个Fragment 专用的Adapter：**FragmentPageAdapter**和**FragmentStatePagerAdapter** 我们简要的来分析下这两个Adapter的区别：
+>
+> - **FragmentPageAdapter**：和PagerAdapter一样，只会缓存当前的Fragment以及左边一个，右边 一个，即总共会缓存3个Fragment而已，假如有1，2，3，4四个页面：
+>   处于1页面：缓存1，2
+>   处于2页面：缓存1，2，3
+>   处于3页面：销毁1页面，缓存2，3，4
+>   处于4页面：销毁2页面，缓存3，4
+>   更多页面的情况，依次类推~
+> - **FragmentStatePagerAdapter**：当Fragment对用户不 见得时，整个Fragment会被销毁， 只会保存Fragment的状态！而在页面需要重新显示的时候，会生成新的页面！
+>
+> 综上，FragmentPageAdapter适合固定的页面较少的场合；而FragmentStatePagerAdapter则适合 于页面较多或者页面内容非常复杂(需占用大量内存)的情况！
+
+##### 2. PagerAdapter的使用
+
+> 我们先来介绍最普通的PagerAdapter，如果想使用这个PagerAdapter需要重写下面的四个方法： 当然，这只是官方建议，实际上我们只需重写getCount()和isViewFromObject()就可以了~
+>
+> - **getCount()**:获得viewpager中有多少个view
+> - **destroyItem()**:移除一个给定位置的页面。适配器有责任从容器中删除这个视图。 这是为了确保在finishUpdate(viewGroup)返回时视图能够被移除。
+>
+> 而另外两个方法则是涉及到一个key的东东：
+>
+> - **instantiateItem()**: ①将给定位置的view添加到ViewGroup(容器)中,创建并显示出来 ②返回一个代表新增页面的Object(key),通常都是直接返回view本身就可以了,当然你也可以 自定义自己的key,但是key和每个view要一一对应的关系
+> - **isViewFromObject()**: 判断instantiateItem(ViewGroup, int)函数所返回来的Key与一个页面视图是否是 代表的同一个视图(即它俩是否是对应的，对应的表示同一个View),通常我们直接写 return view == object!
+
+1. 最简单用法
+
+   就简单的切换设定的视图
+
+2. 标题栏——PagerTitleStrip与PagerTabStrip
+
+    这里两者的区别仅仅是布局不一样而已，其他的都一样
+
+   还需要重写getPageTitle(),设置标题
+
+3.  ViewPager实现TabHost效果
+
+   > 首先是布局：顶部一个LinearLayout，包着三个TextView，weight属性都为1，然后下面跟着 一个滑块的ImageView，我们设置宽度为match_parent；最底下是我们的ViewPager，这里可能 有两个属性你并不认识，一个是：flipInterval：这个是指定View动画间的时间间隔的！
+   > 而persistentDrawingCache：则是设置控件的绘制缓存策略，可选值有四个：
+   >
+   > - none：不在内存中保存绘图缓存；
+   > - animation:只保存动画绘图缓存；
+   > - scrolling：只保存滚动效果绘图缓存；
+   > - all：所有的绘图缓存都应该保存在内存中；
+   >
+   > 可以同时用2个，animation|scrolling这样
+
+#### 2.6.4 DrawerLayout(官方侧滑菜单)的简单使用
+
+##### 1. 使用的注意事项
+
+> - **1**.主内容视图一定要是DrawerLayout的第一个子视图
+> - **2**.主内容视图宽度和高度需要match_parent
+> - **3**.必须显示指定侧滑视图的android:**layout_gravity属性** android:layout_gravity = "start"时，从左向右滑出菜单 android:layout_gravity = "end"时，从右向左滑出菜单 不推荐使用left和right!!!
+> - 侧滑视图的宽度以dp为单位，不建议超过**320dp**(为了总能看到一些主内容视图)
+> - 设置侧滑事件：mDrawerLayout.setDrawerListener(DrawerLayout.DrawerListener);
+> - 要说一点：可以结合Actionbar使用当用户点击Actionbar上的应用图标，弹出侧滑菜单！ 这里就要通过**ActionBarDrawerToggle**，它是DrawerLayout.DrawerListener的具体实现类， 我们可以重写ActionBarDrawerToggle的onDrawerOpened()和onDrawerClosed()以监听抽屉拉出 或隐藏事件！但是这里我们不讲，因为5.0后我们使用的是Toolbar！有兴趣的可以自行查阅相关 文档！
+
+可能有的疑惑
+
+> - **1**. drawer_layout.**openDrawer**(Gravity.END);
+>   这句是设置打开的哪个菜单START代表左边，END代表右边
+> - **2**. drawer_layout.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED,Gravity.END); 锁定右面的侧滑菜单，不能通过手势关闭或者打开，只能通过代码打开！即调用openDrawer方法！ 接着 drawer_layout.setDrawerLockMode(DrawerLayout.LOCK_MODE_UNLOCKED,Gravity.END); 解除锁定状态，即可以通过手势关闭侧滑菜单 最后在drawer关闭的时候调用： drawer_layout.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED, Gravity.END); 再次锁定右边的侧滑菜单！
+> - **3**. 布局代码中的Tag属性的作用？ 答：这里没用到，在重写DrawerListener的onDrawerSlide方法时，我们可以通过他的第一个 参数drawerView，调用drawerView.getTag().equals("START")判断触发菜单事件的是哪个 菜单！然后可以进行对应的操作！
+
+### 第三章--Android的事件处理机制
+
+---
+
