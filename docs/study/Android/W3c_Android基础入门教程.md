@@ -1781,3 +1781,773 @@ static class ViewHolder{
 
 ---
 
+#### 3.1.1 基于监听的事件处理机制
+
+###### 1. 基于监听的事件处理机制模型
+
+ ![img](https://www.runoob.com/wp-content/uploads/2015/07/4109430.jpg) 
+
+##### 2. 五种不同的使用形式
+
+1. 使用匿名内部类(常用)
+2. 使用内部类
+3. 使用外部类
+4. 直接使用Activity作为事件监听器
+
+5. 直接绑定导标签(也就是XML上指定onClick="java中写的方法")
+
+#### 3.2 基于回调的事件处理机制
+
+##### 1. 什么是方法回调
+
+个人感觉指的就是各种框架之类的常带钩子函数、回调函数。也就是在一些常见的应用场景定义一些方法，这些方法会在某场景结束或开始或执行中被执行，而我们只需要重写这些方法，就可以在指定的时刻/位置执行我们想要的操作(其实就是AOP的具体应用)
+
+##### 2. Android回调的事件处理机制详解
+
+1.  自定义View
+
+   >  当用户在GUI组件上激发某个事件时,组件有自己特定的方法会负责处理该事件 通常用法:继承基本的GUI组件,重写该组件的事件处理方法,即自定义view 注意:在xml布局中使用自定义的view时,需要使用**"全限定类名"**
+
+   常见的View组件的回调方法
+
+   > ①在该组件上触发屏幕事件: boolean onTouchEvent(MotionEvent event);
+   > ②在该组件上按下某个按钮时: boolean onKeyDown(int keyCode,KeyEvent event);
+   > ③松开组件上的某个按钮时: boolean onKeyUp(int keyCode,KeyEvent event);
+   > ④长按组件某个按钮时: boolean onKeyLongPress(int keyCode,KeyEvent event);
+   > ⑤键盘快捷键事件发生: boolean onKeyShortcut(int keyCode,KeyEvent event);
+   > ⑥在组件上触发轨迹球屏事件: boolean onTrackballEvent(MotionEvent event);
+   > ⑦当组件的焦点发生改变,和前面的6个不同,这个方法只能够在View中重写哦！ protected void onFocusChanged(boolean gainFocus, int direction, Rect previously FocusedRect)
+
+2. 基于回调的事件传播
+
+ ![img](https://www.runoob.com/wp-content/uploads/2015/07/9989678.jpg) 
+
+注意点就是，弄清设置监听器、重写组件事件触发回调方法以及Activity的事件触发回调方法的执行顺序。传播的顺序是: **监听器**--->**view组件的回调方法**--->**Activity的回调方法**
+
+#### 3.3 Handler消息传递机制浅析
+
+>  前两节中我们对Android中的两种事件处理机制进行了学习，关于响应的事件响应就这两种；本节给大家讲解的 是Activity中UI组件中的信息传递Handler，相信很多朋友都知道，Android为了线程安全，并不允许我们在UI线程外操作UI；很多时候我们做界面刷新都需要通过Handler来通知UI组件更新！除了用Handler完成界面更新外，还可以使用runOnUiThread()来更新，甚至更高级的事务总线，当然，这里我们只讲解Handler，什么是Handler，执行流程，相关方法，子线程与主线程中中使用Handler的区别 
+
+##### 1. 学习路线
+
+ ![img](https://www.runoob.com/wp-content/uploads/2015/07/70402782.jpg) 
+
+##### 2. Handler类的引入
+
+ ![img](https://www.runoob.com/wp-content/uploads/2015/07/90456225.jpg) 
+
+##### 3. Handler的执行流程图
+
+ ![img](https://www.runoob.com/wp-content/uploads/2015/07/25345060.jpg) 
+
+相关名词：
+
+> - **UI线程**:就是我们的主线程,系统在创建UI线程的时候会初始化一个Looper对象,同时也会创建一个与其关联的MessageQueue;
+> - **Handler**:作用就是发送与处理信息,如果希望Handler正常工作,在当前线程中要有一个Looper对象
+> - **Message**:Handler接收与处理的消息对象
+> - **MessageQueue**:消息队列,先进先出管理Message,在初始化Looper对象时会创建一个与之关联的MessageQueue;
+> - **Looper**:每个线程只能够有一个Looper,管理MessageQueue,不断地从中取出Message分发给对应的Handler处理！
+
+简言之：
+
+>  *当我们的子线程想修改Activity中的UI组件时,我们可以新建一个Handler对象,通过这个对象向主线程发送信息;而我们发送的信息会先到主线程的MessageQueue进行等待,由Looper按先入先出顺序取出,再根据message对象的what属性分发给对应的Handler进行处理* 
+
+##### 4. Handler的相关方法
+
+> - void **handleMessage**(Message msg):处理消息的方法,通常是用于被重写!
+> - **sendEmptyMessage**(int what):发送空消息
+> - **sendEmptyMessageDelayed**(int what,long delayMillis):指定延时多少毫秒后发送空信息
+> - **sendMessage**(Message msg):立即发送信息
+> - **sendMessageDelayed**(Message msg):指定延时多少毫秒后发送信息
+> - final boolean **hasMessage**(int what):检查消息队列中是否包含what属性为指定值的消息 如果是参数为(int what,Object object):除了判断what属性,还需要判断Object属性是否为指定对象的消息
+
+##### 5. Handler的使用示例
+
+1. Handler写在主线程中(这个感觉一般用不到，一般都是子线程需要更新UI才使用Handler)
+
+   >  *在主线程中,因为系统已经初始化了一个Looper对象,所以我们直接创建Handler对象,就可以进行信息的发送与处理了* 
+
+2. Handler写在子线程中
+
+    如果是Handler写在了子线程中的话,我们就需要自己创建一个Looper对象：
+
+   >  1 )直接调用Looper.prepare()方法即可为当前线程创建Looper对象,而它的构造器会创建配套的MessageQueue;
+   > 2 )创建Handler对象,重写handleMessage( )方法就可以处理来自于其他线程的信息了!
+   > 3 )调用Looper.loop()方法启动Looper
+
+ps:感觉这里举的例子比较复杂，之前用到的时候不过就是Handler通知主线程更新UI，这里安利几篇相关文章：
+
+> 异步加载资源经常需要渲染UI，但是只能主线程渲染UI，这时候就需要Handler了
+>
+> [Android基础夯实--你了解Handler有多少？]( https://www.cnblogs.com/ryanleee/p/8204450.html )
+>
+> [Android多线程：手把手教你使用HandlerThread]( https://www.jianshu.com/p/9c10beaa1c95 )
+
+看了网上的几篇文章后，总结一下思路。主线程(UI线程)本来初始化就带有Looper，而Looper是绑定所对应的Thread的，其管理一个MessageQueue。创建Handler需要设定其对应的Looper，这样才能知道这个Handler该把消息给谁，或者处理谁的消息。一般使用的情景都是子线程需要渲染UI，但是Andorid考虑到安全、同步的问题，设定只有主线程(UI线程)可以渲染UI，所以我们一般新建一个Handler并将主线程的Looper绑定到子线程，这样子就可以在子线程做好资源加载后，反馈给主线程的Looper，在主线程消息队列MessageQueue轮到该Handler发出的消息执行时，就可以渲染子线程要求的资源到UI界面上了。
+
+#### 3.4.1 TouchListener PK OnTouchEvent + 多点触碰
+
+>  *TouchListener是基于监听的，而OnTouchEvent则是基于回调的* 
+
+##### 1. 基于监听的TouchListener
+
+OnTouchListener相关方法与属性
+
+> onTouch(View v, MotionEvent event):这里面的参数依次是触发触摸事件的组件,触碰事件event 封装了触发事件的详细信息，同样包括事件的类型、触发时间等信息。比如event.getX(),event.getY()
+> 我们也可以对触摸的动作类型进行判断,使用event.getAction( )再进行判断;如:
+> event.getAction == MotionEvent.ACTION_DOWN：按下事件
+> event.getAction == MotionEvent.ACTION_MOVE:移动事件
+> event.getAction == MotionEvent.ACTION_UP:弹起事件
+
+##### 2. 基于回调的onTouchEvent( )方法
+
+> 同样是触碰事件,但是**onTouchEvent更多的是用于自定义的view**,所有的view类中都重写了该方法,而这种触摸事件是基于回调的,也就是说:如果我们返回的值是false的话,那么事件会继续向外传播,由外面的容器或者Activity进行处理!当然还涉及到了手势(Gesture),这个我们会在后面进行详细的讲解!**onTouchEvent其实和onTouchListener是类似的,只是处理机制不同,前者是回调,后者是监听模式**
+
+主要就是Paint、onDraw(Canvas canvas)、invalidate()这几个点需要注意
+
+下面是示例的自定义View代码
+
+```java 
+public class MyView extends View{  
+    public float X = 50;  
+    public float Y = 50;  
+  
+    //创建画笔  
+    Paint paint = new Paint();  
+  
+    public MyView(Context context,AttributeSet set)  
+    {  
+        super(context,set);  
+    }  
+  
+    @Override  
+    public void onDraw(Canvas canvas) {  
+        super.onDraw(canvas);  
+        paint.setColor(Color.BLUE);  
+        canvas.drawCircle(X,Y,30,paint);  
+    }  
+  
+    @Override  
+    public boolean onTouchEvent(MotionEvent event) {  
+        this.X = event.getX();  
+        this.Y = event.getY();  
+        //通知组件进行重绘  
+        this.invalidate();  
+        return true;  
+    }  
+}
+```
+
+##### 3. 多点触碰
+
+原理类的东西：
+
+所谓的多点触碰就是多个手指在屏幕上进行操作，用的最多的估计是放大缩功能吧，比如很多的图片浏览器都支持缩放！理论上Android系统本身可以处理多达256个手指的触摸，当然这取决于手机硬件的支持；不过支持多点触摸的手机一般支持2-4个点，当然有些更多！
+
+我们发现前面两点都有用到MotionEvent，MotionEvent代表的是一个触摸事件；
+
+我们可以根据**event.getAction() & MotionEvent.ACTION_MASK**来判断是哪种操作，除了上面介绍的三种单点操作外，还有两个多点专用的操作：
+
+- MotionEvent.**ACTION_POINTER_DOWN**:当屏幕上已经有一个点被按住，此时再按下其他点时触发。
+- MotionEvent.**ACTION_POINTER_UP**:当屏幕上有多个点被按住，松开其中一个点时触发（即非最后一个点被放开时）。
+
+**简单流程大致如下**：
+
+- 当我们一个手指触摸屏幕 ——> 触发ACTION_DOWN事件
+- 接着有另一个手指也触摸屏幕 ——> 触发ACTION_POINTER_DOWN事件,如果还有其他手指触摸，继续触发
+- 有一个手指离开屏幕 ——> 触发ACTION_POINTER_UP事件，继续有手指离开，继续触发
+- 当最后一个手指离开屏幕 ——> 触发ACTION_UP事件
+- **而且在整个过程中，ACTION_MOVE事件会一直不停地被触发**
+
+> 我们可以通过event.**getX**(int)或者event.**getY**(int)来获得不同触摸点的位置： 比如event.getX(0)可以获得第一个接触点的X坐标，event.getX(1)获得第二个接触点的X坐标这样... 另外，我们还可以在调用MotionEvent对象的**getPointerCount()**方法判断当前有多少个手指在触摸 
+
+java部分的代码：
+
+```java
+package com.jay.example.edittextdemo;
+
+import android.app.Activity;
+import android.graphics.Matrix;
+import android.graphics.PointF;
+import android.os.Bundle;
+import android.util.FloatMath;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.View.OnTouchListener;
+import android.widget.ImageView;
+
+public class MainActivity extends Activity implements OnTouchListener {
+
+    private ImageView img_test;
+
+    // 縮放控制
+    private Matrix matrix = new Matrix();
+    private Matrix savedMatrix = new Matrix();
+
+    // 不同状态的表示：
+    private static final int NONE = 0;
+    private static final int DRAG = 1;
+    private static final int ZOOM = 2;
+    private int mode = NONE;
+
+    // 定义第一个按下的点，两只接触点的重点，以及出事的两指按下的距离：
+    private PointF startPoint = new PointF();
+    private PointF midPoint = new PointF();
+    private float oriDis = 1f;
+
+    /*
+     * (non-Javadoc)
+     * 
+     * @see android.app.Activity#onCreate(android.os.Bundle)
+     */
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        img_test = (ImageView) this.findViewById(R.id.img_test);
+        img_test.setOnTouchListener(this);
+    }
+
+    @Override
+    public boolean onTouch(View v, MotionEvent event) {
+        ImageView view = (ImageView) v;
+        switch (event.getAction() & MotionEvent.ACTION_MASK) {
+        // 单指
+        case MotionEvent.ACTION_DOWN:
+            matrix.set(view.getImageMatrix());
+            savedMatrix.set(matrix);
+            startPoint.set(event.getX(), event.getY());
+            mode = DRAG;
+            break;
+        // 双指
+        case MotionEvent.ACTION_POINTER_DOWN:
+            oriDis = distance(event);
+            if (oriDis > 10f) {
+                savedMatrix.set(matrix);
+                midPoint = middle(event);
+                mode = ZOOM;
+            }
+            break;
+        // 手指放开
+        case MotionEvent.ACTION_UP:
+        case MotionEvent.ACTION_POINTER_UP:
+            mode = NONE;
+            break;
+        // 单指滑动事件
+        case MotionEvent.ACTION_MOVE:
+            if (mode == DRAG) {
+                // 是一个手指拖动
+                matrix.set(savedMatrix);
+                matrix.postTranslate(event.getX() - startPoint.x, event.getY() - startPoint.y);
+            } else if (mode == ZOOM) {
+                // 两个手指滑动
+                float newDist = distance(event);
+                if (newDist > 10f) {
+                    matrix.set(savedMatrix);
+                    float scale = newDist / oriDis;
+                    matrix.postScale(scale, scale, midPoint.x, midPoint.y);
+                }
+            }
+            break;
+        }
+        // 设置ImageView的Matrix
+        view.setImageMatrix(matrix);
+        return true;
+    }
+
+    // 计算两个触摸点之间的距离
+    private float distance(MotionEvent event) {
+        float x = event.getX(0) - event.getX(1);
+        float y = event.getY(0) - event.getY(1);
+        return FloatMath.sqrt(x * x + y * y);
+    }
+
+    // 计算两个触摸点的中点
+    private PointF middle(MotionEvent event) {
+        float x = event.getX(0) + event.getX(1);
+        float y = event.getY(0) + event.getY(1);
+        return new PointF(x / 2, y / 2);
+    }
+
+}
+```
+
+重点就是知道图像是用matrix矩阵表示的，然后用以下2个方法分别控制图片移动和缩放
+
++ 图片移动
+
+  **matrix.postTranslate(event.getX() - startPoint.x, event.getY() - startPoint.y);**
+
++ 图片缩放
+
+  **matrix.postScale(scale, scale, midPoint.x, midPoint.y);**
+
+> 这里贴一个官方Matrix的API介绍
+>
+>  https://www.android-doc.com/reference/android/graphics/Matrix.html 
+
+#### 3.5 监听EditText的内容变化
+
+>  在前面我们已经学过EditText控件了，本节来说下如何监听输入框的内容变化！ 这个再实际开发中非常实用，另外，附带着说下如何实现EditText的密码可见 与不可见 
+
+##### 1. 监听EditText的内容变化
+
+>  *由题可知，是基于监听的事件处理机制，好像前面的点击事件是OnClickListener，文本内容 变化的监听器则是：TextWatcher，我们可以调用EditText.addTextChangedListener(mTextWatcher); 为EditText设置内容变化监听* 
+
+ 简单说下TextWatcher，实现该类需实现三个方法： 
+
+```java
+public void beforeTextChanged(CharSequence s, int start,int count, int after);   
+public void onTextChanged(CharSequence s, int start, int before, int count);
+public void afterTextChanged(Editable s);
+```
+
+依次会在下述情况中触发：
+
+- 1.内容变化前
+- 2.内容变化中
+- 3.内容变化后（最常用）
+
+我们可以根据实际的需求重写相关方法，一般重写得较多的是第三个方法！
+
+监听EditText内容变化的场合有很多： 限制字数输入，限制输入内容等等~
+
+这里给大家实现一个简单的自定义EditText，输入内容后，有面会显示一个叉叉的圆圈，用户点击后 可以清空文本框~，当然你也可以不自定义，直接为EditText添加TextWatcher然后设置下删除按钮~
+
+##### 2. 实现EditText的密码可见与不可见
+
+#### 3.6 响应系统设置的事件(Configuration类)
+
+>  本节给大家介绍的Configuration类是用来描述手机设备的配置信息的，比如屏幕方向， 触摸屏的触摸方式等，相信定制过ROM的朋友都应该知道我们可以在: frameworks/base/core/java/android/content/res/Configuration.java 找到这个类，然后改下相关设置，比如调整默认字体的大小！有兴趣可自行了解！ 本节讲解的Configuration类在我们Android开发中的使用~ API文档：[Configuration](http://androiddoc.qiniudn.com/reference/android/content/res/Configuration.html) 
+
+##### 1. Configuration给我们提供的方法列表
+
+> - **densityDpi**：屏幕密度
+> - **fontScale**：当前用户设置的字体的缩放因子
+> - **hardKeyboardHidden**：判断硬键盘是否可见，有两个可选值：HARDKEYBOARDHIDDEN_NO,HARDKEYBOARDHIDDEN_YES，分别是十六进制的0和1
+> - **keyboard**：获取当前关联额键盘类型：该属性的返回值：KEYBOARD_12KEY（只有12个键的小键盘）、KEYBOARD_NOKEYS、KEYBOARD_QWERTY（普通键盘）
+> - **keyboardHidden**：该属性返回一个boolean值用于标识当前键盘是否可用。该属性不仅会判断系统的硬件键盘，也会判断系统的软键盘（位于屏幕）。
+> - **locale**：获取用户当前的语言环境
+> - **mcc**：获取移动信号的国家码
+> - **mnc**：获取移动信号的网络码
+>   ps:国家代码和网络代码共同确定当前手机网络运营商
+> - **navigation**：判断系统上方向导航设备的类型。该属性的返回值：NAVIGATION_NONAV（无导航）、 NAVIGATION_DPAD(DPAD导航）NAVIGATION_TRACKBALL（轨迹球导航）、NAVIGATION_WHEEL（滚轮导航）
+> - **orientation**：获取系统屏幕的方向。该属性的返回值：ORIENTATION_LANDSCAPE（横向屏幕）、ORIENTATION_PORTRAIT（竖向屏幕）
+> - **screenHeightDp**，**screenWidthDp**：屏幕可用高和宽，用dp表示
+> - **touchscreen**：获取系统触摸屏的触摸方式。该属性的返回值：TOUCHSCREEN_NOTOUCH（无触摸屏）、TOUCHSCREEN_STYLUS（触摸笔式触摸屏）、TOUCHSCREEN_FINGER（接收手指的触摸屏）
+
+##### 2.示例代码:
+
+```java
+public class MainActivity extends AppCompatActivity {
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        TextView txtResult = (TextView) findViewById(R.id.txtResult);
+        StringBuffer status = new StringBuffer();
+        //①获取系统的Configuration对象
+        Configuration cfg = getResources().getConfiguration();
+        //②想查什么查什么
+        status.append("densityDpi:" + cfg.densityDpi + "\n");
+        status.append("fontScale:" + cfg.fontScale + "\n");
+        status.append("hardKeyboardHidden:" + cfg.hardKeyboardHidden + "\n");
+        status.append("keyboard:" + cfg.keyboard + "\n");
+        status.append("keyboardHidden:" + cfg.keyboardHidden + "\n");
+        status.append("locale:" + cfg.locale + "\n");
+        status.append("mcc:" + cfg.mcc + "\n");
+        status.append("mnc:" + cfg.mnc + "\n");
+        status.append("navigation:" + cfg.navigation + "\n");
+        status.append("navigationHidden:" + cfg.navigationHidden + "\n");
+        status.append("orientation:" + cfg.orientation + "\n");
+        status.append("screenHeightDp:" + cfg.screenHeightDp + "\n");
+        status.append("screenWidthDp:" + cfg.screenWidthDp + "\n");
+        status.append("screenLayout:" + cfg.screenLayout + "\n");
+        status.append("smallestScreenWidthDp:" + cfg.densityDpi + "\n");
+        status.append("touchscreen:" + cfg.densityDpi + "\n");
+        status.append("uiMode:" + cfg.densityDpi + "\n");
+        txtResult.setText(status.toString());
+    }
+}
+```
+
+##### 3.重写onConfigurationChanged响应系统设置更改
+
+>  *该方法用于监听系统设置的更改,是基于回调的时间处理方法,当系统的设置发生改变时就会自动触发; 但是要注意一点,使用下面的方法监控的话,targetSdkVersion属性最高只能设置为12,高于12的话,该方法不会被激发！这里写个横竖屏切换的例子给大家参考参考，其他的可自行谷歌* 
+
+实现代码：
+
+```java
+public class MainActivity extends Activity {  
+  
+    @Override  
+    protected void onCreate(Bundle savedInstanceState) {  
+        super.onCreate(savedInstanceState);  
+        setContentView(R.layout.activity_main);  
+          
+        Button btn = (Button) findViewById(R.id.btncahange);  
+        btn.setOnClickListener(new OnClickListener() {  
+              
+            @Override  
+            public void onClick(View v) {  
+                Configuration config = getResources().getConfiguration();  
+                //如果是横屏的话切换成竖屏  
+                if(config.orientation == Configuration.ORIENTATION_LANDSCAPE)  
+                {  
+                    MainActivity.this.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);  
+                }  
+                //如果竖屏的话切换成横屏  
+                if(config.orientation == Configuration.ORIENTATION_PORTRAIT)  
+                {  
+                    MainActivity.this.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);  
+                }  
+            }  
+        });  
+    }  
+      
+    @Override  
+    public void onConfigurationChanged(Configuration newConfig) {  
+        super.onConfigurationChanged(newConfig);  
+        String screen = newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE?"横屏":"竖屏";  
+        Toast.makeText(MainActivity.this, "系统屏幕方向发生改变 \n 修改后的方向为" + screen, Toast.LENGTH_SHORT).show();  
+    }  
+} 
+```
+
+ 另外，还需要在AndroidManifest.xml添加下述内容： 
+
+>  *权限:* **< uses-permission android:name="android.permission.CHANGE_CONFIGURATION" />** *在< activity标签中添加:***android:configChanges="orientation"** *将targetSdkVersion改为12以上的,12也可以* 
+
+#### 3.7 AsyncTask异步任务
+
+> 本节给大家带来的是Android给我们提供的一个轻量级的用于处理异步任务的类:AsyncTask，我们一般是 继承AsyncTask，然后在类中实现异步操作，然后将异步执行的进度，反馈给UI主线程~ 好吧，可能有些概念大家不懂，觉得还是有必要讲解下多线程的概念，那就先解释下一些概念性的东西 
+
+##### 1. 相关概念
+
+1. 什么是多线程
+
+   > 答：先要了解这几个名称：应用程序，进程，线程，多线程！！
+   >
+   > - **应用程序(Application)**：为了完成特定任务，用某种语言编写的一组指令集合(一组静态代码)
+   > - **进程(Process)** :**运行中的程序**，系统调度与资源分配的一个**独立单位**，操作系统会为每个进程分配 一段内存空间，程序的依次动态执行，经理代码加载 -> 执行 -> 执行完毕的完整过程！
+   > - **线程(Thread)**：比进程更小的执行单元，每个进程可能有多条线程，**线程需要放在一个进程中才能执行！** 线程是由程序负责管理的！！！而进程则是由系统进行调度的！！！
+   > - **多线程概念(Multithreading)**：并行地执行多条指令，将CPU的**时间片**按照调度算法，分配给各个线程，实际上是**分时执行**的，只是这个切换的时间很短，用户感觉是同时而已！
+
+2. 同步和异步的概念
+
+3. Android 为什么要引入异步任务
+
+   >  *答：因为Android程序刚启动时，会同时启动一个对应的主线程(Main Thread)，这个主线程主要负责处理 与UI相关的事件！有时我们也把他称作UI线程！而在Android App时我们必须遵守这个单线程模型的规则：* **Android UI操作并不是线程安全的并且这些操作都需要在UI线程中执行！** *假如我们在非UI线程中，比如在主线程中new Thread()另外开辟一个线程，然后直接在里面修改UI控件的值； 此时会抛出下述异常：* **android.view.ViewRoot$CalledFromWrongThreadException: Only the original thread that created a view hierarchy can touch its views** *另外，还有一点，如果我们把耗时的操作都放在UI线程中的话，如果UI线程超过5s没有响应用于请求，那么 这个时候会引发ANR(Application Not Responding)异常，就是应用无响应~ 最后还有一点就是：Android 4.0后禁止在UI线程中执行网络操作~不然会报:* **android.os.NetworkOnMainThreadException** 
+
+以上的种种原因都说明了Android引入异步任务的意义，当然实现异步也可以不用到我们本节讲解 的AsyncTask，我们可以自己开辟一个线程，完成相关操作后，通过下述两种方法进行UI更新：
+
+> 1. 前面我们学的Handler，我们在Handler里写好UI更新，然后通过sendMessage()等的方法通知UI 更新，另外别忘了Handler写在主线程和子线程中的区别哦~ 
+> 2. 利用Activity.runOnUiThread(Runnable)把更新ui的代码创建在Runnable中,更新UI时，把Runnable 对象传进来即可~
+
+##### 2. AsyncTask全解析
+
+1. 为什么要用AsyncTask？
+
+答:我们可以用上述两种方法来完成我们的异步操作，假如要我们写的异步操作比较多，或者较为繁琐， 难道我们new Thread()然后用上述方法通知UI更新么？程序员都是比较喜欢偷懒的，既然官方给我 们提供了AsyncTask这个封装好的轻量级异步类，为什么不用呢？我们通过几十行的代码就可以完成 我们的异步操作，而且进度可控；相比起Handler，AsyncTask显得更加简单，快捷~当然，这只适合 简单的异步操作，另外，实际异步用的最多的地方就是网络操作，图片加载，数据传输等，AsyncTask 暂时可以满足初学者的需求，比如小应用，但是到了公司真正做项目以后，我们更多的使用第三发的 框架，比如Volley,OkHttp,android-async-http,XUtils等很多，后面进阶教程我们会选1-2个框架进行 学习，当然你可以自己找资料学习学习，但是掌握AsyncTask还是很有必要的！ 
+
+2. AsyncTask的基本结构
+
+ AsyncTask是一个抽象类，一般我们都会定义一个类继承AsyncTask然后重写相关方法~ 官方API:[AsyncTask](https://www.runoob.com/wp-content/uploads/2015/07/39584771.jpg) 
+
++  **构建AsyncTask子类的参数：** 
+
+ ![img](https://www.runoob.com/wp-content/uploads/2015/07/39584771.jpg) 
+
++  **相关方法与执行流程：** 
+
+ ![img](https://www.runoob.com/wp-content/uploads/2015/07/27686655.jpg) 
+
++ 注意事项
+
+ ![img](https://www.runoob.com/wp-content/uploads/2015/07/98978225.jpg) 
+
+##### 3. AsyncTask使用示例
+
+ 这里用延时线程来模拟文件下载的过程
+
+下面就贴部分示例代码:
+
+ **定义一个延时操作，用于模拟下载** 
+
+```java
+public class DelayOperator {  
+    //延时操作,用来模拟下载  
+    public void delay()  
+    {  
+        try {  
+            Thread.sleep(1000);  
+        }catch (InterruptedException e){  
+            e.printStackTrace();;  
+        }  
+    }  
+}
+```
+
+ **自定义AsyncTask** 
+
+```java
+public class MyAsyncTask extends AsyncTask<Integer,Integer,String>  
+{  
+    private TextView txt;  
+    private ProgressBar pgbar;  
+  
+    public MyAsyncTask(TextView txt,ProgressBar pgbar)  
+    {  
+        super();  
+        this.txt = txt;  
+        this.pgbar = pgbar;  
+    }  
+  
+  
+    //该方法不运行在UI线程中,主要用于异步操作,通过调用publishProgress()方法  
+    //触发onProgressUpdate对UI进行操作  
+    @Override  
+    protected String doInBackground(Integer... params) {  
+        DelayOperator dop = new DelayOperator();  
+        int i = 0;  
+        for (i = 10;i <= 100;i+=10)  
+        {  
+            dop.delay();  
+            publishProgress(i);  
+        }  
+        return  i + params[0].intValue() + "";  
+    }  
+  
+    //该方法运行在UI线程中,可对UI控件进行设置  
+    @Override  
+    protected void onPreExecute() {  
+        txt.setText("开始执行异步线程~");  
+    }  
+  
+  
+    //在doBackground方法中,每次调用publishProgress方法都会触发该方法  
+    //运行在UI线程中,可对UI控件进行操作  
+  
+  
+    @Override  
+    protected void onProgressUpdate(Integer... values) {  
+        int value = values[0];  
+        pgbar.setProgress(value);  
+    }  
+}
+```
+
+ **MainActivity.java** 
+
+```java
+public class MyActivity extends ActionBarActivity {  
+  
+    private TextView txttitle;  
+    private ProgressBar pgbar;  
+    private Button btnupdate;  
+  
+    @Override  
+    protected void onCreate(Bundle savedInstanceState) {  
+        super.onCreate(savedInstanceState);  
+        setContentView(R.layout.activity_main);  
+        txttitle = (TextView)findViewById(R.id.txttitle);  
+        pgbar = (ProgressBar)findViewById(R.id.pgbar);  
+        btnupdate = (Button)findViewById(R.id.btnupdate);  
+        btnupdate.setOnClickListener(new View.OnClickListener() {  
+            @Override  
+            public void onClick(View v) {  
+                MyAsyncTask myTask = new MyAsyncTask(txttitle,pgbar);  
+                myTask.execute(1000);  
+            }  
+        });  
+    }  
+} 
+```
+
+#### 3.8 Gestures(手势)
+
+##### 1. Android中手势交互的执行顺序
+
+1. 手指触碰屏幕时，触发MotionEvent事件！
+
+2. 该事件被OnTouchListener监听，可在它的onTouch()方法中获得该MotionEvent对象！
+
+3. 通过GestureDetector转发MotionEvent对象给OnGestureListener
+
+4. 我们可以通过OnGestureListener获得该对象，然后获取相关信息，以及做相关处理！
+
+我们来看下上述的三个类都是干嘛的: **MotionEvent**: 这个类用于封装手势、触摸笔、轨迹球等等的动作事件。 其内部封装了两个重要的属性X和Y，这两个属性分别用于记录横轴和纵轴的坐标。 **GestureDetector**: 识别各种手势。 **OnGestureListener**: 这是一个手势交互的监听接口，其中提供了多个抽象方法， 并根据GestureDetector的手势识别结果调用相对应的方法。
+
+——上述资料摘自:http://www.jcodecraeer.com/a/anzhuokaifa/androidkaifa/2012/1020/448.html
+
+##### 2. GestureListener详解
+
+GestureListener提供的回调方法
+
+> - 按下（onDown）： 刚刚手指接触到触摸屏的那一刹那，就是触的那一下。
+> - 抛掷（onFling）： 手指在触摸屏上迅速移动，并松开的动作。
+> - 长按（onLongPress）： 手指按在持续一段时间，并且没有松开。
+> - 滚动（onScroll）： 手指在触摸屏上滑动。
+> - 按住（onShowPress）： 手指按在触摸屏上，它的时间范围在按下起效，在长按之前。
+> - 抬起（onSingleTapUp）：手指离开触摸屏的那一刹那。
+
+实现手势检测的步骤：
+
+> Step 1: 创建GestureDetector对象，创建时需实现GestureListener传入
+>
+> Step 2: 将Activity或者特定组件上的TouchEvent的事件交给GestureDetector处理即可！ 我们写个简单的代码来验证这个流程，即重写对应的方法：
+
+代码示例：
+
+```java
+public class MainActivity extends AppCompatActivity {
+
+    private MyGestureListener mgListener;
+    private GestureDetector mDetector;
+    private final static String TAG = "MyGesture";
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        //实例化GestureListener与GestureDetector对象
+        mgListener = new MyGestureListener();
+        mDetector = new GestureDetector(this, mgListener);
+
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        return mDetector.onTouchEvent(event);
+    }
+
+    //自定义一个GestureListener,这个是View类下的，别写错哦！！！
+    private class MyGestureListener implements GestureDetector.OnGestureListener {
+
+        @Override
+        public boolean onDown(MotionEvent motionEvent) {
+            Log.d(TAG, "onDown:按下");
+            return false;
+        }
+
+        @Override
+        public void onShowPress(MotionEvent motionEvent) {
+            Log.d(TAG, "onShowPress:手指按下一段时间,不过还没到长按");
+        }
+
+        @Override
+        public boolean onSingleTapUp(MotionEvent motionEvent) {
+            Log.d(TAG, "onSingleTapUp:手指离开屏幕的一瞬间");
+            return false;
+        }
+
+        @Override
+        public boolean onScroll(MotionEvent motionEvent, MotionEvent motionEvent1, float v, float v1) {
+            Log.d(TAG, "onScroll:在触摸屏上滑动");
+            return false;
+        }
+
+        @Override
+        public void onLongPress(MotionEvent motionEvent) {
+            Log.d(TAG, "onLongPress:长按并且没有松开");
+        }
+
+        @Override
+        public boolean onFling(MotionEvent motionEvent, MotionEvent motionEvent1, float v, float v1) {
+            Log.d(TAG, "onFling:迅速滑动，并松开");
+            return false;
+        }
+    }
+
+}
+```
+
+对应操作截图：
+
+- 1.按下后立即松开:![img](https://www.runoob.com/wp-content/uploads/2015/07/80514897.jpg)
+- 2.长按后松开：![img](https://www.runoob.com/wp-content/uploads/2015/07/22745782.jpg)
+- 3.轻轻一滑，同时松开：![img](https://www.runoob.com/wp-content/uploads/2015/07/36633841.jpg)
+- 4.按住后不放持续做滑动操作：![img](https://www.runoob.com/wp-content/uploads/2015/07/45064641.jpg)
+
+PS:从上述结果来看，我们发现了一个问题： <u>我们实现OnGestureListener需要实现所有的手势，可能我针对的仅仅是滑动，但是你还是要去重载</u>， 这显得很逗逼，是吧，官方肯定会给出解决方法滴，官方另外给我们提供了一个**SimpleOnGestureListener**类 只需把上述的OnGestureListener替换成SimpleOnGestureListener即可！
+
+##### 3. 简单的例子:下滑关闭Activity，上滑启动新的Activity
+
+ 这里就用上述的SimpleOnGestureListener来实现吧 
+
+```java 
+public class MainActivity extends AppCompatActivity {
+
+    private GestureDetector mDetector;
+    private final static int MIN_MOVE = 200;   //最小距离
+    private MyGestureListener mgListener;
+
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        //实例化SimpleOnGestureListener与GestureDetector对象
+        mgListener = new MyGestureListener();
+        mDetector = new GestureDetector(this, mgListener);
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        return mDetector.onTouchEvent(event);
+    }
+
+    //自定义一个GestureListener,这个是View类下的，别写错哦！！！
+    private class MyGestureListener extends GestureDetector.SimpleOnGestureListener {
+
+        @Override
+        public boolean onFling(MotionEvent e1, MotionEvent e2, float v, float v1) {
+            if(e1.getY() - e2.getY() > MIN_MOVE){
+                startActivity(new Intent(MainActivity.this, MainActivity.class));
+                Toast.makeText(MainActivity.this, "通过手势启动Activity", Toast.LENGTH_SHORT).show();
+            }else if(e1.getY() - e2.getY()  < MIN_MOVE){
+                finish();
+                Toast.makeText(MainActivity.this,"通过手势关闭Activity",Toast.LENGTH_SHORT).show();
+            }
+            return true;
+        }
+    }
+
+}
+```
+
+ **结果分析：** 从上面的对比就可以知道，相比起SimpleOnGestureListener使用SimpleOnGestureListener 显得更加的简单，想重写什么方法就重写什么方法，另外例子比较简单，大家可以自己试试 其他玩法，比如通过手势缩放图片 
+
+##### 4. 手势添加与识别
+
+>  *除了上面讲解的手势检测外，Android还允许我们将手势进行添加，然后提供了相关的识别API； Android中使用GestureLibrary来代表手势库，提供了GestureLibraries工具类来创建手势库* 
+
+ **四个加载手势库的静态方法** 
+
+ ![img](https://www.runoob.com/wp-content/uploads/2015/07/51353345.jpg) 
+
+ 获得GestureLibraries对象后，就可以使用该对象提供的下述方法来做相应操作了：
+
+**相关方法：**
+
+- public void **addGesture** (String entryName, Gesture gesture)：添加一个名为entryName的手势
+- public Set\<String\> **getGestureEntries** ()：获得手势库中所有手势的名称
+- public ArrayList\<Gesture\> **getGestures** (String entryName)：获得entryName名称对应的全部手势
+- public ArrayList<Prediction\> **recognize** (Gesture gesture): 从当前手势库中识别与gesture匹配的全部手势
+- public void **removeEntry** (String entryName)：删除手势库中entryName名称对应的手势
+- public void **removeGesture** (String entryName, Gesture gesture)：删除手势库中entryName和gesture都匹配的手势
+- public abstract boolean **save** ()：向手势库中添加手势或从中删除手势后调用该方法保存手势库
+
+**GestureOverlayView手势编辑组件：**
+
+Android为GestureOverlayView提供了三种监听器接口，如下，一般常用的是:**OnGesturePerformedListener**;用于手势完成时提供响应！
+
+![img](https://www.runoob.com/wp-content/uploads/2015/07/55343440.jpg)
+
+##### 5. 手势添加示例
+
+##### 6. 手势识别示例
+
+### 第四章 Android的四大组件
+
