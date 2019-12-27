@@ -11,4 +11,6 @@
 * [Python](/study/Python)
 * [SpringBoot](/study/SpringBoot)
 * [Netty](/study/Netty)
+* [Linux](/study/Linux)
+* [计算机网络](/study/计算机网络)
 
