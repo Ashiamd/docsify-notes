@@ -411,3 +411,206 @@ public final Buffer clear() {
 
 ### 3.4 详解NIO Channel(通道)类
 
+​	NIO 中一个连接就是用一个Channel来表示。一个通道可以表示一个底层的文件描述符，例如硬盘设备、文件、网络连接等。Java NIO的通道可以更细化，对应不同的网络传输协议类型，Java中都有不同的NIO Channel实现。
+
+#### 3.4.1 Channel(通道)的主要类型
+
+​	这里只介绍最为重要的四种Channel(通道)实现：FileChannel、SocketChannel、ServerSocketChannel、DatagramChannel。
+
+​	对于以上四种通道，说明如下：
+
+1. FileChannel文件通道，用于文件的数据读写。
+2. SocketChannel套接字通道，用于Socket套接字TCP连接的数据读写。
+3. ServerSocketChannel服务器套接字通道(或服务器监听通道)，允许我们监听TCP连接请求，为每个监听到的请求，创建一个SocketChannel套接字通道。
+4. DatagramChannel数据包通道，用于UDP协议的数据读写。
+
+​	这四种通道，涵盖了文件IO、TCP网络、UDP IO基础IO。下面从Channel的获取、读取、写入、关闭四个重要的操作，来对四种通道进行简单的介绍。
+
+#### 3.4.2 FileChannel文件通道
+
+​	FileChannel是专门操作文件的通道。**FileChannel为阻塞模式，不能设置为非阻塞模式**。
+
+1. 获取FileChannel通道
+
+   + 通过文件的输入流、输出流获取FileChannel文件通道。
+
+     ```java
+     FileInputStream fileInputStream = new FileInputStream(path);
+     FileChannel channel = fileInputStream.getChannel();
+     ```
+
+   + 通过RandomAccessFile文件随机访问类，获取FileChannel文件通道。
+
+     同样调用RandomAccessFile实例对象的getChannel()方法。
+
+2. 读取FileChannel通道
+
+   ​	大部分应用场景，从通道读取数据都会调用通道的int read(ByteBuffer dst)方法，它从通道读取到数据写入到ByteBuffer缓冲区，并且返回读取到的数据量。
+
+   ```java
+   while( (length = inChannel.read(buf)) != -1 ){ //处理读取到的buf中的数据 }
+   ```
+
+   ​	这里对于通道Channel是读取数据，对于Buffer缓冲区是写入数据(处于写模式)。
+
+3. 写入FileChannel通道
+
+   ​	大部分应用场景，调用通道的int write(ByteBuffer src)方法。
+
+   ```java
+   while( ( outlength = outchannel.write(buf) ) != 0){ //... }
+   ```
+
+   ​	这里对于通道是写入数据，对于Buffer缓冲区是读取数据(必须处于读模式)
+
+4. 关闭通道
+
+   ```java
+   channel.close();//使用完通道记得关闭
+   ```
+
+5. 强制刷新到磁盘
+
+   在将缓冲区写入通道时，处于性能原因，操作系统不可能每次都实时将数据写入磁盘。如果需要保证写入通道的缓冲数据，最终都能真正地写入磁盘，可以调用FileChannel的force()方法。
+
+   ```java
+   channel.force(true);
+   ```
+
+   ps:看了下方法介绍，说如果是本地设备(文件系统)，能保证写入，但是如果不是本地的，不保证一定写入了。这里我估计是只写入远程的设备or网络传输协议等。
+
+#### 3.4.3 使用FileChannel完成文件复制的实践案例
+
+​	需要注意的是Buffer的读写模式切换。调用flip()写模式切换为读模式，调用clear()或compact()读模式切换为写模式。
+
+​	比起使用channel的write和read方法，可以考虑使用效率更高的channel.transferFrom方法完成文件的复制。
+
+```java
+while (pos < size) {
+    //每次复制最多1024个字节，没有就复制剩余的
+    count = size - pos > 1024 ? 1024 : size - pos;
+    //复制内存,偏移量pos + count长度
+    pos += outChannel.transferFrom(inChannel, pos, count);
+}
+```
+
+#### 3.4.4 SocketChannel套接字通道
+
+​	在NIO中，涉及网络连接的通道主要有两个，一个是SocketChannel负责连接传输，另一个ServerSocketChannel负责连接的监听。
+
+​	NIO中的SocketChannel传输通道，与OIO中的Socket类对应。
+
+​	NIO中的ServerSocketChannel监听通道，对应于OIO中的ServerSocket类。
+
+​	<u>ServerSocketChannel应用于服务器端，而SocketChannel同时处于服务器端和客户端。换句话说，对应于一个连接，两端都有一个负责传输的SocketChannel传输通道</u>。
+
+​	SocketChannel和erverSocketChannel都支持阻塞式和非阻塞式两种模式。调用configureBlocking方法调整：
+
++ socketChannel.configureBlocking(false)设置为非阻塞模式。
+
++ socketChannel.configureBlocking(true)设置为阻塞模式。
+
+​	阻塞模式下SocketChannel通道的connect、read、write同步阻塞，效率与Java旧的OIO面向流的阻塞式读写操作相同。下面讲解非阻塞模式的操作。
+
+1. 获取SocketChannel传输通道
+
+   ​	在客户端，先通过SocketChannel静态方法open()获得一个套接字传输通道；然后，将socket套接字设置为非阻塞模式；最后，通过connect()实例方法，对服务器的IP端口发起连接。
+
+   ```java
+   SocketChannel channel = SocketChannel.open();
+   channel.configureBlocking(false);
+   channel.connect(new InetSocketAddress("127.0.0.1") , 80);
+   ```
+
+   ​	非阻塞情况下，与服务器的连接可能还没有真正建立，socketChannel.connect方法就返回了，因此需要不断地自旋，检查当前是否连接到了主机。
+
+   ```java
+   while(! socketChannel.finishConnect() ){ //... }
+   ```
+
+   ​	当新连接事件到来时，在服务器端的ServerSocketChannel能成功地查询出一个新连接事件，并且通过调用服务器端ServerSocketChannel监听套接字的accept()方法，来获取新连接的套接字通道。
+
+   ```java
+   ServerSocketChannel server = (ServerSocketChannel) key.channel();
+   SocketChannel socketChannel = server.accpet();
+   socketChannel.configureBlocking(false);
+   ```
+
+   ​	强调，NIO套接字通道，主要用于非阻塞应用场景。所以，需要调用configureBlocking(false)，从阻塞模式设置为非阻塞模式。
+
+2. 读取SocketChannel传输通道
+
+   ​	当SocketChannel通道可读时，可以从SocketChannel读取数据，具体方法与前面的文件通道相同。
+
+   ​	读取是异步的，需要检查read返回值判断是否读到了数据，除非读到对方的技术标记返回-1，否则返回读取的字节数。非阻塞模式下，需NIO的Selector通道选择器来轮询查找可读的通道。
+
+3. 写入到SocketChannel传输通道
+
+   ​	与写入到FileChannel一样，大部分应用场景都会调用通道的int write(ByteBuffer src)方法。
+
+4. 关闭SocketChannel传输通道
+
+   ​	调用channel的close方法之前，最好先调用channel的shutdownOutput()终止对此通道的写连接，此时若再尝试写入会报错ClosedChannelException。
+
+#### 3.4.5 使用SocketChannel发送文件的实践案例
+
+​	需要注意的点就是，可以设计成发送<u>文件名、文件大小、文件本身</u>。
+
+#### 3.4.6 DatagramChannel数据报通道
+
+​	和Socket套接字的TCP传输协议不同，UDP协议不是面向连接的协议。使用UDP协议时，只要知道服务器的IP和端口，就可以直接向对方发送数据。在Java中使用UDP协议传输数据，比TCP协议更加简单。在Java NIO中，使用DatagramChannel数据报通道来处理UDP协议的数据传输。
+
+1. 获取DatagramChannel数据报通道
+
+   ​	调用DatagramChannel类的open静态方法获取数据报通道。然后调用configureBlocking(false)方法，设置成非阻塞模式。
+
+   ​	如果需要接收数据，还需要调用bind方法绑定一个数据报的监听端口。
+
+   ```java
+   channel.socket().bind(new InetSocketAddress(18080));
+   ```
+
+2. 读取DatagramChannel数据报通道
+
+   ​	当DatagramChannel通道可读时，可以从DatagramChannel读取数据。读取方法为receive(ByteBuffer dst)，read()方法用于建立连接Channel，然而UDP无连接。
+
+   ```java
+   ByteBuffer buf = ByteBuffer.allocate(1024);
+   SocketAddress client = datagramChannel.receive(buffer);
+   ```
+
+3. 写入DatagramChannel数据报通道
+
+   ​	向DatagramChannel发送数据，调用的是send方法，不是write();
+
+   ```java
+   buffer.flip();//缓冲区切换到读模式
+   dChannel.send(buffer, new InetSocketAddress(IP,PORT));
+   buffer.clear();//缓冲区切换到写模式
+   ```
+
+   **由于UDP是面向非连接的协议，因此，在调用send方法发送数据的时候，需要指定接收方的地址(IP和端口)**
+
+4. 关闭DatagramChannel数据报通道
+
+   ```java
+   dChannel.close();
+   ```
+
+#### 3.4.7 使用DatagramChannel数据报通道发送数据的实践案例
+
+​	步骤基本就是获取数据报通道实例对象，往buffer里写数据，然后send到服务器端(指定IP和PORT)。
+
+​	服务器端则是通过DatagramChannel数据报通道绑定一个服务器地址(IP+PORT)，接收客户端发送过来的UDP数据报，即从datagramChannel数据报通道接收数据，写入ByteBuffer缓冲区中。
+
+### 3.5 详解NIO Selector选择器
+
+#### 3.5.1 选择器以及注册
+
+​	选择器的使命就是完后IO的多路复用。<u>一个通道代表一条连接通路，通过选择器可以同时监控多个通道的IO(输入输出)状况</u>。选择器和通道的关系，是监视和被监视的关系。
+
+​	**一般来说，一个单线程处理一个选择器，一个选择器可以监控很多通道**。
+
+​	通道和选择器之间的关系，通过register(注册)的方式完成。调用通道的Channel.register(Selector sel,int ops)方法，可以将通道实例注册到一个选择器中。register方法有两个参数：第一个参数，指定通道注册到的选择器实例；第二个参数，指定选择器要监控的IO事件类型。
+
+​	可供选择器监控的
