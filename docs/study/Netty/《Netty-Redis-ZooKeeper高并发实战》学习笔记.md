@@ -188,3 +188,226 @@ ulimit -SHn 1000000
 ​	在使用和安装目前非常火的分布式搜索引擎——ElasticSearch，就必须去修改这个文件，增加最大的文件句柄数的极限值。
 
 ​	在服务器运行Netty时，也需要去解除文件句柄数量的限制，修改/etc/security/limits.conf文件即可。
+
+## 第3章 Java NIO通信基础详解
+
+​	现在主流的技术框架或中间件服务器，都使用了Java NIO技术，譬如Tomcat、Jetty、Netty。
+
+### 3.1 Java NIO简介
+
+​	Java1.4版本开始，引进新的异步IO库，称之为Java New IO库，简称JAVA NIO。New IO类库的目标，就是要让Java支持非阻塞IO，基于这个原因，更多人喜欢称Java NIO为非阻塞IO(Non-Block IO)，称“老的”阻塞式的Java IO为OIO (Old IO)。
+
+​	Java NIO由以下三个核心组件组成：
+
++ Channel（通道）
++ Buffer（缓冲区）
++ Selector（选择器）
+
+​	Java NIO属于多路复用模型，提供了统一的API，为大家屏蔽了底层的不同操作系统的差异。
+
+#### 3.1.1 NIO和OIO的对比
+
+1. OIO面向流(Stream Oriented)，NIO面向缓冲区(Buffer Oriented)。
+
+   OIO不能随便改变流Stream的读取指针，而NIO读写通过Channel和Buffer，可以任意操作指针位置。
+
+2. OIO的操作是阻塞的，而NIO的操作是非阻塞的。
+
+   OIO调用read，必须等read系统调用的数据准备和数据复制都结束后才解除阻塞；而NIO在数据准备阶段会直接返回不阻塞，只有在(内核缓冲区)有数据(进行数据复制或已经完成复制后)会阻塞，且NIO使用多路复用模式，一个Selector(一个线程)可以轮询成千上万个连接Connection，不断进行select/epoll轮询，查找出达到IO操作就绪的socket连接。
+
+3. OIO没有选择器(Selector)概念，而NIO有选择器的概念。
+
+   NIO的实现，基于底层的选择器的系统调用。**NIO的选择器，需要底层操作系统提供支持**。而OIO不需要用到选择器。
+
+#### 3.1.2 通道(Channel)
+
+​	在OIO中，同一个网络连接会关联到两个流：一个输入流(Input Stream)，另一个输出流(Output Stream)。通过这两个流，不断地进行输入和输出的操作。
+
+​	在NIO中，同一个网络连接使用一个通道表示，所有的NIO的IO操作都是从通道开始的。一个通道类似于OIO的两个流的结合体，既可以从通道读取，也可以向通道写入。
+
+#### 3.1.3 Selector选择器
+
+​	IO多路复用：一个进程/线程可以同时监听多个文件描述符(<u>一个网络连接，操作系统底层使用一个文件描述符来表示</u>)，**一旦其中的一个或者多个文件描述符可读或者可写，系统内核就通知进程/线程**。在Java应用层面，使用Selector选择器来实现对多个文件描述符的监听。
+
+​	实现多路复用，具体开发层面，首先把通道注册到选择器，然后通过选择器内部的机制，可以查询(select)这些注册的通道是否有已经就绪的IO事件(例如可读、可写、网络连接完成)。
+
+​	一个选择器只需要一个线程来监控。与OIO相比，使用选择器的最大优势：系统开销小，系统不必为每一个网络连接(文件描述符)创建进程/线程，从而大大减小了系统的开销。
+
+#### 3.1.4 缓冲区(Buffer)
+
+​	通道的读取将数据从通道读取到缓冲区；通道的写入将数据从缓冲区写入到通道中。
+
+### 3.2 详解NIO Buffer类及其属性
+
+​	NIO的Buffer(缓冲区)本质上是一个内存块，既可以写入数据，也可以从中读取数据。NIO的Buffer类是一个抽象类，位于java.nio包，内部是一个内存块(数组)。
+
+​	NIO的Buffer对象比其普通内存块(Java数组)，提供了更有效的方法来进行写入和读取的交替访问。
+
+​	强调，**Buffer类是一个非线程安全类**。
+
+#### 3.2.1 Buffer类
+
+​	Buffer类是一个抽象类，对应于Java的主要数据类型，在NIO中有8种缓冲区类，分别如下：ByteBuffer、CharBuffer、DoubleBuffer、FloatBuffer、IntBuffer、LongBuffer、ShortBuffer、MappedByteBuffer。
+
+​	前7种Buffer覆盖了能在IO中传输的所有Java基本数据类型。<u>第8种类型MappedByteBuffer是专门用于内存映射的一种ByteBuffer类</u>。
+
+​	**实际应用最多的还是ByteBuffer二进制字节缓冲区类型**。
+
+#### 3.2.2 Buffer类的重要属性
+
+​	Buffer类内部有一个byte[]数组内存块，作为内存缓冲区。其中，三个重要的成员属性capacity(容量)、position(读写位置)、limit(读写的限制)。此外，标记属性mark(标记)，可以将当前的position临时存入mark中，需要的时候可以再从mark标记恢复到position位置。
+
+1. capacity属性
+
+   ​	表示内部容量大小，Buffer类的对象初始化会按照其大小分配内部的内存，不能再改变。一旦写入的对象的数量超过capacity容量，缓冲区就满了，不能再写入。
+
+   ​	**强调，capacity容量不是指内存块byte[]数组的字节的数量，指的是写入的对象的数量**。
+
+   ​	Buffer是抽象类，使用子类实例化，例如DoubleBuffer写入的数据是double类型，如果capacity是100，那么最多可以写入100个double数据。
+
+2. position属性
+
+   ​	position属性与缓冲区的读写模式有关。
+
+   ​	写入模式下，position的值变化规则如下：(1)刚进入写模式时，position值为0，表示当前的写入位置为从头开始。(2)每当一个数据写入缓冲区之后，position会向后移动到下一个可写的位置。(3)初始的position值为0，最大的可写值为limit-1。当position达到时，缓冲区就无空间可写了。
+
+   ​	在读模式下，(1)缓冲区刚进入到读模式时，position被重置为0。(2)从缓冲区读取时，从position位置开始读，读取数据后，position移动到下一个可读的位置。(3)position最大值为最大可读上限limit，当position达到limit时，缓冲区无数据可读。
+
+   ​	**调用flip翻转方法，可以转换缓冲区的读写模式**。
+
+   ​	flip反转过程中，position由原本的写入位置变成新的可读位置，也就是0，表示可以从头开始读。flip翻转的另一半工作，就是调整limit属性。
+
+3. limit属性
+
+   ​	表示读写的最大上限，与缓冲区的读写模式有关。
+
+   ​	写模式，表示写入数据最大上限。刚进入写模式时，limit的值会被设置成缓冲区的capacity容量值，表示可以一直将缓冲区的容量写满。
+
+   ​	读模式，表示最多能从缓冲区读取到多少数据。
+
+   ​	调用flip翻转方法，将写模式下的position值设置成读模式下的limit值，即将之前的写入的最大数量作为可以读取的上限值。
+
+#### 3.2.4 4个属性的小结
+
+| 属性     | 说明                                                         |
+| -------- | ------------------------------------------------------------ |
+| capacity | 容量，可以容纳的最大数据量；在缓冲区创建时设置并不能再改变   |
+| limit    | 上限，缓冲区中当前的数据量                                   |
+| position | 位置，缓冲区下一个要被读写的元素的索引                       |
+| mark     | 标记，调用mark()方法来设置mark=position，再调用reset()可以让position恢复到mark标记的位置即postion=mark |
+
+### 3.3 详解NIO Buffer类的重要方法
+
+#### 3.3.1 allocate()创建缓冲区
+
+​	在使用Buffer之前，需要先获取Buffer子类的实例对象，并分配内存空间。
+
+​	为获取Buffer实例对象，不是new，而是调用子类的allocate()方法。
+
+#### 3.3.2 put()写入缓冲区
+
+​	<u>調用allocate方法分配内存、返回了实例对象后，缓冲区实例对象处于写模式</u>，可以写入对象。
+
+ps:源码中Buffer子类有成员变量Boolean isReadOnly,由于java默认赋值false，即写模式。
+
+#### 3.3.3 flip()翻转
+
+​	向缓冲区写入数据后，需要先把缓冲区切换从写模式切换道读模式，才能够从缓冲区读取数据。
+
+​	flip()方法的从写到读转换的规则，详细介绍如下：
+
+​	首先，设置可读的长度上线limit。将写模式下的缓冲区中内容的最后写入位置position值，作为读模式下的limit上限值。
+
+​	其次，把读的起始位置position设置为0，表示从头开始读。
+
+​	最后，**清除之前的mark标记**，因为mark保存的是写模式下的临时位置。在读模时下，如果继续使用旧的mark标记，会造成位置混乱。
+
+ps:我自己试了下，如果没有先mark()，调用reset()会报错。源码上mark初始值为-1。
+
+```java
+public final Buffer flip() {
+    limit = position;
+    position = 0;
+    mark = -1;
+    return this;
+}
+```
+
+​	要将缓冲区再一次切换到写入模式，可以调用Buffer.clear()清空或者Buffer.compact()压缩方法，将缓冲区转换为写模式。
+
++ 写模式->读模式：flip()
++ 读模式->写模式：Buffer.clear()或Buffer.compact()
+
+```java
+public final Buffer clear() {
+    position = 0;
+    limit = capacity;
+    mark = -1;
+    return this;
+}
+// public abstract IntBuffer compact();
+```
+
+#### 3.3.4 get()从缓冲区读取
+
+​	读模式下，get方法每次从position位置读取一个位置，并进行相应的缓冲区属性调整。
+
+​	当limit与position相等，若继续get()读，会抛出BufferUnderflowException异常。
+
+​	缓冲区可以重复读。
+
+#### 3.3.5 rewind()倒带
+
+​	已经读完的数据，如果需要再读一遍，可以调用rewind()方法。
+
++ position重置为0
++ limit不变
++ **mark标记被清除**，赋值-1
+
+```java
+public final Buffer rewind() {
+    position = 0;
+    mark = -1;
+    return this;
+}
+```
+
+​	rewind()和flip()相似，区别在于：rewind()不会影响limit属性；而flip()会重设limit属性。
+
+#### 3.3.6 mark()和reset()
+
+​	Buffer.mark()和Buffer.reset()配套使用。mark()保存当前postion值到mark属性，reset()将mark值恢复到position中。
+
+#### 3.3.7 clear()清空缓存区
+
++ position重置为0
++ limit设置为容量上限
++ mark清除，赋值为-1
+
+```java
+public final Buffer clear() {
+    position = 0;
+    limit = capacity;
+    mark = -1;
+    return this;
+}
+```
+
+#### 3.3.8 使用Buffer类的基本步骤
+
+​	总体来说，使用Java NIO Buffer类的基本步骤如下：
+
+1. 使用创建子类实例对象的allocate()方法，创建一个Buffer类的实例对象。
+2. 调用put()方法，将数据写入到缓冲区中。
+3. 写入完成后，在开始读取数据前，调用Buffer.flip()方法，将缓冲区转换为读模式。
+4. 调用get()方法，从缓冲区中读取数据。
+5. 读取完成后，调用Buffer.clear()或Buffer.compact()方法，将缓冲区转换为写模式。
+
+> Buffer.compact()
+>
+> 将剩余未读数据赋值到数组开头，limit=limit-position,即limit大小为剩余数据的数量，position置0。
+>
+> 比如for循环put 写0~4这5个数字，然后调用flip()再for循环get读0~2这3个数字，调用compact(),此时hb成员变量的内容为3 4 2 3 4；position为0，limit为2，capacity不受影响。这里hb即申请的heap buffers，假设使用IntBuffer，那么hb即final int[] hb;
+
+### 3.4 详解NIO Channel(通道)类
+
