@@ -611,6 +611,137 @@ while (pos < size) {
 
 ​	**一般来说，一个单线程处理一个选择器，一个选择器可以监控很多通道**。
 
-​	通道和选择器之间的关系，通过register(注册)的方式完成。调用通道的Channel.register(Selector sel,int ops)方法，可以将通道实例注册到一个选择器中。register方法有两个参数：第一个参数，指定通道注册到的选择器实例；第二个参数，指定选择器要监控的IO事件类型。
+​	通道和选择器之间的关系，通过register(注册)的方式完成。调用通道的Channel.register(Selector sel,int ops)方法，可以将通道实例注册到一个选择器中。register方法有两个参数：第一个参数，指定通道注册到的选择器实例；第二个参数，指定选择器要监控的**IO事件类型**。
 
-​	可供选择器监控的
+​	可供选择器监控的通道IO事件类型，包括以下四种：
+
++ 可读：SelectionKey.OP_READ = 1 << 0
++ 可写：SelectionKey.OP_WRITE = 1 << 2
++ 连接：SelectionKey.OP_CONNECT = 1 << 3
++ 接收：SelectionKey.OP_ACCEPT = 1 << 4
+
+​	如果选择器要监控通道的多种事件，可以用"按位或"运算符实现。
+
+```java
+int key = SelectionKey.OP_READ | SelectionKey.OP_WRITE ; // 监控读和写
+```
+
+​	**这里的IO事件不是对通道的IO操作，而是通道的某个IO操作的一种就绪状态，表示通道具备完成某个IO操作的条件**。
+
+​	比方说，某个SocketChannel通道，完成了和对端的握手连接，则处于“连接就绪”(OP_CONNECT)状态。
+
+​	再比方说，某个ServerSocketChannel服务器通道，监听到一个新连接的到来，则处于"接收就绪"(OP_ACCEPT)状态。
+
+​	还比方说，一个有数据可读的SocketChannel通道，处于"读就绪"(OP_READ)状态；一个等待写入数据的，处于"写就绪"(OP_WRITE)状态。
+
+#### 3.5.2 SelectableChannel可选择通道
+
+​	并不是所有的通道都是可以被选择器监控或选择的。比方说，FileChannel文件通道就不能被选择器复用。判断一个通道能否被选择器监控或选择，有一个前提：判断它是否继承了抽象类SelectableChannel(可选择通道)。<u>如果继承了SelectableChannel，则可以被选择， 否则不能</u>。
+
+​	SelectableChannel提供了实现通道的可选择性所需要的公共方法。**Java NIO中所有网络连接Socket套接字通道，都继承了SelectableChannel类，都是可选择的**。FileChannel没有继承它，不是可选择通道。
+
+#### 3.5.3 SelectionKey选择键
+
+​	通道和选择器的监控关系注册成功后，就可以选择就绪事件。<u>通过调用Selector的select()方法，选择器可以不断地选择通道中所发生操作的就绪状态，返回注册过的感兴趣的那些IO事件</u>。
+
+​	SelectionKey选择键，即那些被选择器选中的IO事件。<u>一个IO事件发生(就绪状态达成)后，如果之前在选择器中注册过，就会被选择器选中，并放入SelectionKey选择键集合中</u>；如果没有注册过，即时发生了IO事件，也不会被选择器选中。可以简单理解为：选择键就是被选中了的IO事件。
+
+​	在编程时，选择键的功能强大。**通过SelectionKey选择键，不仅仅可以获得通道的IO事件类型，比方说Selection.OP_READ；还可以获得IO事件发生的所在通道；另外也可以获得选出选择键的选择器实例**。
+
+#### 3.5.4 选择器使用流程
+
+​	(1)获取选择器实例；(2)将通道注册到选择器；(3)轮询感兴趣的IO就绪事件(选择键集合)
+
+第一步：获取选择器实例
+
+​	通过调用静态工厂方法open()获取选择器实例
+
+```java
+Selector selector = Selector.open();
+```
+
+​	open()内部向选择器SPI（SelectorProvider）发出请求，通过默认的SelecterProvider(选择器提供者)对象，获取一个新的选择器实例。SPI(Service Provider Interface，服务提供接口)，是JDK的一种可以扩展的服务提供和发现机制。
+
+​	<u>Java通过SPI方式，提供选择器的默认实现版本。其他服务提供商可以通过SPI方式提供定制化版本的选择器的动态替换或者扩展</u>。
+
+```java
+public static Selector open() throws IOException {
+    return SelectorProvider.provider().openSelector();
+}
+```
+
+第二步：将通道注册到选择器实例
+
+​	通过调用通道的register()方法，将ServerSocketChannel通道注册到选择器上。
+
+```java
+serverSocketChannel.register(selector,SelectionKey.OP_ACCEPT);
+```
+
++ 注册到选择器的通道，必须处于非阻塞模式，否则抛出IllegalBlockingModeException异常。（*FileChannel文件通道只有阻塞模式，不能与选择器一起用；而Socket套接字相关的所有通道都可以*）
+
++ 一个通道，并不一定要支持所有的四种IO事件。（例如服务器监听通道ServerSocketChannel仅支持Accept接收到新连接的IO事件；而SocketChannel传输通道不支持Accept此IO事件）
+
+**可以在注册之前，通过通道的validOps()方法来获取该通道所有支持的IO事件集合**。
+
+第三步：选出感兴趣的IO就绪事件(选择键集合)
+
+​	通过Selector选择器的select()方法，选出已经注册的、已经就绪的IO事件，保存到SelectionKey选择键集合中。SelectionKey集合保存在选择器实例内部，是一个元素为SelectionKey类型的集合(Set)。调用选择器的selectedKeys()方法，可以获取选择键集合。
+
+​	接下来，需要迭代集合的每一个选择键，根据具体IO事件类型，执行对应的业务操作。大致处理流程如下
+
+```java
+while( selector.select() > 0 ){
+    Set selectedKeys = selector.selectedKeys();
+    Iterator keyIterator = selectedKeys.iterator();
+    while(keyIterator.hasNext()){
+        SelectionKey key = keyIterator.next();
+        if(key.isAcceptable()){
+        	// IO事件：ServerSocketChannel服务器监听通道有新连接
+        } else if(key.isConnectable()){
+            // IO事件：传输通道连接成功
+        } else if(key.isReadable()){
+            // IO事件：传输通道可读
+        } else if(key.isWritable()){
+            // IO事件：传输通道可写
+        }
+        // 处理完成后，移除选择键。
+        keyIterator.remove();
+    }
+}
+```
+
+​	处理完成后，需要将选择键从SelectionKey集合中移除，防止下一次循环的时候，被重复处理。SelectionKey集合不能添加元素，如果试图向选择键集合添加元素，则抛出java.lang.UnsupportedOperationException异常。
+
+​	用于选择就绪的IO事件的select()方法，有多个重载的实现版本：
+
+​	(1) select()：阻塞调用，直到至少有一个通道发生了注册的IO事件。
+
+​	(2) select(long timeout)：和前者一样，但最长阻塞时间为timeout指定的毫秒数。
+
+​	(3) selectNow()：非阻塞，不管有没有IO时间，都会立刻返回。
+
+​	select()方法返回的整数值(int 整数类型)，表示发生了IO事件的通道数量（从上一次select到这次select之间）。强调一下，**select()方法返回的数量与IO事件数无关，是指发生了选择器感兴趣的IO事件的通道数**。
+
+#### 3.5.5 使用NIO实现Discard服务器的实践案例
+
+​	主要需要留意的就两步
+
+```java
+// ...
+// 13、若选择键的IO事件是"可读"事件， 读取数据
+SocketChannel socketChannel = (SocketChannel) selectedKey.channel();
+// ...
+// 15、移除选择键
+selectedKeys.remove();
+```
+
+​	程序涉及两次选择器注册：一次是注册serverChannel服务器通道；另一次，注册接收到的socketChannel客户端传输通道值。serverChannel服务器通道注册的，是新连接的IO事件Selection.OP_ACCEPT；客户端socketChannel传输通道注册的，是可读IO事件SelectionKey.OP_READ。
+
+​	DiscardServer在对选择键进行处理时，通过对类型进行判断，然后进行相应的处理。
+
+1. 如果是Selection.OP_ACCEPT新连接事件类型，代表serverChannel服务器通道发生了新连接事件，则通过服务器通道的accept方法，获取新的socketChannel传输通道，并且注册到选择器。
+2. 如果是SelectionKey.OP_READ可读事件类型，代表某个客户端通过通道有数据可读，则读取选择键socketChannel传输通道的数据，然后丢弃。
+
+#### 3.5.6 使用SocketChannel在服务器端接收文件的实践案例
+
