@@ -994,4 +994,273 @@ public FutureTask(Callable<V> callable) {
 
 #### 5.3.3 Future接口
 
-​	主要对并发
+​	主要对并发任务的执行及获取其结果的一些操作。主要提供了3大功能：
+
+1. 判断并发任务是否执行完成
+2. 获取并发的任务完成后的结果
+3. 取消并发执行中的任务
+
+​	Future接口的源代码如下:
+
+```java
+package java.util.concurrent;
+public interface Future<V> {
+    boolean cancel(boolean mayInterruptRunning);
+    boolean isCancelled();
+    boolean isDone();
+    V get() throws InterruptedException, ExecutionException;
+    V get(long timeout, TimeUnit unit)throws InterruptedException, ExecutionException, TimeoutException;
+}
+```
+
+​	**其中，get方法是阻塞性的方法，如果并发任务没有执行完成or没有超时，调用该方法的线程会一致阻塞直到并发任务执行完成**。
+
+#### 5.3.4 再探FutureTask类
+
+​	FutureTask类实现了Future接口，提供了外部操作异步任务的能力。
+
+​	FutureTask内部有一个Callable类型的成员，代表异步执行的逻辑
+
+```java
+private Callable<V> callable;
+```
+
+​	callable实例属性必须要在FutureTask类的实例构造时进行初始化。
+
+​	FutureTask内部的run方法会执行其callable成员的call方法，执行完成后的结果保存到成员——outcome属性。
+
+```java
+private Object outcome;
+```
+
+#### 5.3.5 使用FutureTask类实现异步泡茶喝的实践案例
+
+​	**FutureTask和Callable都是泛型类，泛型参数表示返回结果的类型。所以，在使用的时候，它们两个实例的泛型参数一定需要保持一致的。**
+
+​	最后，通过FutureTask类的实例，取得异步线程的执行结果。
+
+​	通过FutrueTask类的get方法获取异步结果，主线程也会被阻塞。这一点，**FutureTask和join也是一样的，它们两都是异步阻塞模式**。
+
+​	异步阻塞的效率往往是比较低的，被阻塞的主线程不能干任何事情，唯一能干的，就是傻傻地等待。**原生Java API，除了阻塞模式的获取结果外，并没有实现非阻塞的异步结果获取方法**。如果需要用到获取异步的结果，则需要引入一些额外的框架，这里首先介绍谷歌公司的Guava框架。
+
+### 5.4 Guava的异步回调
+
+​	Guava是谷歌公司提供的Java扩展包，提供了一种异步回调的解决方案。例如，Guava的异步任务接口ListenableFuture，扩展了Java的Future接口，实现非阻塞获取异步结果的功能。
+
+​	总体来说，Guava的主要手段是增强而不是另起炉灶。为了实现非阻塞获取异步线程的结果，Guava对Java的异步回调机制，做了以下的增强：
+
+1. 引入了一个新的接口ListenableFuture，继承了Java的Future接口，使得Java的Future异步任务，在Guava中能被监控和获得非阻塞异步执行的结果。
+2. 引入了一个新的接口FutureCallback，这是一个独立的新接口。该接口的目的，是在异步任务执行完成后，根据异步结果，完成不同的回调处理，并且可以处理异步结果。
+
+#### 5.4.1 详解FutureCallback
+
+​	FutureCallback是一个新增的接口，用来填写异步任务执行完后的监听逻辑。FutureCallback拥有两个回调方法：
+
+1. onSuccess方法，在异步任务执行成功后被回调；调用时，异步任务的执行结果，作为onSuccess方法的参数被传入。
+2. onFailure方法，在异步方法执行过程中，抛出异常时被回调；调用时，异步任务所抛出的异常，作为onFailure方法的参数被传入。
+
+​	ps：感觉和Javascript的ES6语法的Promise类似。
+
+​	FutureCallback的源代码如下：
+
+```java
+package com.google.common.util.concurrent;
+public interface FutureCallback<V> {
+    void onSuccess(@Nullable V var1);
+    void onFailure(Throwable var1);
+}
+```
+
+​	注意，Guava的FutureCallback与Java的Callable，名字相近，但实质不同，存在本质的区别：
+
+1. Java的Callable接口，代表的是异步执行的逻辑。
+2. Guava的FutureCallback接口，代表的是Callable异步逻辑执行完成之后，根据成功或者异常两种情况，所需要执行的善后工作。
+
+​	Guava是对Java Future异步回调的增强，使用Guava异步回调，也需要用到Java的Callable接口。简答地说，<u>只有在Java的Callable任务执行的结果出来之后，才可能执行Guava中的FutureCallback结果回调</u>。
+
+​	Guava引入一个新接口ListenableFuture，继承了Java的Future接口，增强了监控的能力，完成异步任务Callable和FutureCallback结果回调之间的监控关系。
+
+#### 5.4.2 详解ListenableFuture
+
+Guava的ListenableFuture是对Java的Future接口的扩展，可以理解为异步任务的实例。
+
+```java
+package com.google.common.util.concurrent;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Future;
+public interface ListenableFuture<V> extends Future<V> {
+	// 此方法由Guava内部调用
+    void addListener(Runnable r, Executor e);
+}
+```
+
+仅增加了一个方法——addListener方法。作用即将前一小节的FutureCallback善后回调工作封装成一个内部的Runnable异步回调任务，在Callable异步任务完成后，回调FutureCallback进行善后处理。
+
+​	addListener方法只在Guava内部调用，实际变成不用主动调用。
+
+​	实际编程中，使用Guava的Futures工具类的addCallback静态方法，把FutureCallback的回调实例绑定到ListenableFuture异步任务。
+
+```java
+Futures.addCallback(listenableFuture, new FutureCallback<Boolean>(){
+   public void onSuccess(Boolean r)
+   {
+       // listenableFuture内部的Callable成功时回调此方法
+   } 
+   public void onFailure(Throwable t)
+   {
+       // listenableFuture内部的Callable异常时回调此方法
+   }
+});
+```
+
+#### 5.4.3 ListenableFuture异步任务
+
+​	如果要获取Guava的ListenableFuture异步任务实例，主要是通过向线程池ThreadPool提交Callable任务的方式来获取。这里的线程池指的是Guava自己定制的Guava线程池。
+
+​	Guava线程池，是对Java线程池的一种装饰。
+
+```java
+// java线程池
+ExecutorService jPool = Executors.newFixedThreadPool(10);
+// Guava线程池
+ListeningExecutorService gPool = MoreExecutors.listeningDecorator(jPool);
+```
+
+​	首先创建Java线程池，然后以它作为Guava线程池的参数，在构造一个Guava线程池。有了Guava的线程池之后，就可以通过submit方法来提交任务了；任务提交之后的返回结果，就是我们所要的ListenableFuture异步任务实例了。
+
+​	获取异步任务实例的方式，即通过向线程池提交Callable业务逻辑来实现。
+
+```java
+// 调用submit方法来提交任务，返回异步任务实例
+ListenableFuture<Boolean> hFuture = gPool.submit(hJob);
+// 绑定回调实例
+Futures.addCallback(listenableFuture, new FutureCallback<Booelean>(){
+    // 实现回调方法，onSuccess和onFailure
+});
+```
+
+​	获取了ListenableFuture实例之后，通过Futures.addCallback方法，将FutureCallback回调逻辑的实例绑定到ListenableFuture异步任务实例，实现异步执行完成后的回调。
+
+​	Guava异步回调的流程如下：
+
+1. 实现Java的Callable接口，创建异步执行逻辑。还有一种情况，如果不需要返回值，异步执行逻辑也可以实现Java的Runnable接口
+2. 创建Guava线程池
+3. 将第1步创建的Callable/Runnable异步执行逻辑的实例，通过submit提交到Guava线程池，从而获取到ListenableFuture异步任务实例。
+4. 创建FutureCallback回调实例，通过Futures.addCallback将回调实例绑定到ListenableFuture异步任务上。
+
+​	完成以上四步，当Callable/Runnable异步执行逻辑完成后，就会回调异步回调实例FutureCallback的回调方法onSuccess/onFailure。
+
+#### 5.4.4 使用Guava实现泡茶喝的实践案例
+
+​	Guava异步回调和Java的FutureTask异步回调， 本质的不同在于：
+
++ Guava是非阻塞的异步回调，调用线程是不阻塞的，可以继续执行自己的业务逻辑。
++ **FutureTask是阻塞的异步回调，调用线程是阻塞的，在获取异步结果的过程中，一直阻塞，等待异步线程返回结果。**
+
+### 5.5 Netty的异步回调模式
+
+​	**Netty官方文档指出Netty的网络操作都是异步的**。在Netty源代码中，大量使用了异步回调处理模式。在Netty的业务开发层面，Netty应用的Handler处理器中的业务处理代码，也都是异步执行的。所以，了解Netty的异步回调， 无论是Netty应用级的开发还是源代码的开发，都是十分重要的。
+
+​	Netty和Guava一样，实现了自己的异步回调体系：Netty继承和扩展了JDK Future系列异步回调的API，定义了自身Future系列接口和类，实现了异步任务的监控、异步执行结果的获取。
+
+​	总体来说，Netty对Java Future异步任务的扩展如下：
+
+1. 继承Java的Future接口，得到一个新的属于Netty自己的Future异步任务接口；该接口对原有的接口进行了增强，使得Netty异步任务能够以非阻塞的方式处理回调的结果。
+2. 引入了一个新接口——GenericFutureListener，用于表示异步执行完成的监听器。这个接口和Guava的FutureCallback的回调接口不同。Netty使用了监听器的模式，异步任务的执行结果完成后的回调逻辑抽象成了Listener监听器接口。可以将Netty的GenericFutureListener监听器接口加入Netty异步任务Futrue中，实现对异步任务执行状态的事件监听。
+
++ Netty的Future接口，可以对应到Guava的ListenableFuture接口
++ Netty的GenericFutureListener接口，可以对应到Guava的FutureCallback接口
+
+#### 5.5.1 详解GenericFutureListener接口
+
+​	前面提到，和Guava的FutureCallback一样，Netty新增了一个接口来封装异步非阻塞回调的逻辑——GenericFutureListener接口
+
+```java
+package io.netty.util.concurrent;
+import java.util.EventListener;
+public interface GenericFutureListener<F extends Future<?>> extends EventListener {
+    // 监听器的回调方法
+    void operationComplete(F var1) throws Exception;
+}
+```
+
+​	该回调方法表示异步任务操作完成。在Future异步任务执行完成后，将回调此方法。在大多数情况下，Netty的异步回调代码编写在GenericFutureListener接口的实现类中的operationComplete方法中。
+
+​	GenericFutureListener的父接口EventListener是一个空接口，没有任何的抽象方法，是一个仅仅具有标识作用的接口。
+
+#### 5.5.2 详解Netty的Future接口
+
+​	Netty对Java的Future进行扩展，位于io.netty.util.concurrent包中。
+
+​	和Guava的ListenableFuture一样，Netty的Future接口，扩展一系列的方法，对执行的过程进行监控，对异步回调完成事件进行监听Listen。
+
+```java
+public interface Future<V> extends java.util.concurrent.Future<V> {
+	boolean isSuccess();	//判断异步执行是否成功
+    boolean isCancellable();	//判断异步执行是否取消
+    Throwable cause();	//获取异步任务异常的原因
+	
+    //增加异步任务执行完成与否的监听器Listener
+    Future<V> addListener(GenericFutureListener<? extends Future<? super V>> listener);
+    //移除异步任务执行完成与否的监听器Listener
+    Future<V> removeListener(GenericFutureListener<? extends Future<? super V>> listener);
+    // ...
+}
+```
+
+​	<u>Netty的Future接口一般不会直接使用，而是会使用子接口</u>。Netty有一系列的子接口，代表不同类型的异步任务，如ChannelFuture接口。
+
+​	ChannelFuture子接口表示通道IO操作的异步任务；如果在通道的异步IO操作完成后，需要执行回调操作，就需要使用到ChannelFuture接口。
+
+#### 5.5.3 ChannelFuture的使用
+
+​	**在Netty的网络编程中，网络连接通道的输入和输出处理都是异步进行的**，都会返回一个ChannelFuture接口的实例。通过返回的异步任务实例，可以为它增加异步回调的监听器。在异步任务真正完成后，回调才会执行。
+
+```java
+// connect是异步的，仅提交异步任务
+ChannelFuture future = bootstap.connect(new InetSocketAddress("www.manning.com",80));
+
+//connect的异步任务真正执行完成后，future回调监听器才会执行
+future.addListener(new ChannelFutureListener() {
+   @Override
+    public void operationComplete(ChannelFuture channelFuture) throws Exception {
+        if(channelFuture.isSuccess()){
+            System.out.println("Connection established");
+        }else {
+            System.out.println("Connection attempt failed");
+            channelFuture.cause().printStackTrace();
+        }
+    }
+});
+```
+
+​	GenericFutureListener接口在Netty中是一个基础类型接口。在网络编程的异步回调中，一般使用Netty中提供的某个子接口，如ChannelFutureListener接口。
+
+#### 5.5.4 Netty的出站和入站异步回调
+
+​	**Netty的出战和入站操作都是异步的**。
+
+​	以最为经典的NIO出站操作——write为例，说明一下ChannelFuture的使用。
+
+​	在调用write操作后，Netty并没完成对Java NIO底层连接的写入操作，因为是异步执行的。
+
+```java
+// write输出方法，返回的是一个异步任务
+ChannelFuture future = ctx.channel().write(msg);
+// 为异步任务，加上监听器
+future.addListener(new ChannelFutureListener(){
+    @Override
+    public void operationComplete(ChannelFuture future){
+        // write操作完成后的回调代码
+    }
+});
+```
+
+​	在调用write操作后，是<u>立即返回</u>，返回的是一个ChannelFuture接口的实例。通过这个实例，可以绑定异步回调监听器，这里的异步回调逻辑需要我们编写。
+
+### 5.6 本章小结
+
+​	Guava和Netty的异步回调都是非阻塞的，而Java的join、FutureTask都是阻塞的。
+
+## 第6章 Netty原理与基础
+
