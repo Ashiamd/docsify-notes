@@ -789,3 +789,209 @@ selectedKeys.remove();
 ## 第4章 鼎鼎大名的Reactor反应器模式
 
 ### 4.1 Reactor反应器模式为何如此重要
+
+​	Web服务器Nginx、高性能缓存服务器Redis、高性能通信中间件Netty皆基于反应器模式。
+
+#### 4.1.1 为什么首先学习Reactor反应器模式
+
+​	越是高水平的Java代码，抽象的层次越高。如果先了解代码的设计模式，再去看代码，阅读就很轻松。
+
+#### 4.1.2 Reactor反应器模式简介
+
+​	Dong Lea，Java中Concurrent并发包的重要作者之一，在文章《Scalable IO in Java》中对反应器模式的定义，具体如下：
+
+​	反应器模式由**Reactor反应器线程、Handlers处理器**两大角色组成：
+
+​	（1）Reactor反应器线程的职责：负责响应IO事件，并且分发到Handlers处理器。
+
+​	（2）Handlers处理器的职责：非阻塞的执行业务处理逻辑。
+
+#### 4.1.3 多线程的OIO的致命缺陷
+
+​	Java的OIO编程，用一个while循环，不断判断是否有新连接
+
+```java
+while(true){
+    socket = accept();	// 阻塞，接收连接
+    handle(socket);		// 读取数据、业务处理、写入结果
+}
+```
+
+​	为了解决此方法的严重连接阻塞问题，出现一个极为经典模式Connection Per Thread(一个线程处理一个连接)模式。
+
+​	Conneciton Per Thread模式的优点：解决了前面的新连接被严重阻塞的问题，在一定程度上，极大地提高了服务器的吞吐量。缺点：对于大量连接，需要消耗大量的线程资源。
+
+### 4.2 单线程Reactor反应器模式
+
+​	在反应器模式中，有Reactor反应器和Handler处理器两个重要的组件。
+
+​	(1) Reactor反应器：负责查询IO事件，当检测到一个IO事件，将其发送给相应的Handler处理器去处理。这里的IO事件，就是NIO中选择器监控的通道IO事件。
+
+​	(2) Handler处理器：与IO事件（或者选择键）绑定，负责IO事件的处理。完成真正的连接建立、通道的读取、处理业务逻辑、负责将结果写出到通道等。
+
+#### 4.2.1 什么是单线程Reactor反应器
+
+​	简单说，Reactor反应器和Handlers处理器处于一个线程中执行。
+
+​	基于Java NIO，实现简单的单线程版本的反应器模式，需要用到SelectionKey选择键的几个重要的成员方法：
+
++ void attach(Object o)
+
+  ​	此方法可以将任何的Java POJO对象，作为附件添加到SelectionKey实例，相当于附件属性的setter方法。
+
+  ​	这方法非常重要，因为在单线程版本的反应器模式中，*需要将Handler处理器实例，作为附件添加到SelectionKey实例*。
+
++ Object attachment()
+
+  ​	取出之前通过attach(Object o)添加到SelectionKey选择键实例的附件，相当于附件属性的getter方法，与attach(Object o)配套使用。
+
+  ​	该方法同样非常重要，当IO事件发生，选择键被select方法选到，可以直接将事件的附件取出，也就是之前绑定的Handler处理器实例，通过该Handler，完成相应的处理。
+
+ 	反应器模式中，需要进行attach和attachment结合使用：选择键注册完成后，调用attach方法，将Handler处理器绑定到选择键；当事件发生时，调用attachment方法，可以从选择键中取出Handler处理器，将事件分发到Handler处理器中，完成业务处理。
+
+#### 4.2.2 单线程Reactor反应器的参考代码
+
+#### 4.2.3 一个Reactor反应器版本的EchoServer实践案例
+
+​	EchoServer回显服务器：读取客户端的输入，回显到客户端。基于Reactor反应器模式来实现，设计3个重要的类：
+
+​	（1）设计一个反应器类：EchoServerReactor类
+
+​	（2）设计两个处理器类：AcceptorHandler新连接处理器、EchoHandler回显处理器。
+
+#### 4.2.4 单线程Reactor反应器模式的缺点
+
+​	单线程Reactor反应器模式，是基于Java的NIO实现的。相对于传统的多线程OIO，反应器模式不再需要启动成千上万条线程，效率自然大大提升。
+
+​	然而， Reactor和Handler都执行在同一线程上，当其中某个Handler阻塞时，会导致其他所有的Handler都得不到执行。如果被阻塞的Handler不仅仅负责输入和输出处理的业务，还包括负责连接监听的AcceptorHandler处理器，当AcceptorHandler被阻塞，会导致整个服务不能接收新的连接。
+
+​	目前服务器都是多核的，单线程反应器模式不能充分利用多和资源。
+
+### 4.3 多线程的Reactor反应器模式
+
+#### 4.3.1 多线程池Reactor反应器演进
+
++ Handler采用多线程
++ Reactor引入多个Selector选择器
+
+​	(1)将负责输入输出处理的IOHandler处理器的执行，放入独立的线程池中。业务处理线程与负责服务监听和IO事件查询的反应器线程相隔离
+
+​	(2)如果服务器为多核的CPU，可以将反应器线程拆分成多个子反应器(SubReactor)线程；同时，引入多个选择器，每一个SubReactor子线程负责一个选择器。这样，充分利用系统资源，也提高了反应器管理大量连接、选择大量通道的能力。
+
+#### 4.3.2 多线程Reactor反应器的实践案例
+
+​	在前面"回显服务器"(EchoServer)的基础上，完成多线程Reactor反应器的升级。
+
+​	（1）引入多个选择器
+
+​	（2）设计一个新的子反应器(SubReactor)类，一个子反应器负责查询一个选择器。
+
+​	（3）开启多个反应器的处理线程，一个线程负责执行一个子反应器(SubReactor)。
+
+​	**为了提高效率， 建议SubReactor的数量和选择器的数量一致，避免多个线程负责一个选择器，导致需要进行线程同步，引起的效率降低**。
+
+#### 4.3.3 多线程Handler处理器的实践案例
+
+### 4.4 Reactor反应器模式小结
+
+1. 反应器模式和生产者消费者模式对比
+
+   ​	相似之处：生产者消费者模式中，一个或多个生产者将事件加入到一个队列中，一个或多个消费者主动从这个队列中提取事件来处理。
+
+   ​	不同之处：反应器模式基于查询，没有专门的队列去缓冲存储IO事件，在查询到IO事件后，反应器根据不同IO选择键(事件)将其分发给对应的Handler处理器来处理。
+
+2. 反应器模式和观察者模式(Observer Pattern)对比
+
+   ​	相似之处：反应器模式中，当查询到IO事件后，服务处理程序使用单路/多路分发(Dispatch)策略，同步地分发这些IO事件。观察者模式(发布/订阅模式)定义依赖关系，让多个观察者同时监听某一个主题(Topic)。这些主题发生变化时，会通知所有观察者，它们能够执行相应的处理。
+
+   ​	不同之处：反应器模式中，Handler处理器实例和IO事件（选择键）的订阅关系，基本上是一个事件绑定到一个Handler处理器；而观察者模式中，同一个时刻，同一个主题可以被订阅过的多个观察者处理。
+
+​	反应器模式优缺点：
+
+1. 优点：
+
++ 响应快，虽然同一反应器线程本身是同步的，但不会被单个连接的同步IO所阻塞；
++ 变成先后对简单，最大程度避免了复杂的多线程同步，也避免了多线程的各个进程之间的开销。
++ 可扩展，可以方便地通过增加反应器线程个数来充分利用CPU资源。
+
+2. 缺点：
+
++ 增加了一定复杂性，有一定门槛，不易于调试。
++ 需要操作系统底层的IO多路复用的支持，如Linux中的epoll。如果操作系统的底层不支持IO多路复用，反应器模式不会有那么高效。
++ 同一个Handler业务线程中，如果出现一个长时间的数据读写，会影响这个反应器中其他通道的IO处理。例如在大文件传输时，IO操作就会影响其他客户端的相应，因而对于这种操作，还需要进一步对反应器模式进行改进。
+
+### 4.5 本章小结
+
+## 第5章 并发基础中的Future异步回调模式
+
+### 5.1 从泡茶的案例说起
+
+​	为了异步执行整个泡茶流程，分别设计三条线程：主线程、清理线程、烧水线程。
+
+1. 主线程（MainThread）:启动清理线程、启动烧水线程，等清洗、烧水的工作完成后，泡茶喝。
+2. 清理线程（WashThread）：洗茶壶、洗茶杯。
+3. 烧水线程（HotWaterThread）：洗好水壶，灌上凉水，放在火上，一直等水烧开。
+
+下面分别使用阻塞模式、异步回调模式来实现泡茶喝的案例。
+
+### 5.2 join异步阻塞
+
+​	多线程join合并，join原理：阻塞当前的线程，直到准备合并的目标线程执行完成。
+
+#### 5.2.1 线程的join合并流程
+
+​	在Java中，线程Thread的合并流程：假如线程A调用了线程B的B.join方法，合并B线程。那么A线程进入阻塞状态，直到B线程执行完成。
+
+#### 5.2.2 使用join实现异步泡茶喝的实践案例
+
+#### 5.2.3 详解join合并方法
+
+​	join方法的应用场景：A线程调用B线程的join方法，等待B线程执行完成；在B线程没有完成前，A线程阻塞。
+
++ join是实例方法，不是静态方法
++ join调用时，不是线程所指向的目前线程阻塞，而是当前线程阻塞。
++ 只有等到当前线程所指向的线程执行完成、或者超时，当前线程才能重新恢复执行。
+
+​	join有一个问题，被合并的线程没有返回值。如果要获得异步线程的执行结果，可以使用Java的FutureTask系列类。
+
+### 5.3 FutureTask异步回调之重武器
+
+​	为了获取异步线程的返回结果，Java在1.5版本之后提供了一种新的多线程的创建方式——FutureTask方式。FutureTask方式包含了一系列的Java相关的类，在java.util.concurrent包中，最为重要的是FutureTask类和Callable接口。
+
+#### 5.3.1 Callable接口
+
+​	Callable有返回值
+
+```java
+package java.util.concurrent;
+@FunctionalInterface
+public interface Callable<V> {
+    // call方法有返回值
+    V call() throws Exception;
+}
+```
+
+​	Callable不能作为Thread线程实例的target使用，为此Java提供了在Callable实例和Thread的target成员之间的一个搭桥的类——FutureTask类。
+
+#### 5.3.2 初探FutureTask类
+
+​	FutureTask表示一个未来执行的任务，表示新线程所执行的操作，同样java.util.concurrent包。FutureTask类的构造函数的参数为Callable类型，是对Callable的二次分装，可以执行Callable的call方法。FutureTask类间接继承了Runnable接口，从而可以作为Thread实例的target执行目标。
+
+​	FutureTask类的构造函数的源代码：
+
+```java
+public FutureTask(Callable<V> callable) {
+    if(callable == null)
+        throw new NullPointerException();
+    this.callable = callable;
+    this.state = NEW;	//	ensure visibility of callable
+}
+```
+
+​	FutureTask将Callable的call执行结果返回值存储起来，通过FutureTask的实例方法获取返回值。
+
+​	在Java语言中，将FutureTask类的一系列操作，抽象出来作为一个重要的接口——Future接口。FutureTask当然也实现了该接口。
+
+#### 5.3.3 Future接口
+
+​	主要对并发
