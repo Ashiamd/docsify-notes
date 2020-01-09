@@ -1512,8 +1512,8 @@ public class NettyDiscardHandler extends ChannelInboundHandlerAdapter {
 
 ​	在Netty中，每一个NioSocketChannel通道所封装的是Java NIO通道，再往下就对应到了操作系统底层的socket描述符。**理论上讲，操作系统底层的socket描述符分为两类**：
 
-1. 连接监听类型。连接监听类型的socket描述符，放在服务器端，它负责接收客户端的套接字连接；在服务器端，**一个“连接监听类型”的socket描述符可以接受（Accept）成千上万的传输类的socket描述符**。
-2. 传输数据类型。数据传输类的socket描述符负责传输数据。同一条TCP的Socket传输链路，在服务器端和客户端，都分别会有一个与之对应的数据传输类型的socket描述符。
+1. **连接监听类型**。连接监听类型的socket描述符，放在服务器端，它负责接收客户端的套接字连接；在服务器端，**一个“连接监听类型”的socket描述符可以接受（Accept）成千上万的传输类的socket描述符**。
+2. **传输数据类型**。数据传输类的socket描述符负责传输数据。同一条TCP的Socket传输链路，在服务器端和客户端，都分别会有一个与之对应的数据传输类型的socket描述符。
 
 ​	在Netty中，异步非阻塞的服务器端监听通道NioServerSocketChannel，封装在Linux底层的描述符，是“连接监听类型”socket描述符；而NioSocketChannel异步非阻塞TCP Socket传输通道，封装在底层Linux的描述符，是“数据传输类型”的socket描述符。
 
@@ -1549,3 +1549,160 @@ ServerBootstrap b = new ServerBootstrap();
 ​	接下来，结合前面的NettyDiscardServer服务器的代码，给大家详细介绍一下Bootstrap启动流程中精彩的8个步骤。
 
 ​	第1步：创建反应器线程组，并赋值给ServerBootstrap启动器实例
+
+```java
+// 创建反应器线程组
+// boss线程组
+EventLoopGroup bossLoopGroup = new NioEventLoopGroup(1);
+// worker线程组
+EventLoopGroup workerLoopGroup = new NioEventLoopGroup();
+// ...
+// 1 设置反应器线程组
+b.group(bossLoopGroup, workerLoopGroup);
+```
+
+​	第2步：设置通道的IO类型
+
+​	Netty不止支持Java NIO，也支持阻塞式的OIO（也叫BIO，Block-IO，即阻塞式IO）。下面配置的是Java NIO类型的通道类型，方法如下：
+
+```java
+// 2 设置nio类型的通道
+b.channel(NioServerSocketChannel.class);
+```
+
+​	如果确实需要指定Bootstrap的IO模型为BIO，那么这里配置上Netty的OioServerSocketChannel.class类即可。由于NIO的优势巨大，通常不会在Netty中使用BIO。
+
+​	第3步：设置监听端口
+
+```java
+// 3 设置监听端口
+b.localAddress(new InetSocketAddress(port));
+```
+
+​	这是最为简单的一步，主要是设置服务器的监听地址。
+
+​	第4步：设置传输通道的配置选项
+
+```java
+// 4 设置通道的参数
+b.option(ChannelOption.SO_KEEPALIVE, true);
+b.option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+```
+
+​	这里用到了Bootstrap的option()选项设置方法。对于服务器的Bootstrap而言，这个方法的作用是：<u>给父通道（Parent Channel）接收连接通道设置一些选项</u>。
+
+​	<u>如果要给子通道（Child Channel）设置一些通道选项，则需要用另一个childOption()设置方法</u>。
+
+​	可以设置哪些通道选项（ChannelOption）呢？在上面的代码中，设置了一些底层TCP相关的选项ChannelOption.SO_KEEPALIVE。该选项表示：是否开启TCP底层心跳机制，true为开启，false为关闭。
+
+​	第5步：装配子通道的Pipeline流水线
+
+​	上一节介绍到，每一个通道的子通道，都用一条ChannelPipeline流水线。它的内部有一个双向的链表。装配流水线的方式是：将业务处理器ChannelHandler实例加入双向链表中。
+
+​	装配子通道的Handler流水线调用childHandler()方法，传递一个ChannelInitializer通道初始化类的实例。**在父通道成功接收一个连接，并创建成功一个子通道后，就会初始化子通道，这里配置的ChannelInitializer实例就会被调用**。
+
+​	<u>在ChannelInitializer通道初始化类的实例中，有一个initChannel初始化方法，在子通道创建后会被执行到，向子通道流水线增加业务处理器</u>。
+
+```java
+// 5 装配子通道流水线
+b.childHandler(new ChannelInitializer<SocketChannel>() {
+    // 有连接到达时会创建一个通道的子通道，并初始化
+    protected void initChannel(SocketChannel ch) throws Exception {
+        // 流水线管理子通道中的Handler业务处理器
+        // 向子通道流水线添加一个Handler业务处理器
+        ch.pipeline().addLast(new NettyDiscardHandler());
+    }
+})
+```
+
+​	为什么仅装配子通道的流水线，而不需要装配父通道的流水线呢？原因是：父通道也就是NioServerSocketChannel连接接受通道， 它的内部业务处理是固定的：**接受新连接后，创建子通道，然后初始化子通道**，所以不需要特别的配置。<u>如果需要完成特殊的业务处理，可以使用ServerBootstrap的handler（ChannelHandler handler）方法，为父通道设置ChannelInitializer初始化器</u>。
+
+​	<u>说明一下，ChannelInitializer处理器有一个泛型参数SocketChannel，它代表需要初始化的通道类型，这个类型需要和前面的启动器中设置的通道类型，一一对应起来</u>。
+
+​	第6步：开始绑定服务器新连接的监听端口
+
+```java
+// 6 开始绑定端口，通过调用sync同步阻塞直到绑定成功
+ChannelFuture channelFuture = b.bind().sync();
+Logger.info(" 服务器启动成功，监听端口： " + channelFuture.channel().localAddress());
+```
+
+​	这个也很简单。b.bind()方法的功能：返回一个端口绑定Netty的异步任务channelFuture。在这里，并没有给channelFuture异步任务增加回调监听器，而是阻塞channelFuture异步任务，直到端口绑定任务执行完成。
+
+​	**在Netty中，所有的IO操作都是异步执行的**，这就意味着任何一个IO操作会立刻返回，在返回的时候，异步任务还没有真正执行。什么时候执行完成呢？**Netty中的IO操作，都会返回异步任务实例（如ChannelFuture实例），通过自我阻塞一直到ChannelFuture异步任务执行完成，或者为ChannelFuture增加事件监听器的两种方式，以获得Netty中的IO操作的真正结果**。上面使用了第一种。
+
+​	至此，服务器正式启动。
+
+​	第7步：自我阻塞，直到通道关闭
+
+```java
+// 7 等待通道关闭
+// 自我阻塞，直到通道关闭的异步任务结束
+ChannelFuture closeFuture = channelFuture.channel().closeFuture();
+closeFuture.sync();
+```
+
+​	如果要阻塞当前线程直到通道关闭，可以使用通常的closeFuture()方法，以获得通道关闭的异步任务。当通道被关闭时，closeFuture实例的sync()方法会返回。
+
+​	第8步：关闭EventLoopGroup
+
+```java
+// 8 关闭EventLoopGroup
+// 释放掉所有资源，包括创建的反应器线程
+workerLoopGroup.shutdownGracefully();
+bossLoopGroup.shutdownGracefully();
+```
+
+​	<u>关闭Reactor反应器线程组，同时会关闭内部的subReactor子反应器线程，也会关闭内部的Selector选择器、内部的轮询线程以及负责查询的所有的子通道。在子通道关闭后，会释放掉底层的资源，如TCP Socket文件描述符等</u>。
+
+#### 6.3.4 ChannelOption通道选项
+
+​	无论对对于NioServerSocketChannel父通道类型，还是对于NioSocketChannel子通道类型，都可以设置一系列的ChannelOption选项。在ChannelOption类中，定义了一大票选项，下面介绍一些常见的选项。
+
+1. SO_RCVBUF，SO_SNDBUF
+
+   ​	此为TCP参数。**每个TCP socket（套接字）在内核中都有一个发送缓冲区和一个接收缓冲区**，这个两个选项就是用来设置TCP连接的这两个缓冲区大小的。TCP的全双工的工作模式以及<u>TCP的滑动窗口</u>便是依赖于这两个两个独立的缓冲区及其填充的状态。
+
+   > [解析TCP之滑动窗口(动画演示)](https://blog.csdn.net/yao5hed/article/details/81046945)
+   >
+   > [TCP的滑动窗口与拥塞窗口](https://blog.csdn.net/ligupeng7929/article/details/79597423)
+
+2. TCP_NODELAY
+
+   ​	此为TCP参数。表示立即发送数据，默认值为True（Netty默认为True，而操作系统默认为False）。该值用于设置**Nagle算法的启用，该算法将小的碎片数据连接成更大的报文（或数据包）来最小化所发送报文的数量，如果需要发送一些较小的报文，则需要禁用该算法**。<u>Netty默认禁用该算法，从而最小化报文传输的延时</u>。
+
+   ​	说明一下：这个参数的值，与是否开启Nagle算法是相反的，设置为true表示关闭，设置为false表示开启。通俗地讲，如果要求高实时性，有数据发送时就立刻发送，就设置为true，如果需要减少发送次数和减少网络交互次数，就设置为false
+
+   > [结合RPC框架通信谈 netty如何解决TCP粘包问题(即使关闭nagle算法，粘包依旧存在)](https://www.cnblogs.com/yuanjiangw/p/9954079.html)
+
+3. SO_KEEPALIVE
+
+   ​	此为TCP参数。表示**底层TCP协议的心跳机制**。true为连接保持心跳，默认值为false。启用该功能时，TCP会主动探测空闲连接的有效性。可以将此功能视为TCP的心跳机制，需要注意的是：<u>默认的心跳间隔是7200s即2小时。Netty默认关闭该功能</u>。
+
+4. SO_REUSEADDR
+
+   ​	此为TCP参数。设置为true时表示地址复用，默认值为false。有四种情况需要用到这个参数设置：
+
+   + 当有一个有相同本地地址和端口的socket1处于TIME_WAIT状态时，而我们希望启动的程序的socket2要占用该地址和端口。例如在重启服务且保持先前的端口时。
+   + 有多块网卡或用IP Alias技术的机器在同一端口启动多个进程，但每个进程绑定的本地IP地址不能相同。
+   + 单个进程绑定相同的端口到多个socket（套接字）上，但每个socket绑定的IP地址不同。
+   + 完全相同的地址和端口的重复绑定。但这只用于UDP的多播，不用于TCP。
+
+5. SO_LINGER
+
+   ​	此为TCP参数。表示关闭socket的延时事件，默认值为-1，表示禁用该功能。-1表示socket.close()方法立即返回，但操作系统底层会将发送缓冲区全部发送到对端。 0表示socket.close()方法立即返回，操作系统放弃发送缓冲区的数据，直接向对端发送**RST包**，对端收到复位错误。非0整数值表示调用socket.close()方法的线程被阻塞，直到延迟时间到来、发送缓冲区中的数据发送完毕，若超时，则对端会收到复位错误。
+
+   > [TCP连接异常终止（RST包）](https://blog.csdn.net/hik_zxw/article/details/50167703)
+
+6. SO_BACKLOG
+
+   ​	此为TCP参数。<u>表示服务器接收连接的队列长度，如果队列已满，客户端连接池将被拒绝</u>。默认值，在Windows中为200，其他操作系统为128。
+
+   ​	**如果连接建立频繁，服务器处理新连接较慢，可以适当调大这个参数**。
+
+7. SO_BROADCAST
+
+   ​	此为TCP参数。表示设置广播模式
+
+### 6.4 详解Channel通道
+
