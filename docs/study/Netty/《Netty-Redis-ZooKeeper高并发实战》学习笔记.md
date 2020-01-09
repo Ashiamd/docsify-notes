@@ -1264,3 +1264,142 @@ future.addListener(new ChannelFutureListener(){
 
 ## 第6章 Netty原理与基础
 
+​	Netty是一个JavaNIO客户端/服务器框架。基于Netty，可以快速轻松地开发网络服务器和客户端的应用程序。与直接使用Java NIO相比，Netty能更快速轻松地开发网络服务器和客户端的应用程序。Netty极大地简化了TCP、UDP套接字、HTTPWeb服务程序开发。
+
+​	Netty目标之一，开发做到“快速和轻松”，除了做到“快速和轻松”的开发TCP/UDP等自定义协议的通讯程序之外，Netty经过精心设计，还可以做到“快速和轻松”地开发应用层协议的程序，如FTP、SMTP、HTTP以及其他的传统应用层协议。
+
+​	Netty目标值二，高性能、高可扩展性。基于Java的NIO，Netty设计了一套优秀的Reactor反应器模式。在基于Netty的反应器模式实现中的Channel（通道）、Handler（处理器）等基类，能快速扩展以覆盖不同协议、完成不同业务处理的大量应用类。
+
+### 6.1 第一个Netty的实践案例DiscardServer
+
+#### 6.1.1 创建第一个Netty项目
+
+​	建议使用Netty4.0以上的版本。
+
+#### 6.1.2 第一个Netty服务器端程序
+
+ ```java
+public class NettyDiscardServer {
+    private final int serverPort;
+    ServerBootstrap b = new ServerBootstrap();
+
+    public NettyDiscardServer(int port) {
+        this.serverPort = port;
+    }
+
+    public void runServer() {
+        //创建reactor 线程组
+        EventLoopGroup bossLoopGroup = new NioEventLoopGroup(1);
+        EventLoopGroup workerLoopGroup = new NioEventLoopGroup();
+
+        try {
+            //1 设置reactor 线程组
+            b.group(bossLoopGroup, workerLoopGroup);
+            //2 设置nio类型的channel
+            b.channel(NioServerSocketChannel.class);
+            //3 设置监听端口
+            b.localAddress(serverPort);
+            //4 设置通道的参数
+            b.option(ChannelOption.SO_KEEPALIVE, true);
+            b.option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+            b.childOption(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+
+            //5 装配子通道流水线
+            b.childHandler(new ChannelInitializer<SocketChannel>() {
+                //有连接到达时会创建一个channel
+                protected void initChannel(SocketChannel ch) throws Exception {
+                    // pipeline管理子通道channel中的Handler
+                    // 向子channel流水线添加一个handler处理器
+                    ch.pipeline().addLast(new NettyDiscardHandler());
+                }
+            });
+            // 6 开始绑定server
+            // 通过调用sync同步方法阻塞直到绑定成功
+            ChannelFuture channelFuture = b.bind().sync();
+            Logger.info(" 服务器启动成功，监听端口: " +
+                    channelFuture.channel().localAddress());
+
+            // 7 等待通道关闭的异步任务结束
+            // 服务监听通道会一直等待通道关闭的异步任务结束
+            ChannelFuture closeFuture = channelFuture.channel().closeFuture();
+            closeFuture.sync();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            // 8 优雅关闭EventLoopGroup，
+            // 释放掉所有资源包括创建的线程
+            workerLoopGroup.shutdownGracefully();
+            bossLoopGroup.shutdownGracefully();
+        }
+
+    }
+
+    public static void main(String[] args) throws InterruptedException {
+        int port = NettyDemoConfig.SOCKET_SERVER_PORT;
+        new NettyDiscardServer(port).runServer();
+    }
+}
+ ```
+
+​	Netty是基于反应器模式实现的。还好，大家已经非常深入地了解反应器模式，现在大家顺藤摸瓜学习Netty的结构就相对简单了。
+
+​	首先要讲的是Reactor反应器。反应器的作用是进行一个IO事件的select查询和dispatch分发。Netty中对应的反应器组件有多种，应用场景不同，用到的反应器也各不相同。一般来说，对应多线程的Java NIO通信的应用场景，**Netty的反应器类型为：NioEventLoopGroup**。
+
+​	在上面的例子中，使用了两个NioEventLoopGroup实例。第一个通常被称为”包工头“，负责服务器通道新连接的IO事件的监听。第二个通常被称为”工人“，主要负责传输通道的IO事件的处理。
+
+​	其次要说的是Handler处理器（也称之为处理程序）。**Handler处理器的作用是对应到IO事件，实现IO事件的业务处理**。Handler处理器需要专门开发。
+
+​	再次，上面的例子中，还用到了**Netty的服务启动类ServerBootstrap，它的职责是一个组装和集成器**，将不同的Netty组件组装到一起。另外，ServerBootstrap能够按照应用场景的需要，为组件设置好对应的参数，最后实现Netty服务器的监听和启动。
+
+#### 6.1.3 业务处理器NettyDiscardHandler
+
+​	**在反应器Reactor模式中，所有业务处理都在Handler处理器中完成**。这里编写一个新类：NettyDiscardHandler。其业务处理即把所有接收到的内容直接丢弃。
+
+```java
+public class NettyDiscardHandler extends ChannelInboundHandlerAdapter {
+    @Override
+    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+
+        ByteBuf in = (ByteBuf) msg;
+        try {
+            Logger.info("收到消息,丢弃如下:");
+            while (in.isReadable()) {
+                System.out.print((char) in.readByte());
+            }
+            System.out.println();
+        } finally {
+            ReferenceCountUtil.release(msg);
+        }
+    }
+}
+```
+
+​	首先说明一下，这里将引入一个新的概念：入站和出战。入站指的是输入，出站指的是输出。
+
+​	Netty的Handler处理器需要处理多种IO事件（如可读、可写），对应于不同的IO事件，Netty提供了一些基础的方法。这些方法都已经提前封装好，后面直接继承或者实现即可。比如说，对u有处理入站的IO事件的方法，对应的接口为ChannelInboundHandler入站处理接口，而ChannelInboundHandlerAdapter则是Netty提供的入站处理的默认实现。
+
+​	也就是说，如果要实现自己的入站处理器Handler，只要继承ChannelInboundHandlerAdapter入站处理器，再写入自己的入站处理的业务逻辑。如果要读取入站的数据，只要写在了入站处理方法channelRead中即可。
+
+​	上面例子中的channelRead方法，读取了Netty的输入数据缓冲区ByteBuf。Netty的ByteBuf，可以对应到前面介绍的NIO数据缓冲区。它们在功能上是类似的，不过相对而言，Netty的版本性能更好，使用也更加方便。
+
+#### 6.1.4 运行NettyDiscardServer
+
+​	上面的例子中，出现了Netty的各种组件：**服务器启动器、缓冲区、反应器、Handler业务处理器、Future异步任务监听、数据传输通道等**。这些Netty组件都是需要掌握的。
+
+​	虽然客户端EhoClient客户端是使用Java NIO编写的，而NettyDiscardServer服务端是使用Netty编写的，但是不影响它们之间的相互通信。因为NettyDiscardServer的底层也是使用Java NIO。
+
+### 6.2 解密Netty中的Reactor反应器模式
+
+​	前面的章节已经反复说明：<u>设计模式是Java代码或者程序的重要组织方式，如果不了解设计模式，学习Java程序往往找不到头绪，上下求索而不得其法</u>。故而，在学习Netty组件之前，必须了解Netty中的反应器模式是如何实现的。
+
+​	现在回顾一下JavaNIO中IO事件的处理流程和反应器模式的基础内容。
+
+#### 6.2.1 回顾Reactor反应器模式中IO事件的处理流程
+
+​	channel --> selector --> Reactor --> handler
+
+​	整个流程大致分为4步。具体如下：
+
+
+
+
