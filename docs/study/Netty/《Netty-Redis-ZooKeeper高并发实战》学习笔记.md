@@ -1,3 +1,5 @@
+
+
 # 《Netty、Redis、ZooKeeper高并发实战》学习笔记
 
 > 最近一段时间学习IM编程，但是之前急于需要成品，所以学得不是很懂，最后也没能弄好，所以打算系统地学习一下，然后再继续IM编程。
@@ -1787,6 +1789,345 @@ protected AbstractChannel(Channel parent) {
 
 ​	总之，EmbeddedChannel类，即具备通道的通用接口和方法，又增加了一些单元测试的辅助方法，在开发时非常实用。
 
+> [Netty 使用 EmbeddedChannel 进行单元测试](https://blog.csdn.net/al_assad/article/details/79472347)
+> [netty使用EmbeddedChannel对channel的出入站进行单元测试](https://www.jianshu.com/p/1573e81e655d)
+
 ### 6.5 详解Handler业务处理器
 
-​	
+​	在Reactor反应器经典模式中，反应器查询到IO事件后，分发到Handler业务处理器，由Handler完成IO操作和业务处理。
+
+​	**整个IO处理操作环节包括：从通道读取数据包、数据包解码、业务处理、目标数据编码、把数据包写到通道，然后由通道发送到对端**。
+
+​	前后两个环节，**<u>从通道读数据包</u>和<u>由通道发送到对端</u>，由Netty的底层负责完成，不需要用户程序负责**。
+
+​	用户程序主要在Handler业务处理器中，Handler涉及的环节为：**数据包解码、业务处理、目标数据编码、把数据包写到通道中**。
+
+​	前面已经介绍过，从应用程序开发人员的角度来看，有入站和出站两种类型操作。
+
++ 入站处理，触发的方向为：自底向上，Netty的内部（如通道）到ChannelInboundHandler入站处理器。
++ 出站处理，触发的方向为：自顶向下，从ChannelOutboundHandler出站处理器到Netty的内部（如通道）。
+
+​	按照这种方向来分，前面数据包解码、业务处理两个环节——属于入站处理器的工作；后面目标数据编码、把数据包写到通道中两个环节——属于出站处理器的工作。
+
+#### 6.5.1 ChannelInboundHandler通道入站处理器
+
+​	当数据或者信息入站到Netty通道时，Netty将触发入站管理器ChannelInboundHandler所对应的入站API，进行入站操作处理。
+
+​	ChannelInboundHandler主要操作：
+
+1. channelRegistered
+
+   ​	当通道注册完成后，Netty会调用fireChannelRegistered，触发通道注册事件。通道会启动该入站操作的流水线处理，在通道注册过的入站处理器Handler的channelRegitstered方法，会被调用到。
+
+2. channelActive
+
+   ​	当通道激活完成后，Netty会调用fireChannelActive，触发通道激活事件。通常会启动该入站操作的流水线处理，在通道注册过的入站处理器Handler的channelActive方法，会被调用到。
+
+3. channelRead
+
+   ​	当通道缓冲区可读，Netty会调用fireChannelRead，触发通道可读事件。通道会启动该入站操作的流水线处理，在通道注册过的入站处理器Handler的channelRead方法，会被调用到。
+
+4. channelReadComplete
+
+   ​	当通道缓冲区读完，Netty会调用fireChannelReadComplete，触发通道读完事件。通道会启动该入站操作的流水线处理，在通道注册过的入站处理器Handler的channelReadComplete方法，会被调用到。
+
+5. channelInactive
+
+   ​	当连接被断开或者不可用，Netty会调用fireChannelInactive，触发连接不可用事件。通道会启动对应的流水线处理，在通道注册过的入站处理器Handler的channelInactive方法，会被调用到。
+
+6. exceptionCaught
+
+   ​	当通道处理过程发生异常时，Netty会调用fireExceptionCaught，触发异常捕获事件。通道会启动异常捕获的流水线处理，在通道注册过的处理器Handler的exceptionCaught方法，会被调用到。注意，<u>这个方法是在通道处理器中ChannelHandler定义的方法，入站处理器、出战处理器接口都继承到了该方法</u>。
+
+​	上面仅介绍了ChannelInboundHandler的其中几个比较重要的方法。在Netty中，它的默认实现为ChannelInboundHandlerAdapter，在实际开发中，只需要继承这个ChannelInboundHandlerAdapter默认实现，重写自己需要的部分即可。
+
+#### 6.5.2 ChannelOutboundHandler通道出站处理器
+
+​	当业务处理完成后，需要操作Java NIO底层通道时，通过一系列的ChannelOutboundHandler通道出站处理器，完成Netty通道到底层通道的操作。比方说建立底层连接、断开底层连接、写入底层Java NIO 通道等。ChannelOutboundHandler接口定义了大部分的出站操作。
+
+​	再强调一下，**出站处理的方向：是通过上层Netty通道，去操作底层Java IO通道**。
+
+​	主要出站（Outbound）的操作如下：
+
+1. bind
+
+   ​	监听地址（IP+端口）绑定：完成底层Java IO通道的IP地址绑定。如果使用TCP传输协议，这个方法用于服务器端。
+
+2. connect
+
+   ​	连接服务器：完成底层 Java IO通道的服务器端的连接操作。如果使用TCP传输协议，这个方法用于客户端。
+
+3. write
+
+   ​	写数据到底层：完成Netty通道向底层Java IO通道的数据写入操作。<u>此方法仅仅是触发一下操作而已，并不是完成实际的数据写入操作</u>。
+
+4. flush
+
+   ​	腾空缓冲区中的数据，把这些数据写到对端：将底层缓冲区的数据腾空，立即写出到对端。
+
+5. read
+
+   ​	从底层读数据：完成Nettu通道从java IO通道的数据读取。
+
+6. disConnect
+
+   ​	断开服务器连接：断开底层Java IO通道的服务器端连接。如果使用TCP传输协议，此方法主要用于客户端。
+
+7. close
+
+   ​	主动关闭通道：关闭底层的通道，例如服务器端的新连接监听通道。
+
+​	上面仅介绍了ChannelOutboundHandler的其中几个比较重要的方法。在Netty中，它的默认实现为ChannelOutboundHandlerAdapter，在实际开发中，只需要继承这个ChannelOutboundHandlerAdapter默认实现，重写自己需要的部分即可。
+
+#### 6.5.3 ChannelInitializer通道初始化处理器
+
+​	通道和Handler业务处理器的关系：一条Netty的通道拥有一条Handler业务处理器流水线，负责装配自己的Handler业务处理器。装配Handler的工作，发生在通道开始工作之前。现在的问题是：如果向流水线中装配业务处理器呢？这就得借助通道的初始化类——ChannelInitializer。
+
+​	首先回顾NettyDiscardServer丢弃服务端的代码，在给接收到的新连接搭配Handler业务处理器时，使用childHandler设置了一个ChannelInitializer实例：
+
+```java
+// 5 装配子通道流水线
+b.childHandler(new ChannelInitializer<SocketChannel>() {
+    // 有连接到达时会创建一个通道
+    protected void initChannel(SocketChannel ch)throws Exception {
+        // 流水线管理子通道中的Handler业务处理器
+        // 向子通道流水线添加一个Handler业务处理器
+        ch.pipeline().addLast(new NettyDiscardHandler());
+    }
+});
+```
+
+​	上面的ChannelInitializer也是通道初始化器，属于入站处理器的类型。在示例代码中，使用了ChannelInitializer的initChannel()方法。
+
+​	initChannel()方法是ChannelInitailizer定义的一个抽象方法，这个抽象方法需要开发人员自己实现。<u>在父通道调用initChannel()方法时，会将新接收的通道作为参数，传递给initChannel()方法</u>。**initChannel()方法内部法制的业务代码是：拿到新连接通道作为实际参数，往它的流水线中装配Handler业务处理器**。
+
+#### 6.5.4 ChannelInboundHandler的生命周期的实践案例
+
+​	为了弄清Handler业务处理器的各个方法的执行顺序和生命周期，这里定义一个简单的入站Handler处理器——InHandlerDemo。
+
+```java
+public class InHandlerDemo extends ChannelInboundHandlerAdapter {
+    @Override
+    public void handlerAdded(ChannelHandlerContext ctx) throws Exception {
+        Logger.info("被调用：handlerAdded()");
+        super.handlerAdded(ctx);
+    }
+
+    @Override
+    public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
+        Logger.info("被调用：channelRegistered()");
+        super.channelRegistered(ctx);
+    }
+
+    @Override
+    public void channelActive(ChannelHandlerContext ctx) throws Exception {
+        Logger.info("被调用：channelActive()");
+        super.channelActive(ctx);
+    }
+
+    @Override
+    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+        Logger.info("被调用：channelRead()");
+        super.channelRead(ctx, msg);
+    }
+
+    @Override
+    public void channelReadComplete(ChannelHandlerContext ctx) throws Exception {
+        Logger.info("被调用：channelReadComplete()");
+        super.channelReadComplete(ctx);
+    }
+
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        Logger.info("被调用：channelInactive()");
+        super.channelInactive(ctx);
+    }
+
+    @Override
+    public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
+        Logger.info("被调用: channelUnregistered()");
+        super.channelUnregistered(ctx);
+    }
+
+    @Override
+    public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
+        Logger.info("被调用：handlerRemoved()");
+        super.handlerRemoved(ctx);
+    }
+}
+```
+
+​	为了演示这个入站处理器，需要编写一个单元测试代码：将上面的Inhandler入站处理器加入到一个EmbeddedChannel嵌入式通道的流水线中。接着，通过writeInbound方法写入ByteBuf数据包。InHandlerDemo作为一个入站处理器，会处理从通道到流水线的入站报文——ByteBuf数据包。单元测试代码如下：
+
+```java
+public class InHandlerDemoTester {
+    @Test
+    public void testInHandlerLifeCircle() {
+        final InHandlerDemo inHandler = new InHandlerDemo();
+        //初始化处理器
+        ChannelInitializer i = new ChannelInitializer<EmbeddedChannel>() {
+            protected void initChannel(EmbeddedChannel ch) {
+                ch.pipeline().addLast(inHandler);
+            }
+        };
+        //创建嵌入式通道
+        EmbeddedChannel channel = new EmbeddedChannel(i);
+        ByteBuf buf = Unpooled.buffer();
+        buf.writeInt(1);
+        //模拟入站，写一个入站包
+        channel.writeInbound(buf);
+        channel.flush();
+        //模拟入站，再写一个入站包
+        channel.writeInbound(buf);
+        channel.flush();
+        //通道关闭
+        channel.close();
+        try {
+            Thread.sleep(Integer.MAX_VALUE);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+​	运行上面的测试用例，输出的结果具体如下：
+
+```java
+被调用：handlerAdded()
+被调用：channelRegistered()
+被调用：channelActive()
+被调用：channelRead()
+被调用：channelReadComplete()
+被调用：channelRead()
+被调用：channelReadComplete()
+被调用：channelInactive()
+被调用: channelUnregistered()
+被调用：handlerRemoved()
+```
+
+​	其中，读数据的入站回调为：channelRead()->channelReadComplete()；入站方法会多次调用，每一次有ByteBuf数据包入站都会调用到。
+
+​	除两个入站回调方法外，其余6个方法都和ChannelHandler生命周期有关。
+
+1. handlerAdded()：当业务处理器被加入到流水线后，此方法被回调。也就是在完成ch.pipeline().addLast(handler) 语句之后，会回调handlerAdded()。
+
+2. channelRegistered()：当通道成功绑定一个NioEventLoop线程后，会通过流水线回调所有业务处理器的channelRegistered()方法。
+3. channelActive()：当通道激活成功后，会通过流水线会调用所有业务处理器的channelActive()方法。通道激活成功指的是，所有的业务处理器添加、注册的异步任务完成，并且NioEventLoop线程绑定的异步任务完成。
+4. channelInactive()：当通道的底层连接已经不是ESTABLISH状态，或者底层连接已经关闭时，会首先回调所有业务处理器的channelInactive()。
+5. channelUnregistered()：通道和NioEventLoop线程接触绑定，移除对这条通道的事件处理之后，回调所有业务处理器的channelInactive()方法。
+6. handlerRemoved()：最后，Netty会移除掉通道上所有的业务处理器，并且回调所有的的业务处理器的handlerRemoved()方法。
+
+​	上面列取的6个生命周期方法中，前3个在通道创建的时候被现后调用，后面3个在通道关闭时现后被回调。
+
+​	除了生命周期的回调， 就是入站和出站处理的回调。 对于Inhandler入站处理器，有两种很重要的回调方法为：
+
+（1）channelRead()：有数据包入站，通道可读。流水线会启动入站处理流程，从前向后，入站处理器的channelRead()方法会被依次回调到。
+
+（2）channelReadComplete()：流水线完成入站处理后，会从前向后，依次回调每个入站处理器的channelReadComplete()方法，表示数据读取完毕。
+
+​	对于出战处理器ChannelOutboundHandler的生命周期以及回调的顺序，与入站处理器大致相同。
+
+```java
+public class OutHandlerDemo extends ChannelOutboundHandlerAdapter {
+    @Override
+    public void handlerAdded(ChannelHandlerContext ctx) throws Exception {
+        System.out.println("被调用：handlerAdded()");
+        super.handlerAdded(ctx);
+    }
+
+
+    @Override
+    public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
+        System.out.println("被调用： handlerRemoved()");
+        super.handlerRemoved(ctx);
+    }
+
+    @Override
+    public void bind(ChannelHandlerContext ctx, SocketAddress localAddress, ChannelPromise promise) throws Exception {
+        System.out.println("被调用： bind()");
+        super.bind(ctx, localAddress, promise);
+    }
+
+    @Override
+    public void connect(ChannelHandlerContext ctx, SocketAddress remoteAddress, SocketAddress localAddress, ChannelPromise promise) throws Exception {
+        System.out.println("被调用： connect()");
+        super.connect(ctx, remoteAddress, localAddress, promise);
+    }
+
+    @Override
+    public void disconnect(ChannelHandlerContext ctx, ChannelPromise promise) throws Exception {
+        System.out.println("被调用： disconnect()");
+        super.disconnect(ctx, promise);
+    }
+
+    @Override
+    public void read(ChannelHandlerContext ctx) throws Exception {
+        System.out.println("被调用： read()");
+        super.read(ctx);
+    }
+
+    @Override
+    public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
+        System.out.println("被调用： write()");
+        super.write(ctx, msg, promise);
+    }
+
+    @Override
+    public void flush(ChannelHandlerContext ctx) throws Exception {
+        System.out.println("被调用： flush()");
+        super.flush(ctx);
+    }
+}
+```
+
+```java
+public class OutHandlerDemoTester {
+    @Test
+    public void testlifeCircle() {
+        final OutHandlerDemo handler = new OutHandlerDemo();
+        ChannelInitializer i = new ChannelInitializer<EmbeddedChannel>() {
+            protected void initChannel(EmbeddedChannel ch) {
+                ch.pipeline().addLast(handler);
+            }
+        };
+
+        final EmbeddedChannel channel = new EmbeddedChannel(i);
+
+//        channel.pipeline().addLast(handler);
+
+        //测试出站写入
+
+        ByteBuf buf = Unpooled.buffer();
+        buf.writeInt(1);
+
+        ChannelFuture f = channel.pipeline().writeAndFlush(buf);
+        f.addListener(new GenericFutureListener<Future<? super Void>>() {
+            @Override
+            public void operationComplete(Future<? super Void> future) throws Exception {
+                if (future.isSuccess()) {
+                    System.out.println("write is finished");
+                }
+                channel.close();
+            }
+        });
+        try {
+            Thread.sleep(Integer.MAX_VALUE);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+    }
+}
+```
+
+```java
+被调用：handlerAdded()
+被调用： read()
+被调用： write()
+被调用： flush()
+write is finished
+被调用： handlerRemoved()
+```
+
+### 6.6 详解Pipeline流水线
