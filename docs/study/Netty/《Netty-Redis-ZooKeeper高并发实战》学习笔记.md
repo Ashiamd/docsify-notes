@@ -1400,6 +1400,152 @@ public class NettyDiscardHandler extends ChannelInboundHandlerAdapter {
 
 ​	整个流程大致分为4步。具体如下：
 
+​	**第1步：通道注册。IO源于通道（Channel）。IO是和通道（对应于底层连接而言）强相关的。一个IO事件，一定属于某个通道。但是，如果要查询通道的事件，首先要将通道注册到选择器。只需通道提前注册到Selector选择器即可，IO事件会被选择器查询到。**
 
+​	**第2步：查询选择。在反应器模式中，一个反应器（或者SubReactor子反应器）会负责一个线程；不断地轮询，查询选择器中的IO事件（选择键）。**
 
+​	**第3步：事件分发。如果查询到IO事件，则分发给与IO事件有绑定关系的Hanlder业务处理器。**
 
+​	**第4步：完成真正的IO操作和业务处理，这一步由Handler业务处理器负责。**
+
+其中，第1步和第2步，其实是Java NIO的功能，反应器模式仅仅是利用了Java NIO的优势而已。
+
+#### 6.2.2 Netty中的Channel通道组件
+
+​	Channel通道组件是Netty中非常重要的组件。反应器模式和通道紧密相关，反应器的查询和分发的IO事件都来自于Channel通道组件。
+
+​	Netty中不直接使用Java NIO的Channel通道组件，对Channel通道组件进行了自己的封装。在Netty中，由一系列的Channel通道组件，为了支持多种通道协议，对于每一种通道连接协议，Netty都实现了自己的通道。
+
+​	另外一点就是，**除了Java的NIO，Netty还能处理Java的面向流的OIO（Old-IO，即传统的阻塞式IO）**。
+
+​	总结起来，**Netty中的每一种协议的通道，都有NIO（异步IO）和OIO（阻塞式IO）两个版本**。
+
+​	对应不同的协议，Netty中常见的通道类型如下：
+
++ NioSocketChannel：异步非阻塞TCP Socket传输通道。
+
++ NioServerSocketChannel：异步非阻塞TCP Socket服务器端监听通道。
++ NioDatagramChannel：异步非阻塞的UDP传输通道。
++ NioSctpChannel：异步非阻塞Stcp传输通道。
++ NioSctpServerChannel：异步非阻塞Stcp服务器端监听通道。
++ OioSocketChannel：同步阻塞式TCP Socket传输通道。
++ OioServerSocketChannel：同步阻塞式TVP Socket服务器端监听通道。
++ OioDatagramChannel：同步阻塞式UDP传输通道。
++ OioSctpChannel：同步阻塞式Sctp传输通道。
++ OioSctpServerChannel：同步阻塞式Sctp服务器端监听通道。
+
+> 自己查的一些资料网文
+>
+> [SCTP协议详解](https://blog.csdn.net/wuxing26jiayou/article/details/79743683)
+>
+> [为什么SCTP没有被大量使用/知道？](https://cloud.tencent.com/developer/ask/28242)
+
+​	一般来说，服务器端编程用到最多的通信协议还是TCP协议。对应的传输通道类型为NioSocketChannel类，服务器监听类为NioSerevrSocketChannel。在主要使用的方法上，其他的通道类型和这个NioSocketChannel类在原理上基本是相通的。本书很多案例以NioSocketChannel通道为主。
+
+​	在Netty的NioSocketChannel内部封装了一个SelectableChannel成员。<u>通道这个内部的Java NIO通道，Netty的NioSocketChannel通道上的IO操作，最终会落到Java NIO的SelectableChannel底层通道</u>。
+
+#### 6.2.3 Netty中的Reactor反应器
+
+​	在反应器模式中，一个反应器（或者SubReactor子反应器）会负责一个事件处理线程，不断地轮询。通过Selector选择器不断查询注册过的IO事件（选择键）。如果查询到IO事件，则分发给Handler业务处理器。
+
+​	**Netty中的反应器有多个实现类，与Channel通道类有关系**。对应于NioSocketChannel通道，Netty的反应器为：NioEventLoop。
+
+​	NioEventLoop类绑定了两个重要的Java成员属性：一个是Thread线程类的成员，一个是Java NIO选择器的成员属性。
+
+​	一个NioEventLoop拥有一个Thread线程，负责一个Java NIO Selector选择器的IO事件轮询。
+
+​	在Netty中，EventLoop反应器和NettyChannel通道是一对多关系：一个反应器可以注册成千上万的通道。
+
+#### 6.2.4 Netty中的Handler处理器
+
+​	可供选择器监控的IO事件类型包括以下4种：
+
++ 可读：SelectionKey.OP_READ
++ 可写：SelectionKey.OP_WRITE
++ 连接：SelectionKey.OP_CONNECT
++ 接收：SelectionKey.OP_ACCEPT
+
+​	在Netty中，EventLoop反应器内部有一个Java NIO选择器成员执行以上的事件的查询，然后进行对应的事件分发。事件分发（Dispatch）的目标就是Netty自己的Handler处理器。
+
+​	Netty的Handler处理器分为两大类：第一类是ChannelInboundHandler通道入站处理器；第二类是ChannelOutboundHandler通道出站处理器。二者都继承了ChannelHandler处理器接口。
+
+​	Netty中的入站处理，不仅仅是OP_READ输入事件的处理，还是从通道底层出触发，由Netty通过层层传递，调用ChannelInboundHandler通道入站处理器进行的某个处理。以底层的Java NIO中的OP_READ输入事件为例：在通道中发生了OP_READ事件后，会被EventLoop查询到，然后分发给ChannelInboundHandler通道入站处理器，调用它的入站处理的方法read。在ChannelInboundHandler通道入站处理器内部的read方法可以从通道中读取数据。
+
+​	**OP_WRITE可写事件是Java NIO的底层概念，它和Netty的出站处理的概念不是一个维度，Netty的出站处理时应用层维度的**。Netty的出站处理，指的是从ChannelOutboundHandler通道出站处理器到通道的某次IO操作，例如，在应用程序完成业务处理后，可以通过ChannelOutboundHandler通道处理器将处理的结果写入底层通道。它的最常用的一个方法就是write()方法，把数据写入到通道。
+
+​	这两个业务处理器接口都有各自的默认实现：xxxxAdapter（通道入站/出战处理适配器）。
+
+#### 6.2.5 Netty的流水线（Pipeline）
+
+​	梳理Netty的反应器模式中各个组件之间的关系：
+
+1. 反应器（或者SubReactor子反应器）和通道之间是一对多关系：一个反应器可以查询很多个通道的IO事件。
+2. 通道和Handler处理器实例，是多对多关系：一个通道的IO事件被多个的Handler实例处理；一个Handler处理器实例也能绑定到很多的通道，处理多个通道的IO事件。
+
+​	为了处理通道和Handler处理器实例之间的绑定关系，Netty设计了一个特殊的组件，叫作ChannelPipeline（通道流水线），它像一条管道，将绑定到一个通道的多个Handler实例，串在一起，形成一条流水线。**ChannelPipeline（通道流水线）的默认实现，实际上被设计成一个双向链表。所有的Handler处理器实例被包装成了双向链表的结点，加入到ChannelPipeline（通道流水线）中**。
+
+​	重点申明：**一个Netty通道拥有一条Handler处理器流水线，成员的名称叫作pipeline**。
+
+​	以入站处理为例。每个来自通道的IO事件，都会进入一次ChannelPipeline通道流水线。在进入第一个Handler处理器后，这个IO事件将按照**既定**的从前往后次序，在流水线上不断地向后流动，流向下一个Handler处理器。
+
+​	在向后流动的过程中，会出现3种情况：
+
+1. 如果后面还有其他Handler入站处理器，那么IO事件可以交给下一个Handler处理器，向后流动。
+2. 如果后面没有其他的入站处理器，这就意味着这个IO事件在此流水线中的处理结束了。
+3. 如果在流水线中间需要终止流动，可以选择不将IO事件交给下一个Handler处理器，流水线的执行也被终止了。
+
+​	为什么说Handler处理是按照既定的次序，而不是从前往后的次序？**Netty规定：入站处理器Handler的执行次序，是从前往后；出站处理器Handler的执行次序，是从后到前**。
+
+​	入站的IO操作只能从Inbound入站处理器类型的Handler流过；出站的IO操作只能从Outbound出战处理器类型的Handler流过。
+
+​	为了开发方便，Netty提供了一个类把三个组件（EventLoop反应器、通道、Handler处理器）快速组装起来。这个系列的类叫作BootStrap启动器。严格来说，不止一个类名字为BootStrap，例如在服务器端的启动类叫作ServerBootstrap类。
+
+### 6.3 详解BootStrap启动器类
+
+​	Bootstrap类是Netty提供的一个遍历的工厂类，可以通过它来完成Netty的客户端或服务器端的Netty组件的组装，以及Netty程序的初始化。Netty官方解释是，完全可以不使用Bootstrap启动器。不过一点点手动创建通道、完成各种设置和启动、并且注册到EventLoop，这个过程会非常麻烦。通常情况下，还是使用这个便利的Bootstap工具类会效率更高。
+
+​	Netty中，有两个启动类，分别表示在服务器端和客户端。（Bootstrap是client专用，ServerBootstrap是server专用）。它们的配置和使用都是相同的。
+
+​	在介绍ServerBootstrap的服务器启动流程之前，首先介绍一下涉及到的两个基础概念：父子通道、EventLoopGroup线程组（事件循环线程组）。
+
+#### 6.3.1 父子通道
+
+​	在Netty中，每一个NioSocketChannel通道所封装的是Java NIO通道，再往下就对应到了操作系统底层的socket描述符。**理论上讲，操作系统底层的socket描述符分为两类**：
+
+1. 连接监听类型。连接监听类型的socket描述符，放在服务器端，它负责接收客户端的套接字连接；在服务器端，**一个“连接监听类型”的socket描述符可以接受（Accept）成千上万的传输类的socket描述符**。
+2. 传输数据类型。数据传输类的socket描述符负责传输数据。同一条TCP的Socket传输链路，在服务器端和客户端，都分别会有一个与之对应的数据传输类型的socket描述符。
+
+​	在Netty中，异步非阻塞的服务器端监听通道NioServerSocketChannel，封装在Linux底层的描述符，是“连接监听类型”socket描述符；而NioSocketChannel异步非阻塞TCP Socket传输通道，封装在底层Linux的描述符，是“数据传输类型”的socket描述符。
+
+​	在Netty中，将有接收关系的NioServerSocketChannel和NioSocketChannell，叫作父子通道。其中，**NioServerSocketChannel负责服务器连接监听和接收，也叫做父通道（Parent Channel）。对应于每一个接收到的NioSocketChannel传输类通道，而叫做子通道（Child Channel）**。
+
+#### 6.3.2 EventLoopGroup线程组
+
+​	Netty中的Reactor反应器模式，肯定不是单线程版本的反应器模式，而是多线程版本的反应器模式。
+
+​	在Netty中，一个EventLoop相当于一个子反应器（SubReactor）。一个NioEventLoop子反应器拥有了一个线程，同时拥有一个Java NIO选择器。**Netty使用EventLoopGroup线程组组织外层的反应器，多个EventLoop线程组成一个EventLoopGroup线程组**。
+
+​	反过来说，Netty的EventLoopGroup线程组就是一个多线程版本的反应器。而其中的单个EventLoop线程对应一个子反应器（SubReactor）。
+
+​	Netty程序开发往往不会直接用单个EventLoop线程，而是使用EventLoopGroup线程组。EventLoopGroup的构造函数有一个参数，用于指定内部的线程数。在构造器初始化时，会按照传入的线程数量，在内部构造多个Thread线程和多个EventLoop子反应器（一个线程对应一个EventLoop子反应器），进行多线程的IO事件查询和分发。
+
+​	如果使用EventLoopGroup的无参数的构造函数，没有传入线程数或者传入的线程数为0，那么EventLoopGroup内部的线程数是多少？**默认的EventLoopGroup内部线程数为最大可用CPU处理器数量的2倍**。假设电脑使用的是4核的CPU，那么在内部会启动8个EventLoop线程，相当于8个子反应器（SubReactor）实例。
+
+​	从前文可知，为了及时接受（Accept）到新连接，**在服务器端，一般会有两个独立的反应器，一个反应器负责新连接的监听和接受，另一个反应器负责IO事件处理**。对应到Netty服务器程序中，则是设置两个EventLoopGroup线程组，一个EventLoopGroup负责新连接的监听和接受，一个EventLoopGroup负责IO事件处理。
+
+​	负责新连接的监听和接受的EventLoopGroup线程组，查询父通道的IO事件，有点像负责招工的包工头，因此可以形象地称为“包工头”(Boss)线程组。另一个EventLoopGroup线程组负责查询所有子通道的IO事件，并且执行Handler处理器中的业务处理——例如数据的输入和输出（有点像搬砖），这个线程组可以形象地称为“工人”（Worker）线程组。
+
+​	至此，已经介绍完两个基础概念：父子通道、EventLoopGroup线程组。
+
+#### 6.3.3 Bootstrap的启动流程
+
+​	<u>Bootstrap的启动流程，也就是Netty组件的组装、配置，以及Netty服务器或者客户端的启动流程</u>。在本节中对启动流程进行了梳理，大致分成了8步骤。本书仅仅演示的是服务器端启动器的使用，用到的启动类为ServerBootstrap。正式使用之前，首先创建一个服务器端的启动器实例。
+
+```	java
+// 创建一个服务器端的启动器
+ServerBootstrap b = new ServerBootstrap();
+```
+
+​	接下来，结合前面的NettyDiscardServer服务器的代码，给大家详细介绍一下Bootstrap启动流程中精彩的8个步骤。
+
+​	第1步：创建反应器线程组，并赋值给ServerBootstrap启动器实例
