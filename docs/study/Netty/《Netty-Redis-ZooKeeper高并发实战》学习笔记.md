@@ -1706,3 +1706,87 @@ bossLoopGroup.shutdownGracefully();
 
 ### 6.4 详解Channel通道
 
+​	先介绍下，在使用Channel通道的过程中所设涉及的主要成员和方法。然后，为大家介绍一下Netty所提供了一个专门的单元测试通道——EmbededChannel（嵌入式通道）。
+
+#### 6.4.1 Channel通道的主要成员和方法
+
+​	在Netty中，通道是其中的核心概念之一，代表着网络连接。通道是通信的主题，由它负责同对端进行网络通信，可以写入数据到对端，也可以从对端读取数据。
+
+​	通道的抽象类AbstractChannel的构造函数如下：
+
+```java
+protected AbstractChannel(Channel parent) {
+    this.parent = parent; // 父通道
+    id = newId();
+    unsafe = new Unsafe();// 底层的NIO通道，完成实际的IO操作
+    pipeline = new ChannelPipeline(); // 一条通道，拥有一条流水线
+}
+```
+
+​	AbstractChannel内部有一个pipeline属性，表示处理器的流水线。Netty在对通道进行初始化的时候，将pipeline属性初始化为DefaultChannelPipeline的实例。这段代码也表明，每个通道拥有一条ChannelPipeline处理器流水线。
+
+​	AbstractChannel内部有一个parent属性，表示通道的父通道。对于连接监听通道（如NioServerSocketChannel实例）来说，其父亲通道为null；而对于每一条传输通道（如NioSocketChannel实例），其parent属性的值为接收到该连接的服务器连接监听通道。
+
+​	**几乎所有的通道实现类都继承了AbstractChannel抽象类，都拥有上面的parent和pipeline两个属性成员**。
+
+​	再来看一下，在通道接口中定义的几个重要方法：
+
++ 方法1：ChannelFuture connect(SocketAddress address)
+
+  ​	此方法的作用为：连接远程服务器。方法的参数为远程服务器的地址<u>，调用后会立即返回</u>，返回值为负责连接操作的异步任务ChannelFuture。此方法在客户端的传输通道使用。
+
++ 方法2：ChannelFuture bind(SocketAddress address)
+
+  ​	此方法的作用为：绑定监听地址，开始监听新的客户端连接。此方法在服务器的新连接监听和接收通道使用。
+
++ 方法3：ChannelFuture close()
+
+  ​	此方法的作用为：关闭通道连接，返回连接关闭的ChannelFuture异步任务。**如果需要在连接正式关闭后执行其他操作，则需要为异步任务设置回调方法；或者调用ChannelFuture异步任务的sync()方法来阻塞当前线程，一直等到通道关闭的异步任务执行完毕**。
+
++ 方法4：ChannelFuture read()
+
+  ​	此方法的作用为：读取通道数据，并且启动入站处理。具体来说，从内部的Java NIO Channel通道读取数据，然后启动内部的Pipeline流水线，开始数据读取的入站处理。此方法的返回通道自身用于链式调用。
+
++ 方法5：ChannelFuture write(Object o)
+
+  ​	此方法的作用为：启动出站流水处理，把处理后的最终数据写到底层Java NIO通道。此方法的返回值为出站处理的异步处理任务。
+
++ 方法6：Channel flush()
+
+  ​	此方法的作用为：将缓冲区中的数据立即写出到对端。并不是每一次write操作都是将数据直接写出到对端，**write操作的作用在大部分情况下仅仅是写入到操作系统的缓冲区，操作系统会将根据缓冲区的情况，决定什么时候把数据写到对端**。而**执行flush()方法立即将缓冲区的数据写到对端**。
+
+​	上面6种方法，仅仅是比较常见的方法。在Channel接口以及各种通道的实现类中，还定义了大量的通道操作方法。在一般的日常的开发中，如果需要用到，最好直接查阅Netty API文档或者Netty源代码。
+
+#### 6.4.2 EmbeddedChannel嵌入式通道
+
+​	在Netty的实际开发中，通信的基础工作，Netty已经替大家完成。<u>实际上，大量的工作是设计和开发ChannelHandler通道业务处理器，而不是开发Outbound出战处理器，换句话说就是开发Inbound入站处理器</u>。开发完成后，需要投入单元测试。单元测试的大致流程：需要将Handler业务处理器加入到通道的Pipeline流水线中，接下来先后启动Netty服务器、客户端程序，相互发送消息，测试业务处理器的效果。如果每开发一个业务处理器，都进行服务器和客户端的重复启动，这整个过程是非常的烦琐和浪费时间的。
+
+​	Netty提供了一个专用的通道——EmbeddedChannel（嵌入式通道），来解决这种徒劳、低效的重复工作。
+
+​	**EmbeddedChannel仅仅是模拟入站和出站的操作，底层不进行实际的传输，不需要启动Netty服务器和客户端。除了不进行传输之外，EmbeddedChannel的其他的事件机制和处理流程和真正的传输通道是一模一样的**。因此，使用它，开发人员可以在开发的过程中方便、快速地进行ChannelHnadler业务处理器的测试。
+
+​	为了模拟数据的发送和接收，EmbeddedChannel提供了一组专门的方法
+
+| 名称                  | 说明                                                         |
+| --------------------- | ------------------------------------------------------------ |
+| **writeInbound**(...) | 向通道写入inbound入站数据，模拟通道收到数据。也就是说，这些写入的数据会被流水线上的入站处理器处理 |
+| readInbound(...)      | 从EmbeddedChannel中读取入站数据，返回经过流水线最后一个入站处理器处理完成之后的入站数据。如果没有数据，则返回null |
+| writeOutbound(...)    | 向通道写入outbound出站数据，模拟通道发送数据。也就是说，这些写入的数据会被流水线上的出站处理器处理 |
+| **readOutbound**(...) | 从EmbeddedChannel中读取出站数据，返回经过流水线最后一个出站处理器处理之后的出站数据。如果没有数据，则返回null |
+| finish()              | 结束EmbeddedChannel，它会调用通道close方法                   |
+
+​	最为重要的两个方法为：writeInbound和readOutbound方法。
+
++ 方法1：writeInbound入站数据写到通道
+
+  ​	它的使用场景是：测试入站处理器。在测试入站处理器时（例如一个解码器），需要读取Inbound（入站）数据。可以调用writeInbound方法，向EmbeddedChannel写入一个入站而二进制ByteBuf数据包，模拟底层的入站包。
+
++ 方法2：readOutbound读取通道的出站数据
+
+  ​	它的使用场景是：测试出站处理器。在测试出站处理器时（例如测试一个编码器），需要查看处理过的结果数据。可以调用readOutbound方法，读取通道的最终出站结果，它是经过流水线一系列的出站处理后，最终的出站数据包。重复一遍，通过readOutbound，可以读取完成EmbeddedChannel最后一个出站处理器，处理后的ByteBuf二进制出站包。
+
+​	总之，EmbeddedChannel类，即具备通道的通用接口和方法，又增加了一些单元测试的辅助方法，在开发时非常实用。
+
+### 6.5 详解Handler业务处理器
+
+​	
