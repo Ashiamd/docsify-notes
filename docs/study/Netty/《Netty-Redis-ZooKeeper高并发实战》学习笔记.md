@@ -2378,4 +2378,483 @@ public class OutPipeline {
 
 ​	在入站/出站的过程中，由于业务条件不满足，需要截断流水线的处理，不让处理进入下一站，怎么办呢？
 
-​	首先以
+​	首先以channelRead通道读方法的流程为例，看看如何截断入站处理流程。这里的办法是：在channelRead方法中，不再调用父类的channelRead入站方法，它的代码如下：
+
+```java
+public class Inpipeline {
+    // ... 省略SimpleInHandlerA、SimpleInHandlerC
+    
+    // 定义SimpleInHandlerB2
+        static class SimpleInHandlerB2 extends ChannelInboundHandlerAdapter {
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+            Logger.info("入站处理器 B: 被回调 ");
+            //不调用基类的channelRead, 终止流水线的执行
+//            super.channelRead(ctx, msg);
+        }
+    }
+
+    //测试流水线的截断
+    @Test
+    public void testPipelineCutting() {
+        ChannelInitializer i = new ChannelInitializer<EmbeddedChannel>() {
+            protected void initChannel(EmbeddedChannel ch) {
+                ch.pipeline().addLast(new SimpleInHandlerA());
+                ch.pipeline().addLast(new SimpleInHandlerB2());
+                ch.pipeline().addLast(new SimpleInHandlerC());
+
+            }
+        };
+        EmbeddedChannel channel = new EmbeddedChannel(i);
+        ByteBuf buf = Unpooled.buffer();
+        buf.writeInt(1);
+        //向通道写一个入站报文
+        channel.writeInbound(buf);
+        try {
+            Thread.sleep(Integer.MAX_VALUE);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+​	执行结果：
+
+```java
+入站处理器 A: 被回调 
+入站处理器 B: 被回调 
+```
+
+​	从运行的结果看来，入站处理器C没有执行到，说明通过没调用父类的super.channelRead方法，处理流水线被成功地截断了。
+
+​	在channelRead方法中，<u>入站处理传入下一站还有一种方法：调用Context上下文的ctx.fireChannelRead(msg)方法</u>。如果要截断流水线的处理，很显然，就不能调用ctx.fireChannelRead(msg)方法。
+
+​	上面读操作流程的截断仅仅是一个示例。如果要截断其他的入站处理的流水线操作（使用Xxx指代），也可以同样处理：
+
+1. 不调用supper.channelXxx（ChannelHandlerContext...）
+
+2. 也不调用ctx.fireChannelXxx()
+
+​	如何截断出站处理流程呢？结论是：**<u>出站处理流程只要开始执行，就不能被截断</u>**。强制截断的话，Netty会抛出异常。如果业务条件不满足，可以不启动出站处理。
+
+ps:我自己试了一下，出站截断没报错，比较迷？
+
+#### 6.6.5 Handler业务处理器的热拔插
+
+​	<u>Netty中的处理器流水线式一个双向链表</u>。在程序执行过程中，可以动态进行业务处理器的**热拔插：动态地增加、删除流水线上的业务处理器Handler**。主要的Handler热拔插方法声明在ChannelPipeline接口中，如下：
+
+```java
+package io.netty.channel;
+
+public interface ChannelPipeline extends Iterable<Entry<String, ChannelHandler>>
+{
+    //...
+    //在头部增加一个业务处理器，名字由name指定
+    ChannelPipeline addFirst(String name, ChannelHandler handler);
+    //在尾部增加一个业务处理器，名字由name指定
+    ChannelPipeline addLast(String name, ChannelHandler handler);
+    //在baseName处理器的前面增加一个业务处理器，名字由name指定
+    ChannelPipeline addBefore(String baseName, String name, ChannelHandler handler);
+    //在baseName处理器的后面增加一个业务处理器，名字由name指定
+    ChannelPipeline addAfter(String baseName, String name, ChannelHandler handler);
+    //删除一个业务处理器实例
+    ChannelPipeline remove(ChannelHandler handler);
+    //删除一个处理器实例
+    ChannelHandler remove(String handler);
+    //删除第一个业务处理器
+    ChannelHandler removeFirst();
+    //删除最后一个业务处理器
+    ChannelHandler removeLast();
+}
+```
+
+​	下面是一个简单的示例：调用流水线实例的remove(ChannelHandler)方法，从流水线动态地删除一个Handler实例。代码如下：
+
+```java
+public class PipelineHotOperateTester {
+
+    static class SimpleInHandlerA extends ChannelInboundHandlerAdapter {
+
+        public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+            System.out.println("入站处理器 A: 被回调 ");
+            super.channelRead(ctx, msg);
+            //从流水线删除当前Handler
+            ctx.pipeline().remove(this);
+        }
+
+    }
+
+    static class SimpleInHandlerB extends ChannelInboundHandlerAdapter {
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+            System.out.println("入站处理器 B: 被回调 ");
+            super.channelRead(ctx, msg);
+        }
+    }
+
+    static class SimpleInHandlerC extends ChannelInboundHandlerAdapter {
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+            System.out.println("入站处理器 C: 被回调 ");
+            super.channelRead(ctx, msg);
+        }
+    }
+
+    //测试处理器的热拔插
+    @Test
+    public void testPipelineHotOperating() {
+        ChannelInitializer i = new ChannelInitializer<EmbeddedChannel>() {
+            protected void initChannel(EmbeddedChannel ch) {
+                ch.pipeline().addLast(new SimpleInHandlerA());
+                ch.pipeline().addLast(new SimpleInHandlerB());
+                ch.pipeline().addLast(new SimpleInHandlerC());
+
+            }
+        };
+        EmbeddedChannel channel = new EmbeddedChannel(i);
+        ByteBuf buf = Unpooled.buffer();
+        buf.writeInt(1);
+        //第一次向通道写入站报文
+        channel.writeInbound(buf);
+        
+        //第二次向通道写入站报文
+        channel.writeInbound(buf);
+        //第三次向通道写入站报文
+        channel.writeInbound(buf);
+        try {
+            Thread.sleep(Integer.MAX_VALUE);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+​	运行结果：
+
+```java
+入站处理器 A: 被回调 
+入站处理器 B: 被回调 
+入站处理器 C: 被回调 
+入站处理器 B: 被回调 
+入站处理器 C: 被回调 
+入站处理器 B: 被回调 
+入站处理器 C: 被回调 
+```
+
+​	从运行结果可以看出，在SimpleInHandlerA从流水线删除后，在后面的入站流水处理中，SimpleInHandlerA已经不再被调用了。
+
+​	Netty的通道初始化处理器——ChannelInitializer，在它的注册回调channelRegistered方法中，就使用了ctx.pipeline().remove(this)，将自己从流水线中删除。
+
+```java
+// public abstract class ChannelInitializer<C extends Channel> extends ChannelInboundHandlerAdapter 
+
+protected abstract void initChannel(C var1) throws Exception;
+
+public final void channelRegistered(ChannelHandlerContext ctx) throws Exception {
+    if (this.initChannel(ctx)) {
+        ctx.pipeline().fireChannelRegistered();
+        this.removeState(ctx);
+    } else {
+        ctx.fireChannelRegistered();
+    }
+
+}
+```
+
+​	<u>ChannelInitializer在完成通道的初始化之后，为什么要将自己从流水线中删除呢？原因很简单，就是一条通道只需要做一次初始化的工作</u>。
+
+### 6.7 详解ByteBuf缓冲区
+
+​	Netty提供了ByteBuf来代替Java NIO的ByteBuffer缓冲区，以操纵内存缓冲区。
+
+#### 6.7.1 ByteBuf的优势
+
+​	与Java NIO 的ByteBuffer相比，ByteBuf的优势如下：
+
++ **Pooling（池化，这点减少了内存复制和GC，提升了效率）**
++ 复合缓冲区类型，支持零复制
++ 不需要调用flip()方法去切换读/写模式
++ 扩展性好，例如StringBuffer
++ 可以自定义缓冲区类型
++ **读取和写入索引分开**
++ 方法的链式调用
++ 可以进行引用计数，方便重复使用
+
+#### 6.7.2 ByteBuf的逻辑部分
+
+​	ByteBuf是一个字节容器，<u>内部是一个字节数组</u>。从逻辑上来分，字节容器内部可以分为四个部分。
+
+| 第一部分 | 第二部分 | 第三部分 | 第四部分 |
+| -------- | -------- | -------- | -------- |
+| 废弃     | 可读     | 可写     | 可扩容   |
+
+​	第一部分是已用字节，表示已经使用完的废弃的无效字节；第二部分是可读字节，这部分数据是ByteBuf保存的有效数据，从ByteBuf中读取的数据都来自这一部分；第三部分是可写字节，写入到ByteBuf的数据都会写到这一部分中；第四部分是可扩容字节，表示的是该ByteBuf最多还能扩容的大小。
+
+#### 6.7.3 ByteBuf的重要属性
+
+​	ByteBuf通过三个整性的属性有效地区分可读和可写数据，使得读写之间相互没有冲突。这三个属性定义在AbstractByteBuf抽象类中，分别是：
+
++ readerIndex（读指针）
++ writerIndex（写指针）
++ maxCapacity（最大容量）
+
+​	ByteBuf的这三个重要属性，如下图
+
+```none
+[] 表示涵盖的范围，()表示第XX部分，<>表示指针
+[							ByteBuf 内部数组							]
+[					capacity					]
+(废弃) <readerIndex> (可读) <writerIndex>  (可写)    (可扩容) <maxCapacity>
+```
+
+​	这三个属性的详细介绍如下：
+
++ readerIndex（读指针）：表示读取的起始位置。每读取一个字节，readerIndex自动增加1，一旦readerIndex与writerIndex相同，则表示ByteBuf不可读了。
++ writerIndex（写指针）：指示写入的初始位置。每写一个字节，writerIndex自动增加1，一旦增加到writerIndex与capacity()容量相同，则表示ByteBuf已经不可以写了。capacity()是一个成员方法，不是一个成员属性，它表示ByteBuf中可以写入的容量。注意，它不是最大容量maxCapacity。
++ maxCapacity（最大容量）：表示ByteBuf可以扩容的最大容量。当向ByteBuf写数据的时候，如果容量不足，可以进行扩容。扩容的最大限度由maxCapacity的值来设定，超过maxCapacity就会报错。
+
+#### 6.7.4 ByteBuf的三组方法
+
+​	ByteBuf的方法大致可以分为三组。
+
+第一组：容量系列
+
++ capacity():表示ByteBuf的容量，它的值是以下三部分之和：废弃的字节数、可读字节数和可写字节数。
++ maxCapacity()：表示ByteBuf最大能够容纳的字节数。当向ByteBuf中写数据的时候，如果发现容量不足，则进行扩容，直到扩容到maxCapacity设定的上限。
+
+第二组：写入系列
+
++ isWritable()：表示ByteBuf是否可写。如果capacity()容量大于writerIndex 指针的位置，则表示可写，否则为不可写。注意：如果isWritable()返回false，并不代表不能再往ByteBuff中写数据了。如果Netty发现往ByteBuf中写数据写不进去的话，会自动扩容ByteBuf。
++ writableBytes()：取得可写入的字节数，它的值等于容量capacity()减去writerIndex。
++ maxWritableBytes()：取得最大的可写字节数，它的值等于最大容量maxCapacity减去writerIndex。
++ **writeBytes(byte[] src)**：把src字节数组中的数据全部写到ByteBuf。这就是最为常用的一个方法。
++ writeTYPE(TYPE value)：写入基础数据类型的数据。TYPE表示基础数据类型，包含了8大基础数据类型。具体如下：writeByte()、writeBoolean()、writeChar()、writeShort()、writeInt()、writeLong()、writeFloat()、writeDouble()。
+
++ setTYPE(TYPE value)：基础数据类型的设置，不改变writerIndex指针值，包含了8大基础数据类型的设置。具体如下：setByte()、setBoolean()、setChar()、setShort()、setInt()、setLong()、setFloat()、setDouble()。<u>setTYPE系列与writeTYPE系列的不同：setType系列不改变读写指针writerIndex的值；writeTYPE系列会改变writerIndex 的值</u>。
+
++ markWriterIndex()与resetWriterIndex()：这两个方法一起介绍。前一个方法表示把当前的写指针writerIndex属性的值保存在markedWriterIndex属性中；后一个方法表示把之前保存的markedWriterIndex的值恢复到写指针writerIndex属性中。markedWriterIndex属性相当于一个暂存属性，也定义在AbstractByteBuf抽象基类中。
+
+第三组：读取系列
+
++ isReadable()：返回ByteBuf是否可读。如果writerIndex指针的值大于readerIndex指针的值，则表示可读，否则为不可读。
++ readableBytes()：返回表示ByteBuf当前可读取的字节数，它的值等于writerIndex减去readerIndex。
++ **readBytes(byte[] dst)**：读取ByteBuf中的数据。将数据从ByteBuf读取到dst字节数组中，这里dst字节数组的大小，通常等于readableBytes()。这个方法也是最常用的一个方法之一。
++ readType()：读取基础数据类型，可以读取8大基础数据类型。具体如下：readByte()、readBoolean()、readChar()、readShort()、readInt()、readLong()、readFloat()、readDouble()。
+
++ getTYPE(TYPE value)：读取基础数据类型，并且不改变指针值。具体如下：getByte()、getBoolean()、getChar()、getShort()、getInt()、getLong()、getFloat()、getDouble()。<u>getTYPE系列与readTYPE系列的不同：getTYPE系列不会改变指针readerIndex的值；readTYPE系列会改变读指针readerIndex的值</u>。
++ markReaderIndex()与resetReaderIndex()：这两个方法一起介绍。前一个方法表示把当前的读指针ReaderIndex属性的值保存在markedReaderIndex属性中；后一个方法表示把之前保存的markedReaderIndex的值恢复到读指针ReaderIndex属性中。markedReaderIndex属性相当于一个暂存属性，也定义在AbstractByteBuf抽象基类中。
+
+#### 6.7.5 ByteBuf基本使用的实践案例
+
+​	ByteBuf的基本使分为三部分：
+
+1. 分配一个ByteBuf实例；
+2. 向ByteBuf写数据；
+3. 从ByteBuf读数据。
+
+​	这里使用了默认的分配器，分配了一个初始容量为9，最大限制为100个自己的缓冲区。关于ByteBuf实例的分配，稍后具体详细介绍。
+
+```java
+public class WriteReadTest {
+
+    @Test
+    public void testWriteRead() {
+        ByteBuf buffer = ByteBufAllocator.DEFAULT.buffer(9,100);
+        System.out.println("动作：分配 ByteBuf(9, 100)" + buffer);
+        buffer.writeBytes(new byte[]{1, 2, 3, 4});
+        System.out.println("动作：写入4个字节 (1,2,3,4)" + buffer);
+        System.out.println("start==========:get==========");
+        getByteBuf(buffer);
+        System.out.println("动作：取数据 ByteBuf" + buffer);
+        System.out.println("start==========:read==========");
+        readByteBuf(buffer);
+        System.out.println("动作：读完 ByteBuf" + buffer);
+    }
+
+    //读取一个字节
+    private void readByteBuf(ByteBuf buffer) {
+        while (buffer.isReadable()) {
+            System.out.println("读取一个字节:" + buffer.readByte());
+        }
+    }
+    
+    //读取一个字节，不改变指针
+    private void getByteBuf(ByteBuf buffer) {
+        for (int i = 0; i < buffer.readableBytes(); i++) {
+            System.out.println("读取一个字节:" + buffer.getByte(i));
+        }
+    }
+}
+```
+
+​	运行结果：
+
+```java
+动作：分配 ByteBuf(9, 100)PooledUnsafeDirectByteBuf(ridx: 0, widx: 0, cap: 9/100)
+动作：写入4个字节 (1,2,3,4)PooledUnsafeDirectByteBuf(ridx: 0, widx: 4, cap: 9/100)
+start==========:get==========
+读取一个字节:1
+读取一个字节:2
+读取一个字节:3
+读取一个字节:4
+动作：取数据 ByteBufPooledUnsafeDirectByteBuf(ridx: 0, widx: 4, cap: 9/100)
+start==========:read==========
+读取一个字节:1
+读取一个字节:2
+读取一个字节:3
+读取一个字节:4
+动作：读完 ByteBufPooledUnsafeDirectByteBuf(ridx: 4, widx: 4, cap: 9/100)
+```
+
+​	可以看到，使用get取数据是不会影响到ByteBuf的指针属性值的。
+
+#### 6.7.6 ByteBuf的引用计数
+
+​	**Netty的ByteBuf的内存回收工作是通过<u>引用计数</u>的方式管理的**。JVM中使用”计数器“（一种GC算法）来标记对象是否”不可达“进而收回（注：GC是Garbage Collection的缩写，即Java中的垃圾回收机制），Netty也使用了这种手段来对ByteBuf的引用进行计数。Netty采用”计数器“来追踪ByteBuf的生命周期，一是对Pooled ByteBuf的支持，二是能够尽快地”发现“那些可以回收的ByteBuf（非Pooled），以便提升ByteBuf的分配和销毁的效率。
+
+​	插个题外话：什么是Pooled(池化)的ByteBuf缓冲区呢？在通信程序的执行过程中，Buffer缓冲区实例会被频繁创建、使用、释放。大家都知道，频繁创建对象、内存分配、释放内存，系统的开销大、性能低，如何提升性能、提高Buffer实例的使用率呢？**从Netty4版本开始，新增了对象池化的机制。即创建一个Buffer对象池，将没有被引用的Buffer对象，放入对象缓冲池中；当需要时，则重新从对象池中取出，则不需要重新创建**。
+
+​	<u>引用计数的大致规则如下：默认情况下，当创建完一个ByteBuf时，它的引用为1；每次调用retain()方法，它的引用就加1；每次调用release()方法，就是将引用计数减1；如果引用为0，再次访问这个ByteBuf对象，就会抛出异常；如果引用为0，表示这个ByteBuf没有哪个进程引用它，它占用的内存需要回收</u>。
+
+```java
+public class ReferenceTest {
+    @Test
+    public  void testRef()
+    {
+        ByteBuf buffer  = ByteBufAllocator.DEFAULT.buffer();
+        System.out.println("after create:"+buffer.refCnt());
+        buffer.retain();
+        System.out.println("after retain:"+buffer.refCnt());
+        buffer.release();
+        System.out.println("after release:"+buffer.refCnt());
+        buffer.release();
+        System.out.println("after release:"+buffer.refCnt());
+        //错误:refCnt: 0,不能再retain
+        buffer.retain();
+        System.out.println("after retain:"+buffer.refCnt());
+    }
+}
+```
+
+​	输出如下：
+
+```java
+after create:1
+after retain:2
+after release:1
+after release:0
+断开与目标 VM 的连接，地址：'127.0.0.1:58248', transport: 'socket'
+
+io.netty.util.IllegalReferenceCountException: refCnt: 0, increment: 1
+	at io.netty.util.internal.ReferenceCountUpdater.retain0(ReferenceCountUpdater.java:123)
+	at io.netty.util.internal.ReferenceCountUpdater.retain(ReferenceCountUpdater.java:110)
+	at io.netty.buffer.AbstractReferenceCountedByteBuf.retain(AbstractReferenceCountedByteBuf.java:80)
+    ...报错信息
+
+```
+
+​	最后一次retain方法抛出了IllegalReferenceCountException异常。原因是：在此之前，缓冲区buffer的引用计数已经为0，不能再retain了。也就是说：**在Netty中，引用计数为0的缓冲区不能再继续使用**。
+
+​	**为了确保引用计数不会混乱，在Netty的业务处理器开发过程中，应该坚持一个原则：retain和release方法成对使用**。简单地说，在一个方法中，调用了retain，就应该调用一次release。
+
+```java
+public void handlMethodA(ByteBuf byteBuf) {
+    byteBuf.retain();
+    try {
+        handlMethodB(byteBuf);
+    } finally {
+        byteBuf.release();
+    }
+}
+```
+
+​	如果retain和release这两个方法，一次都不调用呢？则在缓冲区使用完后，调用一次release，就是释放一次。例如在Netty流水线上，中间所有的Handler业务处理器处理完ByteBuf之后直接传递给下一个，由最后一个Handler负责调用release来释放缓冲区的内存空间。
+
+​	**当引用计数已经为0，Netty会进行ByteBuf的回收**。分为两种情况：（1）Pooled池化的ByteBuf内存，回收的方法是：放入可以重新分配的ByteBuf池子，等待下一次分配。（2）Unpooled未池化的ByteBuf缓冲区，回收分为两种情况：如果是堆(Heap)结构缓冲，会被JVM的垃圾回收机制回收；如果是Direct类型，调用本地方法释放外部内存(unsafe.freeMemory)。
+
+> [Netty Unpooled 内存分配](https://www.jianshu.com/p/566d162e89c8)
+>
+> [自顶向下深入分析Netty（九）--UnpooledByteBuf源码分析](https://www.jianshu.com/p/ae8010b06ac2)
+
+#### 6.7.7 ByteBuf的Allocator分配器
+
+​	**Netty通过ByteBufAllocator分配器来创建缓冲区和分配内存空间**。Netty提供了ByteBufAllocator的两种实现：PoolByteBufAllocator和UnpooledByteAllocator。
+
+​	PoolByteBufAllocator（池化ByteBuf分配器）将ByteBuf实例放入池中，提高了性能，将内存碎片减少到最小**；这个池化分配器采用了jemalloc高效内存分配的策略，该策略被好几种现代操作系统所使用**。
+
+​	<u>UnpooledByteBufAllocator是普通的未池化ByteBuf分配器，它没有把ByteBuf放入池中，每次被调用时，返回一个新的ByteBuf实例：通过Java的垃圾回收机制回收。</u>
+
+​	为了验证**两者的性能**，大家可以做一下对比实验：
+
+（1）使用UnpooledByteBufAllocator的方式分配ByteBuf缓冲区，开启10000个长连接，每秒所有的连接发送一条信息，再看看服务器的内存使用量的情况。
+
+​	实验的参考结果：在短时间内，可以看到占到10GB多的内存空间，但随着系统的运行，内存空间不断增长，直到整个系统内存被占满而导致内存溢出，最终系统宕机。
+
+（2）把UnplooedByteBufAllocator换成PooledByteBufAllocator，再进行试验，看看服务器的内存使用量的情况。
+
+​	实验的参考结果：内存使用量基本能维持在一个连接占用1MB左右的内存空间，内存使用量保持在10GB左右，经过长时间的运行测试，我们会发现内存使用量基本都能维持在这个数量附近。系统不会因为内存被消耗尽而崩溃。
+
+​	在Netty中，默认的分配器为ByteBufAllocator.DEFAULT，可以通过Java系统参数（System.Property）的选项io.netty.allocator.type进行配置，配置时使用字符串值：“unpooled”，“pooled”。
+
+​	不同的Netty版本，对于分配器的默认使用策略是不一样的。在Netty4.0版本中，默认的分配器为UnpooledByteBufAllocator。而在Netty4.1版本中，默认的分配器为PooledByteBufAllocator。现在PooledByteBufAllocator已经广泛使用了一段时间，并且有了**增强的缓冲区泄露追踪机制**。因此，可以在Netty程序中设置启动器Bootstrap的时候，将PooledByteBufAllocator设置为默认的分配器。
+
+```java
+SerevrBootstrap b = new ServerBootstrap();
+// ... 
+// 4 设置通道的参数
+b.option(ChannelOption.SO_KEEPALIVE, true);
+b.option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+b.childOption(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+```
+
+​	内存管理的策略可以灵活调整，这是使用Netty所带来的又一个好处。只需一行简单的配置，就能获得到池化缓冲区带来的好处。在底层，Netty为我们干了所有“脏活、累活”！这主要是因为Netty用到了Java的Jemalloc内存管理库。
+
+​	使用分配器分配ByteBuf的方法有多种。下面列出主要的几种：
+
+```java
+public class AllocatorTest {
+    @Test
+    public void showAlloc() {
+        ByteBuf buffer = null;
+        //方法一：默认分配器，分配初始容量为9，最大容量100的缓冲
+        buffer = ByteBufAllocator.DEFAULT.buffer(9, 100);
+        //方法二：默认分配器，分配初始为256，最大容量Integer.MAX_VALUE 的缓冲
+        buffer = ByteBufAllocator.DEFAULT.buffer();
+        //方法三：非池化分配器，分配基于Java的堆内存缓冲区
+        buffer = UnpooledByteBufAllocator.DEFAULT.heapBuffer();
+        //方法四：池化分配器，分配基于操作系统的管理的直接内存缓冲区
+        buffer = PooledByteBufAllocator.DEFAULT.directBuffer();
+        //…其他方法
+    }
+}
+```
+
+​	如果没特别的要求，使用第一种或者第二种分配方法分配缓冲区即可。
+
+#### 6.7.8 ByteBuf缓冲区的类型
+
+​	缓冲区的类型，根据内存的管理方不同，分为堆缓冲区和直接缓冲区，也就是Heap ByteBuf和Direct ByteBuf。另外，为了方便缓冲区进行组合，提供了一种组合缓冲区。
+
+| 类型            | 说明                                                         | 优点                                                         | 不足                                                         |
+| --------------- | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| Heap ByteBuf    | 内存数据为一个**Java数组**，存储在JVM的堆空间中，通过hasArray来判断是不是堆缓冲区 | 未使用池化的情况下，能提供快速的分配和释放                   | 写入底层传输通道之前，都会复制到<u>直接缓冲区</u>            |
+| Direct ByteBuf  | 内部数据存储在**操作系统的物理内存**中                       | 能获取超过JVM堆限制大小的内存空间；<u>写入传输通道比堆缓冲区更快</u> | <u>释放和分配空间昂贵（使用系统的方法）</u>；在Java中操作时需要复制一份到堆上 |
+| CompositeBuffer | 多个缓冲区的组合表示                                         | 方便一次操作多个缓冲区实例                                   |                                                              |
+
+​	上面三种缓冲区的类型，无论哪一种，都可以通过池化（Pooled）、非池化（Unpooled）两种分配器来创建和分配内存空间。
+
+​	下面对Direct Memory（直接内存）进行一些特别的介绍：
+
++ **Direct Memory不属于Java堆内存，所分配的内存其实是调用操作系统malloc()函数来获得的**；由Netty的本地内存堆Native堆进行管理。
++ Direct Memory容量可通过-XX:MaxDirectMemorySize来指定，如果不指定，则默认与Java堆的最大值(-Mmx指定)一样。注意：并不是强制要求，有的JVM默认Direct Memory与-Mmx无直接关系
++ **Direct Memory的使用避免了Java堆和Native堆之间来回复制数据**。在某些应用场景提高了性能。
++ 在需要频繁创建缓冲区的场合，由于<u>创建和销毁Direct Buffer（直接缓冲区）的代价比较高昂</u>，因此不宜使用Direct Buffer。也就是说，**Direct Buffer尽量在池化分配器中分配和回收**。如果能将Direct Buffer进行复用，在读写频繁的情况下，就可以大幅度改善性能。
++ **对Direct Buffer的读写比Heap Buffer快，但是它的创建和销毁比普通Heap Buffer慢**。
++ **在Java的垃圾回收机制回收Java堆时，Netty框架也会释放不再使用的Direct Buffer缓冲区**，<u>因为它的内存为**堆外内存**，所以清理的工作不会为Java虚拟机(JVM)带来压力</u>。注意一下垃圾回收的应用场景：（1）垃圾回收仅在Java堆被填满，以至于无法为新的堆分配请求提供服务时发生；（2）在Java应用程序中调用System.gc()函数释放内存。
+
+> [Java的堆,栈,方法区](https://blog.csdn.net/danny_idea/article/details/81137306)
+
+#### 6.7.9 三类ByteBuf使用的实践案例
+
