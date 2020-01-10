@@ -2858,3 +2858,237 @@ public class AllocatorTest {
 
 #### 6.7.9 三类ByteBuf使用的实践案例
 
+​	首先对比介绍一下，Heap ByteBuf和Direct ByteBuf两类缓冲区的使用。它们有以下几点不同：
+
++ 创建的方法不同：Heap ByteBuf通过调用分配器的buffer()方法来创建；而Direct ByteBuf的创建，是通过调用分配器的directBuffer()方法。
++ Heap ByteBuf缓冲区可以直接通过array()方法读取内部数组；而Direct ByteBuf缓冲区不能读取内部数组。
++ 可以调用hasArray()方法来判断是否为Heap ByteBuf类型的缓冲区；如果hasArray()返回值为true，则表示是Heap堆缓冲，否则就不是。
++ **Direct ByteBuf要读取缓冲数据进行业务处理，相对比较麻烦，需要通过getBytes/readBytes等方法先将数据复制到Java堆内存，然后进行其他的计算**。
+
+​	Heap ByteBuf和Direct ByteBuf这两类缓冲区的使用对比，实践案例的代码如下：
+
+```java
+public class BufferTypeTest {
+   final static Charset UTF_8 = Charset.forName("UTF-8");
+
+    //堆缓冲区
+    @Test
+    public  void testHeapBuffer() {
+        //取得堆内存
+        ByteBuf heapBuf =  ByteBufAllocator.DEFAULT.buffer();
+        heapBuf.writeBytes("疯狂创客圈:高性能学习社群".getBytes(UTF_8));
+        if (heapBuf.hasArray()) {
+            //取得内部数组
+            byte[] array = heapBuf.array();
+            int offset = heapBuf.arrayOffset() + heapBuf.readerIndex();
+            int length = heapBuf.readableBytes();
+            System.out.println(new String(array,offset,length, UTF_8));
+        }
+        heapBuf.release();
+
+    }
+
+    //直接缓冲区
+    @Test
+    public  void testDirectBuffer() {
+        ByteBuf directBuf =  ByteBufAllocator.DEFAULT.directBuffer();
+        directBuf.writeBytes("疯狂创客圈:高性能学习社群".getBytes(UTF_8));
+        if (!directBuf.hasArray()) {
+            int length = directBuf.readableBytes();
+            byte[] array = new byte[length];
+            //读取数据到堆内存
+            directBuf.getBytes(directBuf.readerIndex(), array);
+            System.out.println(new String(array, UTF_8));
+        }
+        directBuf.release();
+    }
+}
+```
+
+​	注意，<u>如果hasArray()返回false，不一定代表缓冲区一定就是Direct ByteBuf直接缓冲区，也可能是CompositeByteBuf缓冲区</u>。
+
+​	**在很多通信编程场景下，需要多个ByteBuf组成一个完整的消息**：例如HTTP协议传输时消息总是由Header（消息头）和Body（消息体）组成的。<u>如果传输的内容很长，就会分成多个消息包进行发送，消息中的Header就需重用，而不是每次发送都创建新的Header</u>。
+
+​	下面演示一下通过CompositeByteBuf来复用Header，代码如下：
+
+```java
+public class CompositeBufferTest {
+    static Charset utf8 = Charset.forName("UTF-8");
+
+    @Test
+    public void byteBufComposite() {
+        CompositeByteBuf cbuf = ByteBufAllocator.DEFAULT.compositeBuffer();
+        //消息头
+        ByteBuf headerBuf = Unpooled.copiedBuffer("疯狂创客圈:", utf8);
+        //消息体1
+        ByteBuf bodyBuf = Unpooled.copiedBuffer("高性能 Netty", utf8);
+        cbuf.addComponents(headerBuf, bodyBuf);
+        sendMsg(cbuf);
+        headerBuf.retain();
+        cbuf.release();
+
+        cbuf = ByteBufAllocator.DEFAULT.compositeBuffer();
+        //消息体2
+        bodyBuf = Unpooled.copiedBuffer("高性能学习社群", utf8);
+        cbuf.addComponents(headerBuf, bodyBuf);
+        sendMsg(cbuf);
+        cbuf.release();
+    }
+
+    private void sendMsg(CompositeByteBuf cbuf) {
+        //处理整个消息
+        for (ByteBuf b : cbuf) {
+            int length = b.readableBytes();
+            byte[] array = new byte[length];
+            //将CompositeByteBuf中的数据复制到数组中
+            b.getBytes(b.readerIndex(), array);
+            //处理一下数组中的数据
+            System.out.print(new String(array, utf8));
+        }
+        System.out.println();
+    }
+}
+```
+
+​	上面程序中，向CompositeByteBuf对象增加ByteBuf对象实例，这里调用了addComponents方法。Heap ByteBuf和Direct ByteBuf两种类型都可以增加。**如果内部只存在一个实例，则CompositeByteBuf中的hasArray()方法，将返回这个唯一实例的hasArray()方法的值；如果有多个实例，CompositeByteBuf中的hasArray()方法返回false**。
+
+​	**调用nioBuffer()方法可以将CompositeByteBuf实例合并成一个新的<u>Java NIO ByteBuffer缓冲区</u>**（注意：不是ByteBuf）
+
+```java
+public class CompositeBufferTest {
+    static Charset utf8 = Charset.forName("UTF-8");
+
+    @Test
+    public void intCompositeBufComposite() {
+        CompositeByteBuf cbuf = Unpooled.compositeBuffer(3);
+        cbuf.addComponent(Unpooled.wrappedBuffer(new byte[]{1, 2, 3}));
+        cbuf.addComponent(Unpooled.wrappedBuffer(new byte[]{4}));
+        cbuf.addComponent(Unpooled.wrappedBuffer(new byte[]{5, 6}));
+        //合并成一个单独的缓冲区
+        ByteBuffer nioBuffer = cbuf.nioBuffer(0, 6);
+        byte[] bytes = nioBuffer.array();
+        System.out.print("bytes = ");
+        for (byte b : bytes) {
+            System.out.print(b);
+        }
+        cbuf.release();
+    }
+// ...
+}
+```
+
+​	在以上代码中，使用到了Netty中一个非常方便的类——**Unpooled帮助类，用它来创建和使用非池化的缓冲区**。另外，<u>还可以在Netty程序之外独立使用Unpooled帮助类</u>。
+
+#### 6.7.10 ByteBuf的自动释放
+
+​	在入站处理时，Netty是何时自动创建入站的ByteBuf的呢？
+
+​	查看Netty源代码，我们可以看到，Netty的Reactor反应器线程会在底层的Java NIO通道读数据时，也就是AbstractNioByteChannel.NioByteUnsafe.read()处，调用ByteBufAllocator方法，创建ByteBuf实例，从**操作系统缓冲区**把数据读取到ByteBuf实例中，然后调用pipeline.fireChannelRead(byteBuf)方法将读取到的数据包送入到入站处理流水线中。
+
+​	再看看入站处理时，入站的ByteBuf是如何自动释放的。
+
+方式一：TailHandler自动释放
+
+​	**Netty默认会在ChannelPipeline通道流水线的最后添加一个TailHandle末尾处理器**，它实现了默认的处理方法，在这些方法中会帮助完成ByteBuf内存释放的工作。
+
+​	在默认情况下，如果每个InboundHandler入站处理器，把最初的ByteBuf数据包一路往下转，那么TailHandler末尾处理器会自动释放掉入站的ByteBuf实例。
+
+​	如何让ByteBuf数据包通过流水线一路向后传递呢？
+
+​	如果自定义的InboundHandler入站处理器继承自ChannelInboundHandlerAdapter适配器，那么可以在InboundHandler的入站处理方法中调用基类的入站处理方法。演示代码如下：
+
+```java
+public class DemoHandler extends ChannelInboundHandlerAdapter {
+    /**
+      * 出站处理方法
+      * @param ctx 上下文
+      * @param msg 入站数据包
+      * @throws Exception 可能抛出的异常
+      */
+    @Override
+    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+        ByteBuf byteBuf = (ByteBuf)	msg;
+        // ...省略ByteBuf的业务处理
+        // 自动释放ByteBuf的方法：调用父类的入站方法，将msg向后传递
+        // super.channelRead(ctx,msg);
+    }
+}
+```
+
+​	总体来说，如果自定义的InboundHandler入站处理器继承自ChannelInboundHandlerAdapter适配器，那么可以调用以下两种方法来释放ByteBuf内存；
+
+（1）手动释放ByteBuf。具体的方式为调用byteBuf.release()。
+
+（2）调用父类的入站方法将msg向后传递，以来后面的处理器释放ByteBuf。具体的方式为调用基类的入站处理方法super.channelRead(ctx,msg)。
+
+```java
+public class DemoHandler extends ChannelInboundHandlerAdapter {
+    /**
+      * 出站处理方法
+      * @param ctx 上下文
+      * @param msg 入站数据包
+      * @throws Exception 可能抛出的异常
+      */
+    @Override
+    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+        ByteBuf byteBuf = (ByteBuf)	msg;
+        // ...省略ByteBuf的业务处理
+        // 释放ByteBuf的两种方法
+        // 方法一：手动释放ByteBuf
+        byteBuf.release();
+        
+        // 方法二：调用父类的入站方法，将msg向后传递
+        // super.channelRead(ctx,msg);
+    }
+}
+```
+
+方式二：SimpleChannelInboundHandler自动释放
+
+​	**如果Handler业务处理器需要截断流水线的处理流程，不将ByteBuf数据包送入后边的InboundHandler入站处理器，这时，流水线末端的TailHandler末尾处理器自动释放缓冲区的工作自然就失效了**。
+
+​	在这种场景下，Handler业务处理器有两种选择：
+
++ 手动释放ByteBuf实例。
++ **继承SimpleChannelInboundHandler，利用它的自动释放功能**。
+
+​	这里，我们聚焦的是第二种选择：看看SimpleChannelInboundHandler是如何自动释放的。以入站读数据为例，Handler业务处理器必须继承自SimpleChannelInboundHandler基类。并且，<u>业务处理器的代码必须移动到重写的channelRead0(ctx，msg)方法中</u>。SimpleChannelInboundHandler类的channelRead等入站处理方法，会在调用完实际的channelRead0后，帮忙释放ByteBuf实例。
+
+​	如果大家好奇，想看看SimpleChannelInboundHandler是如何释放ByteBuf的，那么就一起看看Netty源代码。
+
+​	截取部分代码如下所示：
+
+```java
+// public abstract class SimpleChannelInboundHandler<I> extends ChannelInboundHandlerAdapter
+public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+        boolean release = true;
+        try {
+            if (this.acceptInboundMessage(msg)) {
+                // 调用实际的业务代码，必须由子类继承，并且提供实现
+                this.channelRead0(ctx, msg);
+            } else {
+                release = false;
+                ctx.fireChannelRead(msg);
+            }
+        } finally {
+            if (this.autoRelease && release) {
+                ReferenceCountUtil.release(msg);
+            }
+
+        }
+
+    }
+
+protected abstract void channelRead0(ChannelHandlerContext var1, I var2) throws Exception;
+```
+
+​	在Netty的SimpleChannelInboundHandler类的源代码中，执行完由子类继承的channelRead0()业务处理后，在<u>finally语句代码段中，ByteBuf被释放了一次，如果ByteBuf计数器为零，将被彻底释放掉</u>。
+
+​	在看看出站处理时，Netty是何时释放出站的ByteBuf的呢？
+
+​	出站缓冲区的自动释放方式：HeadHandler自动释放。**在出站处理流程中，申请分配到的ByteBuf主要是通过HeadHandler完成自动释放的**。
+
+​	出站处理用到的ByteBuf缓冲区，一般是要发送的消息，通常由Handler业务处理器所申请而分配的。例如，在write出站写入通道时，通过调用ctx.writeAndFlush(Bytebufmsg)，ByteBuf缓冲区进入出站处理的流水线。在每一个出站Handler业务处理器中的处理完成后，最后数据包（或消息）会来到出站处理的最后一棒HeadHandler，在数据输出完成后，ByteBuf会释放一次，如果计数器为零，将被彻底释放掉。
+
+​	**在Netty开发中，必须密切关注ByteBuf缓冲区的释放，如果释放不及时，会造成Netty的内存泄漏（Memory Leak），最终导致内存耗尽**。
+
