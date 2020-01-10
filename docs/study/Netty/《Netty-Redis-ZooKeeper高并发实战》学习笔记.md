@@ -2100,8 +2100,13 @@ public class OutHandlerDemoTester {
 
         ByteBuf buf = Unpooled.buffer();
         buf.writeInt(1);
-
+       
         ChannelFuture f = channel.pipeline().writeAndFlush(buf);
+        
+        buf.writeInt(2);
+        
+        f = channel.pipeline().writeAndFlush(buf);
+        
         f.addListener(new GenericFutureListener<Future<? super Void>>() {
             @Override
             public void operationComplete(Future<? super Void> future) throws Exception {
@@ -2126,8 +2131,251 @@ public class OutHandlerDemoTester {
 被调用： read()
 被调用： write()
 被调用： flush()
+被调用： write()
+被调用： flush()
 write is finished
 被调用： handlerRemoved()
 ```
 
 ### 6.6 详解Pipeline流水线
+
+​	前面讲到，一条Netty通道需要很多的Handler业务处理器来处理业务。每条通道内部都有一条流水线（Pipeline）将Handler装配起来。Netty的业务处理器流水线ChannelPipeline是基于责任链设计模式（Chain of Responsibility）来设计的，内部是一个双向链表结构，能够支持动态地添加和删除Handler业务处理器。
+
+#### 6.6.1 Pipeline入站处理流程
+
+​	为了完整地演示Pipeline入站处理流程，将新建三个极为简单的入站处理器，在ChannelInitializer通道初始化处理器的initChannel方法中把它们加入到流水线中。三个入站处理器分别为：SimpleInHandlerA、SimpleInHandlerB、SimpleHandlerC，添加顺序为A->B->C
+
+```java
+public class InPipeline {
+    static class SimpleInHandlerA extends ChannelInboundHandlerAdapter {
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+            Logger.info("入站处理器 A: 被回调 ");
+            super.channelRead(ctx, msg);
+        }
+    }
+    static class SimpleInHandlerB extends ChannelInboundHandlerAdapter {
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+            Logger.info("入站处理器 B: 被回调 ");
+            super.channelRead(ctx, msg);
+        }
+    }
+    static class SimpleInHandlerC extends ChannelInboundHandlerAdapter {
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+            Logger.info("入站处理器 C: 被回调 ");
+            super.channelRead(ctx, msg);
+        }
+    }
+
+    @Test
+    public void testPipelineInBound() {
+        ChannelInitializer i = new ChannelInitializer<EmbeddedChannel>() {
+            protected void initChannel(EmbeddedChannel ch) {
+                ch.pipeline().addLast(new SimpleInHandlerA());
+                ch.pipeline().addLast(new SimpleInHandlerB());
+                ch.pipeline().addLast(new SimpleInHandlerC());
+
+            }
+        };
+        EmbeddedChannel channel = new EmbeddedChannel(i);
+        ByteBuf buf = Unpooled.buffer();
+        buf.writeInt(1);
+        //向通道写一个入站报文
+        channel.writeInbound(buf);
+        try {
+            Thread.sleep(Integer.MAX_VALUE);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
+    static class SimpleInHandlerB2 extends ChannelInboundHandlerAdapter {
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+            Logger.info("入站处理器 B: 被回调 ");
+            //不调用基类的channelRead, 终止流水线的执行
+//            super.channelRead(ctx, msg);
+        }
+    }
+
+    //测试流水线的截断
+    @Test
+    public void testPipelineCutting() {
+        ChannelInitializer i = new ChannelInitializer<EmbeddedChannel>() {
+            protected void initChannel(EmbeddedChannel ch) {
+                ch.pipeline().addLast(new SimpleInHandlerA());
+                ch.pipeline().addLast(new SimpleInHandlerB2());
+                ch.pipeline().addLast(new SimpleInHandlerC());
+            }
+        };
+        EmbeddedChannel channel = new EmbeddedChannel(i);
+        ByteBuf buf = Unpooled.buffer();
+        buf.writeInt(1);
+        //向通道写一个入站报文
+        channel.writeInbound(buf);
+        try {
+            Thread.sleep(Integer.MAX_VALUE);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+​	输出结果
+
+```java
+入站处理器 A: 被回调 
+入站处理器 B: 被回调 
+```
+
+​	*查看了一下fireChannelRead()的源码(该方法6.5.1 有介绍，即通道缓冲区可读时，Netty会调用它，触发通道可读事件)*
+
+```java
+// super.channelRead(ctx, msg);
+// public class ChannelInboundHandlerAdapter extends ChannelHandlerAdapter implements ChannelInboundHandler
+@Skip
+public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+    ctx.fireChannelRead(msg);
+}
+
+// public class DefaultChannelPipeline implements ChannelPipeline
+public final ChannelPipeline fireChannelRead(Object msg) {
+    AbstractChannelHandlerContext.invokeChannelRead(this.head, msg);
+    return this;
+}
+
+// abstract class AbstractChannelHandlerContext implements ChannelHandlerContext, ResourceLeakHint
+static void invokeChannelRead(final AbstractChannelHandlerContext next, Object msg) {
+        final Object m = next.pipeline.touch(ObjectUtil.checkNotNull(msg, "msg"), next);
+        EventExecutor executor = next.executor();
+        if (executor.inEventLoop()) {
+            next.invokeChannelRead(m);
+        } else {
+            executor.execute(new Runnable() {
+                public void run() {
+                    next.invokeChannelRead(m);
+                }
+            });
+        }
+
+    }
+```
+
+​	在channelRead()方法中，我们打印当前Handler业务处理器的信息，然后调用父类的channelRead()方法，而父类的channelRead()方法会自动调用下一个inBoundHandler的channelRead()方法，**并且会把当前inBoundHandler入站处理器中处理完毕的对象传递到下一个inBoundHandler入站处理器，我们在示例程序中传递的对象都是同一个信息(msg)**。
+
+​	在channelRead()方法中，如果不调用父类的channelRead()方法，结果就是不会继续执行流水线的下一个Handler处理器。
+
+​	我们可以看到，**入站处理器的流动顺序是：从前到后。加在前面的，执行也在前面**。
+
+#### 6.6.2 Pipeline出站处理流程
+
+​	为了完整地延时Pipeline出站处理流程，将新建三个极为简答地出站处理器，在ChannelInitializer通道初始化处理器的initChannel方法中，把它们加入到流水线中。三个出站处理器分别为：SimpleOutHandlerA、SimpleOutHandlerB、SimpleOutHandlerC，添加的顺序为A->B->C。
+
+```java
+public class OutPipeline {
+    public class SimpleOutHandlerA extends ChannelOutboundHandlerAdapter {
+        @Override
+        public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
+            System.out.println("出站处理器 A: 被回调" );
+            super.write(ctx, msg, promise);
+        }
+    }
+    public class SimpleOutHandlerB extends ChannelOutboundHandlerAdapter {
+        @Override
+        public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
+            System.out.println("出站处理器 B: 被回调" );
+            super.write(ctx, msg, promise);
+        }
+    }
+    public class SimpleOutHandlerC extends ChannelOutboundHandlerAdapter {
+        @Override
+        public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
+            System.out.println("出站处理器 C: 被回调" );
+            super.write(ctx, msg, promise);
+        }
+    }
+    @Test
+    public void testPipelineOutBound() {
+        ChannelInitializer i = new ChannelInitializer<EmbeddedChannel>() {
+            protected void initChannel(EmbeddedChannel ch) {
+                ch.pipeline().addLast(new SimpleOutHandlerA());
+                ch.pipeline().addLast(new SimpleOutHandlerB());
+                ch.pipeline().addLast(new SimpleOutHandlerC());
+            }
+        };
+        EmbeddedChannel channel = new EmbeddedChannel(i);
+        ByteBuf buf = Unpooled.buffer();
+        buf.writeInt(1);
+        //向通道写一个出站报文
+        channel.writeOutbound(buf);
+        try {
+            Thread.sleep(Integer.MAX_VALUE);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public class SimpleOutHandlerB2 extends ChannelOutboundHandlerAdapter {
+        @Override
+        public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
+            System.out.println("出站处理器 B: 被回调" );
+            //不调用基类的channelRead, 终止流水线的执行
+//            super.write(ctx, msg, promise);
+        }
+    }
+
+    @Test
+    public void testPipelineOutBoundCutting() {
+        ChannelInitializer i = new ChannelInitializer<EmbeddedChannel>() {
+            protected void initChannel(EmbeddedChannel ch) {
+                ch.pipeline().addLast(new SimpleOutHandlerA());
+                ch.pipeline().addLast(new SimpleOutHandlerB2());
+                ch.pipeline().addLast(new SimpleOutHandlerC());
+            }
+        };
+        EmbeddedChannel channel = new EmbeddedChannel(i);
+        ByteBuf buf = Unpooled.buffer();
+        buf.writeInt(1);
+        //向通道写一个出站报文
+        channel.writeOutbound(buf);
+        try {
+            Thread.sleep(Integer.MAX_VALUE);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+    }
+}
+```
+
+​	执行结果：
+
+```java
+出站处理器 C: 被回调
+出站处理器 B: 被回调
+```
+
+​	在write()方法中，打印当前Handler业务处理器的信息，然后调用父类的write()方法，而这里父类的write()方法会自动调用下一个outBoundHandler出站处理器的write()方法。这里有个小问题：在OutBoundHandler出站处理器的write()方法中，如果不调用父类的write()方法，结果就是流水线Pipeline的下一个出站处理器Handler不被调用。
+
+​	在代码中，通过pipeline.addLast()方法添加OutBoundHandler出站处理器的顺序为A->B->C。从结果可以看出，出站流水处理次序为从后向前：C->B->A。**最后加入的出站处理器，反而执行在最前面。这一点和Inbound入站处理次序是相反的**。
+
+#### 6.6.3 ChannelHandlerContext上下文
+
+​	<u>不管我们定义的是**哪种类型**的Handler业务处理器，最终它们都是以双向链表的方式保存在流水线中</u>。这里的流水线的节点类型，并不是前面的Handler业务处理器基类，而是一个新的Netty类型：ChannelHandlerContext通道处理器上下文类。
+
+​	**在Handler业务处理器被添加到流水线中时，会创建一个通达处理器上下文ChannelHandlerContext，它代表了ChannelHandler通道处理器和ChannelPipeline通道流水线之间的关联**。
+
+​	ChannelHandlerContext中包含了许多方法，主要可以分为**两类**：**第一类是获取上下文关联的Netty组件实例**，如所关联的通道、所关联的流水线、上下文内部Handler业务处理器实例等；**第二类是入站和出站的处理方法**。
+
+​	在Channel、ChannelPipeline、ChannelHandlerContext三个类中，会有同样的出站和入站处理方法，同一个操作出现在不同的类中，功能有何不同？**如果通过Channel或ChannelPipeline的实例来调用这些方法，它们就会在整条流水线中传播。然而，如果是通过ChannelHandlerContext通道处理上下文进行调用，就只会从当前的节点开始执行Handler业务处理器，并传播到<u>同类型处理器</u>的下一站（节点）**。
+
+​	Channel、Handler、ChannelHandlerContext三者的关系为：**Channel通道拥有一条ChannelPipeline通道流水线，每一个流水线节点为一个ChannelHandlerContext通道处理器上下文对象，每一个上下文包裹了一个ChannelHandler通道处理器**。在ChannelHandler通道处理器的入站/出站处理方法中，Netty都会传递一个Context上下文实例作为实际参数。<u>通过Context实例的参数，在业务处理中，可以获取ChannelPipeline通道流水线的实例或者Channel通道的实例</u>。
+
+#### 6.6.4 截断流水线的处理
+
+​	在入站/出站的过程中，由于业务条件不满足，需要截断流水线的处理，不让处理进入下一站，怎么办呢？
+
+​	首先以
