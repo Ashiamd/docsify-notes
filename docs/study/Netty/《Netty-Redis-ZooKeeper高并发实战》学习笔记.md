@@ -3092,3 +3092,339 @@ protected abstract void channelRead0(ChannelHandlerContext var1, I var2) throws 
 
 ​	**在Netty开发中，必须密切关注ByteBuf缓冲区的释放，如果释放不及时，会造成Netty的内存泄漏（Memory Leak），最终导致内存耗尽**。
 
+### 6.8 ByteBuf浅层复制的高级使用方式
+
+​	首先要说明下，浅层复制是一种非常重要的操作。可以很大程度地避免内存复制。这一点对于大规模消息通信来说是非常重要的。
+
+​	ByteBuf的浅层复制分为两种，有**切片（slice）浅层复制**和**整体（duplicate）浅层复制**
+
+#### 6.8.1 slice切片浅层复制
+
+​	ByteBuf的slice方法可以获取到一个ByteBuf的一个切片。一个ByteBuf可以进行多次的切片浅层复制；多次切片后的ByteBuf对象可以共享一个存储区域。
+
+​	slice方法有两个重载版本：
+
+（1）public ByteBuf slice()
+
+（2）public ByteBuf slice(int index, int length)
+
+​	第一个是不带参数的slice方法，在内部是调用了第二个带参数的slice方法，调用大致方式为：buf.slice(buf.readerIndex(), buf.readableBytes())。也就是说，<u>第一个无参数slice方法的返回值是ByteBuf实例中可读部分的切片</u>。
+
+​	第二个带参数的slice(int index, int length)方法，可以通过灵活地设置不同起始位置和长度，来获取到ByteBuf**不同区域**的切片。
+
+​	一个简单的slice的使用示例代码如下：
+
+```java
+public class SliceTest {
+    @Test
+    public  void testSlice() {
+        ByteBuf buffer = ByteBufAllocator.DEFAULT.buffer(9, 100);
+        System.out.println("动作：分配 ByteBuf(9, 100)" + buffer);
+        buffer.writeBytes(new byte[]{1, 2, 3, 4});
+        System.out.println("动作：写入4个字节 (1,2,3,4)" + buffer);
+        ByteBuf slice = buffer.slice();
+        System.out.println("动作：切片 slice" + slice);
+    }
+}
+```
+
+​	输出：
+
+```java
+动作：分配 ByteBuf(9, 100)PooledUnsafeDirectByteBuf(ridx: 0, widx: 0, cap: 9/100)
+动作：写入4个字节 (1,2,3,4)PooledUnsafeDirectByteBuf(ridx: 0, widx: 4, cap: 9/100)
+动作：切片 sliceUnpooledSlicedByteBuf(ridx: 0, widx: 4, cap: 4/4, unwrapped: PooledUnsafeDirectByteBuf(ridx: 0, widx: 4, cap: 9/100))
+```
+
+​	如果输出isReadable()、readerIndex()等，可得下表结果
+
+|                          | 原ByeteBuf | slice切片   |
+| ------------------------ | ---------- | ----------- |
+| isReadable()             | true       | true        |
+| readerIndex()            | 0          | 0           |
+| readableBytes()          | 4          | 4           |
+| ***isWritable()***       | ***true*** | ***false*** |
+| writerIndex()            | 4          | 4           |
+| ***writableBytes()***    | ***5***    | ***0***     |
+| ***capacity()***         | ***9***    | ***4***     |
+| ***maxCapacity()***      | ***100***  | ***4***     |
+| ***maxWritableBytes()*** | ***96***   | ***0***     |
+
+​	调用slice()方法后，返回的切片是一个新的ByteBuf对象，该对象的几个重要属性值，大致如下：
+
++ readerIndex（读指针）的值为0。
++ writerIndex（写指针）的值为源ByteBuf的readableBytes()可读字节数。
++ maxCapacity（最大容量）的值为源ByteBuf的readableBytes()可读字节数。
+
+​	切片后的新ByteBuf有两个特点：
+
++ 切片不可以写入，原因是：maxCapacity与writerIndex值相同。
++ 切片和源ByteBuf的可读字节数相同，原因是：切片后的可读字节书为自己的属性writerIndex-readerIndex，也就是源ByteBuf的readableBytes()-0；
+
+​	**切片后的新ByteBuf和源ByteBuf的关联性：**
+
++ **切片不会复制源ByteBuf的底层数据，底层数组和源ByteBuf的底层数组是同一个。**
++ **切片不会改变源ByteBuf的引用计数**。
+
+​	<u>从根本上说，slice()无参数方法所生成的切片就是**源ByteBuf可读部分的浅层复制**</u>。
+
+#### 6.8.2 duplicate整体浅层复制
+
+​	**和slice切片不同，duplicate()返回的是源ByteBuf的整个对象的一个浅层复制**，包括如下内容：
+
++ duplicate的读写指针、最大容量值，与源ByteBuf的读写指针相同。
++ **duplicate()不会改变源ByteBuf的引用计数。**
++ **duplicate()不会复制源ByteBuf的底层数据。**
+
+​	duplicate()和slice()方法都是浅层复制。不同的是，slice()方法是切取一段(只有可读部分)的浅层复制，而duplicate()是整体的浅层复制。
+
+#### 6.8.3 浅层复制的问题
+
+​	浅层复制方法不会实际去复制数据，也不会改变ByteBuf的引用计数，这就会导致一个问题：在源ByteBuf调用release()之后，一旦引用计数为零，就变得不能访问了；在这种场景下，源ByteBuf的所有浅层复制实例也不能进行读写了；如果强行对浅层复制实例进行读写，则会报错。
+
+​	<u>因此，在调用浅层复制实例时，可以通过调用一次retain()方法来增加引用，表示它们对应的底层内存多了一次引用，引用计数为2。在浅层复制实例用完后，需要调用两次release()方法，将引用计数减一，这样就不影响源ByteBuf的内存释放</u>。
+
+### 6.9 EchoServer回显服务器的实践案例
+
+#### 6.9.1 NettyEchoServer回显服务器的服务器端
+
+​	前面实现过Java NIO版本的EchoServer回显服务器，在学习了Netty后，这里为大家设计和实现一个Netty版本的EchoServer回显服务器。功能很简单：从服务器读取客户端输入的数据，然后将数据直接回显到Console控制台。
+
+​	首先是服务器端的实践案例，目标为掌握以下知识：
+
++ 服务器端ServerBootstrap的装配和使用。
++ 服务器端NettyEchoServerHandler入站处理器的channelRead入站处理方法的编写。
++ Netty的ByteBuf缓冲区的读取、写入，以及ByteBuf的引用计数的查看。
+
+​	服务器端的ServerBootstrap装配和启动过程，代码如下：
+
+```java
+public class NettyEchoServer {
+    // ...
+	 public void runServer() {
+        //创建reactor 线程组
+        EventLoopGroup bossLoopGroup = new NioEventLoopGroup(1);
+        EventLoopGroup workerLoopGroup = new NioEventLoopGroup();
+     	// ... 省略设置：1 反应器线程组 2 通道类型 3 设置监听接口 4 通道选项等
+       	// 5 装配子通道流水线
+        b.childHandler(new ChannelInitializer<SocketChannel>() {
+            // 有连接到达时会创建一个通道
+            protected void initChannel(SocketChannel ch) throws Exception {
+                // 流水线管理子通道中的Handler业务处理器
+                // 向子通道流水线添加一个Handler业务处理器
+                ch.pipeline().addLast(NettyEchoServerHandler.INSTANCE);
+            }
+        });
+        // ... 省略启动、等待、从容关闭（或称为优雅关闭）等
+     }
+    // ... 省略main方法
+}
+```
+
+#### 6.9.2 共享NettyEchoServerHandler处理器
+
+​	Netty版本的EchoServerHandler回显服务器处理器，继承自ChannelInboundHandlerAdapter，然后覆盖了channelRead方法，这个方法在可读IO事件到来时，被流水线回调。
+
+​	这个回显服务器处理器的逻辑分为两步：
+
+​	第一步，从channelRead方法的msg参数。
+
+​	第二步，调用ctx.channel().writeAndFlush()把数据写回客户端。
+
+​	先看第一步，读取从对端输入的数据。channelRead方法的msg参数的形参类型不是ByteBuf，而是Object，为什么呢？实际上，**msg的参数类型是由流水线的上一站决定的**。大家知道，入站处理的流程是：Netty读取底层的二进制数据，填充到msg时，msg是ByteBuf类型，然后经过流水线，传入到第一个入站处理器；每一个节点处理完后，将自己的处理结果（类型不一定是ByteBuf）作为msg参数，不断向后传递。因此，msg参数的形参类型，必须是Object类型。不过，可以肯定的是，**第一个入站处理器的channelRead方法的msg实参类型，绝对是ByteBuf类型**，因为它是Netty读取到的ByteBuf数据包。在本实例中，NettyEchoServerHandler就是第一个业务处理器，虽然msg实参类型是Object，但是实际类型就是ByteBuf，所以可以强制转换成ByteBuf类型。
+
+​	另外，**从Netty4.1开始，ByteBuf的默认类型是Direct ByteBuf直接内存**(6.7.8)。大家知道，Java不能直接访问Direct ByteBuf内部的数据，必须先通过getBytes、readBytes等方法，将数据读入Java数组中，然后才能继续在数组中进行处理。
+
+​	第二步将数据写回客户端。这一步很简单，直接复用前面的msg实例即可。不过要注意，如果上一步使用的readBytes，那么这一步就不能直接将msg写回了，因为数据已经被readBytes读完了。幸好，**上一步调用的读数据方法是getBytes，他不影响ByteBuf的数据指针，因此可以继续使用**(6.7.4)。这一步调用了ctx.writeAndFlush，把msg数据写回客户端。也可调用ctx.channel().writeAndFlush()方法。这两个方法在这里的效果是一样的。因为这个流水线上没有任何的出站处理器。
+
+*ps：如果有其他出站处理器，如果调用ctx.writeAndFlush是走整个出站流水线，而ctx.channel().writeAndFlush()是从当前出站处理器开始接下去依次走出站流水线（出站和入站流水线的走向相反，出站是从后往前类似栈，入站流水线是从前往后类似队列，两者实际上的数据结构本质都是双向链表）***（6.6.3 有介绍Channel、ChannelPipeline、ChannelHandlerContext执行入站、出站方法的效果区别）**
+
+​	服务器端的入站处理器NettyEchoServerHandler的代码如下：
+
+```java
+@ChannelHandler.Sharable
+public class NettyEchoServerHandler extends ChannelInboundHandlerAdapter {
+    public static final NettyEchoServerHandler INSTANCE = new NettyEchoServerHandler();
+
+    @Override
+    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+        ByteBuf in = (ByteBuf) msg;
+        Logger.info("msg type: " + (in.hasArray()?"堆内存":"直接内存"));
+
+        int len = in.readableBytes();
+        byte[] arr = new byte[len];
+        in.getBytes(0, arr);
+        Logger.info("server received: " + new String(arr, "UTF-8"));
+
+        //写回数据，异步任务
+        Logger.info("写回前，msg.refCnt:" + ((ByteBuf) msg).refCnt());
+        ChannelFuture f = ctx.writeAndFlush(msg);
+        f.addListener((ChannelFuture futureListener) -> {
+            Logger.info("写回后，msg.refCnt:" + ((ByteBuf) msg).refCnt());
+        });
+    }
+}
+```
+
+​	这里的NettyEchoServerHandler在前面加了一个特殊的Netty注解：**@ChannelHandler.Sharable**。**这个注解的作用是标注一个Handler实例可以被多个通道安全地共享**。什么叫作Handler共享呢？就是多个通道的流水线可以加入同一个Handler业务处理器实例。而这种操作，**Netty默认是不允许的**。
+
+​	但是，很多应用场景需要Handler业务处理器实例能共享。例如，一个服务器处理十万以上的通道，如果一个通道新建很多重复的Handler实例，就需要上十万以上重复的Handler实例，这就会浪费很多宝贵的空间，降低了服务器的性能。所以，**如果在Handler实例中，没有与特定通道强相关的数据或者状态，建议设计成共享的模式**：在前面加了一个Netty注解：@ChannelHandler.Sharable。
+
+​	<u>反过来，如果没有加@ChannelHandler.Sharable注解，视图将同一个Handler实例添加到多个ChannelPipeline通道流水线时，Netty将会抛出异常</u>。
+
+​	还有一个隐藏比较深的重点：**同一个通道上的所有业务处理器，只能被同一个线程处理**。所以，不是@Sharable共享类型的业务处理器，在线程层面是安全的，不需要进行线程的同步控制。而不同的通道，可能绑定到多个不同的EventLoop反应器线程。因此，加上了@ChannelHandler.Sharable注解后的共享业务处理器的实例，可能别多个线程并发执行。这样，就会导致一个结果：@Sharable共享实例不是线程层面安全的。显而易见，**@Sharable共享的业务处理器，如果需要操作的数据不仅仅是<u>局部变量</u>，则需要进行线程的同步控制，以保证操作是线程层面安全的**。
+
+​	如何判断一个Hnadler是否为@Sharable共享呢？ChannelHandlerAdapter提供了实用方法——isSharable()。如果其对应的实现加上了@Sharable注解，那么这个方法将返回true，表示它可以被添加到多个ChannelPipeline通道流水线中。
+
+​	NettyEchoServerHandler回显服务器处理器没有保存与任何通道连接相关的数据，也没有内部的其他数据需要保存。所以，它不光是可以用来共享，而且不需要做任何的同步控制。在这里，为它加上了@Sharable注解表示可以共享，更进一步，这里还设计了一个通用的INSTANCE静态实例，所有的通道直接使用这个INSTANCE实例即可。
+
+​	最后，揭示一个比较奇怪的问题。
+
+​	运行程序，大家会看到在写入客户端的工作完成后，ByteBuf的引用计数的值变为0.在上面的代码中，既没有自动释放的代码，也没有手动释放的带啊吗，为什么，引用计数就没有了呢？
+
+​	这个问题，比较有意思，留给大家自行思考。答案，就藏在上文之中。
+
+​	*ps:6.7.10 ByteBuf自动释放有提到入站有两种自动释放方式（法1：Netty默认在ChannelPipeline通道流水线最后添加一个TailHandler末尾处理器；法2：Handler业务处理器继承SimpleChannelInboundHandler基类）；出站缓冲区的自动释放则是Netty自动添加的HeadHandler释放。*
+
+#### 6.9.3 NettyEchoClient客户端代码
+
+​	其次是客户端的实践案例，目标为掌握以下知识：
+
++ 客户端Bootstrap的装配和使用
++ 客户端NettyEchoClientHandler入站处理器中，接收回写的数据，并且释放内存。
++ 有多种方式用于释放ByteBuf，包括：自动释放、手动释放。
+
+​	客户端Bootstrap的装配和使用，代码如下：
+
+```java
+public class NettyEchoClient {
+
+    private int serverPort;
+    private String serverIp;
+    Bootstrap b = new Bootstrap();
+
+    public NettyEchoClient(String ip, int port) {
+        this.serverPort = port;
+        this.serverIp = ip;
+    }
+
+    public void runClient() {
+        //创建reactor 线程组
+        EventLoopGroup workerLoopGroup = new NioEventLoopGroup();
+
+        try {
+            //1 设置reactor 线程组
+            b.group(workerLoopGroup);
+            //2 设置nio类型的channel
+            b.channel(NioSocketChannel.class);
+            //3 设置监听端口
+            b.remoteAddress(serverIp, serverPort);
+            //4 设置通道的参数
+            b.option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+
+            //5 装配子通道流水线
+            b.handler(new ChannelInitializer<SocketChannel>() {
+                //有连接到达时会创建一个channel
+                protected void initChannel(SocketChannel ch) throws Exception {
+                    // pipeline管理子通道channel中的Handler
+                    // 向子channel流水线添加一个handler处理器
+                    ch.pipeline().addLast(NettyEchoClientHandler.INSTANCE);
+                }
+            });
+            ChannelFuture f = b.connect();
+            f.addListener((ChannelFuture futureListener) ->
+            {
+                if (futureListener.isSuccess()) {
+                    Logger.info("EchoClient客户端连接成功!");
+
+                } else {
+                    Logger.info("EchoClient客户端连接失败!");
+                }
+
+            });
+
+            // 阻塞,直到连接完成
+            f.sync();
+            Channel channel = f.channel();
+
+            Scanner scanner = new Scanner(System.in);
+            Print.tcfo("请输入发送内容:");
+
+            while (scanner.hasNext()) {
+                //获取输入的内容
+                String next = scanner.next();
+                byte[] bytes = (Dateutil.getNow() + " >>" + next).getBytes("UTF-8");
+                //发送ByteBuf
+                ByteBuf buffer = channel.alloc().buffer();
+                buffer.writeBytes(bytes);
+                channel.writeAndFlush(buffer);
+                Print.tcfo("请输入发送内容:");
+
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            // 优雅关闭EventLoopGroup，
+            // 释放掉所有资源包括创建的线程
+            workerLoopGroup.shutdownGracefully();
+        }
+
+    }
+    public static void main(String[] args) throws InterruptedException {
+        int port = NettyDemoConfig.SOCKET_SERVER_PORT;
+        String ip = NettyDemoConfig.SOCKET_SERVER_IP;
+        new NettyEchoClient(ip, port).runClient();
+    }
+}
+```
+
+​	在上面的代码中，客户端在连接到服务器端成功后不断循环，获取控制台的输入，通过服务器端的通道发送到服务器。
+
+#### 6.9.4 NettyEchoClientHandler处理器
+
+​	客户端的流水线不是空的，还需要装配一个回显处理器，功能很简单，就是接收服务器写过来的数据包，显示在Console控制台上。代码如下：
+
+```java
+@ChannelHandler.Sharable
+    /**
+     * 出站处理方法
+     * 
+     * @param ctx 上下文
+     * @param msg 入站数据包
+     * @throws Exception 可能抛出的异常
+     */
+public class NettyEchoClientHandler extends ChannelInboundHandlerAdapter {
+    public static final NettyEchoClientHandler INSTANCE = new NettyEchoClientHandler();
+
+    @Override
+    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+        ByteBuf in = (ByteBuf) msg;
+        int len = in.readableBytes();
+        byte[] arr = new byte[len];
+        in.getBytes(0, arr);
+        Logger.info("client received: " + new String(arr, "UTF-8"));
+        
+        // 释放ByteBuf的两种方法
+        // 方法一：手动释放ByteBuf
+        in.release();
+        
+        // 方法二：调用父类的入站方法，将msg向后传递
+        // super.channelRead(ctx,msg);
+    }
+}
+```
+
+​	通过代码可以看到，从服务器端发送过来的ByteBuf，被手动方式强制释放掉了。当然，也可以使用前面的介绍的自动释放方式来释放ByteBuf。
+
+​	*ps:这里不是继承SimpleChannelInboundHandler实现的inboundHandler，所以如果要调用自动释放的ByteBuf.release()就必须调用父类的channelRead()，这样Netty默认最后加上TailHandler自动释放ByteBuf这一操作才会被执行（因为被截断就没意义了）。*
+
+### 6.10 本章小结
+
+​	本章详细介绍了Netty的基本原理：Reactor反应器模式在Netty中的应用，Netty中Reactor反应器、Handler业务处理器、Channel通道以及它们三者之间的相互关系。另外，Netty为了有效地管理通道和Handler业务处理器之间的关系，还引入了一个重要组件——Pipeline流水线。
+
+​	如果第4章的Reactor反应器模式，大家理解得比较清晰了，那么掌握Netty的基本原理，其实就是一件非常简单的事件。
+
+​	本章还介绍了Netty的ByteBuf缓冲区的使用，这也是使用Netty需要掌握的一项非常基础的知识。ByteBuf的入门不难，真正用好的话，还是有蛮多学问的，需要不断地积累经验。
+
+​	防止内存泄漏（Memory Leak），不仅仅是Java的难题，也是Netty的难题，它不仅仅是技术问题，也是经验问题。针对这个问题，疯狂创客圈社群通过博客或者视频的方式，总结了Netty的内存使用以及Netty内存泄漏的排查方法。
+
