@@ -14,7 +14,9 @@
     * **SpringBoot**
       + [SpringBoot](/study/SpringBoot/SpringBoot蚂蚁课堂)
     * **Netty**
-      + [Netty](/study/Netty/Netty学习)
+      + [Netty学习](/study/Netty/Netty学习)
+      + [《Netty-Redis-ZooKeeper高并发实战》学习笔记1-6章](/study/Netty/《Netty-Redis-ZooKeeper高并发实战》学习笔记1-6章)
+      + [《Netty-Redis-ZooKeeper高并发实战》学习笔记7-12章](/study/Netty/《Netty-Redis-ZooKeeper高并发实战》学习笔记7-12章)
     * **Linux**
       + [Linux](/study/Linux/Shell学习)
     * **计算机网络**
