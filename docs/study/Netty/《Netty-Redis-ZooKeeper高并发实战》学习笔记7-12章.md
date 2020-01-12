@@ -170,4 +170,88 @@ public class Byte2IntegerDecoderTester {
 
 ​	其实，**<u>基类ByteToMessageDecoder负责解码器的ByteBuf缓冲区的释放工作，它会调用ReferenceCountUtil.release(in)方法，将之前的ByteBuf缓冲区的引用数减1.这个工作是自动完成的。</u>**
 
-​	也会有同学问：如果这个ByteBuf被释放了，在后面还需要用到，怎么办？可以在decode方法中调用一次ReferenceCountUtil.retain(in)来增加一次引用计数
+​	也会有同学问：如果这个ByteBuf被释放了，在后面还需要用到，怎么办？可以在decode方法中调用一次ReferenceCountUtil.retain(in)来增加一次引用计数。
+
+#### 7.1.3 ReplayingDecoder解码器
+
+​	使用上面的Byte2IntegerDecoder整数解码器会面临一个问题：需要对ByteBuf的长度进行检查，如果由足够的字节，才能进行整数的读取。这种长度的判断，是否可以由Netty帮忙来完成呢？答案是：使用Netty的ReplayingDecoder类可以省去长度的判断。
+
+​	ReplayingDecoder类是ByteToMessageDecoder的子类。其作用是：
+
++ **在读取ByteBuf缓冲区的数据之前，需要检查缓冲区是否有足够的字节。**
++ **若ByteBuf中有足够的字节，则会正常读取；反之，如果没有足够的字节，则会停止解码。**
+
+​	使用ReplayingDecoder基类，编写整数解码器，则可以不用进行长度检测。
+
+​	改写上一个的整数解码器，继承ReplayingDecoder类，创建一个新的整数解码器，类名为Byte2IntegerReplayDecoder，代码如下：
+
+```java
+public class Byte2IntegerReplayDecoder extends ReplayingDecoder {
+    @Override
+    public void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
+        int i = in.readInt();
+        Logger.info("解码出一个整数: " + i);
+        out.add(i);
+    }
+}
+```
+
+​	通过这个实例程序，我们可以看到：继承ReplayingDecoder类实现一个解码器，就不用编写长度判断的代码。ReplayingDecoder进行长度判断的原理，其实很简单：它的内部定义了一个新的二进制缓冲区类，对ByteBuf缓冲区进行了装饰，这个类名为ReplayingDecoderBuffer。**该装饰器的特点是：在缓冲区真正读数据之前，首先进行长度的判断：如果长度合格，则读取数据；否则抛出ReplayError。ReplayingDecoder捕获到ReplayError后，会留着数据，<u>等待下一次IO事件到来时再读取</u>。**
+
+​	简单来讲，ReplayingDecoder基类的关键技术就是偷梁换柱，在将外部传入的ByteBuf缓冲区传给子类之前，换成了自己装饰过的ReplayingDecoderBuffer缓冲区。也就是说，<u>在示例程序中，Byte2IntegerReplayDecoder中的decode方法所得到的实参in的值，它的直接类型并不是原始的ByteBuf类型，而是ReplayingDecoderBuffer类型</u>。
+
+​	*ps：看了一下源码，ReplayingDecoderByteBuf extends ByteBuf，内部含成员变量private ByteBuf buffer;*
+
+​	ReplayingDecoderBuffer类型，首先是一个内部的类，其次它继承了ByteBuf类型，包装了ByteBuf类型的大部分读取方法。ReplayingDecoderBuffer类型的读取方法与ByteBuf类型的读取方法相比，做了什么样的功能增强呢？主要是进行二进制数据长度的判断，如果长度不足，则抛出异常。这个异常会反过来被ReplayingDecoder基类所捕获，将解码工作停掉。
+
+​	ReplayingDecoder的作用，远远不止进行长度判断，它更重要的作用是用于<u>分包传输</u>的应用场景。
+
+#### 7.1.4 整数的分包解码器的实践案例
+
+​	前面讲到，**底层通信协议是分包传输的，一份数据可能分几次达到对端**。发送端出去的包在传输过程中会进行多次的拆分和组装。接收端所收到的包和发送端所发送的包不是一模一样的。例如，在发送端发送4个字符串，Netty NIO接收端可能只是接收到了个ByteBuf数据缓冲。
+
+​	对端出站数据：ABCD、EFGH、IJKL、MN
+
+​	ByteBuf解析前(可能出现该情况)：ABC、DEFGHI、JKLMN
+
+​	ByteBuf解析后：ABCD、EFGH、IJKL、MN
+
+​	*ps：典型的粘包、拆包/半包问题。*
+
+​	<u>在Java OIO流式传输中，不会出现这样的问题，因为它的策略是：不读到完整的信息，就一直阻塞程序，不往后执行。</u>但是，在Java的NIO中，由于NIO的非阻塞性，就会出现以上的问题。
+
+​	我们知道，Netty接收到的数据都可以通过解码器进行解码。Netty可以使用ReplayingDecoder解决上述问题。前面讲到，<u>在进行数据解析时，如果发现当前ByteBuf中所有可读的数据不够，ReplayingDecoder会结束解析，直到可读数据是足够的</u>。这一切都是在ReplayingDecoder内部进行，它是通过和缓冲区装饰器类ReplayingDecoderBuffer相互配合完成的，根本就不需要用户程序来操心。
+
+​	一上来就实现对字符串的解码和纠正，相对比较复杂些。在此之前，作为铺垫，我们先看一个简单点的例子：解码整数序列，并且将它们两两一组进行相加。
+
+​	要完成以上的例子，需要用到ReplayingDecoder一个很重要的属性——**state成员属性。该成员属性的作用就是保存当前解码器在解码过程中的当前阶段**。在Netty源代码中，该属性的定义具体如下：
+
+```java
+public abstract class ReplayingDecoder<S> extends ByteToMessageDecoder {
+	// ... 省略不相干的代码
+    
+    // 重要的成员属性，表示阶段，类型为泛型，默认为Object
+    private S state;
+    
+    // 默认的构造器
+    protected ReplayingDecoder() {
+        this((Object)null);
+    }
+    
+    // 重载的构造器
+    protected ReplayingDecoder(S initialState) {
+        // 初始化内部的ByteBuf缓冲装饰器类
+        this.replayable = new ReplayingDecoderByteBuf();
+        
+        // 读断点指针，默认为-1
+        this.checkpoint = -1;
+        
+        // 状态state的默认值为null
+        this.state = initialState;
+    }
+    
+    // ...省略不相干的方法
+}
+```
+
+​	上一小节，在定义的整数解码实例中，使用的是默认的无参构造器，也就是说，**state的值为null，泛型实参类型，为默认的Object**。总之，就是没有用到state属性。
