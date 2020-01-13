@@ -1154,3 +1154,200 @@ MessageToMessageDecoder基类。
 
 ## 第8章 JSON和ProtoBuf序列化
 
+​	我们在开发一些远程过程调用(RPC)的程序时，通常会涉及对象的序列化/反序列化的问题，例如一个“Person”对象从客户端通过TCP的方式发送到服务器端；因为TCP协议（UDP等这种低层协议）只能发送字节流，所以需要应用层将Java POJO对象序列化成字节流，数据接收端再反序列化成Java POJO对象即可。“序列化”一定会涉及编码和格式化（Encoding & Format），目前我们可选择的编码方式有：
+
++ 使用JSON。将Java POJO对象转换成JSON结构化字符串。基于HTTP协议，在Web应用、移动开发方面等，这是常用的编码方式，因为JSON的可读性较强。但是它的性能稍差。
+
++ 基于XML。和JSON一样，数据在序列化成字节流之前都转换成字符串。可读性强，性能差，异构系统、OpenAPI类型的应用中常用。
++ 使用Java内置的编码和序列化机制，可移植性强，性能稍差，无法跨平台（语言）
++ 其他开源的序列化/反序列化框架，例如Apache Avro，Apache Thrift，这两个框架和Protobuf相比，性能非常接近，而且设计原理如出一辙；其中Avro 在大数据存储（RPC数据交换，本地存储）时比较常用；Thrift的亮点在于内置了RPC机制，所以在开发一些RPC交互式应用时，客户端和服务器端的开发与部署都非常简单。
+
+​	如何选择序列化/反序列化框架呢？
+
+​	评价一个序列化框架的优缺点，大概从两个方面着手：
+
+**（1）结果数据大小，原则上说，序列化后的数据尺寸越小，传输效率越高。**
+
+**（2）结构复杂度，这会影响序列化/反序列化的效率，结构越复杂，越耗时。**
+
+​	理论上说，<u>对于性能要求不是太高的服务器程序，可以选择**JSON系列**的序列化框架；对于性能要求比较高的服务器程序，则应该选择传输效率更高的**二进制序列化**框架</u>，目前的建议是Protobuf。
+
+> [【转】三种通用应用层协议protobuf、thrift、avro对比](https://blog.csdn.net/baodi_z/article/details/82222652)
+>
+> 看了下官方github，现在protobuf也支持多种语言了。
+>
+> [protocolbuffers/protobuf](https://github.com/protocolbuffers/protobuf)
+
+​	Protobuf是一个高性能、易扩展的序列化框架，与它的性能测试有关的数据可以参看官方文档。Protobuf本身非常简单，易于开发，而且集合Netty框架，可以非常便捷地实现一个通信应用程序。反过来，Netty也提供了相应的编解码器，为ProtoBuf解决了有关Socket通信中“半包、粘包”等问题。
+
+​	**无论是使用JSON和Protobuf，还是其他反序列化协议，我们必须保证在数据包的反序列化之前，接收端的ByteBuf二进制包一定是一个完整的应用层二进制包，不能是一个半包或者粘包**。
+
+### 8.1 详解粘包和拆包
+
+​	什么是粘包和半包？先从数据包的发送和接收开始讲起。大家知道，Netty发送和读取数据的“场所”是ByteBuf缓冲区。
+
+​	每一次发送就是向通道写入一个ByteBuf。发送数据时先填好ByteBuf，然后通过通道发送出去。对于接收端，每一次读取是通过Handler业务处理器的入站方法，从通道读到一个ByteBuf。读取数据的方法如下：
+
+```java
+public void channelRead(ChannelHandlerContext ctx, Object msg){
+    ByteBuf byteBuf = (ByteBuf) msg;
+    // ... 省略入站处理
+}
+```
+
+​	最为理想的情况是：发送端是发送一个ByteBuf缓冲区，接收端就能接收到一个ByteBuf，并且发送端和接收端的ByteBuf内容能一模一样。
+
+​	现实总是那么残酷。或者说，理想很丰满，现实很骨感。在实际的通信过程中，并没有大家预料的那么完美。
+
+​	下面给大家看一个实例，看看实际通信过程中所遇到的诡异情况。
+
+#### 8.1.1 半包问题的实践案例
+
+​	改造一下前面的NettyEchoClient实例，通过循环的方式，向NettyEchoServer回显服务器写入大量的ByteBuf，然后看看实际的服务器响应结果。注意：服务器类不需要改造，直接使用之前的回显服务器即可。
+
+​	改造好的客户端类——叫作NettyDumpSendClient。在客户端建立连接成功之后，使用一个for循环，不断通过通道向服务器端写ByteBuf。一直写到1000次，写入的ByteBuf的内容相同，都是字符串的内容：“疯狂创客圈：高性能学习社群！”。代码如下：
+
+```java
+public class NettyDumpSendClient {
+
+    private int serverPort;
+    private String serverIp;
+    Bootstrap b = new Bootstrap();
+
+    public NettyDumpSendClient(String ip, int port) {
+        this.serverPort = port;
+        this.serverIp = ip;
+    }
+
+    public void runClient() {
+        //创建reactor 线程组
+        EventLoopGroup workerLoopGroup = new NioEventLoopGroup();
+
+        try {
+            //1 设置reactor 线程组
+            b.group(workerLoopGroup);
+            //2 设置nio类型的channel
+            b.channel(NioSocketChannel.class);
+            //3 设置监听端口
+            b.remoteAddress(serverIp, serverPort);
+            //4 设置通道的参数
+            b.option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+
+            //5 装配子通道流水线
+            b.handler(new ChannelInitializer<SocketChannel>() {
+                //有连接到达时会创建一个channel
+                protected void initChannel(SocketChannel ch) throws Exception {
+                    // pipeline管理子通道channel中的Handler
+                    // 向子channel流水线添加一个handler处理器
+                    ch.pipeline().addLast(NettyEchoClientHandler.INSTANCE);
+                }
+            });
+            ChannelFuture f = b.connect();
+            f.addListener((ChannelFuture futureListener) ->
+            {
+                if (futureListener.isSuccess()) {
+                    Logger.info("EchoClient客户端连接成功!");
+
+                } else {
+                    Logger.info("EchoClient客户端连接失败!");
+                }
+
+            });
+
+            // 阻塞,直到连接完成
+            f.sync();
+            Channel channel = f.channel();
+
+            //6发送大量的文字
+            byte[] bytes = "疯狂创客圈：高性能学习社群!".getBytes(Charset.forName("utf-8"));
+            for (int i = 0; i < 1000; i++) {
+                //发送ByteBuf
+                ByteBuf buffer = channel.alloc().buffer();
+                buffer.writeBytes(bytes);
+                channel.writeAndFlush(buffer);
+            }
+
+
+            // 7 等待通道关闭的异步任务结束
+            // 服务监听通道会一直等待通道关闭的异步任务结束
+            ChannelFuture closeFuture =channel.closeFuture();
+            closeFuture.sync();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            // 优雅关闭EventLoopGroup，
+            // 释放掉所有资源包括创建的线程
+            workerLoopGroup.shutdownGracefully();
+        }
+
+    }
+
+    public static void main(String[] args) throws InterruptedException {
+        int port = NettyDemoConfig.SOCKET_SERVER_PORT;
+        String ip = NettyDemoConfig.SOCKET_SERVER_IP;
+        new NettyDumpSendClient(ip, port).runClient();
+    }
+}
+```
+
+​	运行程序查看结果之前，首先要启动的是前面介绍过的NettyEchoServer回显服务器。然后启动的是新编写的客户端NettyDumpSendClient程序。客户端程序连接成功后，会向服务器发送1000个ByteBuf内容缓冲区，服务器NettyEchoServer收到后，会输出到控制台，然后回写给客户端。
+
+服务器的输出如下（部分）：
+
+```java
+// ...
+msg type: 直接内存
+server received: 疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性
+写回前，msg.refCnt:1
+写回后，msg.refCnt:0
+msg type: 直接内存
+server received: 能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!
+写回前，msg.refCnt:1
+写回后，msg.refCnt:0
+// ...
+```
+
+客户端的输出如下（部分）：
+
+```java
+//...
+client received: 疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!
+client received: 疯狂创客圈：高性能学习社群!
+client received: 疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈�
+client received: ��高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈�
+client received: ��高性能学习社群!疯狂创客圈：高性能学习社群!
+client received: 疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!
+client received: 疯狂创客圈：高性能学习社群!疯狂创客圈：高性能学习社群!
+client received: 疯狂创客圈：高性能学习社群!
+//...
+```
+
+​	仔细观察服务端的控制台输出，可以看出存在三种类型的输出：
+
+（1）读到一个完整的客户端输入ByteBuf。
+
+（2）读到多个客户端的ByteBuf输入，但是“粘”在了一起。
+
+（3）读到部分ByteBuf的内容，并且有乱码。
+
+​	再仔细观看客户端的输出。可以看到，客户端和服务器端同样存在以上三种类型的输出。
+
+​	对应第1种情况，这里把接收端接收到的这种完整的ByteBuf称为“全包”。
+
+​	对应第2种情况，多个发送端的输入ByteBuf“粘”在了一起，就把这种读取的ByteBuf称为“粘包”。
+
+​	对应第3种情况，一个输入的ByteBuf被“拆”开读取，读取到一个破碎的包，就把这种读取的ByteBuf称为“半包”。
+
+​	<u>为了简单起见，也可以将“粘包”的情况看成特殊的“半包”。“粘包”和“半包”可以统称为传输的“半包问题”</u>。
+
+#### 8.1.2 什么是半包问题
+
+​	半包问题包含了“粘包”和“半包”两种情况：
+
+**（1）粘包，指接收端（Receiver）收到一个Bytebuf，包含了多个发送端（Sender）的ByteBuf，多个ByteBuf“粘”在了一起。**
+
+**（2）半包，就是接收端将一个发送端ByteBuf“拆”开了，收到多个破碎的包。换句话说，一个接收端收到的ByteBuf是发送端的一个ByteBuf的一部分。**
+
+​	粘包和半包指的都是一次是不正常的ByteBuf缓存区接收。
+
