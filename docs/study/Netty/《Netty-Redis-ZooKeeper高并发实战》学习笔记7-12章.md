@@ -1351,3 +1351,443 @@ client received: 疯狂创客圈：高性能学习社群!
 
 ​	粘包和半包指的都是一次是不正常的ByteBuf缓存区接收。
 
+#### 8.1.3 半包现象的原理
+
+​	寻根粘包和半包的来源得从操作系统底层说起。
+
+​	大家都知道，**底层网络是以二进制字节报文的形式来传输数据的**。读数据的过程大致为：当IO可读时，Netty会从底层网络将二进制数据读到ByteBuf缓冲区中，再交给Netty程序转成Java POJO对象。写数据的过程大致为：这中间编码器起作用，是将一个Java类型的数据转换成底层能够传输的二进制ByteBuf缓冲数据。解码器的作用与之相反，是将底层传递过来的二进制ByteBuf缓冲数据转换成Java能够处理的Java POJO对象。
+
+​	在发送端Netty的**应用层进程缓冲区**，程序以ByteBuf为单位来发送数据，但是到了**底层操作系统内核缓冲区**，底层会按照协议的规范对数据包进行二进制拼装，拼装成传输层TCP层的协议报文，再进行发送。在接送端接收到传输层的二进制包后，首先保存在**内核缓冲区**，<u>Netty读取ByteBuf时才复制到**进程缓冲区**</u>。
+
+​	在接收端，当Netty程序将数据从**内核缓冲区**复制到**Netty进程缓冲区**的ByteBuf时，问题就来了：
+
+​	**（1）首先，每次读取底层缓冲的数据容量是有限制的，当TCP底层缓冲区的数据包比较大时，会将一个底层包分成多次ByteBuf进行复制，进而造成进程缓冲区读到的是半包。**
+
+​	**（2）当TCP底层缓冲的数据包比较小时，一次复制的却不止一个内核缓冲区包，进而造成进程缓冲区读到的时粘包。**
+
+​	如何解决呢？
+
+​	**基本思路是，在接收端，Netty程序需要根据自定义协议，将读取到的进程缓冲区ByteBuf，在应用程进行二次拼装，重新组装我们应用层的数据包。接收端的这个过程通常也被称为分包，或者叫作拆包。**
+
+​	在Netty中，分包的方法，从第7章可知，主要有两种方法：
+
+<u>（1）可以自定义解码器分包器：基于ByteToMessageDecoder或者ReplayingDecoder，自定义自己的进程缓冲区分包器。</u>
+
+<u>（2）使用Netty内置的解码器。如，使用Netty内置的LengthFieldBasedFrameDecoder自定义分隔符数据包解码器，对进程缓冲区ByteBuf进行正确的分包。</u>
+
+​	在本章后面，这两种方法都会用到。
+
+#### 8.2 JSON协议通信
+
+#### 8.2.1 JSON序列化的通用类
+
+​	Java处理JSON数据有三个比较流行的开源类库：阿里的FastJson、谷歌的Gson和开源社区的Jackson。
+
+​	Jackson是一个简单的、基于Java的JSON开源库。使用Jackson开源库，可以轻松地将Java POJO对象转换成JSON、XML格式字符串；同样也可以方便地将JSON、XML字符串转换成Java POJO对象。Jackson开源库的优点是：所依赖的jar包较少、简单易用、性能也还不错，另外Jackson社区相对比较活跃。<u>Jackson开源库的缺点是：对于复杂POJO类型、复杂的集合Map、List的转换结果，不是标准的JSON格式，或者会出现一些问题</u>。
+
+​	Google的Gson开源库是一个功能齐全的JSON解析库，起源于Google公司内部需求而由Google自行研发而来，在2008年5月公开发布第一版之后已被许多公司或用户使用。<u>Gson可以完成复杂类型的POJO和JSON字符串的相互转换，转换能力非常强</u>。
+
+​	阿里巴巴的FastJson是一个高性能的JSON库。<u>传闻说FastJson在复杂类型的POJO转换JSON时，可能会出现一些引用类型而导致JSON转换出错，需要进行引用的定制</u>。顾名思义，从性能上说，FastJson库采用独创的算法，将JSON转换POJO的速度提升到极致，超过其他JSON开源库。
+
+​	在实际开发中，目前主流的策略是：Google的Gson库和阿里的FastJson库两者结合使用。<u>在POJO序列化成JSON字符串的应用场景，使用Google的Gson库；在JSON字符串反序列化成POJO的应用场景，使用阿里的FastJson库</u>。
+
+​	下面将JSON的序列化和反序列化功能放在一个通用类JsonUtil中，方便后面统一使用。代码如下：
+
+```java
+public class JsonUtil {
+
+    //  谷歌GsonBuilder构造器
+    static GsonBuilder gb = new GsonBuilder();
+    static {
+        // 不需要html escape
+        gb.disableHtmlEscaping();
+    }
+
+    //  序列化：使用谷歌Gson将POJO转成字符串
+    public static String pojoToJson(Object obj){
+        // String json = new Gson().toJson(obj);
+        String json = gb.create().toJson(obj);
+        return json;
+    }
+
+    //  反序列化：使用阿里Fastjson将字符串转换成POJO对象
+    public static <T> T jsonToPojo(String json, Class<T> tClass){
+        T t = JSONObject.parseObject(json, tClass);
+        return t;
+    }
+}
+```
+
+> json相关：
+>
+> [GSON](https://www.jianshu.com/p/75a50aa0cad1)
+>
+> [王学岗Gson解析和泛型和集合数据](https://www.jianshu.com/p/fb53745f8752)
+>
+> [fastJson与jackson性能对比](https://blog.csdn.net/u013433821/article/details/82905222)
+>
+> 泛型相关：
+>
+> [java 泛型详解-绝对是对泛型方法讲解最详细的，没有之一](https://blog.csdn.net/s10461/article/details/53941091)
+>
+> [java泛型(尖括号里看不懂的东西)](https://blog.csdn.net/weixin_39408343/article/details/95761171)
+
+#### 8.2.2 JSON序列化与反序列化的实践案例
+
+​	下面通过一个小实例，演示一下POJO对象的JSON协议的序列化与反序列化。首先定义一个POJO类，名为JsonMsg类，包含id和content两个属性。然后使用lombok开源库的@Data注释，为属性加上getter和setter方法。
+
+```java
+@Data
+public class JsonMsg {
+    //id Field(域/字段)
+    private int id;
+    //content Field(域/字段)
+    private String content;
+
+    //反序列化：在通用方法中，使用阿里FastJson转成Java POJO对象
+    public static JsonMsg parseFromJson(String json) {
+        return JsonUtil.jsonToPojo(json, JsonMsg.class);
+    }
+
+    //序列化：在通用方法中，使用谷歌Gson转成字符串
+    public String convertToJson() {
+        return JsonUtil.pojoToJson(this);
+    }
+
+}
+```
+
+​	在POJO类JsonMsg中，首先加上了一个JSON序列化方法convertToJson()：它调用通用类定义的JsonUtil.pojoToJson(Object)方法，将对象自身序列化为JSON字符串。另外，JsonMsg还加上了一个JSON反序列化方法parseFromJson(String)：它是一个静态方法，调用通用类定义的JsonUtil.jsonToPojo(String, Class)，将JSON字符串反序列化为JsonMsg类型的对象实例。
+
+​	使用POJO类的JsonMsg实现从POJO对象到JSON的序列化、反序列化的实践案例演示，代码如下：
+
+```java
+public class JsonMsgDemo {
+
+    //构建Json对象
+    public JsonMsg buildMsg() {
+        JsonMsg user = new JsonMsg();
+        user.setId(1000);
+        user.setContent("疯狂创客圈:高性能学习社群");
+        return user;
+    }
+
+    //序列化 serialization & 反序列化 Deserialization
+    @Test
+    public void serAndDesr() throws IOException {
+        JsonMsg message = buildMsg();
+        //将POJO对象，序列化成字符串
+        String json = message.convertToJson();
+        //可以用于网络传输,保存到内存或外存
+        System.out.println("json:=" + json);
+
+        //JSON 字符串,反序列化成对象POJO
+        JsonMsg inMsg = JsonMsg.parseFromJson(json);
+        System.out.println("id:=" + inMsg.getId());
+        System.out.println("content:=" + inMsg.getContent());
+    }
+}
+```
+
+​	运行结果如下：
+
+```java
+json:={"id":1000,"content":"疯狂创客圈:高性能学习社群"}
+id:=1000
+content:=疯狂创客圈:高性能学习社群
+```
+
+#### 8.2.3 JSON传输的编码器和解码器之原理
+
+​	<u>本质上来说，JSON格式仅仅是字符串的一种组织形式</u>。所以，传输JSON的所用到的协议与传输普通文本所使用的协议没有什么不同。下面使用常用的Head-Content协议来介绍一下JSON的传输。
+
+​	Head-Content数据包的解码过程大致如下：
+
+​	先使用LengthFieldBasedFrameDecoder（Netty内置的自定义长度数据包解码器）解码Head-Content二进制数据包，解码出Content字段的二进制内容。然后，使用StringDecoder字符串解码器（Netty内置的解码器）将二进制内容解码成JSON字符串。最后，使用JsonMsgDecoder解码器（一个自定义解码器）将JSON字符串解码成POJO对象。
+
+​	Head-Content数据包的编码过程大致如下：
+
+​	先使用StringEncoder编码器（Netty内置）将JSON字符串编码成二进制字节数组。然后，使用LengthFieldPrepender编码器（Netty内置）将二进制字节数组编码成Head-Content二进制数据包。
+
+​	**LengthFieldPrepender编码器的作用：在数据包的前面加上内容的二进制字节数组的长度**。<u>这个编码器和LengthFieldBasedFrameDecoder解码器是天生的一对，常常配套使用</u>。这组“天仙配”属于Netty所提供的一组非常重要的编码器和解码器，<u>常常用于Head-Content数据包的传输</u>。
+
+​	LengthFieldPrepender编码器有两个常用的构造器：
+
+```java
+public class LengthFieldPrepender extends MessageToByteEncoder<ByteBuf> {
+    // ...成员变量
+    
+    public LengthFieldPrepender(int lengthFieldLength) {
+        this(lengthFieldLength, false);
+    }
+
+    public LengthFieldPrepender(int lengthFieldLength, boolean lengthIncludesLengthFieldLength) {
+        this(lengthFieldLength, 0, lengthIncludesLengthFieldLength);
+    }
+    // ...其他构造函数
+}
+```
+
+​	上面的构造器中，第一个参数lengthFieldLength表示Head长度字段所占用的字节数。另一个参数lengthIncludesLengthFieldLength表示Head字段是否包含长度字段自身的字节数。<u>如果该参数的值为true，表示长度字段的值（总长度）包含了自己的字节数。如果值为false，表示长度字段的值仅仅包含Content内容的二进制数据的长度。一般来说，lengthIncludesLengthFieldLength的默认值为false。</u>
+
+#### 8.2.4 JSON传输之服务器端的实践案例
+
+​	为了清晰地演示JSON传输，下面设计一个简单的客户端/服务器传输程序：服务器接收客户端的数据包，并解码成JSON，再转换POJO；客户端将POJO转换成JSON字符串，编码后发送给到服务器端。
+
+​	为了简化流程，此服务器端的代码仅仅包含Inbound入站处理的流程，不包含OutBound出站处理的流程。也就是说，服务器端的程序仅仅读取客户端数据包并完成解码。服务器端的程序没有写出任何的输出数据包到对端（即客户端）。服务器端实践案例的程序代码如下：
+
+```java
+public class JsonServer {
+
+    private final int serverPort;
+    ServerBootstrap b = new ServerBootstrap();
+
+    public JsonServer(int port) {
+        this.serverPort = port;
+    }
+
+    public void runServer() {
+        //创建reactor 线程组
+        EventLoopGroup bossLoopGroup = new NioEventLoopGroup(1);
+        EventLoopGroup workerLoopGroup = new NioEventLoopGroup();
+
+        try {
+            //1 设置reactor 线程组
+            b.group(bossLoopGroup, workerLoopGroup);
+            //2 设置nio类型的channel
+            b.channel(NioServerSocketChannel.class);
+            //3 设置监听端口
+            b.localAddress(serverPort);
+            //4 设置通道的参数
+            b.option(ChannelOption.SO_KEEPALIVE, true);
+            b.option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+            b.childOption(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+
+            //5 装配子通道流水线
+            b.childHandler(new ChannelInitializer<SocketChannel>() {
+                //有连接到达时会创建一个channel
+                protected void initChannel(SocketChannel ch) throws Exception {
+                    // pipeline管理子通道channel中的Handler
+                    // 向子channel流水线添加3个handler处理器
+                    ch.pipeline().addLast(new LengthFieldBasedFrameDecoder(1024, 0, 4, 0, 4));
+                    ch.pipeline().addLast(new StringDecoder(CharsetUtil.UTF_8));
+                    ch.pipeline().addLast(new JsonMsgDecoder());
+                }
+            });
+            // 6 开始绑定server
+            // 通过调用sync同步方法阻塞直到绑定成功
+            ChannelFuture channelFuture = b.bind().sync();
+            System.out.println(" 服务器启动成功，监听端口: " +
+                    channelFuture.channel().localAddress());
+
+            // 7 等待通道关闭的异步任务结束
+            // 服务监听通道会一直等待通道关闭的异步任务结束
+            ChannelFuture closeFuture = channelFuture.channel().closeFuture();
+            closeFuture.sync();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            // 8 优雅关闭EventLoopGroup，
+            // 释放掉所有资源包括创建的线程
+            workerLoopGroup.shutdownGracefully();
+            bossLoopGroup.shutdownGracefully();
+        }
+
+    }
+
+    //服务器端业务处理器
+    static class JsonMsgDecoder extends ChannelInboundHandlerAdapter {
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+            String json = (String) msg;
+            JsonMsg jsonMsg = JsonMsg.parseFromJson(json);
+            System.out.println("收到一个 Json 数据包 =》" + jsonMsg);
+
+        }
+    }
+
+
+    public static void main(String[] args) throws InterruptedException {
+        int port = 8099;
+        new JsonServer(port).runServer();
+    }
+}
+```
+
+#### 8.2.5 JSON传输之客户端的实践案例
+
+​	为了简化流程，客户端的代码仅仅包含Outbound出站处理的流程，不包含Inbound入站处理的流程。也就是说，客户端的程序仅仅进行数据的编码，然后把数据包写到服务器端。客户端的程序并没有去处理从对端（即服务器端）过来的输入数据包。客户端的流程大致如下：
+
+​	（1）通过谷歌的Gson框架，将POJO序列化成JSON字符串。
+
+​	（2）然后，使用StringEncoder编码器（Netty内置）将JSON字符串编码成二进制字节数组。
+
+​	（3）最后，使用LengthFieldPrepender编码器（Netty内置）将二进制字节数组编码成Head-Content格式的二进制数据包。
+
+​	客户端实践案例的程序代码如下：
+
+```java
+public class JsonSendClient {
+    static String content = "疯狂创客圈：高性能学习社群!";
+
+    private int serverPort;
+    private String serverIp;
+    Bootstrap b = new Bootstrap();
+
+    public JsonSendClient(String ip, int port) {
+        this.serverPort = port;
+        this.serverIp = ip;
+    }
+
+    public void runClient() {
+        //创建reactor 线程组
+        EventLoopGroup workerLoopGroup = new NioEventLoopGroup();
+
+        try {
+            //1 设置reactor 线程组
+            b.group(workerLoopGroup);
+            //2 设置nio类型的channel
+            b.channel(NioSocketChannel.class);
+            //3 设置监听端口
+            b.remoteAddress(serverIp, serverPort);
+            //4 设置通道的参数
+            b.option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+
+            //5 装配通道流水线
+            b.handler(new ChannelInitializer<SocketChannel>() {
+                //初始化客户端channel
+                protected void initChannel(SocketChannel ch) throws Exception {
+                    // 客户端channel流水线添加2个handler处理器
+                    ch.pipeline().addLast(new LengthFieldPrepender(4));
+                    ch.pipeline().addLast(new StringEncoder(CharsetUtil.UTF_8));
+                }
+            });
+            ChannelFuture f = b.connect();
+            f.addListener(new GenericFutureListener<ChannelFuture>() {
+                @Override
+                public void operationComplete(ChannelFuture futureListener) throws Exception {
+                    if (futureListener.isSuccess()) {
+                        System.out.println("EchoClient客户端连接成功!");
+                    } else {
+                        System.out.println("EchoClient客户端连接失败!");
+                    }
+                }
+            });
+
+            // 阻塞,直到连接完成
+            f.sync();
+            Channel channel = f.channel();
+
+            //发送 Json 字符串对象
+            for (int i = 0; i < 1000; i++) {
+                JsonMsg user = build(i, i + "->" + content);
+                channel.writeAndFlush(user.convertToJson());
+                System.out.println("发送报文：" + user.convertToJson());
+            }
+            channel.flush();
+
+
+            // 7 等待通道关闭的异步任务结束
+            // 服务监听通道会一直等待通道关闭的异步任务结束
+            ChannelFuture closeFuture = channel.closeFuture();
+            closeFuture.sync();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            // 优雅关闭EventLoopGroup，
+            // 释放掉所有资源包括创建的线程
+            workerLoopGroup.shutdownGracefully();
+        }
+
+    }
+
+    //构建Json对象
+    public JsonMsg build(int id, String content) {
+        JsonMsg user = new JsonMsg();
+        user.setId(id);
+        user.setContent(content);
+        return user;
+    }
+
+
+    public static void main(String[] args) throws InterruptedException {
+        int port = 8099;
+        String ip = "127.0.0.1";
+        new JsonSendClient(ip, port).runClient();
+    }
+}
+```
+
+​	依次运行服务器端和客户端程序后，输出结果部分如下：
+
+```java
+// 服务器端
+服务器启动成功，监听端口: /0:0:0:0:0:0:0:0:8099
+收到一个 Json 数据包 =》JsonMsg(id=0, content=0->疯狂创客圈：高性能学习社群!)
+收到一个 Json 数据包 =》JsonMsg(id=1, content=1->疯狂创客圈：高性能学习社群!)
+收到一个 Json 数据包 =》JsonMsg(id=2, content=2->疯狂创客圈：高性能学习社群!)
+// ... 
+
+// 客户端
+EchoClient客户端连接成功!
+发送报文：{"id":0,"content":"0->疯狂创客圈：高性能学习社群!"}
+发送报文：{"id":1,"content":"1->疯狂创客圈：高性能学习社群!"}
+发送报文：{"id":2,"content":"2->疯狂创客圈：高性能学习社群!"}
+// ...
+```
+
+### 8.3 Protobuf协议通讯
+
+​	Protobuf是Google提出的一种数据交换的格式，是一套类似JSON或者XML的数据传输格式和规范，用于不同应用或进程之间的通信。Protobuf的编码过程为：使用预先定义的Message数据结构将实际的传输数据进行打包，然后编码成二进制的码流进行传输或者存储。Protobuf的解码过程刚刚好与编码过程相反：将二进制码流解码成Protobuf自己定义的Message结构的POJO实例。
+
+​	**Protobuf既独立于语言，又独立于平台**。Google官方提供了多种语言的实现：Java、C#、C++、GO、JavaScript和Python。**Protobuf数据包是一种二进制的格式，相对于文本格式的数据交换（JSON、XML）来说，速度要快很多**。由于Protobuf优异的性能，使得它更加适用于**分布式应用场景下的数据通信或者异构环境下的数据交换**。
+
+​	与JSON、XML相比，Protobuf算是后起之秀，是Google开源的一种数据格式。只是<u>Protobuf更加适合于高性能、快速响应的数据传输应用场景</u>。另外，JSON、XML是文本格式，数据具有可读性；而Protobuf是二进制数据格式，数据本身不具有可读性，只有反序列化之后才能得到真正可读的数据。正因为Protobuf是二进制数据格式，数据序列化之后，体积比JSON和XML更小，更加适合网络传输。
+
+​	总体来说，<u>在一个需要大量数据传输的应用场景中，因为数据量很大，则选择Protobuf可以明显地减少传输的数据量和提升网络IO的速度</u>。对于打造一款高性能的通信服务器来说，Protobuf传输协议是最高性能的传输协议之一。微信的消息传输就采用了Protobuf协议。
+
+> [深入 ProtoBuf - 简介](https://www.jianshu.com/p/a24c88c0526a)
+>
+> [深入 ProtoBuf - 编码](https://www.jianshu.com/p/73c9ed3a4877)
+
+#### 8.3.1 一个简单的proto文件的实践案例
+
+​	Protobuf使用proto文件来预先定义的消息格式。数据包是按照proto文件所定义的消息格式完成二进制码流的编码和解码。proto文件，简单地说，就是一个消息的协议文件，这个协议文件的后缀文件名为".proto"。
+
+​	作为演示，下面介绍一个非常简单的proto文件：仅仅定义一个消息结构体，并且该消息结构体也非常简单，仅包含两个字段。实例如下：
+
+```protobuf
+// [开始头部声明]
+syntax = "proto3";
+package com.crazymakercircle.im.common.bean.msg;
+// [结束头部声明]
+
+// [开始 java选项配置]
+option java_package = "com.crazymakercircle.netty.protocol";
+option java_outer_classname = "MsgProtos";
+// [结束 java选项配置]
+
+// [开始消息定义]
+message Msg{
+	uint32 id = 1;	// 消息ID
+	string content = 2;	// 消息内容
+}
+// [结束消息定义]
+```
+
+​	在”.proto“文件的头部声明中，需要声明”.proto“所使用的Protobuf协议版本，这里使用的是”proto3“。也可以使用旧一点的版本"proto2"，两个版本的消息格式有一些细微的不同。默认的协议版本为”proto2“。
+
+​	Protobuf支持很多语言，所以它为不同的语言提供了一些可选的声明选项，选项的前面有option关键字。<u>”java_package“选项的作用为：在生成”proto“文件中消息的POJO类和Builder（构造者）的Java代码时，将Java代码放入指定的package中。”java_outer_classname“选项的作用为：在生成”proto“文件所对应Java代码时，所生产的Java外部类的名称</u>。
+
+​	在”proto“文件中，使用message这个关键字来定义消息的结构体。在生成”proto“对应的Java代码时，每个具体的消息结构体都对应一个最终的Java POJO类。<u>消息结构体的字段对应到POJO类的属性</u>。也就是说，每定义一个”message“结构体相当于声明一个Java中的类。并且message中可以内嵌message，就像Java的内部类一样。
+
+​	每一个消息结构体可以有多个字段。定义一个字段的格式，简单来说就是”类型 名称 = 编号“。例如”string content = 2；“表示该字段是string类型，名为content，序号为2。**字段序号表示为：在Protobuf数据包的序列化、反序列化时，该字段的具体排序**。
+
+​	在每一个".proto"文件中，可以声明多个”message“。**大部分情况下，会把有依赖关系或者包含关系的message消息结构体写入一个.proto文件。将那些没有关联关系的message消息结构体，分别写入不同的文件，这样便于管理。**
+
+#### 8.3.2 控制台命令生成POJO和Builder
+
+​	完成”.proto“文件定义后，下一步就是生成消息的POJO类和Builder（构造者）类。有两种方式生成Java类：一种是通过控制台命令的方式；另一种是使用Maven插件的方式。
+
+​	
