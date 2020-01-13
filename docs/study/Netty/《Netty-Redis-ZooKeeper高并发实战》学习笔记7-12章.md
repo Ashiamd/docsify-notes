@@ -2362,3 +2362,63 @@ message Msg {
 | String     | 一个字符串必须是UTF-8编码或者7-bit ASCII编码的文本           | String     |
 | Bytes      | 可能包含任意顺序的字节数据                                   | ByteString |
 
+​	**变长编码的类型表示打包的字节并不是固定，而是根据数据的带下或者长度来定。**例如int32，如果数值比较小，在0~127时，使用一个字节打包。
+
+​	<u>关于fixed32和int32的区别。**fixed32的打包效率比int32的效率高，但是使用的空间一般比int32多。因此一个属于空间效率高**。根据项目的实际情况，一般选择fixed32，如果遇到对传输数据量要求比较苛刻的环境，则可以选择int32。</u>
+
+#### 8.5.4 其他的语法规范
+
+1. import声明
+
+   ​	在需要多个消息结构体时，".proto"文件可以像Java语言的类文件一样分离多个，在需要的时候通过import导入需要的文件。导入的操作和Java的import操作大致相同。
+
+2. 嵌套消息
+
+   ​	“.proto”文件支持嵌套消息，消息中可以包含另一个消息作为其字段，也可以在消息中定义一个新的消息。
+
+   ```protobuf
+   message Outer{				// Level 0
+       message MiddleA {		// Level 1
+           message Inner{		// Level 2
+               int64 ival = 1;
+               bool booly = 2;
+           }
+       }
+       message MiddleB {		// Level 1
+           message Inner{		// Level 2
+               int32 ival = 1;
+               bool booly = 2;
+           }
+       }
+   }
+   ```
+
+   ​	如果你想在它的父消息类型的外部重复使用这个内部的消息类型，可以使用Parent.Type的形式来使用它，例如：
+
+   ```protobuf
+   message SomeOtherMessage{
+   	Outer.MiddlerA.Inner ref = 1;
+   }
+   ```
+
+3. enum枚举
+
+   ​	**枚举的定义和Java相同，但是有一些限制。枚举值必须大于等于0的整数**。使用分号(；)分隔枚举变量，而不是Java语言中的逗号“，”。
+
+   ```java
+   enum VoipProtocil{
+       H323 = 1;
+       SIP = 2;
+       MGCP = 3;
+       H248 = 4;
+   }
+   ```
+
+### 8.6 本章小结
+
+​	**JSON格式是直观的文本序列化方式，在实际的开发中，尤其是基于RESTful进行远程交互的应用开发中使用的非常多。一般来说，在实际开发中使用较多的JSON开发包是阿里的FastJson、谷歌的Gson。**
+
+​	**Protobuf格式是非直观的二进制序列化方式，效率比较高，主要用于高性能的通信开发。**
+
+## 第9章 基于Netty的单体IM系统的开发实践
+
