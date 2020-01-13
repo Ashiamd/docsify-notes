@@ -1790,4 +1790,437 @@ message Msg{
 
 ​	完成”.proto“文件定义后，下一步就是生成消息的POJO类和Builder（构造者）类。有两种方式生成Java类：一种是通过控制台命令的方式；另一种是使用Maven插件的方式。
 
+​	先看第一种方式：通过控制台命令生成消息的POJO类和Builder构造者。
+
+​	首先从”https://github.com/protocolbuffers/protobuf/releases“下载Protobuf的安装包，可以选择不同的版本，这里下载的是3.6.1的java版本。在Windows下解压后执行安装。备注：这里以Windows平台为例子，对于在Linux或者Mac平台下，自行尝试。
+
+​	生成构造者代码，需要用到安装文件中的protoc.exe可执行文件。安装完成后，设置一下path环境变量。将poto的安装目录加入到path环境变量中。
+
+​	下面开始使用protoc.exe文件生成的Java的Builder（构造者）。生成的命令如下：
+
+```none
+protoc.exe --java_out=./src/main/java/ ./Msg.proto
+```
+
+​	上面的命令表示“proto”文件的名称为：“./Msg.proto”；所生产的POJO类和构造者类的输出文件夹为./src/main/java/。
+
+#### 8.3.3 Maven插件生成POJO和Builder
+
+​	使用命令行生成Java类的操作比较繁琐。另一种更加方便的方式是：使用protobuf-maven-plugin插件，它可以非常方便地生成消息的POJO类和Buidler（构造者）类的Java代码。在Maven的pom文件中增加此plugin插件的配置项，具体如下：
+
+```xml
+    <plugin>
+        <groupId>org.xolstice.maven.plugins</groupId>
+        <artifactId>protobuf-maven-plugin</artifactId>
+        <version>0.5.0</version>
+        <extensions>true</extensions>
+        <configuration>
+            <!--proto文件路径-->
+            <protoSourceRoot>${project.basedir}/protobuf</protoSourceRoot>
+            <!--目标路径-->
+            <outputDirectory>${project.build.sourceDirectory}</outputDirectory>
+            <!--设置是否在生成java文件之前清空outputDirectory的文件-->
+            <clearOutputDirectory>false</clearOutputDirectory>
+            <!--临时目录-->
+            <temporaryProtoFileDirectory>${project.build.directory}/protoc-temp</temporaryProtoFileDirectory>
+            <!--protoc 可执行文件路径-->
+            <protocExecutable>${project.basedir}/protobuf/protoc3.6.1.exe</protocExecutable>
+        </configuration>
+        <executions>
+            <execution>
+                <goals>
+                    <goal>compile</goal>
+                    <goal>test-compile</goal>
+                </goals>
+            </execution>
+        </executions>
+    </plugin>
+```
+
+​	protobuf-maven-plugin插件的配置项，具体介绍如下：
+
++ protoSourceRoot：“proto”消息结构体文件的路径
++ outputDirectory：生成的POJO类和Builder类的目标路径
++ protocExecutable：Java代码生成器工具的protoc3.6.1.exe可执行文件的路径。
+
+​	配置好之后，执行插件的compile命令，Java代码就利索生成了。或者在Maven的项目编译时，POJO类和Builder类也会自动生成。
+
+#### 8.3.4 消息POJO和Builder的使用之实践案例
+
+​	在Maven的pom.xml文件上加上protobuf的Java运行包的依赖，代码如下：
+
+```xml
+<dependency>
+    <groupId>com.google.protobuf</groupId>
+    <artifactId>protobuf-java</artifactId>
+    <version>${protobuf.version}</version>
+</dependency>
+```
+
+​	这里的protobuf.version版本号的具体值为3.6.1。也就是说，Java运行时的protobuf依赖包的版本和“.proto”消息结构体文件中的syntax配置版本，以及编译“.proto”文件所使用的编译器“protoc3.6.1.exe”的版本，这三个版本需要配套一致。
+
+1. 使用Builder构造者，构造POJO消息对象
+
+```java
+public class ProtobufDemo {
+    public static MsgProtos.Msg buildMsg() {
+        MsgProtos.Msg.Builder personBuilder = MsgProtos.Msg.newBuilder();
+        personBuilder.setId(1000);
+        personBuilder.setContent("疯狂创客圈:高性能学习社群");
+        MsgProtos.Msg message = personBuilder.build();
+        return message;
+    }
+    // ...
+}
+```
+
+​	**Protobuf为每个message消息结构体生成的Java类中，包含了一个POJO类、一个Builder类**。构造POJO消息，首先需要使用POJO类的newBuilder<u>静态方法</u>获得一个Builder构造者。<u>每一个POJO字段的值，需要通过Builder构造者的setter方法去设置</u>。注意，<u>消息POJO对象并没有setter方法</u>。字段值设置完成之后，使用构造者的build()方法构造出POJO消息对象。
+
+2. 序列化 serialization & 反序列化 Deserialization的方式一
+
+​	获得消息POJO实例之后，可以通过多种方法将POJO对象序列化为二进制字节，或者反序列化。下面是方式一：
+
+```java
+public class ProtobufDemo {
+    public void serAndDesr1() throws IOException {
+        MsgProtos.Msg message = buildMsg();
+        //将Protobuf对象，序列化成二进制字节数组
+        byte[] data = message.toByteArray();
+        //可以用于网络传输,保存到内存或外存
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        outputStream.write(data);
+        data = outputStream.toByteArray();
+        //二进制字节数组,反序列化成Protobuf 对象
+        MsgProtos.Msg inMsg = MsgProtos.Msg.parseFrom(data);
+        System.out.println("id:=" + inMsg.getId());
+        System.out.println("content:=" + inMsg.getContent());
+    }
+}
+```
+
+​	输出结果：
+
+```java
+id:=1000
+content:=疯狂创客圈:高性能学习社群
+```
+
+​	这种方式通过调用POJO对象的toByteArray()方法<u>将POJO对象序列化成字节数组</u>。通过调用parseFrom(byte[] data)方法，Protobuf也可以从<u>字节数组中重新反序列化得到POJO新的实例</u>。
+
+​	**这种方式类似于普通Java对象的序列化，适用于很多将Protobuf的POJO序列化到内存或者外层的应用场景。**
+
+3. 序列化 serialization & 反序列化 Deserialization 的方式二
+
+```java
+public class ProtobufDemo {
+    public void serAndDesr2() throws IOException {
+        MsgProtos.Msg message = buildMsg();
+        //序列化到二进制流
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        message.writeTo(outputStream);
+        ByteArrayInputStream inputStream = new ByteArrayInputStream(outputStream.toByteArray());
+        //从二进流,反序列化成Protobuf 对象
+        MsgProtos.Msg inMsg = MsgProtos.Msg.parseFrom(inputStream);
+        System.out.println("id:=" + inMsg.getId());
+        System.out.println("content:=" + inMsg.getContent());
+    }
+}
+```
+
+​	这种方式通过调用POJO对象的writeTo(OutputStream)方法将<u>POJO对象的二进制字节写出到输出流</u>。通过调用parseFrom(InputStream)方法，Protobuf<u>从输入流中读取二进制码流重新反序列化</u>，得到POJO新的实例。
+
+​	在阻塞式的二进制码流传输到应用场景中，这种序列化和反序列化的方式是没有问题的。例如，可以将二进制码流写入阻塞式的Java OIO套接字或者输出到文件。但是，**这种方式在异步操作的NIO应用场景中，存在着粘包/半包的问题**。
+
+4. 序列化 serialization & 反序列化 Deserialization的方式三
+
+```java
+public class ProtobufDemo {
+    //带字节长度：[字节长度][字节数据],解决粘包/半包问题
+    public void serAndDesr3() throws IOException {
+        MsgProtos.Msg message = buildMsg();
+        //序列化到二进制流
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        message.writeDelimitedTo(outputStream);
+        ByteArrayInputStream inputStream = new ByteArrayInputStream(outputStream.toByteArray());
+        //从二进流,反序列化成Protobuf 对象
+        MsgProtos.Msg inMsg = MsgProtos.Msg.parseDelimitedFrom(inputStream);
+        System.out.println("id:=" + inMsg.getId());
+        System.out.println("content:=" + inMsg.getContent());
+    }
+}
+```
+
+​	这种方式通过调用POJO对象的writeDelimitedTo(OutputStream)方法在序列化的字节码之前添加了字节数组的长度。<u>这一点类似于前面介绍的Head-Content协议，只不过Protobuf做了优化，长度的类型不是固定长度的int类型，而是可变长度varint32类型</u>。
+
+​	反序列化时，调用parseDelimitedFrom(InputStream)方法。Protobuf从输入流中先读取varint32类型的长度值，然后根据长度值读取此消息的二进制字节，再反序列化得到POJO新的实例。
+
+​	**这种方式可以用于异步操作的NIO应用场景中，解决了粘包/半包的问题**。
+
+### 8.4 Protobuf编解码的实践案例
+
+​	<u>Netty默认支持Protobuf的编码和解码，内置了一套基础的Protobuf编码和解码器。</u>
+
+#### 8.4.1 Protobuf编码器和解码器的原理
+
+​	Netty内置的Protobuf专用的基础编码器/解码器为：ProtobufEncoder编码器和ProtobufDecoder解码器。
+
+1. ProtobufEncoder编码器
+
+   ​	翻开Netty源代码，我们发现ProtobufEncoder的实现逻辑非常简单，<u>直接使用了message.toByteArray()方法将Protobuf的POJO消息对象编码成二进制字节，数据放入Netty的Bytebuf数据包中，然后交给了下一站的编码器。</u>
+
+   ```java
+   @Sharable
+   public class ProtobufEncoder extends MessageToMessageEncoder<MessageLiteOrBuilder> {
+       public ProtobufEncoder() {
+       }
+   
+       protected void encode(ChannelHandlerContext ctx, MessageLiteOrBuilder msg, List<Object> out) throws Exception {
+           if (msg instanceof MessageLite) {
+               out.add(Unpooled.wrappedBuffer(((MessageLite)msg).toByteArray()));
+           } else {
+               if (msg instanceof Builder) {
+                   out.add(Unpooled.wrappedBuffer(((Builder)msg).build().toByteArray()));
+               }
+   
+           }
+       }
+   }
+   ```
+
+2. ProtobufDecoder解码器
+
+   ​	ProtobufDecoder解码器和ProtobufEncoder编码器相互对应。ProtobufDecoder需要指定一个POJO消息的prototype原型POJO实例，根据原型实例找到对应的Parer解析器，将二进制的字节解析为Protobuf POJO消息对象。
+
+   ​	**在Java NIO通信中，仅仅使用以上这组编码器和解码器会存在粘包/半包的问题**。Netty也提供了配套的Head-Content类型的Protobuf编码器和解码器，在二进制码流之前加上二进制字节数组的长度。
+
+3. ProtobufVarint32LengthFieldPrepender长度编码器
+
+   ​	这个编码器的作用是，可以在ProtobufEncoder生成的字节数组之前，前置一个varint32数字，表示序列化的二进制字节数。
+
+4. ProtobufVarint32FrameDecoder长度解码器
+
+   ​	ProtobufVarint32FrameDecoder和ProtobufVarint32LengthFieldPrepender相互对应。其作用是，根据数据包中的varint32的长度值，解码一个足额的字节数组。然后将字节数组交给下一站的解码器ProbufDecoder。
+
+​	**varint32是一种紧凑的表示数字的方法，它不是一种具体的数据类型**。<u>varint32它用一个或多个字节来表示一个数字，值越小的数字使用越少的字节数，值越大使用的字节数越多</u>。varint32根据值的大小自动进行长度的收缩，这能减少用于保存长度的字节数。也就是说，**varint32与int类型的最大区别是：varint32用一个或多个字节来表示一个数字。varint32不是固定长度，所以为了更好地减少通信过程中的传输量，消息头中的长度尽量采用varint格式**。
+
+​	至此，Netty的内置的Protobuf的编码器和解码器已经初步介绍完了。可以通过这两组编码器/解码器完成Length+ProtobufData(Head-Content)协议的数据传输。但是，<u>在更加复杂的传输应用场景，Netty的内置编码器和解码器是不够用的</u>。例如，在Head部分加上魔数字段进行安全验证；或者还需要对Protobuf Data的内容进行加密和解密等。也就是说，**在复杂的传输应用场景下，需要定制属于自己的Protobuf编码器和解码器**。
+
+*ps：吐槽，果然到最后，还是提倡自己写编码器和解码器，哈哈。*
+
+#### 8.4.2 Protobuf传输之服务器端的实践案例
+
+​	为了清晰地演示Protobuf传输，下面设计了一个简单的客户端/服务器端传输程序：服务器端接收客户端的数据包，并解码成Protobuf的POJO；客户端将Protobuf的POJO编码成二进制数据包，再发送到服务器端。
+
+​	在服务器端，Protobuf协议的解码过程如下：
+
+​	先使用Netty内置的ProtobufVarint32FrameDecoder，根据varint32格式的可变长度值，从入站数据包中解码出二进制Protobuf POJO对象。最后，自定义一个ProtobufBussinessDecoder解码器来处理Protobuf POJO对象。
+
+​	服务器端的实践案例程序代码如下：
+
+```java
+public class ProtoBufServer {
+
+    private final int serverPort;
+    ServerBootstrap b = new ServerBootstrap();
+
+    public ProtoBufServer(int port) {
+        this.serverPort = port;
+    }
+
+    public void runServer() {
+        //创建reactor 线程组
+        EventLoopGroup bossLoopGroup = new NioEventLoopGroup(1);
+        EventLoopGroup workerLoopGroup = new NioEventLoopGroup();
+
+        try {
+            //1 设置reactor 线程组
+            b.group(bossLoopGroup, workerLoopGroup);
+            //2 设置nio类型的channel
+            b.channel(NioServerSocketChannel.class);
+            //3 设置监听端口
+            b.localAddress(serverPort);
+            //4 设置通道的参数
+            b.option(ChannelOption.SO_KEEPALIVE, true);
+            b.option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+            b.childOption(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+
+            //5 装配子通道流水线
+            b.childHandler(new ChannelInitializer<SocketChannel>() {
+                //有连接到达时会创建一个channel
+                protected void initChannel(SocketChannel ch) throws Exception {
+                    // pipeline管理子通道channel中的Handler
+                    // 向子channel流水线添加3个handler处理器
+                    ch.pipeline().addLast(new ProtobufVarint32FrameDecoder());
+                    ch.pipeline().addLast(new ProtobufDecoder(MsgProtos.Msg.getDefaultInstance()));
+                    ch.pipeline().addLast(new ProtobufBussinessDecoder());
+                }
+            });
+            // 6 开始绑定server
+            // 通过调用sync同步方法阻塞直到绑定成功
+            ChannelFuture channelFuture = b.bind().sync();
+            System.out.println(" 服务器启动成功，监听端口: " +
+                    channelFuture.channel().localAddress());
+
+            // 7 等待通道关闭的异步任务结束
+            // 服务监听通道会一直等待通道关闭的异步任务结束
+            ChannelFuture closeFuture = channelFuture.channel().closeFuture();
+            closeFuture.sync();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            // 8 优雅关闭EventLoopGroup，
+            // 释放掉所有资源包括创建的线程
+            workerLoopGroup.shutdownGracefully();
+            bossLoopGroup.shutdownGracefully();
+        }
+
+    }
+
+    //服务器端业务处理器
+    static class ProtobufBussinessDecoder extends ChannelInboundHandlerAdapter {
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+            MsgProtos.Msg protoMsg = (MsgProtos.Msg) msg;
+            //经过pipeline的各个decoder，到此Person类型已经可以断定
+            System.out.println("收到一个 MsgProtos.Msg 数据包 =》");
+            System.out.println("protoMsg.getId():=" + protoMsg.getId());
+            System.out.println("protoMsg.getContent():=" + protoMsg.getContent());
+        }
+    }
+
+    public static void main(String[] args) throws InterruptedException {
+        int port = 8099;
+        new ProtoBufServer(port).runServer();
+    }
+}
+```
+
+#### 8.4.3 Protobuf传输之客户端的实践案例
+
+​	在客户端开始出站之前，需要提前构造好Protobuf的POJO对象。然后可以使用通道的write/writeAndFlush方法，启动出站处理的流水线执行工作。
+
+​	客户端的出站处理流程中，Protobuf协议的编码过程大致如下：
+
+​	先使用Netty内置的ProtobufEncoder，将Protobuf POJO对象编码成二进制的字节数组；然后，使用Netty内置的ProtobufVarint32LengthFieldPrepender编码器，加上varint32格式的可变长度。Netty会将完成了编码后的Length+Content格式的二进制字节码发送到服务器端。
+
+​	客户端的实践案例程序代码如下：
+
+```java
+public class ProtoBufSendClient {
+    static String content = "疯狂创客圈：高性能学习社群!";
+
+    private int serverPort;
+    private String serverIp;
+    Bootstrap b = new Bootstrap();
+
+    public ProtoBufSendClient(String ip, int port) {
+        this.serverPort = port;
+        this.serverIp = ip;
+    }
+
+    public void runClient() {
+        //创建reactor 线程组
+        EventLoopGroup workerLoopGroup = new NioEventLoopGroup();
+
+        try {
+            //1 设置reactor 线程组
+            b.group(workerLoopGroup);
+            //2 设置nio类型的channel
+            b.channel(NioSocketChannel.class);
+            //3 设置监听端口
+            b.remoteAddress(serverIp, serverPort);
+            //4 设置通道的参数
+            b.option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+
+            //5 装配通道流水线
+            b.handler(new ChannelInitializer<SocketChannel>() {
+                //初始化客户端channel
+                protected void initChannel(SocketChannel ch) throws Exception {
+                    // 客户端channel流水线添加2个handler处理器
+                    ch.pipeline().addLast(new ProtobufVarint32LengthFieldPrepender());
+                    ch.pipeline().addLast(new ProtobufEncoder());
+                }
+            });
+            ChannelFuture f = b.connect();
+            f.addListener(new GenericFutureListener<ChannelFuture>() {
+                @Override
+                public void operationComplete(ChannelFuture futureListener) throws Exception {
+                    if (futureListener.isSuccess()) {
+                        System.out.println("EchoClient客户端连接成功!");
+
+                    } else {
+                        System.out.println("EchoClient客户端连接失败!");
+                    }
+
+                }
+            });
+
+            // 阻塞,直到连接完成
+            f.sync();
+            Channel channel = f.channel();
+
+            //发送 Protobuf 对象
+            for (int i = 0; i < 1000; i++) {
+                MsgProtos.Msg user = build(i, i + "->" + content);
+                channel.writeAndFlush(user);
+                System.out.println("发送报文数：" + i);
+            }
+            channel.flush();
+
+
+            // 7 等待通道关闭的异步任务结束
+            // 服务监听通道会一直等待通道关闭的异步任务结束
+            ChannelFuture closeFuture = channel.closeFuture();
+            closeFuture.sync();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            // 优雅关闭EventLoopGroup，
+            // 释放掉所有资源包括创建的线程
+            workerLoopGroup.shutdownGracefully();
+        }
+
+    }
+
+    //构建ProtoBuf对象
+    public MsgProtos.Msg build(int id, String content) {
+        MsgProtos.Msg.Builder builder = MsgProtos.Msg.newBuilder();
+        builder.setId(id);
+        builder.setContent(content);
+        return builder.build();
+    }
+
+    public static void main(String[] args) throws InterruptedException {
+        int port = 8099;
+        String ip = "127.0.0.1";
+        new ProtoBufSendClient(ip, port).runClient();
+    }
+}
+```
+
+​	运行结果如下：
+
+```java
+// 服务器端：
+ 服务器启动成功，监听端口: /0:0:0:0:0:0:0:0:8099
+收到一个 MsgProtos.Msg 数据包 =》
+protoMsg.getId():=0
+protoMsg.getContent():=0->疯狂创客圈：高性能学习社群!
+收到一个 MsgProtos.Msg 数据包 =》
+protoMsg.getId():=1
+protoMsg.getContent():=1->疯狂创客圈：高性能学习社群!
+收到一个 MsgProtos.Msg 数据包 =》
+// ...
+
+// 客户端：
+EchoClient客户端连接成功!
+发送报文数：0
+发送报文数：1
+发送报文数：2
+// ...
+```
+
+### 8.5 详解Protobuf协议语法
+
 ​	
