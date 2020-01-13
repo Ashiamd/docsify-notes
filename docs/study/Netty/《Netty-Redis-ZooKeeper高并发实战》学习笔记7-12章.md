@@ -2223,4 +2223,142 @@ EchoClient客户端连接成功!
 
 ### 8.5 详解Protobuf协议语法
 
-​	
+​	在Protobuf中，通信协议的格式是通过”.proto“文件定义的。**一个”.proto“文件有两大组成部分：头部声明、消息结构体的定义**。
+
+​	**头部声明部分，包含了协议的版本、包名、特定语言的选项设置等；消息结构体部分，可以定义一个或者多个消息结构体。**
+
+​	在Java中，当用Protobuf编译器（如“protoc3.6.exe”）来编译“.proto”文件时，编译器将生成Java语言的POJO消息类和Builder构造者类。<u>这些代码可以操作在.proto文件中定义的消息类型，包括获取、设置字段值，将消息序列化到一个输出流中（序列化），以及从一个输入流中解析信息（反序列化）</u>。
+
+#### 8.5.1 proto的头部声明
+
+​	前面介绍了一个简单的“.proto”文件，其头部声明如下：
+
+```java
+// [开始声明]
+syntax = "proto3";
+ //定义protobuf的包名称空间
+package protocol;
+// [结束声明]
+
+// [开始 java 选项配置]
+option java_package = "protocol";
+option java_outer_classname = "MsgProtos";
+// [结束 java 选项配置]
+```
+
+1. syntax版本号
+
+   ​	对于一个".proto"文件而言，文件**首个非空、非注释的行必须注明Protobuf的语法版本**，即syntax=“proto3”，否则<u>默认版本是proto2</u>。
+
+2. package包
+
+   ​	和Java语言类似，通过package指定包名，用来避免信息（message）名字冲突。**如果两个信息的名称相同，但是package包名不同，则它们可以共同存在。**
+
+   ​	如果第一个“.proto”文件定义了一个Msg结构体，package包名如下：
+
+   ```java
+   package test;
+   message Msg{...}
+   ```
+
+   ​	假设另一个“.proto”文件，定义了一个相同名字的消息，package包名如下：
+
+   ```java
+   package haha;
+   message Msg{
+       // ...
+       test.Msg testMsg = 1;
+       // ...
+   }
+   ```
+
+   ​	我们可以看到，第二个".proto"文件中，可以用”包名+消息名称“（全限定名）来引用第一个Msg结构体。这一点和Java中package的使用方法是一样的。
+
+   ​	另外，package指定包名后，会对生成的消息POJO代码产生影响。在Java语言中，会以package指定的包名作为生成的POJO类的包名。
+
+3. 选项
+
+   ​	**选项是否生效与”.proto“文件使用的一些特定的语言场景有关**。在Java语言中，以”java_“打头的”option“选项会生效。
+
+   ​	选项option java_package表示Protobuf编译器在生成Java POJO消息类时，生成类所在的Java包名。<u>如果没有该选项，则会以头部声明中的package作为Java包名</u>。
+
+   ​	选项option java_multiple_files表示在生成Java类时的打包方式。有两种方式：
+
+   ​	方式1：一个消息对应一个独立的Java类。
+
+   ​	方式2：所有的消息都作为内部类，打包到一个外部类中。
+
+   ​	<u>此选项的值，默认为false，也就是方式2</u>，表示使用外部类打包的方式。如果设置option java_multiple_files=true，则使用方式1生成Java类，则一个消息对应一个POJO Java类。
+
+   ​	<u>选项option java_outer_classname表示Protobuf编译器在生成Java POJO消息类时，如果”.proto“定义的全部POJO消息类都作为内部类打包在同一个外部类中，则以此作为外部类的类名。</u>
+
+#### 8.5.2 消息结构体与消息字段
+
+​	定义Protobuf消息结构体的关键字为message。一个消息结构体由一个或者多个消息字段组合而成。
+
+```java
+// [开始 消息定义]
+message Msg {
+  uint32 id = 1;  // 消息ID
+  string content = 2; // 消息内容
+}
+// [结束 消息定义]
+```
+
+​	**Protobuf消息字段的格式为：**
+
+​	**限定修饰符①|数据类型②|字段名称③|=|分配标识号④**
+
+1. 限定修饰符
+
+   + repeated限定修饰符：表示该字段可以包含0~N个元素值，相当于Java中的List（列表数据类型）。
+   + singular限定修饰符：表示该字段可以包含0~1个元素值。singular限定修饰符是默认的字段修饰符。
+   + reserved限定修饰符：用来保留字段名称（Field Name）和分配标识号（Assigning Tags），用于将来的扩展。
+
+   ```java
+   message MsgFoo{
+       // ...
+       reserved 12, 15, 9 to 11; // 预留将来使用的分配标识号（Assigning Tags）
+   	reserved "foo", "bar";	  // 预留将来使用的字段名（field name）
+   }
+   ```
+
+2. 数据类型
+
+   ​	详见下一个小节
+
+3. 字段名称
+
+   ​	字段名称的命名与Java语言的成员变量命名方式几乎是相同的。
+
+   ​	<u>Protobuf建议字段的命名以下划线分割，例如使用first_name形式，而不是驼峰式firstName</u>；
+
+4. 分配标识号
+
+   ​	**在消息定义中，每个字段都有唯一的一个数字标识符，可以理解为字段编码值，叫作分配标识号（Assigning Tags）。通过该值，通信双方才能互相识别对方的字段。**当然，相同的编码值，它的限定修饰符和数据类型必须相同。**分配标识号是用来在消息的二进制格式中识别各个字段的，一旦开始使用就不能够再改变**。
+
+   ​	分配标识号的取值范围为1~2<sup>32</sup>(4294967296)。**<u>其中编号[1, 15]之内的分配标识号，时间和空间效率是最高的</u>**。为什么呢？[1 , 15]之内的标识符，在编码的时候只会占用一个字节。[16 , 2047]之内的标识号要占用2个字节。所以那些频繁出现的消息字段，应该使用[1 , 15]之内的标识号。切记：**要为将来有可能添加的、频繁出现的字段预留一些标识号。另外，[1900 , 2000]之内的标识号，为Google Protobuf系统的内部保留值，建议不要在自己的项目中使用**。
+
+   ​	一个消息结构体中的标识号无须是连续的。另外，在同一个消息结构体中，不同的字段不能够使用相同的标识号。
+
+#### 8.5.3 字段的数据类型
+
+​	Protobuf定义了一套基本数据类型。几乎都可以映射到C++\Java等语言的基本数据类型。
+
+| proto Type | Notes                                                        | Java Type  |
+| ---------- | ------------------------------------------------------------ | ---------- |
+| double     |                                                              | double     |
+| Float      |                                                              | float      |
+| int32      | 使用变长编码，对于负值的效率很低，如果字段有可能是负值，请使用sint64代替 | int        |
+| uint32     | 使用变长编码                                                 | int        |
+| uint64     | 使用变长编码                                                 | long       |
+| sint32     | 使用变长编码，这些编码在负值时比int32高效得多                | int        |
+| sint64     | 使用变长编码，有符号的整型值。编码时比通常的int64高效        | long       |
+| fixed32    | 总是4个字节，如果数值总是比2<sup>28</sup>大的话，这个类型会比unit32高效 | int        |
+| fixed64    | 总是8个字节，如果数值总是比2<sup>56</sup>大的话，这个类型会比unit64高效 | long       |
+| sfixed32   | 总是4个字节                                                  | int        |
+| sfixed64   | 总是8个字节                                                  | long       |
+| Bool       |                                                              | boolean    |
+| String     | 一个字符串必须是UTF-8编码或者7-bit ASCII编码的文本           | String     |
+| Bytes      | 可能包含任意顺序的字节数据                                   | ByteString |
+
