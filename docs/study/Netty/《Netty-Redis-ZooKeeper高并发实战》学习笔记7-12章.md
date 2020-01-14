@@ -2422,3 +2422,669 @@ message Msg {
 
 ## 第9章 基于Netty的单体IM系统的开发实践
 
+​	本章是Netty应用的综合实践篇：将综合使用前面学到的编码器、解码器、业务处理器等知识，完成一个聊天系统的设计和实现。
+
+### 9.1 自定义Protobuf编解码器
+
+​	前面已经详细介绍过：在Netty中，内置了一组Protobuf编/解码器——ProtobufDecoder解码器和ProtobufEncoder编码器，它们负责Protobuf POJO和二进制字节之间的编码和解码。除此之外，Netty还自带了一组配套的Protobuf半包处理器：可变长度ProtobufVarint32FrameDecoder解码器、ProtobufVarint32LengthFieldPrepender编码器。为二进制ByteBuf加上varint32格式的可变长度，解决了Protobuf传输过程中的粘包/半包问题。
+
+​	<u>使用Netty内置的Protobuf系列编解码器，可以解决简单的Protobuf协议的传输问题，不过，面对复杂Head-Content协议的解析，例如，在数据包Head部分，加上魔数、版本号字段，内置Protobuf系列编解码器，就显得无能为力了</u>。
+
+​	**在通信数据包中，魔数可以理解为通信的口令**。例如，在电影《智取威虎山》中，土匪内部使用暗号接头，魔数和土匪的接头暗号在原理上是一样的。<u>无论是服务器端还是客户端，通信之前首先是对口令，如果口令不对，就不是符合自定义协议规范的数据包，也不是安全的数据包。通过魔数的对比，服务器端能够在第一时间识别出不符合规范的数据包，为了安全考虑，可以直接关闭连接</u>。
+
+​	**在通信数据包中，版本号是什么呢？如果在程序中有协议升级的需求，又需要同时兼顾新旧版本的协议，就会用到这个版本号。例如：APP协议升级后，旧版本还需要使用**。
+
+​	<u>解析复杂的Head-Content协议就需要自定义Protobuf编/解码器，需要开发者自己去解决半包问题</u>，包括以下两个方面：
+
+​	（1）继承Netty提供的MessageToByteEncoder编码器，完后Head-Content协议的复杂数据包的编码，将Protobuf POJO编码成Head-Content协议的二进制ByteBuf数据包。
+
+​	（2）继承Netty提供的ByteToMessageDecoder解码器，完成Head-Content协议的复杂数据包的解码，将二进制ByteBuf数据包最终解码出Protobuf POJO实例。
+
+#### 9.1.1 自定义Protobuf编码器
+
+​	自定义Protobuf编码器，通过继承Netty中基础的MessageToByteEncoder编码器类，实现其抽象的编码方法encode，在该方法中把以下内容写入到目标Bytebuf：
+
++ 写入Protobuf的POJO的字节码长。
++ 写入其他的字段，如魔数、版本号。
++ 写入Protobuf的POJO的字节码内容。
+
+​	按照上面的步骤，自定义一个ProtobufEncoder，代码如下：
+
+```java
+/**
+ * 编码器
+ */
+@Slf4j
+public class ProtobufEncoder extends MessageToByteEncoder<ProtoMsg.Message>
+{
+
+    @Override
+    protected void encode(ChannelHandlerContext ctx,
+                          ProtoMsg.Message msg, ByteBuf out)
+            throws Exception
+    {
+
+        byte[] bytes = msg.toByteArray();// 将对象转换为byte
+
+        // 加密消息体
+        /*ThreeDES des = channel.channel().attr(AppAttrKeys.ENCRYPT).get();
+        byte[] encryptByte = des.encrypt(bytes);*/
+        int length = bytes.length;// 读取消息的长度
+
+        ByteBuf buf = ctx.alloc().buffer(2 + length);
+
+        // 先将消息长度写入，也就是消息头
+        buf.writeShort(length);
+        // 消息体中包含我们要发送的数据
+        buf.writeBytes(bytes);
+        out.writeBytes(buf);
+
+        log.debug("send "
+                + "[remote ip:" + ctx.channel().remoteAddress()
+                + "][total length:" + length
+                + "][bare length:" + msg.getSerializedSize() + "]");
+
+        if(buf.refCnt()>0)
+        {
+            log.debug("释放临时缓冲");
+            buf.release();
+        }
+
+    }
+
+}
+```
+
+​	*注意，这里写入的消息长度，调用了writeShort(length)方法，仅仅两个字节。这就存在一个问题，数据包的最大的净内容长度为32767个字节（有符号的短整型）。如果一个数据包需要传输更多的内容，可以调用writeInt(length)方法。*
+
+#### 9.1.2 自定义Protobuf解码器
+
+​	自定义Protobuf解码器，通过继承Netty中基础的ByteToMessageDecoder解码器类，将ByteBuf字节码解码成Protobuf的POJO对象，大致的过程如下：
+
+​	（1）首先读取长度，如果长度位数不够，则终止读取。
+
+​	（2）然后读取魔数、版本号等其他的字段。
+
+​	（3）最后按照净长度读取内容。如果内容的字节数不够，则恢复到之前的起始位置（也就是长度的位置），然后终止读取。
+
+​	自定义Protobuf解码器，如下所示：
+
+```java
+/**
+ * 解码器
+ */
+
+@Slf4j
+public class ProtobufDecoder extends ByteToMessageDecoder
+{
+
+    @Override
+    protected void decode(ChannelHandlerContext ctx, ByteBuf in,
+                          List<Object> out) throws Exception
+    {
+        // 标记一下当前的readIndex的位置
+        in.markReaderIndex();
+        // 判断包头长度
+        if (in.readableBytes() < 2)
+        {// 不够包头
+            return;
+        }
+
+        // 读取传送过来的消息的长度。
+        int length = in.readUnsignedShort();
+
+        // 长度如果小于0
+        if (length < 0)
+        {// 非法数据，关闭连接
+            ctx.close();
+        }
+
+        if (length > in.readableBytes())
+        {// 读到的消息体长度如果小于传送过来的消息长度
+            // 重置读取位置
+            in.resetReaderIndex();
+            return;
+        }
+
+
+        byte[] array ;
+        int offset=0;
+        if (in.hasArray())
+        {
+            //堆缓冲
+//            offset = in.arrayOffset() + in.readerIndex();
+            ByteBuf slice=in.slice();
+            array=slice.array();
+        }
+        else
+        {
+            //直接缓冲
+            array = new byte[length];
+            in.readBytes( array, 0, length);
+        }
+
+        // 字节转成Protobuf对象的POJO对象
+        ProtoMsg.Message outmsg =
+                ProtoMsg.Message.parseFrom(array);
+
+
+        if (outmsg != null)
+        {
+            // 获取业务消息
+            out.add(outmsg);
+        }
+
+    }
+}
+```
+
+​	<u>在定义的解码过程中，如果需要进行版本号或者魔数的校验，也是非常简单的：只需读相应的字节数，进行值得比较即可</u>。
+
+#### 9.1.3 IM系统中Protobuf消息格式的设计
+
+> [Protobuf 的 proto3 与 proto2 的区别](https://www.cnblogs.com/jhj117/p/6202688.html)
+
+​	一般来说，网络通信涉及消息的定义，不管是直接使用二进制格式，还是XML、JSON等字符串格式，大体都可以分为<u>3大消息类型</u>：
+
+​	**（1）请求消息**
+
+​	**（2）应答消息**
+
+​	**（3）命令消息**
+
+​	**每个消息基本上会包含一个序列号和一个类型定义。序列号用来唯一区分一个消息，类型用来决定消息的处理方式。**
+
+​	Protobuf消息格式，大致有以下几个可供参考的原则：
+
+​	**原则一：消息类型使用enum定义**
+
+​	在“.proto”协议文件中，可以定义一个HeadType枚举类型，包含系统用到的所有消息类型，具体的例子如下：
+
+```protobuf
+enum HeadType {
+    LOGIN_REQUEST = 0;			//登录请求
+    LOGIN_RESPONSE = 1;			//登录响应
+    LOGOUT_REQUEST = 2;			//登出请求
+    LOGOUT_RESPONSE = 3;		//登出响应
+    KEEPALIVE_REQUEST = 4;		//心跳请求
+    KEEPALIVE_RESPONSE = 5;		//心跳响应
+    MESSAGE_REQUEST = 6;		//聊天信息请求
+    MESSAGE_RESPONSE = 7;		//聊天消息响应
+    MESSAGE_NOTIFICATION = 8;	//服务器通知
+}
+```
+
+​	**原则二：使用一个Protobufmessage结构定义一类信息**
+
+​	例如，对应于登录请求类型——LOGIN_REQUEST类型的消息，Protobuf message消息结构如下：
+
+```protobuf
+/*登录请求信息*/
+message LoginRequest {
+     string uid = 1;			// 用户唯一IO
+     string deviceId = 2;		// 设备ID
+     string token = 3;			// 用户token
+     uint32 platform = 4;		// 客户端平台 windows、mac、android、ios、web
+     string app_version = 5;	// APP版本号
+}
+```
+
+​	**原则三：建议给应答消息加上成功标记和应答序号**
+
+​	对于应答消息并非总是成功的，因此建议在应答消息中加上两个字段：成功标记和应答序号。
+
+​	成功标记是一个用于描述应答是否成功的标记，建议是哟个bool类型，true表示发送成功，false表示发送失败。
+
+​	建议设置info字段的类型为字符串，用于放置失败时的提示信息。
+
+​	**应答序号的作用是什么呢？如果一个请求有多个响应，则发送端可以设计为：每一个响应消息可以包含一个应答的序号，最后一个响应消息包含一个结束标记。接收端在处理的时候，根据应答序号和结束标记，可以合并所有的响应消息。**
+
+​	对于聊天响应类型——MESSAGE_RESPONSE类型的消息，Protobufmessage消息结构如下：
+
+```protobuf
+/* 聊天响应 */
+message MessageResponse {
+    bool result = 1;            // true表示发送成功，false表示发送失败
+    uint32 code = 2;            // 错误码
+    string info = 3;            // 错误描述
+    uint32 expose = 4;          // 错误描述是否提示给用户：1 提示；0不提示
+    bool last_block = 5;        // 是否为最后的应答
+    fixed32 block_index = 6;    // 应答的序号
+}
+```
+
+​	**原则四：编解码从顶层消息开始**
+
+​	建议定义一个外层的消息，把所有的消息类型全部封装在一起。在通信的时候，可以从外层消息开始编码或者解码。
+
+​	对应于聊天器中的外层消息，Protobuf message消息结构大致如下：
+
+```protobuf
+message Message {
+    HeadType type = 1;                      // 消息类型
+    uint64 sequence = 2;                    // 序列号
+    string session_id = 3;                  // 会话ID
+    LoginRequest loginRequest = 4;          // 登录请求
+    LoginResponse loginResponse = 5;        // 登录响应
+    MessageRequest messageRequest = 6;      // 聊天请求
+    MessageResponse messageResponse = 7;    // 聊天响应
+    MessageNotification notification = 8;   // 通知消息
+}
+```
+
+​	什么是序列号（sequence）呢？<u>序列号主要用于请求数据包Request和响应数据包Response的配套，Response的值必须和Request相同，使得发送端可以进行请求-响应的匹配处理</u>。
+
+​	下面是一份完整的聊天器的”.proto“协议文件的定义：
+
+```protobuf
+// [开始声明]
+syntax = "proto3";
+//定义protobuf的包名称空间
+package protocol;
+// [结束声明]
+
+// [开始 java 选项配置]
+option java_package = "chatcommon.im.common.bean.msg";
+option java_outer_classname = "ProtoMsg";
+// [结束 java 选项配置]
+
+// [开始 消息定义]
+
+enum HeadType {
+    LOGIN_REQUEST = 0; //登录请求
+    LOGIN_RESPONSE = 1; //登录响应
+    LOGOUT_REQUEST = 2; //登出请求
+    LOGOUT_RESPONSE = 3; //登出响应
+    KEEPALIVE_REQUEST = 4; //心跳请求
+    KEEPALIVE_RESPONSE = 5; //心跳响应
+    MESSAGE_REQUEST = 6; //聊天信息请求
+    MESSAGE_RESPONSE = 7; //聊天消息响应
+    MESSAGE_NOTIFICATION = 8; //服务器通知
+}
+
+/*登录请求信息*/
+message LoginRequest {
+    string uid = 1; // 用户唯一IO
+    string deviceId = 2; // 设备ID
+    string token = 3; // 用户token
+    uint32 platform = 4; // 客户端平台 windows、mac、android、ios、web
+    string app_version = 5; // APP版本号
+}
+
+message LoginResponse {
+    bool result = 1;
+    uint32 code = 2;
+    string info = 3;
+    uint32 expose = 4;
+}
+
+
+message MessageRequest {
+    uint64 msg_id = 1;
+    string from = 2;
+    string to = 3;
+    uint64 time = 4;
+    uint32 msg_type = 5;
+    string content = 6;
+    string url = 8;
+    string property = 9;
+    string from_nick = 10;
+    string json = 11;
+}
+
+/* 聊天响应 */
+message MessageResponse {
+    bool result = 1; // true表示发送成功，false表示发送失败
+    uint32 code = 2; // 错误码
+    string info = 3; // 错误描述
+    uint32 expose = 4; // 错误描述是否提示给用户：1 提示；0不提示
+    bool last_block = 5; // 是否为最后的应答
+    fixed32 block_index = 6; // 应答的序号
+}
+
+
+message MessageNotification {
+    uint32 msg_type = 1;
+    bytes sender = 2;
+    string json = 3;
+    string timestamp = 4;
+}
+
+
+message Message {
+    HeadType type = 1;                      // 消息类型
+    uint64 sequence = 2;                    // 序列号
+    string session_id = 3;                  // 会话IO
+    LoginRequest loginRequest = 4;          // 登录请求
+    LoginResponse loginResponse = 5;        // 登录响应
+    MessageRequest messageRequest = 6;      // 聊天请求
+    MessageResponse messageResponse = 7;    // 聊天响应
+    MessageNotification notification = 8;   // 通知消息
+}
+
+// [结束 消息定义]
+```
+
+​	可以使用Maven插件生成对应的Protobuf Builder和POJO类，以供后续使用。
+
+### 9.2 概述IM的登录流程
+
+​	单体IM系统中，首先需要登录。登录的流程，从端到端（End to End）的角度来说，包括以下环节：
+
+1. 客户端发送登录数据包。
+2. 服务器端进行用户信息验证。
+3. 服务器端创建Session会话。
+4. 服务器端返回登录结束结果的信息给客户端，包括成功标志、Session ID等。
+
+​	在端到端（End to End）的流程中总计需要完成4次编/解码：
+
++ 客户端编码：编码登录请求的Protobuf数据包编码。
++ 服务器端解码：解码登录请求的Protobuf数据包解码。
++ 服务器端编码：编码登录响应的Protobuf数据包编码。
++ 客户端解码：解码登录响应的Protobuf数据包解码。
+
+#### 9.2.1 图解登录/响应流程的9个环节
+
+​	从细分的角度来看，整个登录/响应的流程大概包含9个环节。
+
+​	控制台命令 -> 发送器 -> 客户端通道 -> 服务端子通道 -> 登录响应handler -> 登录请求业务处理器 -> 服务端子通道 -> 客户端通道 -> 登录响应handler
+
+​	从客户端到服务器端再到客户端，9个环节的介绍如下：
+
+（1）首先，客户端手机用户ID和密码，这一步需要使用到LoginConsoleCommand控制台命令类。
+
+（2）然后，客户端发送Protobuf数据包到客户端通道，这一步需要通过LoginSender发送器组装Protobuf数据包。
+
+（3）客户端通道将Protobuf数据包发送到对端，这一步需要通过Netty底层来完成。
+
+（4）服务器子通道接收到Protobuf数据包，这一步需要通过Netty底层来完成。
+
+（5）服务端UserLoginHandler入站处理器收到登录消息，交给业务处理器LoginMsgProcesser处理异步的业务逻辑。
+
+（6）服务端LoginMsgProcesser处理完异步的业务逻辑，就将处理结果写入用户绑定的子通道。
+
+（7）服务器子通道将登录响应的Protobuf数据帧写入到对端，这一步需要通过Netty底层来完成。
+
+（8）客户端通道收到Protobuf登录响应数据包，这一步需要通过Netty底层来完成。
+
+（9）客户端LoginResponceHandler业务处理器处理登录响应，例如设置登录的状态，保存会话的Session ID等等。
+
+#### 9.2.2 客户端涉及的主要模块
+
+​	在具体的开发实践中，客户端所涉及的主要模块大致如下：
+
++ ClientCommand模块：控制台命令收集器。
++ ProtobufBuilder模块：Protobuf数据包构造者。
++ Sender模块：数据包发送器。
++ Handler模块：服务器响应处理器。
+
+​	在具体的实现中，上面的这些模块都有一个或者多个专门的POJO Java类来完成对应的工作：
+
++ LoginConsoleCommand类：属于ClientCommand模块，它负责收集用户在控制台输入的用户ID和密码。
++ CommandController类：属于ClientCommand模块，它负责收集用户在控制台输入的命令类型，根据相应的类型调用相应的命令处理器和收集相应的信息。例如，如果用户输入的命令类型为登录，则调用LoginConsoleCommand命令处理器，将收集到的用户ID和密码封装成User类，然后启动登录处理。
++ LoginMsgBuilder类：属于ProtobufBuilder模块，它负责将User类组装成Protobuf登录请求数据包。
++ LoginSender类：属于Sender模块，它负责将组装好Protobuf登录数据包发送到服务器端。
++ LoginResponseHandler：属于Handler模块，它负责处理服务器端的登录响应。
+
+#### 9.2.3 服务器端涉及的主要模块
+
+​	在具体的开发实践中，服务器端所涉及的主要模块如下：
+
++ Handler模块：客户端请求的处理。
++ Processer模块：以异步方式完成请求的业务逻辑处理。
++ Session模块：管理用户与通道的绑定关系。
+
+​	在具体的服务器登录流程中，上面的这些模块都有一个或者多个专门的Java类来完成对应的工作。在服务器端的登录流程中，上面模块中对应的类为：
+
++ UserLoginRequestHandler类：属于Handler模块，负责处理收到的Protobuf登录请求包，然后使用LoginProcesser类，以异步方式进行用户校验。
++ LoginProcesser类：属于Processer模块，完成服务器端的用户校验，再将校验的结果组装成一个登录响应Protobuf数据包写回到客户端。
++ ServerSession类：属于Session模块，如果校验成功，设置相应的会话状态（isLogin=true;）；然后，将会话加入到服务器端的SessionMap映射中，可以接受其他用户发送的聊天信息。
+
+​	这里有一个疑问：为什么在服务器端登录处理需要分成两个模块，一个模块是Handler业务处理器，另一个模块是Processer以异步方式完成请求的业务逻辑处理？而不是像客户端一样，在Netty的Handler入站处理器模块中，统一完成业务的处理逻辑呢？
+
+​	具体答案，稍后揭晓。
+
+### 9.3 客户端的登录处理的实践案例
+
+ 	在输入登录信息之前，用户所选择的菜单是登录的选项。最开始的时候，客户端通过ClientCommandMenu菜单展示类展示出一个命令菜单，以供用户选择。效果如下：
+
+```java
+// ... 省略其他的输出
+客户端开始连接
+服务器连接成功
+请输入某个操作指令：
+[menu] 0->show 所有命令 | 1->登录 | 2->聊天 | 10->退出 |
+// ... 省略其他的输出
+```
+
+​	从上面的输出可以看出，ClientCommandMenu菜单展示类展示了4个选项：
+
+（1）登录
+
+（2）聊天
+
+（3）退出
+
+（4）查看全部命令
+
+​	每一个菜单项都对应到一个信息的收集类：
+
+（1）聊天命令的信息收集类：ChatConsoleCommand
+
+（2）登录命令的信息收集类：LoginConsoleCommand
+
+（3）登出命令的信息收集类：LogoutConsoleCommand
+
+（4）命令的类型收集类：ClientCommandMenu
+
+​	以上4个客户端主要的命令收集类都组合在CommandClient类中。CommandClient类代表了整个客户端。
+
+​	当用户输入的命令为“1”（表示登录），CommandClient类会通过LoginConsoleCommand类完成用户ID和密码的收集。
+
+#### 9.3.1 LoginConsoleCommand和User POJO
+
+​	登录命令和信息收集类LoginConsoleCommand负责从Scanner控制台实例收集客户端登录的用户ID和密码，代码如下：
+
+```java
+// ...
+@Data
+@Service("LoginConsoleCommand")
+public class LoginConsoleCommand implements BaseCommand {
+    public static final String KEY = "1";
+
+    private String userName;
+    private String password;
+
+    @Override
+    public void exec(Scanner scanner) {
+        System.out.println("请输入用户信息（id:password）：");
+        String[] info = null;
+        while (true) {
+            String input = scanner.next();
+            info = input.split(":");
+            if (info.length != 2) {
+                System.out.println("请按照格式输入（id:password）：");
+            } else {
+                break;
+            }
+        }
+        userName = info[0];
+        password = info[1];
+    }
+
+    @Override
+    public String getKey(){
+        return KEY;
+    }
+
+    @Override
+    public String getTip(){
+        return "登录";
+    }
+}
+```
+
+​	成功获取到用户密码和ID后，客户端CommandClient将这些内容组装成User POJO用户对象，然后通过客户端的发送器LoginSender开始向服务器端发送登录请求。
+
+```java
+@Service("CommandClient")
+public class CommandClient {
+    //...
+    //命令收集线程
+    public void startCommandThread() throws InterruptedException {
+        Thread.currentThread().setName("主线程");
+        while (true) {
+            //建立连接
+            while (connectFlag == false) {
+                // 开始连接
+                startConnectServer();
+                waitCommandThread();
+            }
+
+            //处理命令
+            while (null != session && session.isConnected()) {
+                Scanner scanner = new Scanner(System.in);
+                clientCommandMenu.exec(scanner);
+                String key = clientCommandMenu.getCommandInput();
+                //取到命令收集类POJO
+                BaseCommand command = commandMap.get(key);
+                switch (key) {
+                    //登录的命令
+                    case LoginConsoleCommand.KEY:
+                        command.exec(scanner);
+                        startLogin((LoginConsoleCommand) command);
+                        break;
+
+                    // ... 其他命令
+                }
+            }
+        }
+    }
+
+    // 开始发送登录请求
+    private void startLogin(LoginConsoleCommand command) {
+        //登录
+        if (!isConnectFlag()) {
+            log.info("连接异常，请重新建立连接");
+            return;
+        }
+        User user = new User();
+        user.serUid(command.getUserName());
+        user.serToken(command.getPassword());
+        user.setDevId("1111");
+        loginSender.setUser(user);
+        loginSender.setSession(session);
+        loginSender.sendLoginMsg();
+    }
+    // ... 
+}
+```
+
+#### 9.3.2 LoginSender发送器
+
+​	LoginSender消息发送器的sendLoginMsg方法用于在第一步生成Protobuf登录数据包，在第二步则是调用BaseSender基类的sendMsg来发送数据包。
+
+```java
+@Slf4j
+@Service("LoginSender")
+public class LoginSender extends BaseSender {
+    
+    public void sendLoginMsg() {
+        if (!isConnected()) {
+            log.info("还没有建立连接!");
+            return;
+        }
+        log.info("构造登录消息");
+        ProtoMsg.Message message =
+                LoginMsgBuilder.buildLoginMsg(getUser(), getSession());
+        log.info("发送登录消息");
+        super.sendMsg(message);
+    }
+}
+```
+
+​	首先使用LoginMsgBuilder消息构造者来构造一个登录请求的Protobuf消息。这一步比较简单，大家直接看源码即可。
+
+​	然后调用基类的sendMsg方法来发送登录消息。
+
+```java
+@Data
+@Slf4j
+public abstract class BaseSender {
+
+    private User user;
+    private ClientSession session;
+
+    public boolean isConnected() {
+        if (null == session) {
+            log.info("session is null");
+            return false;
+        }
+        return session.isConnected();
+    }
+    
+    public boolean isLogin() {
+        if (null == session) {
+            log.info("session is null");
+            return false;
+        }
+        return session.isLogin();
+    }
+
+    public void sendMsg(ProtoMsg.Message message) { 
+        if (null == getSession() || !isConnected()) {
+            log.info("连接还没成功");
+            return;
+        }
+        Channel channel = getSession().getChannel();
+        ChannelFuture f = channel.writeAndFlush(message);
+        f.addListener(new GenericFutureListener<Future<? super Void>>() {
+            @Override
+            public void operationComplete(Future<? super Void> future)
+                    throws Exception {
+                // 回调
+                if (future.isSuccess()) {
+                    sendSucced(message);
+                } else {
+                    sendfailed(message);
+                }
+            }
+        });
+    }
+    
+    protected void sendSucced(ProtoMsg.Message message) {
+        log.info("发送成功");
+
+    }
+
+    protected void sendfailed(ProtoMsg.Message message) {
+        log.info("发送失败");
+    }
+}
+```
+
+​	一般来说，在Netty中会调用write(pkg)/writeAndFlush(pkg)这一组方法来发送数据包。前面多次反复讲到，<u>发送方法channel.writeAndFlush(pkg)是立即返回的，返回的类型是一个ChannelFuture异步任务实例。</u>问题是：当channel.writeAndFlush(pkg)函数返回时，如何判断是否已经成功将数据包写入到了底层的TCP连接呢？
+
+​	答案是没有。在writeAndFlush(pkg)方法返回时，真正的TCP写入的操作其实还没有执行。为什么呢？
+
+​	在Netty中，无论是入站操作还是出站操作，都有两大特点：
+
+1. ​	**同一条通道的所有出入/站处理都是串行的，而不是并行的**。换句话说，<u>同一条通道上的所有出/入站处理都会在它所绑定的EventLoop线程上执行</u>。既然只有一个线程负责，那就只有串行的可能。
+
+   ​	假如某个出/入站的处理在最开始执行的时候，会对当前的执行线程进行判断：如果当前线程不是普通的EventLoop线程，则当前出/入站的处理暂时不执行；**Netty会将当前出/入站的处理，通过建立一个新的异步可执行任务，加入到通道的EventLoop线程的任务队列中**。
+
+   ​	EventLoop线程的任务队列是一个<u>MPSC队列（即多生产者单消费者队列）</u>。什么是MPSC队列呢？只有EventLoop线程自己是唯一的消费者，它将遍历任务队列，逐个执行任务；其他线程只能作为生产者，它们的出/入站操作都会作为异步任务加入到任务队列。**通过MPSC队列，确保了EventLoop线程能做到：同一个通道上所有的IO操作是串行的，不是并行的。这样，不同的Handler业务处理器之间不需要进行线程的同步，这点也能大大提升IO的性能**。
+
+2. ​	**Netty的一个出/入站操作不是一次的单一Handler业务处理器操作，而是流水线上的一系列的出/入站处理流程。只有整个流程都处理完，出/入站操作才真正处理完成**。
+
+​	基于以上两点，大家可以简单地推断，在调用完channel.writeAndFlush(pkg)后，真正的出栈操作肯定是没有执行完成的，可能还需要在EventLoop的任务队列中排队等待。
+
+​	如何才能判断writeAndFlush()执行完毕了呢？writeAndFlush()方法会返回一个ChannelFuture异步任务实例，通过为ChannelFuture异步任务增加GenericFutureListener监听器的方式来判断writeAndFlush()是否已经执行完毕。<u>当GenericFutureListener监听器的operationComplete方法被回调时，表示writeAndFlush()方法已经执行完毕了。而具体的回调业务逻辑，可以放在operationComplete监听器的方法中</u>。
+
+​	在上面的代码中，设计了两个sendSucced/sendfailed业务回调方法，放置在operationComplete监听器方法中，在发送完成后进行回调，并且将sendSucced和sendfailed方法封装在发送器的BaseSender基类中。如果需要改变默认的回调处理逻辑，可以在发送子类重写基类的sendSucced和sendfailed方法即可。
+
+​	再看另外一个话题：在上面的代码中，为获取客户端的通道，使用了ClientSession客户端会话。什么是会话呢？会话的作用是什么呢？什么时候创建会话呢？预知后事，请看下回。
+
+#### 9.3.3 ClientSession客户端会话
+
+1
