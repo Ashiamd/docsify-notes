@@ -16,7 +16,8 @@
     * **Netty**
       + [Netty学习](/study/Netty/Netty学习)
       + [《Netty-Redis-ZooKeeper高并发实战》学习笔记1-6章](/study/Netty/《Netty-Redis-ZooKeeper高并发实战》学习笔记1-6章)
-      + [《Netty-Redis-ZooKeeper高并发实战》学习笔记7-12章](/study/Netty/《Netty-Redis-ZooKeeper高并发实战》学习笔记7-12章)
+      + [《Netty-Redis-ZooKeeper高并发实战》学习笔记7-9章](/study/Netty/《Netty-Redis-ZooKeeper高并发实战》学习笔记7-9章)
+      + [《Netty-Redis-ZooKeeper高并发实战》学习笔记10-12章](/study/Netty/《Netty-Redis-ZooKeeper高并发实战》学习笔记10-12章)
     * **Linux**
       + [Linux](/study/Linux/Shell学习)
     * **计算机网络**

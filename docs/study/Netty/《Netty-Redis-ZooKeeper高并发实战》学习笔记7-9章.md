@@ -3087,4 +3087,1482 @@ public abstract class BaseSender {
 
 #### 9.3.3 ClientSession客户端会话
 
-1
+​	ClientSession是一个很重要的胶水类，有两个成员：一个是user，代表用户，另一个是channel，代表了连接的通道。在实际开发中，这两个成员的作用是：
+
+1. 通过user，可以获得当前的用户信息。
+2. 通过channel，可以向服务器端发送信息。
+
+​	ClientSession会话“左拥右抱”，左手“拥有”用户信息，右手“抱有”服务器端的连接。通过user成员可以获取当前的用户信息。借助channel通道，ClientSession可以写入Protobuf数据包，或者关闭Netty连接。
+
+​	其次，客户端会话ClientSession保存着当前的状态：
+
+​	（1）是否成功连接isConnected
+
+​	（2）是否成功登录isLogin
+
+​	第三，ClientSession绑定在通道上，因而可以在入站处理器中通过通道反向取得绑定的ClientSession。
+
+```java
+@Slf4j
+@Data
+public class ClientSession {
+
+    public static final AttributeKey<ClientSession> SESSION_KEY =
+            AttributeKey.valueOf("SESSION_KEY");
+
+    /**
+     * 用户实现客户端会话管理的核心
+     */
+    private Channel channel;
+    private User user;
+
+    /**
+     * 保存登录后的服务端sessionid
+     */
+    private String sessionId;
+
+    private boolean isConnected = false;
+    private boolean isLogin = false;
+
+    /**
+     * session中存储的session 变量属性值
+     */
+    private Map<String, Object> map = new HashMap<String, Object>();
+
+    //绑定通道
+    public ClientSession(Channel channel) {
+        this.channel = channel;
+        this.sessionId = String.valueOf(-1);
+        channel.attr(ClientSession.SESSION_KEY).set(this);
+    }
+
+    //登录成功之后,设置sessionId
+    public static void loginSuccess(
+            ChannelHandlerContext ctx, ProtoMsg.Message pkg) {
+        Channel channel = ctx.channel();
+        ClientSession session = channel.attr(ClientSession.SESSION_KEY).get();
+        session.setSessionId(pkg.getSessionId());
+        session.setLogin(true);
+        log.info("登录成功");
+    }
+
+    //获取channel
+    public static ClientSession getSession(ChannelHandlerContext ctx) {
+        Channel channel = ctx.channel();
+        ClientSession session = channel.attr(ClientSession.SESSION_KEY).get();
+        return session;
+    }
+
+    public String getRemoteAddress() {
+        return channel.remoteAddress().toString();
+    }
+
+    //写protobuf 数据帧
+    public ChannelFuture witeAndFlush(Object pkg) {
+        ChannelFuture f = channel.writeAndFlush(pkg);
+        return f;
+    }
+
+    public void writeAndClose(Object pkg) {
+        ChannelFuture future = channel.writeAndFlush(pkg);
+        future.addListener(ChannelFutureListener.CLOSE);
+    }
+
+    //关闭通道
+    public void close() {
+        isConnected = false;
+
+        ChannelFuture future = channel.close();
+        future.addListener(new ChannelFutureListener() {
+            @Override
+            public void operationComplete(ChannelFuture future) throws Exception {
+                if (future.isSuccess()) {
+                    log.error("连接顺利断开");
+                }
+            }
+        });
+    }
+}
+```
+
+​	什么时候创建客户端会话呢？在Netty客户端连接建立之后，并增加一个监听异步任务完成的监听器，代码如下：
+
+```java
+@Slf4j
+@Data
+@Service("CommandController")
+public class CommandController {
+    // ... 
+    GenericFutureListener<ChannelFuture> connectedListener = (ChannelFuture f) ->
+    {
+        final EventLoop eventLoop
+                = f.channel().eventLoop();
+        if (!f.isSuccess()) {
+            log.info("连接失败!在10s之后准备尝试重连!");
+            eventLoop.schedule(
+                    () -> nettyClient.doConnect(),
+                    10,
+                    TimeUnit.SECONDS);
+
+            connectFlag = false;
+        } else {
+            connectFlag = true;
+
+            log.info("疯狂创客圈 IM 服务器 连接成功!");
+            channel = f.channel();
+
+            // 创建会话
+            session = new ClientSession(channel);
+            session.setConnected(true);
+            channel.closeFuture().addListener(closeListener);
+
+            //唤醒用户线程
+            notifyCommandThread();
+        }
+
+    };
+    // ...
+}
+```
+
+#### 9.3.4 LoginResponseHandler登录相应处理器
+
+​	LoginResponseHandler登录响应处理器对消息类型进行判断：
+
+​	（1）如果消息类型是请求响应消息并且登录成功，则取出绑定的会话（Session），再设置登录成功的状态。在完成登录称后之后，进行其他的客户端业务处理。
+
+​	（2）如果消息类型不是请求响应数据，则调用父类默认的super.channelRead()入站处理方法，将数据包交给流水线的下一站Handler业务处理器去处理。
+
+```java
+@Slf4j
+@ChannelHandler.Sharable
+@Service("LoginResponceHandler")
+public class LoginResponceHandler extends ChannelInboundHandlerAdapter {
+    /**
+     * 业务逻辑处理
+     */
+    @Override
+    public void channelRead(ChannelHandlerContext ctx, Object msg)
+            throws Exception {
+        //判断消息实例
+        if (null == msg || !(msg instanceof ProtoMsg.Message)) {
+            super.channelRead(ctx, msg);
+            return;
+        }
+
+        //判断类型
+        ProtoMsg.Message pkg = (ProtoMsg.Message) msg;
+        ProtoMsg.HeadType headType = ((ProtoMsg.Message) msg).getType();
+        if (!headType.equals(ProtoMsg.HeadType.LOGIN_RESPONSE)) {
+            super.channelRead(ctx, msg);
+            return;
+        }
+
+
+        //判断返回是否成功
+        ProtoMsg.LoginResponse info = pkg.getLoginResponse();
+
+        ProtoInstant.ResultCodeEnum result =
+                ProtoInstant.ResultCodeEnum.values()[info.getCode()];
+
+        if (!result.equals(ProtoInstant.ResultCodeEnum.SUCCESS)) {
+            //登录失败
+            log.info(result.getDesc());
+        } else {
+            //登录成功
+            ClientSession.loginSuccess(ctx, pkg);
+            ChannelPipeline p = ctx.pipeline();
+            //移除登录响应处理器
+            p.remove(this);
+
+            //在编码器后面，动态插入心跳处理器
+            p.addAfter("encoder", "heartbeat", new HeartBeatClientHandler());
+        }
+
+    }
+
+}
+```
+
+​	在的登录成功之后，需要将LoginResponseHandler登录响应处理器实例从流水线上移除，因为不需要再处理登陆响应了。同时，需要在客户端和服务器端之间开启定时的心跳处理。心跳是一个比较复杂的议题，后面会有单独的小节专门详细介绍客户端和服务器之间的心跳。
+
+#### 9.3.5 客户端流水线的装配
+
+​	对于客户端的业务处理器流水线（Pipeline），首先是需要装配一个ProtobufDecoder解码器和一个ProtobufEncoder编码器。编码器和解码器一般都是装配在最前面。然后需要装配业务处理器——LoginResponseHandler登录响应处理器的实例。
+
+​	<u>一般来说，在流水线最末端还需要装配一个ExceptionHander异常处理器，它也是一个入站处理器，用来实现Netty异常的处理以及在连接异常中断后进行重连</u>。
+
+```java
+@Slf4j
+@Data
+@Service("NettyClient")
+public class NettyClient {
+    // 服务器ip地址
+    @Value("${server.ip}")
+    private String host;
+    // 服务器端口
+    @Value("${server.port}")
+    private int port;
+
+
+    @Autowired
+    private ChatMsgHandler chatMsgHandler;
+
+    @Autowired
+    private LoginResponceHandler loginResponceHandler;
+
+
+    @Autowired
+    private ExceptionHandler exceptionHandler;
+
+
+    private Channel channel;
+    private ChatSender sender;
+    private LoginSender l;
+
+    /**
+     * 唯一标记
+     */
+    private boolean initFalg = true;
+    private User user;
+    private GenericFutureListener<ChannelFuture> connectedListener;
+
+    private Bootstrap b;
+    private EventLoopGroup g;
+
+    public NettyClient() {
+
+        /**
+         * 客户端的是Bootstrap，服务端的则是 ServerBootstrap。
+         * 都是AbstractBootstrap的子类。
+         **/
+
+        /**
+         * 通过nio方式来接收连接和处理连接
+         */
+
+        g = new NioEventLoopGroup();
+    }
+
+    /**
+     * 重连
+     */
+    public void doConnect() {
+        try {
+            b = new Bootstrap();
+
+            b.group(g);
+            b.channel(NioSocketChannel.class);
+            b.option(ChannelOption.SO_KEEPALIVE, true);
+            b.option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+            b.remoteAddress(host, port);
+
+            // 设置通道初始化
+            b.handler(
+                    new ChannelInitializer<SocketChannel>() {
+                        public void initChannel(SocketChannel ch) {
+                            ch.pipeline().addLast("decoder", new ProtobufDecoder());
+                            ch.pipeline().addLast("encoder", new ProtobufEncoder());
+                            ch.pipeline().addLast(loginResponceHandler);
+                            ch.pipeline().addLast(chatMsgHandler);
+                            ch.pipeline().addLast(exceptionHandler);
+                        }
+                    }
+            );
+            log.info("客户端开始连接 [疯狂创客圈IM]");
+
+            ChannelFuture f = b.connect();
+            f.addListener(connectedListener);
+
+
+            // 阻塞
+            // f.channel().closeFuture().sync();
+
+        } catch (Exception e) {
+            log.info("客户端连接失败!" + e.getMessage());
+        }
+    }
+
+    public void close() {
+        g.shutdownGracefully();
+    }
+}
+```
+
+​	关于业务处理器的执行次序，再强调一下：登录响应处理器，必须装配在ProtobufDecoder解码器之后。具体原因是：Netty客户端读到二进制Bytebuf数据包之后，首先需要通过protobufDecoder完成解码操作。解码后组装好Protobuf消息POJO，再进入loginResponseHandler登录响应处理器。
+
+### 9.4 服务器端的登录响应的实践案例
+
+​	服务器端的登录响应流程是：
+
+​	（1）ProtobufDecoder解码器把请求ByteBuf数据包解码成Protobuf数据包。
+
+​	（2）UserLoginRequestHandler登录处理器用于处理Protobuf数据包，进行一些必要的判断和预处理后，启动LoginProcesser登录业务处理器，开始以异步方式进行登录验证处理。
+
+​	（3）LoginProcesser通过数据库或者远程接口完成用户验证，根据验证处理的结果，生成登录成功/或者失败的登录响应报文，并发送到客户端。
+
+#### 9.4.1 服务器流水线的装配
+
+​	与客户端一样，对于服务器端流水线的，首先需要装配一个ProtobufDecoder解码器和一个ProtobufEncoder编码器。然后需要装配loginRequestHandler登录业务处理器的实例。<u>在流水线的最末端，还需要装配一个serverExceptionHandler异常处理器实例。</u>
+
+```java
+@Data
+@Slf4j
+@Service("ChatServer")
+public class ChatServer {
+    // 服务器端口
+    @Value("${server.port}")
+    private int port;
+    // 通过nio方式来接收连接和处理连接
+    private EventLoopGroup bg =
+            new NioEventLoopGroup();
+    private EventLoopGroup wg =
+            new NioEventLoopGroup();
+
+    // 启动引导器
+    private ServerBootstrap b =
+            new ServerBootstrap();
+    @Autowired
+    private LoginRequestHandler loginRequestHandler;
+
+    @Autowired
+    private ServerExceptionHandler serverExceptionHandler;
+
+    @Autowired
+    private ChatRedirectHandler chatRedirectHandler;
+
+    public void run() {
+        try {   //1 设置reactor 线程
+            b.group(bg, wg);
+            //2 设置nio类型的channel
+            b.channel(NioServerSocketChannel.class);
+            //3 设置监听端口
+            b.localAddress(new InetSocketAddress(port));
+            //4 设置通道选项
+            b.option(ChannelOption.SO_KEEPALIVE, true);
+            b.option(ChannelOption.ALLOCATOR,
+                    PooledByteBufAllocator.DEFAULT);
+
+            //5 装配流水线
+            b.childHandler(new ChannelInitializer<SocketChannel>() {
+                //有连接到达时会创建一个channel
+                protected void initChannel(SocketChannel ch) throws Exception {
+                    // 管理pipeline中的Handler
+                    ch.pipeline().addLast(new ProtobufDecoder());
+                    ch.pipeline().addLast(new ProtobufEncoder());
+                    ch.pipeline().addLast(new HeartBeatServerHandler());
+                    // 在流水线中添加handler来处理登录,登录后删除
+                    ch.pipeline().addLast(loginRequestHandler);
+                    ch.pipeline().addLast(chatRedirectHandler);
+                    ch.pipeline().addLast(serverExceptionHandler);
+                }
+            });
+            // 6 开始绑定server
+            // 通过调用sync同步方法阻塞直到绑定成功
+
+            ChannelFuture channelFuture = b.bind().sync();
+            log.info(
+                    "疯狂创客圈 CrazyIM 服务启动, 端口 " +
+                            channelFuture.channel().localAddress());
+            // 7 监听通道关闭事件
+            // 应用程序会一直等待，直到channel关闭
+            ChannelFuture closeFuture =
+                    channelFuture.channel().closeFuture();
+            closeFuture.sync();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            // 8 优雅关闭EventLoopGroup，
+            // 释放掉所有资源包括创建的线程
+            wg.shutdownGracefully();
+            bg.shutdownGracefully();
+        }
+    }
+}
+```
+
+​	在服务器端的登录处理流程中，ProtobufDecoder解码器把登录请求的二进制ByteBuf数据包解码成Protobuf数据包，然后发送给下一站loginRequestHandler登录请求处理器，由loginRequestHandler登录请求处理器完成实际的登录处理。
+
+#### 9.4.2 LoginRequestHandler登录请求处理器
+
+​	这是个入站处理器，它继承自ChannelInboundHandlerAdapter入站适配器，重写了channelRead方法，主要的工作如下：
+​	（1）对消息进行必要的判断：判断是否为登录请求Protobuf数据包。如果不是，通过super.channelRead(ctx,msg)将消息交给流水线的下一站。
+
+​	（2）创建一个ServerSession，即为客户建立一个服务器端的会话。
+
+​	（3）使用自定义的CallbackTaskScheduler异步任务调度器，提交一个异步任务，启动LoginProcesser执行登录用户验证逻辑。
+
+```java
+@Slf4j
+@Service("LoginRequestHandler")
+@ChannelHandler.Sharable
+public class LoginRequestHandler extends ChannelInboundHandlerAdapter {
+
+    @Autowired
+    LoginProcesser loginProcesser;
+
+    /**
+     * 收到消息
+     */
+    public void channelRead(ChannelHandlerContext ctx, Object msg)
+            throws Exception {
+        if (null == msg
+                || !(msg instanceof ProtoMsg.Message)) {
+            super.channelRead(ctx, msg);
+            return;
+        }
+
+        ProtoMsg.Message pkg = (ProtoMsg.Message) msg;
+
+        //取得请求类型
+        ProtoMsg.HeadType headType = pkg.getType();
+
+        if (!headType.equals(loginProcesser.type())) {
+            super.channelRead(ctx, msg);
+            return;
+        }
+
+
+        ServerSession session = new ServerSession(ctx.channel());
+
+        //异步任务，处理登录的逻辑
+        CallbackTaskScheduler.add(new CallbackTask<Boolean>() {
+            @Override
+            public Boolean execute() throws Exception {
+                boolean r = loginProcesser.action(session, pkg);
+                return r;
+            }
+
+            //异步任务返回
+            @Override
+            public void onBack(Boolean r) {
+                if (r) {
+                    ctx.pipeline().remove(LoginRequestHandler.this);
+                    log.info("登录成功:" + session.getUser());
+
+                } else {
+                    ServerSession.closeSession(ctx);
+                    log.info("登录失败:" + session.getUser());
+                }
+            }
+            //异步任务异常
+
+            @Override
+            public void onException(Throwable t) {
+                ServerSession.closeSession(ctx);
+                log.info("登录失败:" + session.getUser());
+            }
+        });
+
+    }
+}
+```
+
+#### 9.4.3 LoginProcesser用户验证逻辑
+
+​	LoginProcesser用户验证逻辑包括：密码验证、将验证的结果写入到通道。如果登入验证成功，还需要绑定服务器端的会话，并且加入到在线用户列表中。
+
+```java
+@Slf4j
+@Service("LoginProcesser")
+public class LoginProcesser extends AbstractServerProcesser {
+    @Autowired
+    LoginResponceBuilder loginResponceBuilder;
+
+    @Override
+    public ProtoMsg.HeadType type() {
+        return ProtoMsg.HeadType.LOGIN_REQUEST;
+    }
+
+    @Override
+    public boolean action(ServerSession session,
+                          ProtoMsg.Message proto) {
+        // 取出token验证
+        ProtoMsg.LoginRequest info = proto.getLoginRequest();
+        long seqNo = proto.getSequence();
+
+        User user = User.fromMsg(info);
+
+        //检查用户
+        boolean isValidUser = checkUser(user);
+        if (!isValidUser) {
+            ProtoInstant.ResultCodeEnum resultcode =
+                    ProtoInstant.ResultCodeEnum.NO_TOKEN;
+            //构造登录失败的报文
+            ProtoMsg.Message response =
+                    loginResponceBuilder.loginResponce(resultcode, seqNo, "-1");
+            //发送登录失败的报文
+            session.writeAndFlush(response);
+            return false;
+        }
+
+        session.setUser(user);
+
+        session.bind();
+
+        //登录成功
+        ProtoInstant.ResultCodeEnum resultcode =
+                ProtoInstant.ResultCodeEnum.SUCCESS;
+        //构造登录成功的报文
+        ProtoMsg.Message response =
+                loginResponceBuilder.loginResponce(
+                        resultcode, seqNo, session.getSessionId());
+        //发送登录成功的报文
+        session.writeAndFlush(response);
+        return true;
+    }
+
+    private boolean checkUser(User user) {
+
+        if (SessionMap.inst().hasLogin(user)) {
+            return false;
+        }
+
+        //校验用户,比较耗时的操作,需要100 ms以上的时间
+        //方法1：调用远程用户restfull 校验服务
+        //方法2：调用数据库接口校验
+
+        return true;
+
+    }
+
+}
+```
+
+​	用户密码验证的逻辑，在checkUser()方法中完成。<u>在实际的生产场景中，LoginProcesser进行用户验证的方式比较多：</u>
+
++ 通过RESTful接口验证用户
++ 通过数据库去验证用户
++ 通过验证(Auth)服务器去验证用户
+
+​	总之，验证用户是一个耗时间的操作。为了尽量地简化流程，示例代码省去了通过账号和密码验证地过程，而checkUser()方法直接返回true，也就是所有的登录都是成功的。
+
+​	<u>服务器端校验通过之后，可以完成服务器端会话（Session）的绑定工作</u>。
+
+​	服务器端的ServerSession会话也是一个胶水类，与客户端的ClientSession会话类似。<u>每一个ServerSession对应一个客户端连接。一个ServerSession拥有一个Channel成员实例、一个User成员实例。Channel成员代表与客户端连接的子通道；User成员代表用户信息。</u>稍后，会对ServerSession进行详细介绍。
+
+​	<u>在用户校验成功之后，就需要向客户端发送登陆响应</u>。具体的方法是：调用登录响应的Protobuf消息构造器loginResponseBuilder，构造一个登录响应POJO，设置好校验成功的标志位，调用会话（Session）的writeAndFlush()方法写到客户端。
+
+#### 9.4.4 EventLoop线程和业务线程相互隔离
+
+​	前面章节中，已经埋下一个疑问：为什么在服务器整个登录处理需要分成两个模块：一个是Netty Handler业务处理器，另一个是Processer业务逻辑处理器；而不是像客户端一样，在入站处理器Handler中统一完成呢？
+
+​	答案是：**在服务器端需要隔离EventLoop（Reactor）线程和业务线程**。基本的方法是，<u>使用独立的、异步的线程任务去执行用户验证的逻辑；而不在EventLoop线程中去执行用户验证的逻辑。</u>
+
+​	实际上，Reactor反应器线程和业务线程相互隔离，在服务器端非常重要。
+
+​	首先，以读通道channelRead为例，看下一次普通的入站处理的基本步骤：
+
+```java
+public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception{
+    //1 判断消息是否需要处理
+    //2 取得消息，并判断类型
+    //3 耗时的业务处理操作
+    //4 把结果写入到连接通道
+}
+```
+
+​	其中第三步，通常会涉及到一些比较耗时的业务处理操作，例如：
+
+​	（1）数据库操作，百毫秒级，一般查询都在100ms以上。
+
+​	（2）远程接口调用，百毫秒级，一般都在200ms以上，慢的在1000ms以上。
+
+​	再看Netty内部的IO读写操作，通常都是毫秒级。也就是说，**Netty内部的IO操作和业务处理操作在时间上不在一个数量级**。
+
+​	问题来了：<u>在大量（成千上万）的子通道复用一个EventLoop线程的应用场景中，一旦耗时的业务处理操作也会执行在EventLoop线程上，就会导致其他子通道的IO操作会发生严重的性能问题。</u>
+
+​	大家都知道，**默认情况下，Netty的一个EventLoop实例会开启2倍CPU内核数的内部线程**。通常情况下，一个Netty服务器端会有几万或者几十万的连接通道。也就是说，一个EventLoop内部线程会负责处理几万或者上十万个通道连接的IO处理。
+
+​	**在一个EventLoop内部线程上任务是串行的**。如果一个Handler业务处理器中的channelRead()入站处理方法执行1000ms或者几秒钟，最终的结果是，阻塞了EventLoop内部线程其他几十万个通道的出站和入站处理，阻塞时长为1000ms或者几秒钟。而耗时的入站/出站处理越多，就越会拖慢整个线程的其他IO处理，最终导致严重的性能问题。
+
+​	<u>解决方法是，业务操作和EventLoop线程相隔离。具体来说，就是专门开辟一个独立的线程池，负责一个独立的异步任务处理队列。对于耗时的业务操作封装成异步任务，并放入异步任务队列中去处理。这样的化，服务器端的性能会提升很多。</u>
+
+### 9.5 详解ServerSession服务器会话
+
+​	无论是客户端还是服务器端，为了让通道（Channel——连接和用户(User)的管理和使用变得方便，引入了一个非常重要的概念——会话(Session)）。有点类似Tomcat的服务器会话，只是在实现上比较简单。
+
+​	<u>由于客户端和服务器分别都有各自的通道，并且相关的参数与一些也不一致，因此这里使用了两个会话类型：客户端会话ClientSession、服务器端会话ServerSession</u>。
+
+​	**会话和通道直接的导航关系有两个方向，一个是正向导航：通过会话导航到通道，主要用于出站处理的场景，通过会话将数据包写出到通道；另一个是反向导航，通过通道导航到会话，主要用于入站处理的场景，通过通道获取会话，以便进一步进行业务处理。**
+
+​	如果进行反向导航呢？需要用到**通道的容器属性**。
+
+#### 9.5.1 通道的容器属性
+
+​	<u>Netty中的Channel通道类，有类似于Map的容器功能，可以通过“key-value”键值对的形式来保存任何Java Object类型的值</u>。一般来说，可以存放一些与通道实例相关联的属性，比如说服务器端的ServerSession会话实例。
+
+​	**除了Channel通道类，Netty中的HandlerContext处理器上下文类，也具备了类似的容器功能，可以绑定key-value键值对**。
+
+​	问题是：Channel和HandlerContext的容器功能，具体是如何实现的呢？
+
+​	Netty没有实现Map接口，而是定义了一个类似的接口，叫作AttributeMap，<u>它有且只有一个方法"\<T\> Attribute\<T\> attr(AttributeKey\<T\> key)；"，此方法接受一个AttributeKey类型的key，返回一个Attribute类型的值</u>。这里特别说明一下：
+
+​	（1）这里的AttributeKey也不是原始的key（例如，放在Map中的key），而是一个key的包装类。AttributeKey确保了key的唯一性，在单个Netty应用中，key值必须唯一。
+
+​	（2）这里的值Attribute不是原始的value，也是value的包装类。原始的value就放置在Attribute包装类中，可以通过Attribute包装类实现value的读取（get）和设置（set），取值和设值。
+
+key -> {AttributeMap : AttribubteKey -> Attribute} -> value
+
+​	在Netty中，接口AttributeMap的源代码如下：
+
+```java
+public interface AttributeMap {
+    <T> Attribute<T> attr(AttributeKey<T> key);
+}
+```
+
+​	AttributeMap只是一个接口，Netty提供了默认的实现。**AttributeMap的实现要求是线程安全的**。可以通过AttributeMap的attr(...)方法，根据key取得Attribute类型的value；然后通过Attribute类型的value实例完成最终的两个重要操作：设值（set）、取值（get）。
+
+1. Attribute的设值
+
+   ​	Attribute设值的方法，举例如下：
+
+   ```java
+   // 定义key
+   public static final AttributeKey<ServerSession> SESSION_KEY = AttributeKey.valueOf("SESSION_KEY");
+   // ...
+   // 通过设置将会话绑定到通道
+   channel.attr(SESSION_KEY).set(session);
+   ```
+
+   ​	AttributeKey的创建，需要用到静态方法AttributeKey.valueOf(String)方法。该方法的返回值为一个AttributeKey实例，它的泛型类型为实际上的key-value键值对value的实际类型。这里的value实际是ServerSession类型，所以返回值类型为AttributeKey\<ServerSession\>。
+
+   ```java
+   public static <T> AttributeKey<T> valueOf(String name) {
+       ObjectUtil.checkNotNull(name, "name");
+       AttributeKey<T> option = (AttributeKey)names.get(name);
+       if (option == null) {
+           option = new AttributeKey(name);
+           AttributeKey<T> old = (AttributeKey)names.putIfAbsent(name, option);
+           if (old != null) {
+               option = old;
+           }
+       }
+       return option;
+   }
+   ```
+
+   ​	再强调一句：这里的AttributeKey一般定义为一个常量，需要提前定义：它的那个泛型的参数是Attribute最终的包装值value的数据类型。
+
+   ```java
+   // key 的泛型形参是设置的value的类型
+   public static final AttributeKey<ServerSession> SESSION_KEY = AttributeKey.valueOf("SESSION_KEY");
+   ```
+
+2. Attribute取值
+
+   ​	Attribute取值的方法，举例如下：
+
+   ```java
+   ServerSession session = ctx.channel().attr(SESSION_KEY).get();
+   ```
+
+   ​	这里使用了链式调用，首先通过通道的attr(AttributeKey)方法，取得键(key)所对应的值(value)的包装类Attribute实例。然后通过Attribute 的get()方法，获取真正的值——前面所设置的会话session实例。
+
+#### 9.5.2 ServerSession服务器端会话类
+
+​	<u>在登录成功之后，服务器端会为每一个新连接通道创建一个ServerSession案例，表示用户与服务器端的会话信息</u>。
+
+​	**每个SerevrSession实例都有一个唯一标识，为sessionId。注意，唯一标识ServerSession实例的不是userid。为什么呢?主要原因是：同一个用户可从网页端、手机端、电脑桌桌面，同时登录IM服务器端。微信、QQ都是典型的案例。另外，同一个用户的消息需要在手机端、网页端、桌面端进行同步，也就是说同时接受消息、同时发送消息。**
+
+```java
+@Data
+@Slf4j
+public class ServerSession {
+
+    public static final AttributeKey<String> KEY_USER_ID =
+        AttributeKey.valueOf("key_user_id");
+
+    public static final AttributeKey<ServerSession> SESSION_KEY =
+        AttributeKey.valueOf("SESSION_KEY");
+
+    /**
+     * 用户实现服务端会话管理的核心
+     */
+    //通道
+    private Channel channel;
+    //用户
+    private User user;
+
+    //session唯一标示
+    private final String sessionId;
+
+    //登录状态
+    private boolean isLogin = false;
+
+    /**
+     * session中存储的session 变量属性值
+     */
+    private Map<String, Object> map = new HashMap<String, Object>();
+
+    public ServerSession(Channel channel) {
+        this.channel = channel;
+        this.sessionId = buildNewSessionId();
+    }
+
+    //反向导航
+    public static ServerSession getSession(ChannelHandlerContext ctx) {
+        Channel channel = ctx.channel();
+        return channel.attr(ServerSession.SESSION_KEY).get();
+    }
+
+    //关闭连接
+    public static void closeSession(ChannelHandlerContext ctx) {
+        ServerSession session =
+            ctx.channel().attr(ServerSession.SESSION_KEY).get();
+
+        if (null != session && session.isValid()) {
+            session.close();
+            SessionMap.inst().removeSession(session.getSessionId());
+        }
+    }
+
+    //和channel 通道实现双向绑定
+    public ServerSession bind() {
+        log.info(" ServerSession 绑定会话 " + channel.remoteAddress());
+        channel.attr(ServerSession.SESSION_KEY).set(this);
+        SessionMap.inst().addSession(getSessionId(), this);
+        isLogin = true;
+        return this;
+    }
+
+    public ServerSession unbind() {
+        isLogin = false;
+        SessionMap.inst().removeSession(getSessionId());
+        this.close();
+        return this;
+    }
+
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    private static String buildNewSessionId() {
+        String uuid = UUID.randomUUID().toString();
+        return uuid.replaceAll("-", "");
+    }
+
+    public synchronized void set(String key, Object value) {
+        map.put(key, value);
+    }
+
+    public synchronized <T> T get(String key) {
+        return (T) map.get(key);
+    }
+
+    public boolean isValid() {
+        return getUser() != null ? true : false;
+    }
+
+    //写Protobuf数据帧
+    public synchronized void writeAndFlush(Object pkg) {
+        channel.writeAndFlush(pkg);
+    }
+
+    //关闭连接
+    public synchronized void close() {
+        ChannelFuture future = channel.close();
+        future.addListener(new ChannelFutureListener() {
+            @Override
+            public void operationComplete(ChannelFuture future) throws Exception {
+                if (!future.isSuccess()) {
+                    log.error("CHANNEL_CLOSED error ");
+                }
+            }
+        });
+    }
+
+    public User getUser() {
+        return user;
+    }
+
+    public void setUser(User user) {
+        this.user = user;
+        user.setSessionId(sessionId);
+    }
+
+}
+```
+
+​	从功能上说，ServerSession类与ClientSession类似，也是一个很重要的胶水类。
+
+（1）通过ServerSession实例可以导航到通道，以发送消息。
+
+（2）在通道收到消息时，通过ServerSession实例，反向导航到用户，以处理业务逻辑。
+
+​	需要注意的是sessionId的类型，它是String类型而不是数字类型，为什么呢？**主要是为了方便后期的分布式扩展**。在后期，通信服务器需要从单体服务器扩展到多节点服务集群。**为了在分布式集群的应用场景下，在后期sessionId可以确保全局唯一，使用String类型就比较方便**。
+
+#### 9.5.3 SessionMap会话管理器
+
+​	一台服务器需要接受几万/几十万的客户端连接。每一条连接都对应到一个ServerSession实例，服务器需要对这些大量的ServerSession实例进行管理。
+
+​	**SessionMap负责管理服务器端所有的ServerSession。它有一个<u>线程安全的ConcurrentHashMap类型的成员map</u>，保持sessionId到服务器端ServerSession的映射。**
+
+```java
+@Slf4j
+@Data
+public final class SessionMap {
+    private SessionMap() {
+    }
+
+    private static SessionMap singleInstance = new SessionMap();
+
+    //会话集合
+    private ConcurrentHashMap<String, ServerSession> map =
+            new ConcurrentHashMap<String, ServerSession>();
+
+    public static SessionMap inst() {
+        return singleInstance;
+    }
+
+    /**
+     * 增加session对象
+     */
+    public void addSession(
+            String sessionId, ServerSession s) {
+        map.put(sessionId, s);
+        log.info("用户登录:id= " + s.getUser().getUid()
+                + "   在线总数: " + map.size());
+
+    }
+
+    /**
+     * 获取session对象
+     */
+    public ServerSession getSession(String sessionId) {
+        if (map.containsKey(sessionId)) {
+            return map.get(sessionId);
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * 根据用户id，获取session对象
+     */
+    public List<ServerSession> getSessionsBy(String userId) {
+
+        List<ServerSession> list = map.values()
+                .stream()
+                .filter(s -> s.getUser().getUid().equals(userId))
+                .collect(Collectors.toList());
+        return list;
+    }
+
+    /**
+     * 删除session
+     */
+    public void removeSession(String sessionId) {
+        if (!map.containsKey(sessionId)) {
+            return;
+        }
+        ServerSession s = map.get(sessionId);
+        map.remove(sessionId);
+        Print.tcfo("用户下线:id= " + s.getUser().getUid()
+                + "   在线总数: " + map.size());
+    }
+
+
+    public boolean hasLogin(User user) {
+        Iterator<Map.Entry<String, ServerSession>> it =
+                map.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<String, ServerSession> next = it.next();
+            User u = next.getValue().getUser();
+            if (u.getUid().equals(user.getUid())
+                    && u.getPlatform().equals(user.getPlatform())) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+```
+
+​	在调用ServerSessioni.bind()绑定时，在SessionMap中增加一次映射：
+
+```java
+// public class ServerSession
+// 和channel 通道实现双向绑定
+public ServerSession bind() {
+    log.info(" ServerSession 绑定会话 " + channel.remoteAddress());
+    channel.attr(ServerSession.SESSION_KEY).set(this);
+    SessionMap.inst().addSession(getSessionId(), this);
+    isLogin = true;
+    return this;
+}
+```
+
+​	在调用ServerSession.unbind()解除绑定时，在SessionMap中减少一次映射：
+
+```java
+public ServerSession unbind() {
+    isLogin = false;
+    SessionMap.inst().removeSession(getSessionId());
+    this.close();
+    return this;
+}
+```
+
+​	<u>通过SessionMap，可以实现在线用户的统计。除此之外，当用户与用户之间进行单聊时，消息需要通过服务器端，在不同的用户之间进行转发，这时也需要用到SessionMap。</u>
+
+### 9.6 点对点单聊的实践案例
+
+​	单聊的业务非常简单，就像微信的聊天功能。这里强调一下，对单聊的业务流程进行具体介绍：
+
+​	（1）当用户A登录成功之后，按照单聊的消息格式，发送所要的消息。
+
+​	这里的消息格式设定为——userId：content。其中的userId，就是消息接收方目标用户B的userId；其中的content，表示聊天的内容。
+
+​	（2）服务器端收到消息后，根据目标userID进行消息的转发，发送到用户B所在的客户端。
+
+​	（3）客户端用户B收到用户A发来的消息，在自己的控制台显示出来。
+
+​	<u>理论上来说，单聊业务是十分的简单。不过，在这里有问题，为很么服务器端的路由转发不是根据sessionID，而是根据userID呢？</u>
+
+​	<u>原因是：用户B可能登录了多个会话（桌面会话、移动端会话、网页端会话），这时发给用户B的聊天信息必须转发到多个会话，所以需要根据userID进行转发</u>。
+
+#### 9.6.1 简述单聊的端到端流程
+
+​	单聊的端到端流程，从大的角度来说，包括以下环节：
+
+​	client --发数据--> childChannel -> Server路由转发 -> childChannel --收数据--> client
+
+​	（1）用户A发送单聊Protobuf数据包。
+
+​	（2）服务器端接收到用户A的单聊数据包。
+
+​	（3）服务器端转发单聊数据包到用户B。
+
+​	（4）最终用户B接收到来自用户A的单聊数据包。
+
+#### 9.6.2 客户端的ChatConsoleCommand收集聊天内容
+
+​	ChatConsoleCommand命令收集类负责从Scanner控制台实例获取聊天的消息（格式为 id:message）。代码如下：
+
+```java
+@Data
+@Service("ChatConsoleCommand")
+public class ChatConsoleCommand implements BaseCommand {
+
+    private String toUserId;
+    private String message;
+    public static final String KEY = "2";
+
+    @Override
+    public void exec(Scanner scanner) {
+        System.out.print("请输入聊天的消息(id:message)：");
+        String[] info = null;
+        while (true) {
+            String input = scanner.next();
+            info = input.split(":");
+            if (info.length != 2) {
+                System.out.println("请输入聊天的消息(id:message):");
+            } else {
+                break;
+            }
+        }
+        toUserId = info[0];
+        message = info[1];
+    }
+
+
+    @Override
+    public String getKey() {
+        return KEY;
+    }
+
+    @Override
+    public String getTip() {
+        return "聊天";
+    }
+
+}
+```
+
+#### 9.6.3 客户端的CommandController发送POJO
+
+​	ChatConsoleCommand的调用者是CommandController命令控制类。CommandController在完成聊天内容和目标用户信息的收集后，在自己的startOneChat（...）方法中调用chatSender发送器实例，将聊天消息组装成Protobuf数据包，通过客户端的通道发往服务器端。
+
+```java
+@Slf4j
+@Data
+@Service("CommandController")
+public class CommandController {
+    //聊天命令收集类
+    @Autowired
+    ChatConsoleCommand chatConsoleCommand;
+    //...省略其他成员
+    
+    public void startCommandThread()
+            throws InterruptedException {
+        Thread.currentThread().setName("命令线程");
+
+        while (true) {
+            //建立连接
+            while (connectFlag == false) {
+                //开始连接
+                startConnectServer();
+                waitCommandThread();
+
+            }
+            //处理命令
+            while (null != session) {
+
+                Scanner scanner = new Scanner(System.in);
+                clientCommandMenu.exec(scanner);
+                String key = clientCommandMenu.getCommandInput();
+                BaseCommand command = commandMap.get(key);
+
+                if (null == command) {
+                    System.err.println("无法识别[" + command + "]指令，请重新输入!");
+                    continue;
+                }
+
+
+                switch (key) {
+                    case ChatConsoleCommand.KEY:
+                        command.exec(scanner);
+                        startOneChat((ChatConsoleCommand) command);
+                        break;
+
+                    case LoginConsoleCommand.KEY:
+                        command.exec(scanner);
+                        startLogin((LoginConsoleCommand) command);
+                        break;
+
+                    case LogoutConsoleCommand.KEY:
+                        command.exec(scanner);
+                        startLogout(command);
+                        break;
+
+                }
+            }
+        }
+    }
+    
+    //发送单聊消息
+    private void startOneChat(ChatConsoleCommand c) {
+        //登录
+        if (!isLogin()) {
+            log.info("还没有登录，请先登录");
+            return;
+        }
+        chatSender.setSession(session);
+        chatSender.setUser(user);
+        chatSender.sendChatMsg(c.getToUserId(), c.getMessage());
+
+//        waitCommandThread();
+
+    }
+    
+    //...省略其他的命令处理
+}
+```
+
+#### 9.6.4 服务器端的ChatRedrectHandler
+
+​	服务器端的消息转发处理器ChatRedirectHandler类，主要的工作如下：
+
+​	（1）对消息类型进行判断：判断是否为聊天请求Protobuf数据包。如果不是，通过super.channelRead(ctx, msg)将消息交给流水线的下一站。
+
+​	（2）对用户登录进行判断：如果没有登录，则不能发送消息。
+
+​	（3）开启**异步**的消息转发，由负责转发的chatRedirectProcesser实例完成消息转发。
+
+```java
+@Slf4j
+@Service("ChatRedirectHandler")
+@ChannelHandler.Sharable
+public class ChatRedirectHandler extends ChannelInboundHandlerAdapter {
+
+    @Autowired
+    ChatRedirectProcesser chatRedirectProcesser;
+
+    /**
+     * 收到消息
+     */
+    public void channelRead(ChannelHandlerContext ctx, Object msg)
+            throws Exception {
+        //判断消息实例
+        if (null == msg || !(msg instanceof ProtoMsg.Message)) {
+            super.channelRead(ctx, msg);
+            return;
+        }
+
+        //判断消息类型
+        ProtoMsg.Message pkg = (ProtoMsg.Message) msg;
+        ProtoMsg.HeadType headType = ((ProtoMsg.Message) msg).getType();
+        if (!headType.equals(chatRedirectProcesser.type())) {
+            super.channelRead(ctx, msg);
+            return;
+        }
+
+        //判断是否登录
+        ServerSession session = ServerSession.getSession(ctx);
+        if (null == session || !session.isLogin()) {
+            log.error("用户尚未登录，不能发送消息");
+            return;
+        }
+
+        //异步处理IM消息转发的逻辑
+        FutureTaskScheduler.add(() ->
+        {
+            chatRedirectProcesser.action(session, pkg);
+        });
+
+    }
+
+}
+```
+
+#### 9.6.5 服务器端的ChatRedirectProcesser异步处理
+
+​	编写负责异步消息转发的ChatRedirectProcesser类，功能如下：
+
+​	（1）根据目标用户ID，找出所有的服务器端会话列表。
+
+​	（2）然后为每一个会话转发一份消息。
+
+​	大致的代码如下：
+
+```java
+@Slf4j
+@Service("ChatRedirectProcesser")
+public class ChatRedirectProcesser extends AbstractServerProcesser {
+    @Override
+    public ProtoMsg.HeadType type() {
+        return ProtoMsg.HeadType.MESSAGE_REQUEST;
+    }
+
+    @Override
+    public boolean action(ServerSession fromSession, ProtoMsg.Message proto) {
+        // 聊天处理
+        ProtoMsg.MessageRequest msg = proto.getMessageRequest();
+        Print.tcfo("chatMsg | from="
+                + msg.getFrom()
+                + " , to=" + msg.getTo()
+                + " , content=" + msg.getContent());
+        // 获取接收方的chatID
+        String to = msg.getTo();
+        // int platform = msg.getPlatform();
+        List<ServerSession> toSessions = SessionMap.inst().getSessionsBy(to);
+        if (toSessions == null) {
+            //接收方离线
+            Print.tcfo("[" + to + "] 不在线，发送失败!");
+        } else {
+
+            toSessions.forEach((session) -> {
+                // 将IM消息发送到接收方
+                session.writeAndFlush(proto);
+            });
+        }
+        return true;
+    }
+
+}
+```
+
+​	由于一个用户可能有多个会话，因此需要通过调用SessionMap会话管理器的SessionMap.inst().getSessionBy(to)方法来取得这个用户的所有会话。
+
+```java
+@Slf4j
+@Data
+public final class SessionMap {
+    //会话集合
+    private ConcurrentHashMap<String, ServerSession> map =
+        new ConcurrentHashMap<String, ServerSession>();
+
+    /**
+     * 根据用户id，获取session对象
+     */
+    public List<ServerSession> getSessionsBy(String userId) {
+
+        List<ServerSession> list = map.values()
+            .stream()
+            .filter(s -> s.getUser().getUid().equals(userId))
+            .collect(Collectors.toList());
+        return list;
+    }
+    // ...
+}
+```
+
+#### 9.6.6 客户端的ChatMsgHandler接收POJO
+
+​	客户端的ChatMsgHandler聊天消息处理器很简单，主要的工作如下：
+
+​	（1）对消息类型进行判断：判断是否为聊天请求Protobuf数据包。如果不是，则通过super.channelRead(ctx, msg)将消息交给流水线的下一站。
+
+​	（2）如果是聊天信息，则将聊天消息显示在控制台。
+
+```java
+@ChannelHandler.Sharable
+@Service("ChatMsgHandler")
+public class ChatMsgHandler extends ChannelInboundHandlerAdapter {
+
+
+    public ChatMsgHandler() {
+
+    }
+
+
+    /**
+     * 业务逻辑处理
+     */
+    @Override
+    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+        //判断消息实例
+        if (null == msg || !(msg instanceof ProtoMsg.Message)) {
+            super.channelRead(ctx, msg);
+            return;
+        }
+
+        //判断类型
+        ProtoMsg.Message pkg = (ProtoMsg.Message) msg;
+        ProtoMsg.HeadType headType = pkg.getType();
+        if (!headType.equals(ProtoMsg.HeadType.MESSAGE_REQUEST)) {
+            super.channelRead(ctx, msg);
+            return;
+        }
+
+        ProtoMsg.MessageRequest req = pkg.getMessageRequest();
+        String content = req.getContent();
+        String uid = req.getFrom();
+
+        System.out.println(" 收到消息 from uid:" + uid + " -> " + content);
+    }
+    
+}
+```
+
+### 9.7 详解心跳检测
+
+​	客户端的心跳检测对于任何长连接的应用来说，都是一个非常基础的功能。要理解心跳的重要性，首先需要从**网络连接假死**的现象说起。
+
+#### 9.7.1 网络连接的假死现象
+
+​	**什么是连接假死呢？如果底层的TCP连接已经断开，但是服务器端并没有正常地关闭套接字，服务器端认为这条TCP连接仍然是存在的**。
+
+​	连接假死的具体表现如下：
+
+​	（1）在服务器端，会有一些处于TCP_ESTABLISHED状态的”正常“连接。
+
+​	（2）但在客户端，TCP客户端已经显示连接已经断开。
+
+​	（3）**客户端此时虽然可以进行断线重连操作，但是上一次的连接状态依然被服务器端认为有效，并且服务器端的资源得不到正确释放，包括套接字上下文以及接口/发送缓冲区**。
+
+​	<u>连接假死的情况虽然不常见，但是确实存在。服务器端长时间运行后，会面临大量假死连接得不到正常释放的情况。由于每个连接都会耗费CPU和内存资源，因此大量假死的连接会逐渐消耗光服务器的资源，使得服务器越来越慢，IO处理效率越来越低，最终导致服务器崩溃。</u>
+
+​	连接假死通常是由以下多个原因造成的，例如：
+
+​	（1）应用程序出现线程阻塞，无法进行数据的读写。
+
+​	（2）网络相关的设备出现故障，例如网卡、机房故障。
+
+​	（3）**网络丢包。公网环境非常容易出现丢包和网络抖动等现象**。
+
+​	**解决假死的有效手段是：客户端定时进行心跳检测，服务器端定时进行空闲检测。**
+
+> [ping、网络抖动与丢包](https://www.cnblogs.com/zhangnan35/p/11128388.html)
+>
+> [记一次对网络抖动经典案例的分析](https://yq.aliyun.com/articles/697773)
+
+#### 9.7.2 服务器端的空闲检测
+
+​	想解决假死问题，服务器端的有效手段就是——空闲检测。
+
+​	**何为空闲检测？就是每隔一段时间，检测子通道是否有数据读写，如果有，则子通道是正常的；如果没有，则子通道被判定为假死，关掉子通道**。
+
+​	服务器端如何实现空闲检测呢？**使用Netty自带的IdleStateHandler空闲状态处理器就可以实现这个功能**。下面的示例程序继承自IdleStateHandler，定义一个假死处理类：
+
+```java
+@Slf4j
+public class HeartBeatServerHandler extends IdleStateHandler {
+
+    private static final int READ_IDLE_GAP = 150;
+
+    public HeartBeatServerHandler() {
+        super(READ_IDLE_GAP, 0, 0, TimeUnit.SECONDS);
+
+    }
+
+    public void channelRead(ChannelHandlerContext ctx, Object msg)
+            throws Exception {
+        //判断消息实例
+        if (null == msg || !(msg instanceof ProtoMsg.Message)) {
+            super.channelRead(ctx, msg);
+            return;
+        }
+
+        ProtoMsg.Message pkg = (ProtoMsg.Message) msg;
+        //判断消息类型
+        ProtoMsg.HeadType headType = pkg.getType();
+        if (headType.equals(ProtoMsg.HeadType.HEART_BEAT)) {
+            //异步处理,将心跳包，直接回复给客户端
+            FutureTaskScheduler.add(() -> {
+                if (ctx.channel().isActive()) {
+                    ctx.writeAndFlush(msg);
+                }
+            });
+
+        }
+        super.channelRead(ctx, msg);
+
+    }
+
+    @Override
+    protected void channelIdle(ChannelHandlerContext ctx, IdleStateEvent evt) throws Exception {
+        System.out.println(READ_IDLE_GAP + "秒内未读到数据，关闭连接");
+        ServerSession.closeSession(ctx);
+    }
+}
+```
+
+​	在HeartBeatServerHandler的构造函数中，调用了基类IdleStateHandler的构造函数，传递了四个参数：
+
+```java
+public HeartBeatServerHandler() {
+    super(READ_IDLE_GAP, 0, 0, TimeUnit.SECONDS);
+}
+```
+
+​	其中，第一个参数表示入站空闲检测时长，指的是一段时间内如果没有数据入站，就判定连接假死；第二个参数是出站空闲检测时长，指的是一段时间内如果没有数据出站，就判定连接假死；第三个参数是出/入站检测时长，表示在一段时间内如果没有出站或者入站，就判定连接假死。最后一个参数表示时间单位，TimeUnit.SECONDS表示秒。
+
+​	<u>判定假死后，IdleStateHanler类会回调自己的channelIdle()方法。在这个子类的重写版本中，重写了这个空闲回调方法，手动关闭连接。</u>
+
+```java
+@Override
+protected void channelIdle(ChannelHandlerContext ctx, IdleStateEvent evt) throws Exception {
+    System.out.println(READ_IDLE_GAP + "秒内未读到数据，关闭连接");
+    ServerSession.closeSession(ctx);
+}
+```
+
+​	HeartBeatServerHandler实现的主要功能是空闲检测，需要客户端定时发送心跳数据包（或报文、消息）进行配合。而且**客户端发送心跳数据包的时间间隔需要远远小于服务器端的空闲检测时间间隔。**
+
+​	HeartBeatServerHandler收到客户端的心跳数据包之后，可以直接回复到客户端，让客户端也能进行类似的空闲检测。由于IdleStateHandler本身是一个入站处理器，只需要重写这个子类HeartBeatServerHandler的channelRead方法，然后将心跳数据包直接回复客户端即可。
+
+​	<u>如果HeartBeatServerHandler要重写channelRead方法，一定要记得调用基类的"super.channelRead(ctx,msg);"方法，不然IdleStateHandler的入站空闲检测会无效。</u>
+
+ps:这里的意思应该就是不要截断流水线的handler调用吧。
+
+#### 9.7.3 客户端的心跳报文
+
+​	**与服务器端的空闲检测相配合，客户端需要定期发送数据包到服务器端，通常这个数据包称为心跳数据包**。接下来，定义一个Handler业务处理器定期发送心跳数据包给服务器端。
+
+```java
+@Slf4j
+@ChannelHandler.Sharable
+@Service("HeartBeatClientHandler")
+public class HeartBeatClientHandler extends ChannelInboundHandlerAdapter {
+    //心跳的时间间隔，单位为s
+    private static final int HEARTBEAT_INTERVAL = 100;
+
+    //在Handler被加入到Pipeline时，开始发送心跳
+    @Override
+    public void handlerAdded(ChannelHandlerContext ctx)
+            throws Exception {
+        ClientSession session = ClientSession.getSession(ctx);
+        User user = session.getUser();
+        HeartBeatMsgBuilder builder =
+                new HeartBeatMsgBuilder(user, session);
+
+        ProtoMsg.Message message = builder.buildMsg();
+        //发送心跳
+        heartBeat(ctx, message);
+    }
+
+    //使用定时器，发送心跳报文
+    public void heartBeat(ChannelHandlerContext ctx,
+                          ProtoMsg.Message heartbeatMsg) {
+        ctx.executor().schedule(() -> {
+
+            if (ctx.channel().isActive()) {
+                log.info(" 发送 HEART_BEAT  消息 to server");
+                ctx.writeAndFlush(heartbeatMsg);
+
+                //递归调用，发送下一次的心跳
+                heartBeat(ctx, heartbeatMsg);
+            }
+
+        }, HEARTBEAT_INTERVAL, TimeUnit.SECONDS);
+    }
+
+    /**
+     * 接受到服务器的心跳回写
+     */
+    @Override
+    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+        //判断消息实例
+        if (null == msg || !(msg instanceof ProtoMsg.Message)) {
+            super.channelRead(ctx, msg);
+            return;
+        }
+
+        //判断类型
+        ProtoMsg.Message pkg = (ProtoMsg.Message) msg;
+        ProtoMsg.HeadType headType = pkg.getType();
+        if (headType.equals(ProtoMsg.HeadType.HEART_BEAT)) {
+
+            log.info(" 收到回写的 HEART_BEAT  消息 from server");
+
+            return;
+        } else {
+            super.channelRead(ctx, msg);
+        }
+    }
+
+}
+```
+
+​	<u>在HeartBeatClientHandler实例被加入到流水线时，它重写的handlerAdded方法被回调。在handlerAdded(...)方法中，开始调用heartBeat()方法，发送心跳数据包。heartBeat是一个不断递归调用的方法，它的递归调用的方式比较特别：使用了executor()获取当前通道绑定的Reactor反应器NIO线程，然后通过NIO线程的schedule()定时调度方法，每隔一段时间(50s)执行一次回调，向服务器端发送一个心跳数据包</u>。
+
+​	**客户端的心跳间隔，要比服务器端的空闲检测时间间隔要短，一般来说，要比它的一半要短一些，可以直接定义为空闲时间间隔的1/3。这样做的目的就是防止公网偶发的秒级抖动。**
+
+​	<u>HeartBeatClientHandler实例并不是一开始就装配到了流水线中的，它装配的时机是在登录成功之后。</u>
+
+```java
+@Slf4j
+@ChannelHandler.Sharable
+    @Service("LoginResponceHandler")
+    public class LoginResponceHandler extends ChannelInboundHandlerAdapter {
+        /**
+     * 业务逻辑处理
+     */
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg)
+            throws Exception {
+            // ...
+            //判断返回是否成功
+            ProtoMsg.LoginResponse info = pkg.getLoginResponse();
+
+            ProtoInstant.ResultCodeEnum result =
+                ProtoInstant.ResultCodeEnum.values()[info.getCode()];
+
+            if (!result.equals(ProtoInstant.ResultCodeEnum.SUCCESS)) {
+                //登录失败
+                log.info(result.getDesc());
+            } else {
+                //登录成功
+                ClientSession.loginSuccess(ctx, pkg);
+                ChannelPipeline p = ctx.pipeline();
+                //移除登录响应处理器
+                p.remove(this);
+
+                //在编码器后面，动态插入心跳处理器
+                p.addAfter("encoder", "heartbeat", new HeartBeatClientHandler());
+            }
+        }
+    }
+```
+
+​	在登录成功之后，在ChannelPipeline通道流水线上，HeartBeatClientHandler心跳客户端处理器实例被动态插入到了解码器之后。
+
+​	服务器端的空闲检测处理器在收到客户端的心跳数据包之后，会进行回写。在HeartBeatClientHandler的channelRead方法中，对回写的数据包进行了简单的处理。这个地方还藏有另外的一个玄机，那就是HeartBeatClientHandler在完成心跳处理的同时，还能和服务器的空闲检测处理器一样，继承IdleStateClient类，在客户端进行空闲检测。这样，客户端也可以对服务器进行假死判定。在服务器端假死的情况下，客户端可以发起重连。客户端的空闲检测的实战留给大家自行实验。
+
+#### 9.8 本章小结
+
+​	本章内容是Netty学习的一次综合性的检验，覆盖了非常全面的Netty知识：包括自定义编解码器的开发、半包的处理、流水线的装配、会话的使用等。
