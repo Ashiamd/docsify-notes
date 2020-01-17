@@ -4563,6 +4563,76 @@ public class HeartBeatClientHandler extends ChannelInboundHandlerAdapter {
 
 ​	服务器端的空闲检测处理器在收到客户端的心跳数据包之后，会进行回写。在HeartBeatClientHandler的channelRead方法中，对回写的数据包进行了简单的处理。这个地方还藏有另外的一个玄机，那就是HeartBeatClientHandler在完成心跳处理的同时，还能和服务器的空闲检测处理器一样，继承IdleStateClient类，在客户端进行空闲检测。这样，客户端也可以对服务器进行假死判定。在服务器端假死的情况下，客户端可以发起重连。客户端的空闲检测的实战留给大家自行实验。
 
+​	运行以上代码，查看运行效果:
+
+```java
+//ServerApplication
+2020-01-16 03:48:16 INFO (ChatServer.java:81) - 疯狂创客圈 CrazyIM 服务启动, 端口 /0:0:0:0:0:0:0:0:8081
+150秒内未读到数据，关闭连接
+150秒内未读到数据，关闭连接
+2020-01-16 03:52:11 INFO (User.java:53) - 登录中: User{uid='laowang', devId='1111', token='123456', nickName='nickName', platform=WINDOWS}
+2020-01-16 03:52:11 INFO (ServerSession.java:74) -  ServerSession 绑定会话 /127.0.0.1:56276
+2020-01-16 03:52:11 INFO (SessionMap.java:36) - 用户登录:id= laowang   在线总数: 1
+2020-01-16 03:52:11 INFO (LoginRequestHandler.java:60) - 登录成功:User{uid='laowang', devId='1111', token='123456', nickName='nickName', platform=WINDOWS}
+2020-01-16 03:52:23 INFO (User.java:53) - 登录中: User{uid='panjinlian', devId='1111', token='123456', nickName='nickName', platform=WINDOWS}
+2020-01-16 03:52:23 INFO (ServerSession.java:74) -  ServerSession 绑定会话 /127.0.0.1:56307
+2020-01-16 03:52:23 INFO (SessionMap.java:36) - 用户登录:id= panjinlian   在线总数: 2
+2020-01-16 03:52:23 INFO (LoginRequestHandler.java:60) - 登录成功:User{uid='panjinlian', devId='1111', token='123456', nickName='nickName', platform=WINDOWS}
+[pool-2-thread-1|ChatRedirectProcesser:action]：chatMsg | from=laowang , to=panjinlian , content=你好骚啊
+[pool-2-thread-2|ChatRedirectProcesser:action]：chatMsg | from=panjinlian , to=laowang , content=会不会说话啊？
+
+
+//ClientApplication
+2020-01-16 03:48:20 INFO (NettyClient.java:102) - 客户端开始连接 [疯狂创客圈IM]
+2020-01-16 03:48:21 INFO (CommandController.java:96) - 疯狂创客圈 IM 服务器 连接成功!
+请输入某个操作指令：
+[menu] 0->show 所有命令 | 1->登录 | 2->聊天 | 10->退出 | 
+0
+请输入某个操作指令：
+[menu] 0->show 所有命令 | 1->登录 | 2->聊天 | 10->退出 | 
+1
+请输入用户信息(id:password)  
+laowang:123456
+2020-01-16 03:52:10 INFO (LoginSender.java:18) - 构造登录消息
+2020-01-16 03:52:10 INFO (LoginSender.java:21) - 发送登录消息
+请输入某个操作指令：
+[menu] 0->show 所有命令 | 1->登录 | 2->聊天 | 10->退出 | 
+2020-01-16 03:52:11 INFO (BaseSender.java:81) - 发送成功
+2020-01-16 03:52:11 INFO (ClientSession.java:61) - 登录成功
+2
+请输入聊天的消息(id:message)：panjinlian:你好骚啊
+2020-01-16 03:52:36 INFO (ChatSender.java:14) - 发送消息 startConnectServer
+请输入某个操作指令：
+[menu] 0->show 所有命令 | 1->登录 | 2->聊天 | 10->退出 | 
+2020-01-16 03:52:36 INFO (ChatSender.java:28) - 发送成功:你好骚啊
+ 收到消息 from uid:panjinlian -> 会不会说话啊？
+
+
+//ClientApplication(1)
+2020-01-16 03:48:25 INFO (NettyClient.java:102) - 客户端开始连接 [疯狂创客圈IM]
+2020-01-16 03:48:25 INFO (CommandController.java:96) - 疯狂创客圈 IM 服务器 连接成功!
+请输入某个操作指令：
+[menu] 0->show 所有命令 | 1->登录 | 2->聊天 | 10->退出 | 
+1
+请输入用户信息(id:password)  
+panjinlian:123456
+2020-01-16 03:52:22 INFO (LoginSender.java:18) - 构造登录消息
+2020-01-16 03:52:22 INFO (LoginSender.java:21) - 发送登录消息
+请输入某个操作指令：
+[menu] 0->show 所有命令 | 1->登录 | 2->聊天 | 10->退出 | 
+2020-01-16 03:52:22 INFO (BaseSender.java:81) - 发送成功
+2020-01-16 03:52:23 INFO (ClientSession.java:61) - 登录成功
+ 收到消息 from uid:laowang -> 你好骚啊
+2
+请输入聊天的消息(id:message)：laowang:会不会说话啊？
+2020-01-16 03:52:55 INFO (ChatSender.java:14) - 发送消息 startConnectServer
+请输入某个操作指令：
+[menu] 0->show 所有命令 | 1->登录 | 2->聊天 | 10->退出 | 
+2020-01-16 03:52:55 INFO (ChatSender.java:28) - 发送成功:会不会说话啊？
+```
+
+
+
 #### 9.8 本章小结
 
 ​	本章内容是Netty学习的一次综合性的检验，覆盖了非常全面的Netty知识：包括自定义编解码器的开发、半包的处理、流水线的装配、会话的使用等。
