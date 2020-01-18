@@ -1206,3 +1206,1203 @@ SnowFlake算法的缺点：
 
 ### 10.5 分布式事件监听的重点
 
+​	实现对ZooKeeper服务器端的事件监听，是客户端操作服务器端的一项重点工作，在Curator的API中，事件监听有两种模式：
+
+**（1）一种是标准的观察者模式。**
+
+**（2）另一种是缓存监听模式。**
+
+​	<u>第一种标准的观察者模式是通过Watcher监听器实现的；第二种缓存监听模式是通过引入了一种本地缓存视图的Cache机制去实现的。</u>
+
+​	第二种Cache事件监听机制，<u>可以理解为一个本地缓存视图与远程ZooKeeper视图的对比过程</u>，简单来说，Cache在客户端缓存了ZNode的各种状态，当感知到Zk集群的ZNode状态变化时，会触发事件，注册的监听器会处理这些事件。
+
+​	虽然，<u>Cache是一种缓存机制，但是可以借助Cache实现实际的监听</u>。另外，**Cache机制提供了反复注册的能力，而观察模式的Watcher监听器只能监听一次。**
+
+​	在类型上，Watcher监听器比较简单，只有一种。Cache事件监听器的种类有3种：Path Cache，Node Cache和Tree Cache。
+
+#### 10.5.1 Watcher标准的事件处理器
+
+​	在ZooKeeper中，接口类型Watcher用于表示一个标准的事件处理器，用来定义收到事件通知后相关的回调处理逻辑。
+
+​	<u>接口类型Watcher包含KeeperState和EventType两个内部枚举类，分别代表了通知状态和事件类型。</u>
+
+​	定义回调处理逻辑，需要使用Watcher接口的事件回调方法：process(WatchedEvent event)。定义一个Watcher的实例很简单，代码如下：
+
+```java
+Watcher w = new Watcher() {
+    @Override
+    public void process(WatchedEvent watchedEvent){
+        log.info("监听器watchedEvent：" + watchedEvent);
+    }
+}
+```
+
+​	如何使用Watcher监听器实例呢？可以通过GetDataBuilder、GetChildrenBuilder和ExistsBuilder等这类实现了Watchable\<T\>接口的构造者，然后使用构造者的usingWatcher(Watcher w)方法，为构造者设置Watcher监听器实例。
+
+​	在Curator中，Watchable\<T\>接口的源代码如下：
+
+```java
+package org.apache.curator.framework.api;
+import org.apache.ZooKeeper.Watcher;
+public interface Watchable<T> {
+    T watched();
+    T usingWatcher(Watcher w);
+    T usingWatcher(CuratorWatcher cw);
+}
+```
+
+​	GetDataBuilder、GetChildrenBuilder、ExistsBuilder构造者，分别通过getData()、getChildren()和checkExists()三个方法返回，也就是说，至少在以上三个方法的调用链上可以通过加上usingWatcher方法去设置监听器，典型的代码如下：
+
+```java
+//为GetDataBuilder实例设置监听器
+byte[] content = client.getData().usingWatcher(w).forPath(workerPath);
+```
+
+​	<u>一个Watcher监听器在向服务器完成注册后，当服务器的一些事件触发了这个Watcher，就会向注册过的客户端会话发送一个事件通知来实现分布式的通知功能。在Curator客户端收到服务器端的通知后，会封装一个**WatchedEvent事件实例**，再传递给监听器的process(WatchedEvent e)回调方法。</u>
+
+​	来看一下通知事件WatchedEvent实例的类型，WatchedEvent包含了三个基本属性：
+
++ 通知状态（keeperState）
++ 事件类型（EventType）
++ 节点路径（path）
+
+​	**WatchedEvent并不是从ZooKeeper集群直接传递过来的事件实例，而是Curator封装过的事件案例。WatchedEvent类型没有实现序列化接口java.io.Serializable，因此不能用于网络传输**。从ZooKeeper服务器端直接通过网络传输传递过来的事件实例其实是一个**WatcherEvent类型的实例**，WatcherEvent传输实例和Curator的WatchedEvent封装实例，在名称上基本上一样的，只有一个字母之差，而且功能也是一样的，都表示的是同一个服务器端事件。
+
+​	这里聚焦一下，只讲Curator封装过的WatchedEvent实例。WatchedEvent中所用到的通知状态和事件类型定义在Watcher接口中。Watcher接口定义的通知状态和事件类型，具体如下表。
+
+| KeeperState      | EventType           | 触发条件                                                     | 说明                                                         |
+| ---------------- | ------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+|                  | None(-1)            | 客户端与服务器成功建立连接                                   |                                                              |
+| SyncConnected(0) | NodeCreated(1)      | 监听的对应数据节点被创建                                     |                                                              |
+|                  | NodeDeleted(2)      | 监听的对应数据节点被删除                                     | 此时客户端和服务器处于连接状态                               |
+|                  | NodeDataChanged(3)  | 监听的对应数据节点的数据内容发生变更                         |                                                              |
+|                  | NodeChildChanged(4) | 监听的对应数据节点的子节点列表发生变更                       |                                                              |
+| Disconnected(0)  | None(-1)            | 客户端与ZooKeeper服务器断开连接                              | 此时客户端和服务器处于断开连接状态                           |
+| Expired(-112)    | Node(-1)            | 会话超时                                                     | 此时客户端会话失效，通常同时也会收到SessionExpiredException异常 |
+| AuthFailed(4)    | None(-1)            | 通常有两种情况，1：使用错误的schema进行权限检查，2：SASL权限检查失败 | 通常同时也会收到AuthFailedException异常                      |
+
+​	利用Watcher来对节点事件进行监听，来看一个简单的实例程序:
+
+```java
+@Slf4j
+@Data
+public class ZkWatcherDemo {
+    private String workerPath = "/test/listener/remoteNode";
+    private String subWorkerPath = "/test/listener/remoteNode/id-";
+
+    @Test
+    public void testWatcher() {
+        CuratorFramework client = ZKclient.instance.getClient();
+
+        //检查节点是否存在，没有则创建
+        boolean isExist = ZKclient.instance.isNodeExist(workerPath);
+        if (!isExist) {
+            ZKclient.instance.createNode(workerPath, null);
+        }
+
+        try {
+
+            Watcher w = new Watcher() {
+                @Override
+                public void process(WatchedEvent watchedEvent) {
+                    System.out.println("监听到的变化 watchedEvent = " + watchedEvent);
+                }
+            };
+
+            byte[] content = client.getData()
+                .usingWatcher(w).forPath(workerPath);
+
+            log.info("监听节点内容：" + new String(content));
+
+            // 第一次变更节点数据
+            client.setData().forPath(workerPath, "第1次更改内容".getBytes());
+
+            // 第二次变更节点数据
+            client.setData().forPath(workerPath, "第2次更改内容".getBytes());
+
+            Thread.sleep(Integer.MAX_VALUE);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+    // ...其他方法
+}
+```
+
+​	运行上面的程序代码，输出结果如下：
+
+```java
+// ... 省略其他的输出
+监听到的变化watchedEvent = 
+    WatchedEventstate:SyncConnectedtype:NodeDataChanged path:/test/listener/node
+```
+
+​	在这个程序中，节点路径"/list/listener/node"注册了一个Watcher监听器实例，随后调用setData方法改变节点内容，虽然改变了两次，但是监听器仅仅监听到了一个事件。换句话说，<u>监听器的注册时一次性的，当第二次改变节点内容时，注册已经失效，无法再次捕获节点的变动事件</u>。
+
+​	<u>既然Watcher监听器时一次性的，如果要反复使用，需要反复地通过构造者的usingWatcher方法去提前进行注册。所以，Watcher监听器不适用于节点的数据频繁变动或者节点频繁变动这样的业务场景，而是适用于一些特殊的、变动不频繁的场景，例如**会话超时、授权失败**等这样的特殊场景</u>。
+
+​	Watcher需要反复注册比较烦琐，所以Curator引入了Cache来监听ZooKeeper服务器端的事件。**Cache机制对ZooKeeper事件监听进行了封装，能够自动处理反复注册监听。**
+
+#### 10.5.2 NodeCache节点缓存的监听
+
+​	Curator引入的Cache缓存机制的实现拥有一个系列的类型，包括了Node Cache、Path Cache和Tree Cache三组类。其中：
+
+（1）Node Cache节点缓存可用于ZNode节点的监听；
+
+（2）Path Cache子节点缓存可用于ZNode的子节点的监听；
+
+（3）Tree Cache树缓存是Path Cache的增强，不光能监听子节点，还能监听ZNode节点自身。
+
+​	先看Node Cache，用于监控节点的增加，删除和更新。
+
+​	有两个构造方法，具体如下：
+
+```java
+NodeCache(CuratorFramework client, String path)
+NodeCache(CuratorFramework client, String path, boolean dataIsCompressed)
+```
+
+​	第一个参数就是传入创建的Curator的框架客户端，第二个参数就是监听节点的路径，第三个重载参数dataIsCompressed表示是否对数据进行压缩。
+
+​	NodeCache使用的第二步，就是构造一个NodeCacheListener监听器实例。该接口的定义如下：
+
+```java
+package org.apache.curator.framework.recipes.cache;
+public interface NodeCacheListener {
+    void nodeChanged() throws Exception;
+}
+```
+
+​	NodeCacheListener监听器接口只定义了一个简单的方法nodeChanged，当节点变化时，这个方法就会被回调。实例代码如下：
+
+```java
+NodeCacheListener l = new NodeCacheListener() {
+    @Override
+    public void nodeChanged() throws Exception {
+        ChildData childData = nodeCache.getCurrentData();
+        log.info("ZNode节点状态改变, path={}", childData.getPath());
+        log.info("ZNode节点状态改变, data={}", new String(childData.getData(), "Utf-8"));
+        log.info("ZNode节点状态改变, stat={}", childData.getStat());
+    }
+};
+```
+
+​	在创建完NodeCacheListener的实例之后，需要将这个实例注册到NodeCache缓存实例，使用缓存实例的addListener方法，然后使用缓存实例nodeCache的start方法来启动节点的事件监听。
+
+```java
+//启动节点的事件监听
+nodeCache.getListenable().addListener(listener);
+nodeCache.start();
+```
+
+​	再强调一下，需要调用nodeCache的start方法进行缓存和事件监听，这个方法有两个版本。
+
+```java
+void start(); // Start the cache.
+void start(boolean buildInitial); // true代表缓存当前节点
+```
+
+​	唯一的一个参数buildInitail代表是否将该节点的数据立即进行缓存。如果设置为true的话，在start启动时立即调用NodeCache的getCurrentData方法能够得到对应节点的信息ChildData类，如果设置为false，就得不到对应的信息。
+
+​	使用NodeCache来监听节点的事件，完整的实例代码如下：
+
+```java
+@Slf4j
+@Data
+public class ZkWatcherDemo {
+
+    private String workerPath = "/test/listener/remoteNode";
+    private String subWorkerPath = "/test/listener/remoteNode/id-";
+
+    /**
+     * NodeCache节点缓存的监听
+     */
+    @Test
+    public void testNodeCache() {
+
+        //检查节点是否存在，没有则创建
+        boolean isExist = ZKclient.instance.isNodeExist(workerPath);
+        if (!isExist) {
+            ZKclient.instance.createNode(workerPath, null);
+        }
+
+        CuratorFramework client = ZKclient.instance.getClient();
+        try {
+            NodeCache nodeCache =
+                new NodeCache(client, workerPath, false);
+            NodeCacheListener l = new NodeCacheListener() {
+                @Override
+                public void nodeChanged() throws Exception {
+                    ChildData childData = nodeCache.getCurrentData();
+                    log.info("ZNode节点状态改变, path={}", childData.getPath());
+                    log.info("ZNode节点状态改变, data={}", new String(childData.getData(), "Utf-8"));
+                    log.info("ZNode节点状态改变, stat={}", childData.getStat());
+                }
+            };
+            nodeCache.getListenable().addListener(l);
+            nodeCache.start();
+
+            // 第1次变更节点数据
+            client.setData().forPath(workerPath, "第1次更改内容".getBytes());
+            Thread.sleep(1000);
+
+            // 第2次变更节点数据
+            client.setData().forPath(workerPath, "第2次更改内容".getBytes());
+
+            Thread.sleep(1000);
+
+            // 第3次变更节点数据
+            client.setData().forPath(workerPath, "第3次更改内容".getBytes());
+            Thread.sleep(1000);
+
+            // 第4次变更节点数据
+            //            client.delete().forPath(workerPath);
+            Thread.sleep(Integer.MAX_VALUE);
+        } catch (Exception e) {
+            log.error("创建NodeCache监听失败, path={}", workerPath);
+        }
+    }
+}
+```
+
+​	通过运行的结果我们可以看到，NodeCache节点缓存能够重复地进行事件节点的监听。代码中的第三次监听的输出节选如下：
+
+```java
+//...省略前两次的输出
+- ZNode节点状态改变，path=/test/listener/node
+- ZNode节点状态改变，data=第三次更改内容
+- ZNode节点状态改变，stat=17179869191，
+...
+```
+
+​	**最后说明一下，如果在监听的时候NodeCache监听的节点为空（也就是说ZNode路径不存在），也是可以的。之后，如果创建了对应的节点，也是会触发事件从而回调nodeChanged方法。**
+
+#### 10.5.3 PathChildrenCache子节点监听
+
+​	PathChildrenCache子节点缓存用于子节点的监听，监控当前节点的子节点被创建、根本更新或者删除，需要强调：
+
++ **只能监听子节点，监听不到当前节点。**
++ **不能递归监听，子节点下的子节点不能递归监控**。
+
+​	PathChildrenCache子节点缓存使用的第一步就是构造一个缓存实例。PathChildrenCache有多个重载版本的构造方法，下面选择4个进行寿命，具体如下：
+
+```java
+	//重载版本一
+	public PathChildrenCache(CuratorFramework client, String path, boolean cacheData)
+
+    //重载版本二
+    public PathChildrenCache(CuratorFramework client, String path, boolean cacheData, boolean dataIsCompressed, final ExecutorService executorService)
+
+    //重载版本三
+    public PathChildrenCache(CuratorFramework client, String path, boolean cacheData, boolean dataIsCompressed, ThreadFactory threadFactory)
+
+    //重载版本三
+    public PathChildrenCache(CuratorFramework client, String path, boolean cacheData, ThreadFactory threadFactory)
+```
+
+​	所有的PathChildrenCache构造方法的前三个参数都是一样的。
+
++ 第一个参数就是传入创建的Curator框架的客户端。
++ 第二个参数就是监听节点的路径。
++ 第三个重载参数cacheData表示是否把节点的内容缓存起来。如果cacheData为true，那么接收到节点列表变更事件的同时会将获得节点内容。
+
+​	除了上边的三个参数，其他参数的说明如下：
+
++ dataIsCompressed参数，表示是否对节点数据进行压缩。
++ threadFactory参数表示线程池工厂，当PathChildrenCache内部需要启动新的线程执行时，使用该线程池工厂来创建线程。
++ executorService和threadFactory参数差不多，表示通过传入的线程池或者线程工厂来异步处理监听事件。
+
+​	构造完缓冲实例之后，PathChildrenCache缓存的第二步是构造一个子节点缓存监听器PathChildrenCacheListener实例。
+
+​	PathChildrenCacheListener监听器接口的定义如下：
+
+```java
+package org.apache.curator.framework.recipes.cache;
+import org.apache.curator.framework.CuratorFramework;
+public interface PathChildrenCacheListener {
+    void childEvent(CucratorFramework client, PathChildrenCacheEvent e) throws Exception;
+}
+```
+
+​	**在PathChildrenCacheListener监听接口中只定义了一个简单的方法childEvent，当子节点有变化时，这个方法就会被回调。**PathChildrenCacheListener的使用实例如下：
+
+```java
+PathChildrenCacheListener l =
+    new PathChildrenCacheListener() {
+    @Override
+    public void childEvent(CuratorFramework client,
+                           PathChildrenCacheEvent event) {
+        try {
+            ChildData data = event.getData();
+            switch (event.getType()) {
+                case CHILD_ADDED:
+                    log.info("子节点增加, path={}, data={}",
+                             data.getPath(), new String(data.getData(), "UTF-8"));
+                    break;
+                case CHILD_UPDATED:
+                    log.info("子节点更新, path={}, data={}",
+                             data.getPath(), new String(data.getData(), "UTF-8"));
+                    break;
+                case CHILD_REMOVED:
+                    log.info("子节点删除, path={}, data={}",
+                             data.getPath(), new String(data.getData(), "UTF-8"));
+                    break;
+                default:
+                    break;
+            }
+        } catch (
+            UnsupportedEncodingException e) {
+            e.printStackTrace();
+        }
+    }
+};
+```
+
+​	在创建完PathChildrenCacheListener的实例之后，需要将这个实例注册到PathChildrenCache缓存实例，在调用缓存实例的addListenr方法，然后调用缓存实例nodeCache的start方法，启动节点的事件监听。
+
+​	start方法可以传入启动的模式，定义在StartMode枚举中，具体如下：
+
++ NORMAL——异步初始化cache
++ BUILD_INITIAL_CACHE——同步初始化cache
++ POST_INITAILIZED_EVENT——异步初始化cache，并触发完成事件
+
+​	StartMode枚举的三种启动方式，详细说明如下：
+
+（1） BULID_INITIAL_CACHE模式：启动时同步初始化cache，表示创建cache后就从服务器提取对应的数据；
+
+（2）POST_INITIALIZED_EVENT模式：启动时异步初始化cache，表示创建cache后从服务器提取对应的数据，完成后触发PathChildrenCacheEvent.Type#INITIALIZED事件，cache中Listener会收到该事件的通知；
+
+（3）NORMAL模式：启动时异步初始化cache，完成后不会发出通知。
+
+​	使用PathChildrenCache来监听节点的事件，完整的实例代码如下：
+
+```java
+@Slf4j
+@Data
+public class ZkWatcherDemo {
+    /**
+     * 子节点监听
+     */
+    @Test
+    public void testPathChildrenCache() {
+
+        //检查节点是否存在，没有则创建
+        boolean isExist = ZKclient.instance.isNodeExist(workerPath);
+        if (!isExist) {
+            ZKclient.instance.createNode(workerPath, null);
+        }
+
+        CuratorFramework client = ZKclient.instance.getClient();
+
+        try {
+            PathChildrenCache cache =
+                new PathChildrenCache(client, workerPath, true);
+            PathChildrenCacheListener l =
+                new PathChildrenCacheListener() {
+                @Override
+                public void childEvent(CuratorFramework client,
+                                       PathChildrenCacheEvent event) {
+                    try {
+                        ChildData data = event.getData();
+                        switch (event.getType()) {
+                            case CHILD_ADDED:
+
+                                log.info("子节点增加, path={}, data={}",
+                                         data.getPath(), new String(data.getData(), "UTF-8"));
+
+                                break;
+                            case CHILD_UPDATED:
+                                log.info("子节点更新, path={}, data={}",
+                                         data.getPath(), new String(data.getData(), "UTF-8"));
+                                break;
+                            case CHILD_REMOVED:
+                                log.info("子节点删除, path={}, data={}",
+                                         data.getPath(), new String(data.getData(), "UTF-8"));
+                                break;
+                            default:
+                                break;
+                        }
+
+                    } catch (
+                        UnsupportedEncodingException e) {
+                        e.printStackTrace();
+                    }
+                }
+            };
+            // 增加监听器
+            cache.getListenable().addListener(l);
+            // 设置启动模式
+            cache.start(PathChildrenCache.StartMode.BUILD_INITIAL_CACHE);
+            Thread.sleep(1000);
+            
+            // 创建3个子节点
+            for (int i = 0; i < 3; i++) {
+                ZKclient.instance.createNode(subWorkerPath + i, null);
+            }
+
+            Thread.sleep(1000);
+            
+            // 删除3个子节点
+            for (int i = 0; i < 3; i++) {
+                ZKclient.instance.deleteNode(subWorkerPath + i);
+            }
+
+        } catch (Exception e) {
+            log.error("PathCache监听失败, path=", workerPath);
+        }
+
+    }
+}
+```
+
+​	运行的结果如下：
+
+```java
+- 子节点增加，patt=/test/listener/node/id-0, data=to set content
+- 子节点增加，patt=/test/listener/node/id-2, data=to set content
+- 子节点增加，patt=/test/listener/node/id-1, data=to set content
+......
+- 子节点删除，patt=/test/listener/node/id-2, data=to set content
+- 子节点删除，patt=/test/listener/node/id-0, data=to set content
+- 子节点删除，patt=/test/listener/node/id-1, data=to set content
+```
+
+​	从执行结果可以看到，PathChildrenCache能偶反复地监听到节点的增加和删除。
+
+​	**Curator监听的原理：无论是PathChildrenCache，还是TreeCache，所谓的监听都是在进行Curator本地缓存视图和ZooKeeper服务器远程的数据节点的对比，并且在进行数据同步时会触发相应的事件**。
+
+​	<u>这里，以NODE\_ADDED(节点增加事件)的触发为例来进行说明。在本地缓存视图开始创建的时候，本地视图为空，从服务器进行数据同步时，本地的监听器就能监听到NODE\_ADDED事件。为什么呢？刚开始本地缓存并没有内容，然后本地缓存和服务器缓存进行对比，发现ZooKeeper服务器是有节点数据的，这才将服务器的节点缓存到本地，也会触发本地缓存的NODE\_ADDED事件</u>。
+
+​	至此，已经讲完了两个系列的缓存监听。简单回顾一下：
+
+（1）Node Cache用来观察ZNode自身，如果ZNode节点自身被创建，更新或者删除，那么Node Cache会更新缓存，并触发事件给注册的监听器。Node Cache是通过NodeCache类来实现的，监听器对应的接口为NodeCacheListener。
+
+（2）Path Cache子节点缓存用来观察ZNode的子节点、并缓存子节点的状态，如果ZNode的子节点被创建，更新或者删除，那么Path Cache会更新缓存，并且触发事件给注册的监听器。Path Cache是通过PathChildrenCache类来实现的，监听器注册是通过PathChildrenCacheListener。
+
+#### 10.5.4 Tree Cache节点树缓存
+
+​	最后的一个系列是Tree Cache。
+
+​	Tree Cache可以看作是Node Cache和Path Cache的合体。Tree Cache不光能监听子节点，这能监听节点自身。
+
+​	Tree Cache使用的第一步就是构造一个TreeCache缓存实例。
+
+​	Tree Cache类有两个构造方法，具体如下：
+
+```java
+// TreeCache构造器之一
+TreeCache(CuratorFramework client, String path)
+
+// TreeCache构造器之二
+TreeCache(CuratorFramework client, String path, boolean cacheData, boolean dataIsCompressed, int maxDepth, ExecutorService executorService, boolean createParentNodes, TreeCacheSelector selector)
+```
+
+​	第一个参数就是传入创建的Curator框架的客户端，第二个参数就是监听节点的路径，其他参数的简单说明如下：
+
++ dataIsCompressed：表示是否对数据进行压缩。
++ maxDepth：表示缓存的层次深度，默认为整数最大值。
++ executorService：表示监听的执行线程池，默认会创建一个单一线程的线程池。
++ createParentNodes：表示是否创建父亲节点，默认为false。
+
+​	如果要监听一个ZNode节点，在一般情况下，使用TreeCache的第一个构造函数即可。
+
+​	TreeCache使用的第二步就是构造一个TreeCacheListener监听器实例。该接口的定义如下：
+
+```java
+//监听器接口定义
+package org.apache.curator.framework.recipes.cache;
+import org.apache.curator.framework.CuratorFramework;
+public interface TreeCacheListener {
+    void childEvent(CutatorFramework var1, TreeCacheEvent var2) throws Exception;
+}
+```
+
+​	在TreeCacheListener监听器接口中也只定义了一个简单的方法childEvent，当子节点有变化时，这个方法就会被回调。TreeCacheListener的使用实例如下：
+
+```java
+TreeCacheListener l =
+    new TreeCacheListener() {
+    @Override
+    public void childEvent(CuratorFramework client,
+                           TreeCacheEvent event) {
+        try {
+            ChildData data = event.getData();
+            if (data == null) {
+                log.info("数据为空");
+                return;
+            }
+            switch (event.getType()) {
+                case NODE_ADDED:
+                    log.info("[TreeCache]节点增加, path={}, data={}",
+                             data.getPath(), new String(data.getData(), "UTF-8"));
+                    break;
+                case NODE_UPDATED:
+                    log.info("[TreeCache]节点更新, path={}, data={}",
+                             data.getPath(), new String(data.getData(), "UTF-8"));
+                    break;
+                case NODE_REMOVED:
+                    log.info("[TreeCache]节点删除, path={}, data={}",
+                             data.getPath(), new String(data.getData(), "UTF-8"));
+                    break;
+                default:
+                    break;
+            }
+
+        } catch (
+            UnsupportedEncodingException e) {
+            e.printStackTrace();
+        }
+    }
+};
+```
+
+​	在创建完TreeCacheListener的实例之后，调用缓存实例的addListener方法，将TreeCacheListener监听器实例注册到TreeCache缓存实例。然后调用缓存实例nodeCache的start方法来启动节点的事件监听。整个实例的代码如下：
+
+```java
+@Slf4j
+@Data
+public class ZkWatcherDemo {
+    @Test
+    public void testTreeCache() {
+        //检查节点是否存在，没有则创建
+        boolean isExist = ZKclient.instance.isNodeExist(workerPath);
+        if (!isExist) {
+            ZKclient.instance.createNode(workerPath, null);
+        }
+        CuratorFramework client = ZKclient.instance.getClient();
+
+        try {
+            TreeCache treeCache =
+                new TreeCache(client, workerPath);
+            TreeCacheListener l =
+                new TreeCacheListener() {
+                @Override
+                public void childEvent(CuratorFramework client,
+                                       TreeCacheEvent event) {
+                    try {
+                        ChildData data = event.getData();
+                        if (data == null) {
+                            log.info("数据为空");
+                            return;
+                        }
+                        switch (event.getType()) {
+                            case NODE_ADDED:
+                                log.info("[TreeCache]节点增加, path={}, data={}",
+                                         data.getPath(), new String(data.getData(), "UTF-8"));
+                                break;
+                            case NODE_UPDATED:
+                                log.info("[TreeCache]节点更新, path={}, data={}",
+                                         data.getPath(), new String(data.getData(), "UTF-8"));
+                                break;
+                            case NODE_REMOVED:
+                                log.info("[TreeCache]节点删除, path={}, data={}",
+                                         data.getPath(), new String(data.getData(), "UTF-8"));
+                                break;
+                            default:
+                                break;
+                        }
+                    } catch (
+                        UnsupportedEncodingException e) {
+                        e.printStackTrace();
+                    }
+                }
+            };
+            treeCache.getListenable().addListener(l);
+            treeCache.start();
+            Thread.sleep(1000);
+            for (int i = 0; i < 3; i++) {
+                ZKclient.instance.createNode(subWorkerPath + i, null);
+            }
+            Thread.sleep(1000);
+            for (int i = 0; i < 3; i++) {
+                ZKclient.instance.deleteNode(subWorkerPath + i);
+            }
+            Thread.sleep(1000);
+            ZKclient.instance.deleteNode(workerPath);
+            Thread.sleep(Integer.MAX_VALUE);
+        } catch (Exception e) {
+            log.error("PathCache监听失败, path=", workerPath);
+        }
+    }
+}
+```
+
+​	运行的结果如下：
+
+```java
+- [TreeCache]节点增加，path=/test/listener/node，data=to set content
+
+- [TreeCache]节点增加，path=/test/listener/node/id-0，data=to set content
+- [TreeCache]节点增加，path=/test/listener/node/id-1，data=to set content
+- [TreeCache]节点增加，path=/test/listener/node/id-2，data=to set content
+    
+- [TreeCache]节点删除，path=/test/listener/node/id-2，data=to set content
+- [TreeCache]节点删除，path=/test/listener/node/id-1，data=to set content
+- [TreeCache]节点删除，path=/test/listener/node/id-0，data=to set content
+    
+- [TreeCache]节点删除，path=/test/listener/node，data=to set content
+```
+
+​	最后，说明一下TreeCacheEvent的事件类型，具体为：
+
++ NODE_ADDED对应于节点的增加。
++ NODE_UPDATED对应于节点的修改。
++ NODE_REMOVED对应于节点的删除。
+
+​	对比TreeCacheEvent的事件类型与Path Cache的事件类型是不同的。回忆一下，Path Cache的事件类型具体如下：
+
++ CHILD_ADDED对应于子节点的增加。
++ CHILD_UPDATED对应于子节点的修改。
++ CHILD_REMOVED对应于子节点的删除。
+
+### 10.6 分布式锁的原理与实践
+
+​	在单体的应用开发场景中涉及并发同步的时候，大家往往采用Synchronized(同步)或者其他同一个JVM内Lock机制来解决多线程之间的同步问题。在分布式集群工作的开发场景中，就需要一种更加高级的锁机制来处理跨机器的进程之间的数据同步问题。这种跨机器的锁就是分布式锁。
+
+#### 10.6.1 公平锁和可重入锁的原理
+
+​	最经典的分布式锁是可重入的公平锁。什么是可重入的公平锁呢？
+
+​	直接讲解概念和原理会比较抽象难懂，还是从具体的实例入手吧！这里尽量用一个简单的故事来类比，估计就简单多了。
+
+​	故事发生在一个没有自来水的古代，在一个村子里有一口井，水质非常的好，村民们都抢着取井里的水。井就那么一口，存里的人很多，村民为争抢取水大家斗殴，甚至头破血流。
+
+​	问题总是要解决，于是村长绞尽脑汁最终想出了一个凭号取水的方案。井边安排一个看井人，维护取水的秩序。取水秩序很简单：
+
+（1）取水之前，先取号
+
+（2）号排在前面的人，就可以先取水。
+
+（3）先到的人排在前面，那些后到的人，一个一个挨着在井边排成一队。
+
+​	这种排队取水模型就是一种锁的模型。排在最前面的号拥有取水权，就是一种典型的独占锁。另外，先到先得，号排在前面的人先取到水，取水之后就轮到下一个号取水，停公平的，说明它是一种公平锁。
+
+​	什么是可重入锁呢？假定取水时以家庭为单位，家庭的某人拿到号，其他的家庭成员过来打水，这时候不用再取号。如果是同一个家庭，可以直接复用排号，不用重复取号从后面排起。
+
+​	**只要满足条件，同一个取水号，可以用来多次取水，相当于重入锁的模型。在重入锁的模型中，一把独占锁可以被多次锁定，这就叫作可重入锁**。
+
+#### 10.6.2 ZooKeeper分布式锁的原理
+
+​	理解了经典的公平可重入锁的原理后，再来看在分布式场景下的公平可重入锁的原理。
+
+​	通过前面的分析基本可以判定：ZooKeeper的临时顺序节点，天生就有一副实现分布式锁的胚子。为什么呢？
+
+1. ZooKeeper的每一个节点都是一个天然的顺序发号器
+
+   ​	<u>在每一个节点下面创建临时顺序节点（EPHEMERAL_SEQUENTIAL）类型，新的子节点后面会加上一个顺序编号。这个顺序编号是在上一个生成的顺序编号加1。</u>
+
+   ​	例如，用一个发号的节点"/test/lock"为父亲节点，可以在这个父节点下面创建相同前缀的临时顺序子节点，假定相同的前缀为"/test/lock/seq-"。如果是第一个创建的子节点，那么生成的子节点为"/test/lock/seq-0000000000"，下一个节点则为"/test/lock/seq-0000000001"。
+
+2. ZooKeeper节点的递增有序性可以确保锁的公平
+
+   ​	一个ZooKeeper分布式锁，首先需要创建一个父节点，尽量是持久节点（PERSISTENT类型），然后每个要获得锁的线程都在这个节点下创建个临时的顺序节点。<u>由于Zk节点是按照创建的顺序依次递增的，为了确保公平，可以简单地规定，编号最小的那个节点表示获得了锁。因此，每个线程在尝试占用锁之前，首先判断自己的排号是不是当前最小的，如果是，则获取锁。</u>
+
+3. ZooKeeper的节点监听机制可以保障占有锁的传递有序而且高效
+
+   ​	<u>每个线程抢占锁之前，先抢号创建自己的ZNode。同样，释放锁的时候，就需要删除抢号的ZNode。</u>在抢号成之后，如果不是排号最小的节点，就处于等待通知的状态。等谁的通知呢？不需要其他人，只需要等前一个ZNode节点的通知即可。当前一个ZNode被删除的时候，就是轮到了自己占有锁的时候。第一个通知第二个、第二个通知第三个，击鼓传花似的依次向后传递。
+
+   ​	ZooKeeper内部优越的机制，能保证由于网络异常或者其他原因造成集群中的占有锁的客户端失联时，锁能够被有效释放。一旦占用锁的ZNode客户端与ZooKeeper集群服务器失去联系，这个临时ZNode也将自动删除。排在它户面的那个节点也能收到删除事件，从而获得锁。所以，在创建取号节点的时候，尽量创建临时ZNode节点。
+
+4. ZooKeeper的节点监听机制能够避免羊群效应
+
+   ​	**ZooKeeper这种首尾相接，后面监听前面的方式，可以避免羊群效应。所谓羊群效应就是一个节点挂掉了，所有节点都去监听，然后作出反应，这样会给服务器带来巨大压力，所以有了临时顺序节点，当一个节点挂掉，只有它后面的那一个节点才作出反应。**
+
+#### 10.6.3 分布式锁的基本流程
+
+​	接下来就基于ZooKeeper实现一下分布式锁。
+
+​	首先，定义了一个锁的接口Lock，很简单，仅仅两个抽象方法：一个加锁方法，一个解锁方法。Lock接口的代码如下：
+
+```java
+public interface Lock {
+	/**
+	 * 加锁方法
+	 * @return 是否成功加锁
+	 */
+    boolean lock() throws Exception;
+	
+    /**
+     * 解锁方法
+     * @return 是否成功解锁
+     */
+    boolean unlock();
+}
+```
+
+​	使用ZooKeeper实现分布式锁的算法，流程大致如下：
+
+（1）一把锁，使用一个ZNode节点表示，如果锁对应的ZNode节点不存在，那么先创建ZNode节点。这里假设为"/test/lock"，代表了一把需要创建的分布式锁。
+
+（2）抢占锁的所有客户端，使用锁的ZNode节点的子节点列表来表示；如果某个客户端需要占用锁，则在"/test/lock"下创建一个临时有序的子节点。
+
+​	这里，所有子节点尽量共用一个有意义的子节点前缀。
+
+​	如果子节点前缀为"/test/lock/seq-"，则第一个客户端对应的子节点为"/test/lock/seq-000000000"，第二个为"/test/lock/seq-000000001"，以此类推，也非常直观。
+
+（3）如果判定客户端是否占有锁呢？很简单，客户端创建子节点后，需要进行判断：自己创建的子节点是否为当前子节点列表中序号最小的子节点。如果是，则认为加锁成功；如果不是，则监听前一个ZNode子节点的变更消息，等待前一个节点释放锁。
+
+（4）一旦队列中后面的节点获得前一个子节点的变更通知，则开始进行判断，判断自己是否为当前子节点列表中序号最小的子节点，如果是，则认为加锁成功；如果不是，则持续监听，一直到获得锁。
+
+（5）获得锁后，开始处理业务流程。在完成业务流程后，删除自己对应的子节点，完成释放锁的工作，以便后面的节点能捕获到节点的变更通知，获得分布式锁。
+
+#### 10.6.4 加锁的实现
+
+​	在Lock接口中，加锁的方法是lock()。lock()方法的大致流程是，首先尝试着去加锁，如果加锁失败就去等待，然后再重复。代码如下：
+
+```java
+@Slf4j
+public class ZkLock implements Lock {
+    //ZkLock的节点链接
+    private static final String ZK_PATH = "/test/lock";
+    private static final String LOCK_PREFIX = ZK_PATH + "/";
+    private static final long WAIT_TIME = 1000;
+    //Zk客户端
+    CuratorFramework client = null;
+
+    private String locked_short_path = null;
+    private String locked_path = null;
+    private String prior_path = null;
+    final AtomicInteger lockCount = new AtomicInteger(0);
+    private Thread thread;
+
+    public ZkLock() {
+        ZKclient.instance.init();
+        if (!ZKclient.instance.isNodeExist(ZK_PATH)) {
+            ZKclient.instance.createNode(ZK_PATH, null);
+        }
+        client = ZKclient.instance.getClient();
+    }
+    
+    @Override
+    public boolean lock() {
+
+        synchronized (this) {
+            if (lockCount.get() == 0) {
+                thread = Thread.currentThread();
+                lockCount.incrementAndGet();
+            } else {
+                if (!thread.equals(Thread.currentThread())) {
+                    return false;
+                }
+                lockCount.incrementAndGet();
+                return true;
+            }
+        }
+
+        try {
+            boolean locked = false;
+
+            locked = tryLock();
+
+            if (locked) {
+                return true;
+            }
+            while (!locked) {
+
+                await();
+
+                //获取等待的子节点列表
+
+                List<String> waiters = getWaiters();
+
+                if (checkLocked(waiters)) {
+                    locked = true;
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            e.printStackTrace();
+            unlock();
+        }
+
+        return false;
+    }
+    
+    //...省略其他的方法
+}
+```
+
+​	尝试加锁的tryLock方法是关键，它做了两件很重要的事情：
+
+（1）创建临时顺序节点，并且保存自己的节点路径。
+
+（2）判断是否是第一个，如果是第一个，则加锁成功。如果不是，就找到前一个ZNode节点，并且把它的路径把它的路径保存到prior_path。
+
+​	myLock()方法的代码如下：
+
+```java
+@Slf4j
+public class ZkLock implements Lock {
+    //...省略其他成员变量和方法
+    /**
+     * 尝试枷锁
+     * @return 是否加锁成功
+     * @throws Exception异常
+     */
+    private boolean tryLock() throws Exception {
+        //创建临时Znode节点
+        List<String> waiters = getWaiters();
+        locked_path = ZKclient.instance
+            .createEphemeralSeqNode(LOCK_PREFIX);
+        if (null == locked_path) {
+            throw new Exception("zk error");
+        }
+        
+        //取得加锁的排队编号
+        locked_short_path = getShorPath(locked_path);
+        
+        //获得加锁的队列
+        List<String> waiters = getWaiters();
+
+        //获取等待的子节点列表，判断自己是否第一个
+        if (checkLocked(waiters)) {
+            return true;
+        }
+
+        // 判断自己排第几个
+        int index = Collections.binarySearch(waiters, locked_short_path);
+        if (index < 0) { // 网络抖动，获取到的子节点列表里可能已经没有自己了
+            throw new Exception("节点没有找到: " + locked_short_path);
+        }
+
+        //如果自己没有获得锁，则要监听前一个节点
+        prior_path = ZK_PATH + "/" + waiters.get(index - 1);
+
+        return false;
+    }
+}
+```
+
+​	创建临时顺序节点后，它的完整路径存放在locked_path成员中。另外，还截取了一个后缀路径，放在locked_short_path成员中，后缀路径是一个短路径，只有完整路径的最后一层。为什么要单独保存段路径呢？<u>因为获取的远程子节点列表中的其他路径都是短路径，只有最后一层。为了方便进行比较，也把自己的短路经保存下来</u>。
+
+​	创建了自己的临时节点后，调用checkLocked方法，判断是否锁定成功。如果锁定成功，则返回true；如果自己没有获得锁，则要监听前一个节点。找出前一个节点的路径，保存在prior_path成员中，供后面的await()等待方法用于监听。在介绍await()等待方法之前，先说下checkLocked锁定判断方法。
+
+​	在checkLocked()方法中，判断是否可以持有锁。判断规则很简单：当前创建的节点是否在上一步获取到的子节点列表的第一个位置。
+
++ 如果是，说明可以持有锁，返回true，表示加锁成功。
++ 如果不是，说明有其他线程早已先持有了锁， 返回false。
+
+​	checkLocked()方法的代码如下：
+
+```java
+@Slf4j
+public class ZkLock implements Lock {
+    //...省略其他成员变量和方法
+    
+    /**
+     * 判断是否加锁成功
+     * @param waiters 排队列表
+     * @return 成功状态
+     */
+    private boolean checkLocked(List<String> waiters) {
+
+        //节点按照编号，升序排列
+        Collections.sort(waiters);
+
+        // 如果是第一个，代表自己已经获得了锁
+        if (locked_short_path.equals(waiters.get(0))) {
+            log.info("成功的获取分布式锁,节点为{}", locked_short_path);
+            return true;
+        }
+        return false;
+    }
+}
+```
+
+​	checkLocked方法比较简单，将参与排队的所有子节点列表从小到大根据节点名称进行排序，排序主要依靠节点的编号，也就是后10位数字，因为前缀都是一样的。排序之后，进行判断，如果自己的locked_short_path编号位置排在第一个，代表自己已经获得了锁。如果不是，则会返回false。
+
+​	如果checkLocked()为false，那么外层的调用方法一般会执行等待方法await()执行争夺锁失败以后的等待逻辑。
+
+​	await()也很简单，就是监听前一个ZNode节点prior_path成员的删除事件，代码如下：
+
+```java
+@Slf4j
+public class ZkLock implements Lock {
+    //...省略其他成员变量和方法
+    
+    /**
+     * 等待，监听前一个节点的删除事件
+     * @throws Exception 可能会有Zk异常、网络异常
+     */
+    private void await() throws Exception {
+
+        if (null == prior_path) {
+            throw new Exception("prior_path error");
+        }
+
+        final CountDownLatch latch = new CountDownLatch(1);
+
+		//监听方式一：Watcher一次性订阅
+        //订阅比自己次小顺序节点的删除事件
+        Watcher w = new Watcher() {
+            @Override
+            public void process(WatchedEvent watchedEvent) {
+                System.out.println("监听到的变化 watchedEvent = " + watchedEvent);
+                log.info("[WatchedEvent]节点删除");
+
+                latch.countDown();
+            }
+        };
+		
+        //开始监听
+        client.getData().usingWatcher(w).forPath(prior_path);
+        
+        /*
+        //监听方式二：TreeCache订阅
+        //订阅比自己次小顺序节点的删除事件
+        TreeCache treeCache = new TreeCache(client, prior_path);
+        TreeCacheListener l = new TreeCacheListener() {
+            @Override
+            public void childEvent(CuratorFramework client,
+                                   TreeCacheEvent event) throws Exception {
+                ChildData data = event.getData();
+                if (data != null) {
+                    switch (event.getType()) {
+                        case NODE_REMOVED:
+                            log.debug("[TreeCache]节点删除, path={}, data={}",
+                                    data.getPath(), data.getData());
+
+                            latch.countDown();
+                            break;
+                        default:
+                            break;
+                    }
+                }
+            }
+        };
+        
+		//开始监听
+        treeCache.getListenable().addListener(l);
+        treeCache.start();
+        */
+        
+        //限时等待，最长加锁时间为3s
+        latch.await(WAIT_TIME, TimeUnit.SECONDS);
+    }
+}
+```
+
+​	首先添加一个Watcher监听，而监听的节点正是前面所保存在prior_path成员的前一个节点的路径。这里，仅仅去监听自己的前一个节点的变动，而不是其他节点的变动，以提高效率。完成监听之后，调用latch.await()，线程进入等待状态，一直到线程被监听回调代码中的latch.countDown()所唤醒，或者等待超时。
+
+​	在上面的代码中，监听前一个节点的删除可以使用两种监听方式：
+
++ Watcher订阅。
++ TreeCache订阅。
+
+​	两种方式的效果都差不多。<u>但是，这里的删除事件只需要监听一次即可，不需要反复监听，所以，建议使用Watcher一次性订阅</u>。而程序中有关TreeCache订阅的代码已经被注释，供大家参考。**一旦前一个节点prior_path被删除，那么就将线程从等待状态唤醒，重新开始一轮锁的争夺，直到获得锁，再完成业务处理**。
+
+​	至此，关于lock加锁的算法还差一点点就介绍完成。这一点，就是实现锁的可重入。<u>什么是可重入呢？只需要保障同一个线程进入加锁的代码，可以重复加锁成功即可。</u>修改前面的lock方法，在前面加上可重入的判读逻辑。代码如下：
+
+```java
+@Override
+public boolean lock() {
+    // 可重入的判断
+    synchronized (this) {
+        if(lockCount.get() == 0) {
+            thread = Thread.currentThread();
+            lockCount.incrementAndGet();
+        } else {
+            if(!thread.equals(Thread.currentThread())) {
+                return false;
+            }
+            lockCount.incrementAndGet();
+            return true;
+        }
+    }
+}
+```
+
+​	为了变成可重入，在代码中增加了一个加锁的计数器lockCount，计算重复加锁的次数。如果是同一个线程加锁，只需要增加次数，直接返回，表示加锁成功。至此，lock()方法已经介绍完了，接下来，就是去释放锁。
+
+#### 10.6.5 释放锁的实现
+
+​	Lock接口中的unLock()方法用于释放锁，释放锁主要有两个工作：
+
++ 减少重入锁的计数，如果不是0，直接返回，表示成功地释放了一次
++ 如果计数器为0，移除Watchers监听器，并且删除创建的ZNode临时节点
+
+​	unLock()方法的代码如下：
+
+```java
+@Slf4j
+public class ZkLock implements Lock {
+    //...省略其他成员变量和方法
+    
+    /**
+     * 释放锁
+     * @return 是否成功释放锁
+     */
+    @Override
+    public boolean unlock() {
+		
+        // 没有加锁的线程能够解锁
+        if (!thread.equals(Thread.currentThread())) {
+            return false;
+        }
+		
+        // 减少可重入的计数
+        int newLockCount = lockCount.decrementAndGet();
+		
+        // 计数不能小于0
+        if (newLockCount < 0) {
+            throw new IllegalMonitorStateException("Lock count has gone negative for lock: " + locked_path);
+        }
+		
+        // 如果计数不为0，直接返回
+        if (newLockCount != 0) {
+            return true;
+        }
+        try {
+            // 删除临时节点
+            if (ZKclient.instance.isNodeExist(locked_path)) {
+                client.delete().forPath(locked_path);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+
+        return true;
+    }
+}
+```
+
+​	**在程序中，为了尽量保证线程的安全，可重入计数器的类型不是int类型，而是Java并发包中的原子类型——AtomicInteger。**
+
+#### 10.6.6 分布式锁的使用
+
+​	编写一个用例，测试一下ZLock的使用，代码如下：
+
+```java
+/**
+ * 测试分布式锁
+ */
+@Slf4j
+public class ZkLockTester {
+	//需要锁来保护的公共资源
+    //变量
+    int count = 0;
+	/**
+	 * 测试自定义分布式锁
+	 * @throws InterruptedException异常
+	 */
+    @Test
+    public void testLock() throws InterruptedException {
+        // 10个并发任务
+        for (int i = 0; i < 10; i++) {
+            FutureTaskScheduler.add(new ExecuteTask() {
+                @Override
+                public void execute() {
+                    //创建锁
+                    ZkLock lock = new ZkLock();
+                    lock.lock();
+                    
+					//每条线程执行10次累加
+                    for (int j = 0; j < 10; j++) {
+						// 公共资源变量累加
+                        count++;
+                    }
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                    log.info("count = " + count);
+                    lock.unlock();
+
+                }
+            });
+        }
+        Thread.sleep(Integer.MAX_VALUE);
+    }
+
+    // ... 省略其他成员变量和方法
+}
+```
+
+​	ZLock仅仅对应一个ZNode路径，也就是说，仅仅代表一把锁。如果需要代表不同的ZNode路径，还需要进行简单改造。这种改造，留给各位自己去实现。
+
+#### 10.6.7 Curator的InterProcessMutex可重入锁
+
+​	Zlock实现的主要价值是展示一下分布式锁的原理和基础开发。<u>在实际的开发中，如果需要使用分布式锁，不建议自己“重复造轮子”，而建议直接使用Curator客户端中的各种官方实现的分布式锁，例如其中的InterProcessMutex可重入锁。</u>
+
+​	这里提供一个InterProcessMutex可重入锁的使用实例，代码如下：
+
+```java
+/**
+ * 测试分布式锁
+ */
+@Slf4j
+public class ZkLockTester {
+    //需要锁来保护的公共资源
+    //变量
+    int count = 0;
+
+    /**
+     * 测试ZK自带的互斥锁
+     * @throws InterruptedException异常
+     */
+    @Test
+    public void testzkMutex() throws InterruptedException {
+
+        CuratorFramework client = ZKclient.instance.getClient();
+		// 创建互斥锁
+        final InterProcessMutex zkMutex =
+            new InterProcessMutex(client, "/mutex");
+        // 每条线程执行10次累加
+        for (int i = 0; i < 10; i++) {
+            FutureTaskScheduler.add(new ExecuteTask() {
+                @Override
+                public void execute() {
+
+                    try {
+                        // 获得互斥锁
+                        zkMutex.acquire();
+
+                        for (int j = 0; j < 10; j++) {
+							// 公共的资源变量累加
+                            count++;
+                        }
+                        try {
+                            Thread.sleep(1000);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                        log.info("count = " + count);
+                        //释放互斥锁
+                        zkMutex.release();
+
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+
+                }
+            });
+        }
+        Thread.sleep(Integer.MAX_VALUE);
+    }
+}
+```
+
+​	最后，总结一下ZooKeeper分布式锁：
+
+1. 优点：ZooKeeper分布式锁（如InterProcessMutex），能有效地解决分布式问题，不可重入问题，使用起来也较为简单。
+
+2. 缺点：**ZooKeeper实现的分布式锁，性能并不高**。为什么呢？因为每次在创建和释放锁的过程中，都要动态创建、销毁暂时节点来实现锁功能。大家知道，**Zk中创建和删除节点只能通过Leader(主)服务器来执行**，然后Leader服务器还需要将数据同步到所有的Follower(从)服务器上，这样频繁的网络通信，性能的短板是非常突出的。
+
+   ​	总之，**在高性能、高并发的应用场景下，不建议使用ZooKeeper的分布式锁**。而由于ZooKeeper的高可用性，因此<u>在并发量不是太高的应用场景中，还是推荐使用ZooKeeper的分布式锁</u>。
+
+   ​	**目前分布式锁，比较成熟、主流的方案有两种：**
+
+   **（1）基于Redis的分布式锁。适用于并发量很大、性能要求很高而可靠性问题可以通过其他方案去弥补的场景。**
+
+   **（2）基于ZooKeeper的分布式锁。适用于高可靠（高可用），而并发量不是太高的场景。**
+
+### 10.7 本章小结
+
+​	在分布式系统中，ZooKeeper是一个重要的协调工具。本章介绍了<u>分布式命名服务、分布式锁</u>的原理以及基于ZooKeeper的参考实现。
+
+## 第11章 分布式缓存Redis
+
