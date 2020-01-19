@@ -1,4 +1,4 @@
-# 《Netty、Redis、ZooKeeper高并发实战》学习笔记
+# p按段《Netty、Redis、ZooKeeper高并发实战》学习笔记
 
 > 最近一段时间学习IM编程，但是之前急于需要成品，所以学得不是很懂，最后也没能弄好，所以打算系统地学习一下，然后再继续IM编程。
 
@@ -2406,3 +2406,1179 @@ public class ZkLockTester {
 
 ## 第11章 分布式缓存Redis
 
+​	缓存是一个很简单的问题，为什么要用缓存？主要原因是数据库的查询比较耗时，而使用缓存能大大节省数据访问的时间。举个例子，假如表中有两千万个用户信息，在加载用户信息时，一次数据库查询大致的时间在数百毫秒级别。这仅仅是一次查询，如果是频繁多次的数据库查询，效率就会更低。
+
+​	<u>提升效率的通用做法是把数据加入缓存，每次加载数据之前，先去缓存中加载，如果为空，再去查询数据库并将数据加入缓存，这样可以大大提高数据访问的效率</u>。 
+
+### 11.1 Redis入门
+
+​	本节主要介绍Redis的安装和配置，以及Redis的客户端操作。
+
+#### 11.1.1 Redis安装和配置
+
+​	Redis在Windows下的安装很简单，根据系统的实际情况选择32位或者64位的Redis安装版本。
+
+​	查看和修改Redis的配置项，有两种方式：
+
+（1）是通过配置文件查看和修改；
+
+（2）是通过配置命令查看和修改。
+
+​	第一种方法，通过配置文件修改Redis的配置项。Redis在Windows中安装完成后，配置文件在Redis安装目录下，文件名为redis.windows.conf，可以复制它，保存一份自己的配置版本redis.conf，以自己的这份来作为运行时的配置文件。Redis在Linux中安装完后，redis.conf是一个默认的配置文件。通过redis.conf文件，可以查看和修改配置项的值。
+
+​	第二种方式，通过命令修改Redis的配置项。启动Redis的命令客户端工具，连接上Redis服务，可以使用以下命令来查看和修改Redis配置项：
+
+```shell
+CONFIG GET CONFIG_SETTING_NAME
+CONFIG SET CONFIG_SETTING_NAME NEW_CONFIG_VALUE
+```
+
+​	前一个命令CONFIG GET是查看命令，后面加配置项的名称；后一个命令CONFIG SET，是修改命令，后面加配置项的名称和要设置的新值.还要注意的是：**Redis的客户端命令是不区分字母大小的**；另外CONFIG GET查看命令可以使用通配符。
+
+​	举个例子，查看Redis的服务端口，使用config get port，具体如下：
+
+```shell
+127.0.0.1:6379>config getport
+1) "port"
+2) "6379"
+```
+
+​	通过控制台输出的结果，我们可以看到，当前的Redis服务的端口为6379。
+
+​	Redis的配置项比较好，大致的清单如下：
+（1）port：端口配置项，查看和设置Redis监听端口，默认端口为6379。
+
+（2）bind：主机地址配置项，查看和绑定的主机地址，默认地址的值为127.0.0.1。这个选项，在单机网卡的机器上，一般不需要修改。
+
+（3）timeout：连接空闲多长要关闭连接，表示客户端闲置一段时间后，要关闭连接。如果指定为0，表示时长不限制。这个选项的默认值为0，表示默认不限制连接的空闲时长。
+
+（4）dbfilename：指定保存缓存数据库的本地文件名，默认值为dump.rdb。
+
+（5）dir：指定保存缓存数据的本地文件所存放的目录，默认的值为安装目录。
+
+（6）rdbcompression：指定存储至本地数据库是否压缩数据，默认为yes，Redis采用LZF压缩，如果为了节省CPU时间，可以关闭该选项，但会导致数据库文件变得巨大。
+
+（7）save：指定在多长时间内，有多少次Key-Value更新操作，就将数据同步到本地数据库文件。save配置项的格式为save\<seconds\>\<changes\>：seconds表示时间段的长度，changes表示变化的次数。如果在seconds时间段内，变化了changes次，则将Redis缓存数据同步到文件。
+
+​	设置为900秒（15分钟）内有1个更改，则同步到文件：
+
+```shell
+127.0.0.1:6379> config set save "900 1"
+OK
+127.0.0.1:6379> config get save
+1) "save"
+2) "jd 900"
+```
+
+​	设置为900秒（15分钟）内有1个更改，300秒（5分钟）内有10个更改以及60秒内有10000个更改，三者满足一个条件，则同步到文件：
+
+```shell
+127.0.0.1:6379> config set save "900 1 300 10 60 10000"
+OK
+127.0.0.1:6379> config get save
+1) "save"
+2) "jd 900 jd 300 jd 60"
+```
+
+（8）requirepass：设置Redis连接密码，如果配置了连接密码，客户端在连接Reids时需要通过AUTH\<password\>命令提供密码，默认这个选项是关闭的。
+
+（9）slaveof：在主从复制的模式下，设置当前节点为slave（从）节点时，设置master（主）节点的IP地址即端口，在Redis启动时，它会自动从master（主）节点进行数据同步。如果已经是slave（从）服务器，则会丢掉旧数据集，从新的master主服务器同步缓存数据。
+
+```none
+设置为slave节点命令的格式为：slaveof<masterip><masterport>
+```
+
+（10）masterauth：在主从复制的模式下，当master（主）服务器节点设置了密码保护时，slave（从）服务器连接master（主）服务器的密码。
+
+```none
+master服务器节点设置密码的格式为：masterauth<master-password>
+```
+
+（11）databases：<u>设置缓存数据库的数量，默认数据库数量为16个</u>。这个16个数据库的id为0-15，默认使用的数据库是第0个。可以使用SELECT\<dbid\>命令在连接时通过数据库id来指定要使用的数据库。
+
+​	databases配置选项，可以设置多个缓存数据库，不同的数据库存放不同应用的缓存数据。类似mysql数据库中，不同的应用程序数据存在不同的数据库下。**在Redis中，数据库的名称由一个整数索引标识，而不是由一个字符串名称来标识**。在默认情况下，一个客户端连接到数据库0。可以通过SELECT <dbid\>命令来切换到不同的数据库。例如，命令select 2，将Redis数据库切换到第3个数据库，随后所有的Redis客户端命令将使用数据库3。
+
+​	<u>Redis存储的形式是Key-Value（键-值对），其中Key（键）不能发生冲突。每个数据库都有属于自己的空间，不必担心之间的Key相冲突。在不同的数据库中，相同的Key可以分别取到各自的值。</u> 
+
+​	<u>当清除缓存数据时，使用flushdb命令，只会清除当前数据库中的数据，而不会影响到其他数据库；而flushall命令，则会清除这个Redis实例所有数据库（从0-15）的数据，因此在执行这个命令前要格外小心。</u>
+
+​	在Java编程中，配置连接Reids的uri连接字符串时，可以指定到具体的数据库，格式为：
+
+```shell
+redis://用户名:密码@host:port/Redis库名
+```
+
+​	举例如下
+
+```shell
+redis://testRedis:foobared@119.254.166.136:6379/1
+```
+
+​	表示连接到第2个Redis缓存库，其中的用户名是可以随意填写的。
+
+> [Window配置Redis环境和简单使用](https://www.cnblogs.com/wxjnew/p/9160855.html)
+
+#### 11.1.2 Redis客户端命令
+
+​	通过安装目录下的redis-cli命令客户端，可以连接到Redis本地服务。如果需要在远程Redis服务上执行命令，我们使用的也是redis-cli命令。Windows/Linux命令的格式为：
+
+```shell
+redis-cli -h host -p port -a password
+```
+
+​	实例如下：
+
+```shell
+redis-cli -h 127.0.0.1 -p 6379 -a "123456"
+```
+
+​	此命令实例表示使用Redis命令客户端，连接到的远程主机为127.0.0.1，端口为6379，密码为"123456"的Redis服务上。
+
+​	一旦连接上Redis本地服务或者远程服务，既可以通过命令客户端，完成Redis的命令执行，包括了基础Redis的Key-Value缓存操作。
+
+（1）set命令：根据Key，设置Value值。
+
+（2）get命令：根据Key，获取Value值。当Key不存在，会返回空结果。
+
+set、get两个命令的使用很简单，与Java中Map数据类型的Key-Value设置与获取非常相似。如Key为"foo"、Value为"bar"的设置和获取，示例如下：
+
+```shell
+127.0.0.1:6379> set foo bar
+OK
+127.0.0.1:6379> get foo
+"bar"
+```
+
+（3）keys命令：查找所有符合给定模式（Pattern）的Key。模式支持多种通配符，大致的规则如下表
+
+| 符号 | 含义                                                 |
+| ---- | ---------------------------------------------------- |
+| ?    | 匹配一个字符                                         |
+| *    | 匹配任意个（包括0个）字符                            |
+| [-]  | 匹配取键内的任一字符，如a[b-d]可以匹配"ab","ac","ad" |
+| \    | 转义符。使用\？，可以匹配"?"字符                     |
+
+（4）exists命令：判断一个Key是否存在。如果Key存在，则返回整数类型1，否则返回0。
+
+例如：
+
+```shell
+127.0.0.1:6379> exists foo
+(integer) 1
+127.0.0.1:6379> exists bar
+(integer) 0
+```
+
+（5）expire命令：为指定的Key设置过期时间，以秒为单位。
+
+（6）ttl命名：返回指定Key的剩余生存时间（ttl，time to live），以秒为单位
+
+```shell
+127.0.0.1:6379>set foo2 bar2
+OK
+127.0.0.1:6379>expire foo2 10000
+(integer) 1
+127.0.0.1:6379>ttl foo2
+(integer) 9995
+127.0.0.1:6379>ttl foo2
+(integer) 9987
+127.0.0.1:6379>ttl foo
+(integer) -1
+```
+
+​	**如果没有指定剩余时间，默认的剩余生存时间为-1，表示永久存在。**
+
+（7）type命令：返回Key所存储的Value值的类型。最简单的类型为string类型。**Redis中有5种数据类型：String（字符串类型）、Hash（哈希类型）、List（列表类型）、Set（集合类型）、Zset（有序集合类型）**。
+
+（8）del命令：删除Key，可以删除一个或多个Key，返回值是删除的Key的个数。实例如下：
+
+```shell
+127.0.0.1:6379>del foo
+(integer) 1
+127.0.0.1:6379>del foo2
+(integer) 1
+```
+
+（9）ping命令：检查客户端是否连接成功，如果连接成功，则返回pong。
+
+#### 11.1.3 Redis Key的命名规范
+
+​	在实际开发中，为了更好地进行命令空间的区分，Key会有很多的层次间隔，就像一棵目录树一样。例如"疯狂创客圈"的CrazyIM系统中，有缓存用户的Key，也有缓存IM消息的Key。为了以示区分，方便统计、更新、清除，可以将Key的命令组织成一种目录树一样的层次关系。
+
+​	很多人习惯用英文句号来作为层次关系的Key的分隔符，例如：
+
+```shell
+superkey.subkey.subsubkey.subsubsubkey....
+```
+
+​	**而使用Redis，建议使用冒号作为superkey和subkey直接的风格符**，如下：
+
+```shell
+superkey:subkey:subsubkey:subsubsubkey....
+```
+
+​	例如，在"疯狂创客圈"的CrazyIM系统中有缓存用户的Key，也有缓存IM消息的Key，使用上面的规范，进行命名的规则如下：
+
++ 缓存用户的Key，命名规则为：CrazyIMKey:User:0001
++ 缓存消息的Key，命名规则为：CrazyIMKey:ImMessage:0001
+
+​	最后的部分（如0001），表示的是业务ID。
+
+​	Key的命名规范使用冒号分割，大致的优势如下：
+
+（1）方便分层展示。Redis的很多客户端可视化管理工具，如Redis Desktop Manager，是以冒号作为分类展示的，方便快速查到要查询的Redis Key对应的Value值。
+
+（2）方便删除与维护。可以对于某一层次下面的Key，使用通配符进行批量查询和批量删除。
+
+### 11.2 Redis数据类型
+
+​	**Redis中有5种数据类型：String（字符串类型）、Hash（哈希类型）、List（列表类型）、Set（集合类型）、Zset（有序集合类型）。**
+
+#### 11.2.1 String字符串
+
+​	String类型是Redis中最简单的数据结构。它既可以存储文字（例如"hello world"），又可以存储数字（例如整数10086和浮点数3.14），还可以存储二进制数据（例如10010100）。下面对String类型的主要操作进行简要介绍。
+
+1. 设值：SET Key Value [EX seconds]
+
+   ​	将Key键设置成指定的Value值。如果Key键已经存在，并且保存了一个旧值的话，旧的值会被覆盖，不论旧的类型是否为String都会被忽略掉。如果Key值不存在，那么会在数据库中添加一个Key键，保存的Value值就是刚刚设置的新值。
+
+   ​	[EXseconds]选项表示Key键过期的时间，单位为秒。如果不加设置，表示Key键永不过期。另外，SET命令还有一些选项，由于使用较少，这里就展开说明了。
+
+2. 批量设值：MSET Key Value [Key Value ...]
+
+   ​	一次性设置多个Key-Value（键-值对）。相当于同时调用多次SET命令。不过要注意的是，**这个操作是原子的**。也就是说，所有的Key键都一次性设置的。如果同时运行两个MSET来设置相同的Key键，那么操作的结果也只会是两次MSET中后一次的结果，而不会是混杂的结果。
+
+3. 批量添加：MSETNX Key Value [Key Value ...]
+
+   ​	一次性添加多个Key-Value(键-值对)。**如果任何一个Key键已经存在，那么这个操作都不会执行**。所以，当使用MSETNX时，要么全部Key键被添加，要么全部不被添加。这个命令是在MSET命令后面增加了一个后缀NX（if Not eXist），表示只有Key键不存在的时候，才会设置Key键的Value值。
+
+4. 获取：GET Key
+
+   ​	使用GET命令，可以取得单个Key键所绑定的String值。
+
+5. 批量获取：MGET Key [Key ...]
+
+   ​	在GRT命令的前面增加了一个前缀M，表示多个（Multi）。使用MGET命令一次性获取多个Value值，这和多次使用GET命令取得单个值，有什么区别呢？主要在于减少网络传输的次数，提升了性能。
+
+6. 获取长度：STRLEN Key
+
+   ​	返回Key键对应的String的长度，如果Key键对应的不是String，则报错。如果Key键不存在，则返回0。
+
+7. 为Key键对应的整数Value值增加1：INCR Key
+
+8. 为Key键对应的整数Value值减少1：DECR Key
+
+9. 为Key键对应的整数Value值增加increment：INCRBY Key increment
+10. 为Key键对应的整数Value值减少decrement：DECRBY Key decrement
+
+​	说明一下：**Redis并没有为浮点数Value值减少decrement的操作DECRBYFLOAT。如果要为浮点数Value值减少decrement，只需要把INCRBYFLOAT命令的increment设成负值即可。**
+
+```shell
+127.0.0.1:6379>set foo 1.0
+OK
+127.0.0.1:6379>incrbyfloat foo 10.01
+"11.01"
+127.0.0.1:6379>incrbyfloat foo -5.0
+"6.01"
+```
+
+​	在例子中，首先为foo设置了一个浮点数，然后使用INCRBYFLOAT命令，为foo的值加上了10.01；最后将INCRBYFLOAT命令的参数设置成负数，为foo的值减少了5.0。
+
+#### 11.2.2 List列表
+
+​	**Redis的List类型是基于双向链表实现的**，可以支持正向、反向查找和遍历。从用户角度来说，List列表是简单的字符串列表，字符串按照添加的顺序排序。可以添加一个元素到List列表的头部（左边）或者尾部（右边）。一个List列表最多可以包含2<sup>32</sup>-1个元素（最多可以存储超过40亿个元素，4294967295）。
+
+​	**List列表的典型应用场景：网络社区中最新的发帖列表、简单的消息队列、最新新闻的分页列表、博客的评论列表、排队系统等等**。举个具体的例子，在"双11"秒杀、抢购这样的大型活动中，短时间内有大量的用户请求发向服务器，而后台的程序不可能立即响应每一个用户的请求，有什么好的方法来解决这个问题呢？我们需要一个排队系统。<u>根据用户的请求时间，将用户的请求放入List队列中，后台程序依次从队列中获取任务，处理并将结果返回到结果队列</u>。换句话说，<u>通过List队列，可以将并行的请求转换成串行的任务队列，之后依次处理</u>。总体来说，List队列的使用场景，是非常多的。
+
+​	下面对List类型的主要操作，进行简要介绍。
+
+1. 右推入：RPUSH Key Value [Value ...]
+
+   ​	也叫后推入。将一个或多个的Value值依次推入到列表的尾部（右端）。如果Key键不存在，那么RPUSH之前会先自动创建一个空的List列表。如果Key键的Value值不是一个List类型，则会返回一个错误。如果同时RPUSH多个Value值，则多个Value值会依次从尾部进入List列表。<u>RPUSH命令的返回值为操作完成后List包含的元素量</u>。RPUSH时间复杂度为O(N)，如果只推入一个值，那么命令的复杂度为O(1)。
+
+2. 左推入：LPUSH Key Value [Value ...]
+
+   ​	也叫前推入。这个命令和RPUSH几乎一样，只是推入元素的地点不同，是从List列表的头部（左侧）推入的。
+
+3. 左弹出：LPOP Key
+
+   ​	PUSH操作是增加元素；而POP操作，则是<u>获取元素并删除</u>。LPOP命令是从List队列的左边（前端），获取并移除一个元素，复杂度O(1)。如果List列表为空，则返回nil。
+
+4. 右弹出：RPOP Key
+
+   ​	与LPOP功能基本相同，是从队列的右边（后端）获取并移除一个元素，复杂度O(1)。
+
+5. 获取列表的长度：LLEN Key
+
+6. 获取列表指定位置上的元素：LINDEX Key index
+
+7. 获取指定索引范围之内的所有元素：LRANGE Key start stop
+
+8. 设置指定索引上的元素：LSET Key index Value
+
+   不能设置超过原本范围的索引的元素值，比如原本就2个，不能设置index为2的元素值，会报错(error) ERR index out of range
+
+​	**List列表的下标是从0开始的，index为负的时候是从后向前数。-1表示最后一个元素。当下标超出边界时，会返回nil**。
+
+#### 11.2.3 Hash哈希表
+
+​	Redis中的Hash表是一个String类型的Field字段和Value值之间的映射表，类似于Java中的HashMap。一个哈希表由多个字段-值对（Field-Value Pair）组成，Value值可以是文字、整性、浮点数或者二进制数据。在同一个Hash哈希表中，每个Field字段的名称必须时唯一的。这一点和Java中的HashMap的Key键的规范要求也是八九不离十的。下面对Hash哈希表的主要操作进行简要介绍。
+
+1. 设置字段-值：HSET Key Field Value；
+
+   ​	在Key哈希表中，给Field字段设置Value值。如果Field字段之前没有设置值，那么命令返回1；如果Field字段已经有关联值，那么命令用新值覆盖旧值，并返回0。
+
+2. 获取字段-值：HGET Key Field；
+
+   ​	返回Key哈希表中Field字段所关联的Value值。如果Field字段没有关联Values，那么返回nil。
+
+3. 检查字段是否存在：HEXISTS Key Field；
+
+   ​	查看在Key哈希表中，指定Field字段是否存在：存在则返回1，不存在则返回0。
+
+4. 删除指定的字段：HDEL Key Field [Field ...]
+
+   ​	删除Key哈希表中，一个或多个指定Field字段，以及那些Field字段所关联的值。不存在的Field字段将被忽略。命令返回被成功删除的Field-Value对的数量。
+
+5. 查看指定的Field字段是否存在：HEXISTS Key Field；
+
+6. 获取所有的Field字段：HEKYS Key；
+
+7. 获取所有的Value值：HVALS Key。
+
+​	总结一下，使用Hash哈希列表的好处：
+
+（1）将数据集中存放。通过Hash哈希表，可以将一些相关的信息存储在同一个缓存Key键中，不仅方便了数据管理，还可以尽量避免误操作的发生。
+
+（2）避免键名冲突。<u>在介绍缓存Key命名规范时，可以在命名键的时候，使用冒号分隔符来避免命名冲突，但更好的避免冲突的办法是直接使用哈希键来存储"键-值对"数据</u>。
+
+（3）减少Key键的内存占用。**在一般情况下，保存相同数量的"键-值对"信息，使用哈希键比使用字符串键更节约内存**。因为Redis创建一个Key都带有很多的附加管理信息（例如这个Key键的类型、最后一次被访问的时间等），所以缓存的Key键越多，耗费的内存就越多，花在管理数据库Key键上的CPU也会越多。
+
+​	总之，**应该尽量使用Hash哈希表而不是字符串键来缓存Key-Value"键-值对"数据，优势为：方便管理、能够避免键名冲突、并且还能够节约内存**。
+
+#### 11.2.4 Set集合
+
+​	Set集合也是一个列表，不过它的特殊之处在于它是可以自动去掉重复元素的。Set集合类型的使用场景是：当需要存储一个列表，而又不希望有重复的元素(例如ID的集合)时，使用Set是一个很好的选择。<u>并且Set类型拥有一个命令，它可用于判断某个元素是否存在，而List类型并没有这种功能的命令</u>。
+
+​	通过Set集合类型的命令可以快速地向集合添加元素，或者从集合里面删除元素，也可以对多个Set集合进行集合运算，例如并集、交集、差集。
+
+1. 添加元素：SADD Key member1 [member2 ...]
+
+   ​	可以向Key集合中，添加一个或者多个成员。  
+
+2. 移除元素：SREM Key  member1 [member2 ...]
+
+   ​	从Key集合中移除一个或者多个成员。
+
+3. 判断某个元素：SISMEMBER Key member
+
+   ​	判断member元素是否为Key集合的成员。
+
+4. 获取集合的成员数：**SCARD Key**
+
+5. 获取集合中的所有成员：SMEMBERS Key
+
+#### 11.2.5 Zset有序集合
+
+​	Zset有序集合和Set集合的使用场景类似，区别是**有序集合会根据提供的score参数来进行自动排序**。当需要一个不重复的且有序的集合列表，那么就可以选择Zset有序集合列表。<u>常用案例：游戏中的排行榜。</u>
+
+​	Zset有序集合和Set集合不同的是，有序集合的每个元素，都关联着一个分值（Score），这是一个浮点数格式的关联值。Zset有序集合会按照分值（score），按照**从小到大**的顺序来排列有序集合中的各个元素。
+
+1. 添加成员：ZADD Key Score1 member1 [ScoreN memberN ...]
+
+   ​	向有序集合Key中添加一个或者多个成员。如果memberN已经存在，则更新已存在成员的分数。
+
+2. 移除元素：ZREM Key member1 [memberN ...]
+
+   ​	从有序集合Key中移除一个或者多个成员
+
+3. 取得分数：ZSCORE Key member
+
+   ​	从有序集合Key中，取得member成员的分数值。
+
+4. 取得成员排序：ZRANK Key member
+
+   ​	从有序集合Key中，取得member成员的分数值的排名。
+
+5. 成员加分：ZINCRBY Key increment member
+
+   ​	在有序集合Key中，对指定成员的分数加上增量Score。
+
+6. 区间获取：ZRANGEBYSCORE Key min max[WITHSCORES] [LIMIT]
+
+   ​	从有序集合Key中，获取指定**分数区间范围**内的成员。WITHSCORES表示带上分数值返回；LIMIT选项，类似于mysql查询的limit选项，有offset、count两个参数，表示返回的偏移量和成员数量。
+
+   ​	在默认情况下，min和max表示的范围，是闭包间范围，而不是开区间范围，即min <= score <= max 内的成员将被返回。另外，**可以使用-inf 和+inf分别表示有序集合中分数的最小值和最大值。**
+
+7. 获取成员数：ZCARD Key
+
+8. 区间计数：ZCOUNT Key min max
+
+   ​	在有序集合Key中，计算<u>指定区间分数</u>的成员数。
+
+### 11.3 Jedis基础编程的实践案例
+
+​	Jedis是一个高性能的Java客户端，是Redis官方推荐的Java开发工具。要在Java开发中访问Redis缓存服务器，必须对Jedis熟悉才能编写出"漂亮"的代码。[Jedis的项目地址](https://github.com/xetorthio/jedis)
+
+​	使用Jedis，可以在Maven的pom文件中，增加以下依赖：
+
+```xml
+<dependency>
+    <groupId>redis.clients</groupId>
+    <artifactId>jedis</artifactId>
+    <version>${redis.version}</version>
+</dependency>
+```
+
+​	本实践实例所使用的依赖版本为2.9.0。
+
+​	Jedis基本的使用十分简单，在每次使用时，构建Jedis对象即可。<u>一个Jedis对象代表一条和Reids服务进行连接的Socket通道。使用完Jedis对象之后，需要调用Jedis.close()方法把连接关闭，否则会占用系统资源</u>。
+
+​	创建Jedis对象时，可以指定Redis服务的host，port和password。大致的伪代码如下：
+
+```java
+Jedis jedis = new Jedis("localhost",6379); // 指定Redis服务的主机和端口
+jedis.auth("XXXX");	// 如果Redis服务连接需要密码，就设置密码
+// .... 访问Redis服务
+jedis.close(); // 使用完，就关闭连接
+```
+
+#### 11.3.1 Jedis操作String字符串
+
+​	Jedis的String字符串操作函数和Redis客户端操作String字符串的命令，基本上可以一比一的相互对应。正因为如此，本节部对Jedis的String字符串操作函数进行清单式的说明，只设计了一个比较全面的String字符串操作的示例程序，演示一下这些函数的使用。
+
+​	Jedis操作String字符串具体的示例程序代码，如下：
+
+```java
+public class StringDemo {
+
+    /**
+     * Redis 字符串数据类型的相关命令用于操作 redis 字符串值
+     */
+    @Test
+    public void operateString() {
+        Jedis jedis = new Jedis("localhost", 6379);
+        //如果返回 pang 代表链接成功
+        System.out.println("jedis.ping():" + jedis.ping());
+        //设置key0的值 123456
+        jedis.set("key0", "123456");
+        //返回数据类型  string
+        System.out.println("jedis.type(key0): " + jedis.type("key0"));
+        //get key
+        System.out.println("jedis.get(key0): " + jedis.get("key0"));
+        // key是否存在
+        System.out.println("jedis.exists(key0):" + jedis.exists("key0"));
+        //返回key的长度
+        System.out.println("jedis.strlen(key0): " + jedis.strlen("key0"));
+        //返回截取字符串, 范围 0,-1 表示截取全部
+        System.out.println("jedis.getrange(key0): " + jedis.getrange("key0", 0, -1));
+        //返回截取字符串, 范围 1,4 表示从表示区间[1,4]
+        System.out.println("jedis.getrange(key0): " + jedis.getrange("key0", 1, 4));
+
+        //追加
+        System.out.println("jedis.append(key0): " + jedis.append("key0", "appendStr"));
+        System.out.println("jedis.get(key0): " + jedis.get("key0"));
+
+        //重命名
+        jedis.rename("key0", "key0_new");
+        //判断key 是否存在
+        System.out.println("jedis.exists(key0): " + jedis.exists("key0"));
+
+        //批量插入
+        jedis.mset("key1", "val1", "key2", "val2", "key3", "100");
+        //批量取出
+        System.out.println("jedis.mget(key1,key2,key3): " + jedis.mget("key1", "key2", "key3"));
+        //删除
+        System.out.println("jedis.del(key1): " + jedis.del("key1"));
+        System.out.println("jedis.exists(key1): " + jedis.exists("key1"));
+        //取出旧值 并set新值
+        System.out.println("jedis.getSet(key2): " + jedis.getSet("key2", "value3"));
+        //自增1 要求数值类型
+        System.out.println("jedis.incr(key3): " + jedis.incr("key3"));
+        //自增15 要求数值类型
+        System.out.println("jedis.incrBy(key3): " + jedis.incrBy("key3", 15));
+        //自减1 要求数值类型
+        System.out.println("jedis.decr(key3): " + jedis.decr("key3"));
+        //自减5 要求数值类型
+        System.out.println("jedis.decrBy(key3): " + jedis.decrBy("key3", 15));
+        //增加浮点类型
+        System.out.println("jedis.incrByFloat(key3): " + jedis.incrByFloat("key3", 1.1));
+
+        //返回0 只有在key不存在的时候才设置
+        System.out.println("jedis.setnx(key3): " + jedis.setnx("key3", "existVal"));
+        System.out.println("jedis.get(key3): " + jedis.get("key3"));// 3.1
+
+        //只有key都不存在的时候才设置,这里返回 null
+        System.out.println("jedis.msetnx(key2,key3): " + jedis.msetnx("key2", "exists1", "key3", "exists2"));
+        System.out.println("jedis.mget(key2,key3): " + jedis.mget("key2", "key3"));
+
+        //设置key 2 秒后失效
+        jedis.setex("key4", 2, "2 seconds is no Val");
+        try {
+            Thread.sleep(3000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        // 2 seconds is no Val
+        System.out.println("jedis.get(key4): " + jedis.get("key4"));
+
+
+        jedis.set("key6", "123456789");
+        //下标从0开始，从第三位开始,将新值覆盖旧值
+        jedis.setrange("key6", 3, "abcdefg");
+        //返回：123abcdefg
+        System.out.println("jedis.get(key6): " + jedis.get("key6"));
+
+        //返回所有匹配的key
+        System.out.println("jedis.get(key*): " + jedis.keys("key*"));
+
+        jedis.close();
+
+    }
+}
+```
+
+运行结果如下：
+
+```java
+jedis.ping():PONG
+jedis.type(key0): string
+jedis.get(key0): 123456
+jedis.exists(key0):true
+jedis.strlen(key0): 6
+jedis.getrange(key0): 123456
+jedis.getrange(key0): 2345
+jedis.append(key0): 15
+jedis.get(key0): 123456appendStr
+jedis.exists(key0): false
+jedis.mget(key1,key2,key3): [val1, val2, 100]
+jedis.del(key1): 1
+jedis.exists(key1): false
+jedis.getSet(key2): val2
+jedis.incr(key3): 101
+jedis.incrBy(key3): 116
+jedis.decr(key3): 115
+jedis.decrBy(key3): 100
+jedis.incrByFloat(key3): 101.1
+jedis.setnx(key3): 0
+jedis.get(key3): 101.09999999999999
+jedis.msetnx(key2,key3): 0
+jedis.mget(key2,key3): [value3, 101.09999999999999]
+jedis.get(key4): null
+jedis.get(key6): 123abcdefg
+jedis.get(key*): [key0_new, key2, key6, key3]
+```
+
+#### 11.3.2 Jedis操作List列表
+
+​	Jedis的List列表操作函数和Redis客户端操作List列表的命令，基本上可以一比一的相互对应。正因为如此，本节部对Jedis的List列表操作函数进行清单式的说明，只设计了一个比较全面的List列表操作的示例程序，演示一下这些函数的使用。
+
+```java
+public class ListDemo {
+
+    /**
+     * Redis列表是简单的字符串列表，按照插入顺序排序。
+     * 可以添加一个元素到列表的头部（左边）或者尾部（右边）
+     */
+    @Test
+    public void operateList() {
+        Jedis jedis = new Jedis("localhost");
+        System.out.println("jedis.ping(): " +jedis.ping());
+        jedis.del("list1");
+
+        //从list尾部添加3个元素
+        jedis.rpush("list1", "zhangsan", "lisi", "wangwu");
+
+        //取得类型, list
+        System.out.println("jedis.type(): " +jedis.type("list1"));
+
+        //遍历区间[0,-1]，取得全部的元素
+        System.out.println("jedis.lrange(0,-1): " +jedis.lrange("list1", 0, -1));
+        //遍历区间[1,2]，取得区间的元素
+        System.out.println("jedis.lrange(1,2): " +jedis.lrange("list1", 1, 2));
+
+        //获取list长度
+        System.out.println("jedis.llen(list1): " +jedis.llen("list1"));
+        //获取下标为 1 的元素
+        System.out.println("jedis.lindex(list1,1): " +jedis.lindex("list1", 1));
+        //左侧弹出元素
+        System.out.println("jedis.lpop(): " +jedis.lpop("list1"));
+        //右侧弹出元素
+        System.out.println("jedis.rpop(): " +jedis.rpop("list1"));
+        //设置下标为0的元素val
+        jedis.lset("list1", 0, "lisi2");
+        //最后，遍历区间[0,-1]，取得全部的元素
+        System.out.println("jedis.lrange(0,-1): " +jedis.lrange("list1", 0, -1));
+
+        jedis.close();
+    }
+
+}
+```
+
+运行结果如下：
+
+```java
+jedis.ping(): PONG
+jedis.type(): list
+jedis.lrange(0,-1): [zhangsan, lisi, wangwu]
+jedis.lrange(1,2): [lisi, wangwu]
+jedis.llen(list1): 3
+jedis.lindex(list1,1): lisi
+jedis.lpop(): zhangsan
+jedis.rpop(): wangwu
+jedis.lrange(0,-1): [lisi2]
+```
+
+#### 11.3.3 Jedis操作Hash哈希表
+
+​	Jedis的Hash哈希表操作函数和Redis客户端操作Hash哈希表的命令，基本上可以一比一的相互对应。正因为如此，本节部对Jedis的Hash哈希表操作函数进行清单式的说明，只设计了一个比较全面的Hash哈希表操作的示例程序，演示一下这些函数的使用。
+
+```java
+public class HashDemo {
+
+    /**
+     * Redis hash 是一个string类型的field和value的映射表，
+     * hash特别适合用于存储对象。
+     * Redis 中每个 hash 可以存储 2^32 - 1 键值对（40多亿）
+     */
+    @Test
+    public void operateHash() {
+
+        Jedis jedis = new Jedis("localhost");
+        jedis.del("config");
+        //设置hash的 field-value 对
+        jedis.hset("config", "ip", "127.0.0.1");
+
+        //取得hash的 field的关联的value值
+        System.out.println("jedis.hget(): " + jedis.hget("config", "ip"));
+        //取得类型：hash
+        System.out.println("jedis.type(): " + jedis.type("config"));
+
+        //批量添加 field-value 对，参数为java map
+        Map<String, String> configFields = new HashMap<String, String>();
+        configFields.put("port", "8080");
+        configFields.put("maxalive", "3600");
+        configFields.put("weight", "1.0");
+        //执行批量添加
+        jedis.hmset("config", configFields);
+        //批量获取：取得全部 field-value 对，返回 java map
+        System.out.println("jedis.hgetAll(): " + jedis.hgetAll("config"));
+        //批量获取：取得部分 field对应的value，返回 java map
+        System.out.println("jedis.hmget(): " + jedis.hmget("config", "ip", "port"));
+
+        //浮点数增加: 类似于String的 incrByFloat
+        jedis.hincrByFloat("config", "weight", 1.2);
+        System.out.println("jedis.hget(weight): " + jedis.hget("config", "weight"));
+
+        //获取所有的key
+        System.out.println("jedis.hkeys(config): " + jedis.hkeys("config"));
+        //获取所有的val
+        System.out.println("jedis.hvals(config): " + jedis.hvals("config"));
+
+        //获取长度
+        System.out.println("jedis.hlen(): " + jedis.hlen("config"));
+        //判断field是否存在
+        System.out.println("jedis.hexists(weight): " + jedis.hexists("config", "weight"));
+
+        //删除一个field
+        jedis.hdel("config", "weight");
+        System.out.println("jedis.hexists(weight): " + jedis.hexists("config", "weight"));
+        jedis.close();
+    }
+}
+```
+
+运行结果如下：
+
+```java
+jedis.hget(): 127.0.0.1
+jedis.type(): hash
+jedis.hgetAll(): {port=8080, weight=1.0, maxalive=3600, ip=127.0.0.1}
+jedis.hmget(): [127.0.0.1, 8080]
+jedis.hget(weight): 2.2
+jedis.hkeys(config): [port, weight, maxalive, ip]
+jedis.hvals(config): [127.0.0.1, 3600, 8080, 2.2]
+jedis.hlen(): 4
+jedis.hexists(weight): true
+jedis.hexists(weight): false
+```
+
+#### 11.3.4 Jedis操作Set集合
+
+​	Jedis的Set集合操作函数和Redis客户端操作Set集合的命令，基本上可以一比一的相互对应。正因为如此，本节部对Jedis的Set集合操作函数进行清单式的说明，只设计了一个比较全面的Set集合操作的示例程序，演示一下这些函数的使用。
+
+```java
+public class SetDemo {
+
+    /**
+     * Redis 的 Set 是 String 类型的无序集合。
+     * 集合成员是唯一的，这就意味着集合中不能出现重复的数据。
+     * Redis 中集合是通过哈希表实现的，所以添加，删除，查找的复杂度都是 O(1)。
+     * 集合中最大的成员数为 2^32 - 1 (4294967295, 每个集合可存储40多亿个成员)。
+     */
+    @Test
+    public void operateSet() {
+        Jedis jedis = new Jedis("localhost");
+        jedis.del("set1");
+        System.out.println("jedis.ping(): " + jedis.ping());
+        System.out.println("jedis.type(): " + jedis.type("set1"));
+
+        //sadd函数: 向集合添加元素
+        jedis.sadd("set1", "user01", "user02", "user03");
+        //smembers函数: 遍历所有元素
+        System.out.println("jedis.smembers(): " + jedis.smembers("set1"));
+        //scard函数: 获取集合元素个数
+        System.out.println("jedis.scard(): " + jedis.scard("set1"));
+        //sismember 判断是否是集合元素
+        System.out.println("jedis.sismember(user04): " + jedis.sismember("set1", "user04"));
+        //srem函数：移除元素
+        System.out.println("jedis.srem(): " + jedis.srem("set1", "user02", "user01"));
+        //smembers函数: 遍历所有元素
+        System.out.println("jedis.smembers(): " + jedis.smembers("set1"));
+
+        jedis.close();
+    }
+
+}
+```
+
+运行结果如下：
+
+```java
+jedis.ping(): PONG
+jedis.type(): none
+jedis.smembers(): [user02, user01, user03]
+jedis.scard(): 3
+jedis.sismember(user04): false
+jedis.srem(): 2
+jedis.smembers(): [user03]
+```
+
+#### 11.3.5 Jedis操作Zset有序集合
+
+​	Jedis的Zset有序集合操作函数和Redis客户端操作Zset有序集合的命令，基本上可以一比一的相互对应。正因为如此，本节部对Jedis的Zset有序集合操作函数进行清单式的说明，只设计了一个比较全面的Zset有序集合操作的示例程序，演示一下这些函数的使用。
+
+```java
+public class ZSetDemo {
+
+    /**
+     * Redis 有序集合和集合一样也是string类型元素的集合,且不允许重复的成员。
+     * 不同的是每个元素都会关联一个double类型的分数。
+     * redis正是通过分数来为集合中的成员进行从小到大的排序。
+     * 有序集合的成员是唯一的,但分数(score)却可以重复。
+     * 集合是通过哈希表实现的，所以添加，删除，查找的复杂度都是O(1)。
+     * 集合中最大的成员数为 2^32 - 1 (4294967295, 每个集合可存储40多亿个成员)。
+     */
+    @Test
+    public void operateZset() {
+
+        Jedis jedis = new Jedis("localhost");
+        System.out.println("jedis.get(): " + jedis.ping());
+
+        jedis.del("salary");
+        Map<String, Double> members = new HashMap<String, Double>();
+        members.put("u01", 1000.0);
+        members.put("u02", 2000.0);
+        members.put("u03", 3000.0);
+        members.put("u04", 13000.0);
+        members.put("u05", 23000.0);
+        //批量添加元素
+        jedis.zadd("salary", members);
+        //类型,zset
+        System.out.println("jedis.type(): " + jedis.type("salary"));
+
+        //获取集合元素个数
+        System.out.println("jedis.zcard(): " + jedis.zcard("salary"));
+        //按照下标[起,止]遍历元素
+        System.out.println("jedis.zrange(): " + jedis.zrange("salary", 0, -1));
+        //按照下标[起,止]倒序遍历元素
+        System.out.println("jedis.zrevrange(): " + jedis.zrevrange("salary", 0, -1));
+
+        //按照分数（薪资）[起,止]遍历元素
+        System.out.println("jedis.zrangeByScore(): " + jedis.zrangeByScore("salary", 1000, 10000));
+        //按照薪资[起,止]遍历元素,带分数返回
+        Set<Tuple> res0 = jedis.zrangeByScoreWithScores("salary", 1000, 10000);
+        for (Tuple temp : res0) {
+            System.out.println("Tuple.get(): " + temp.getElement() + " -> " + temp.getScore());
+        }
+        //按照分数[起,止]倒序遍历元素
+        System.out.println("jedis.zrevrangeByScore(): " + jedis.zrevrangeByScore("salary", 1000, 4000));
+        //获取元素[起,止]分数区间的元素数量
+        System.out.println("jedis.zcount(): " + jedis.zcount("salary", 1000, 4000));
+
+        //获取元素score值：薪资
+        System.out.println("jedis.zscore(): " + jedis.zscore("salary", "u01"));
+        //获取元素下标
+        System.out.println("jedis.zrank(u01): " + jedis.zrank("salary", "u01"));
+        //倒序获取元素下标
+        System.out.println("jedis.zrevrank(u01): " + jedis.zrevrank("salary", "u01"));
+        //删除元素
+        System.out.println("jedis.zrem(): " + jedis.zrem("salary", "u01", "u02"));
+        //删除元素,通过下标范围
+        System.out.println("jedis.zremrangeByRank(): " + jedis.zremrangeByRank("salary", 0, 1));
+        //删除元素,通过分数范围
+        System.out.println("jedis.zremrangeByScore(): " + jedis.zremrangeByScore("salary", 20000, 30000));
+        //按照下标[起,止]遍历元素
+        System.out.println("jedis.zrange(): " + jedis.zrange("salary", 0, -1));
+
+        Map<String, Double> members2 = new HashMap<String, Double>();
+        members2.put("u11", 1136.0);
+        members2.put("u12", 2212.0);
+        members2.put("u13", 3324.0);
+        //批量添加元素
+        jedis.zadd("salary", members2);
+        //增加指定分数
+        System.out.println("jedis.zincrby(10000): " + jedis.zincrby("salary", 10000, "u13"));
+        //按照下标[起,止]遍历元素
+        System.out.println("jedis.zrange(): " + jedis.zrange("salary", 0, -1));
+
+        jedis.close();
+
+    }
+}
+```
+
+运行结果如下：
+
+```java
+jedis.get(): PONG
+jedis.type(): zset
+jedis.zcard(): 5
+jedis.zrange(): [u01, u02, u03, u04, u05]
+jedis.zrevrange(): [u05, u04, u03, u02, u01]
+jedis.zrangeByScore(): [u01, u02, u03]
+Tuple.get(): u01 -> 1000.0
+Tuple.get(): u02 -> 2000.0
+Tuple.get(): u03 -> 3000.0
+jedis.zrevrangeByScore(): []
+jedis.zcount(): 3
+jedis.zscore(): 1000.0
+jedis.zrank(u01): 0
+jedis.zrevrank(u01): 4
+jedis.zrem(): 2
+jedis.zremrangeByRank(): 2
+jedis.zremrangeByScore(): 1
+jedis.zrange(): []
+jedis.zincrby(10000): 13324.0
+jedis.zrange(): [u11, u12, u13]
+```
+
+### 11.4 JedisPool连接池的实践案例
+
+​	使用Jedis API可以方便地在Java程序中操作Redis，就像通过JDBC API操作数据库一样。但是仅仅实现这一点是不够地。为什么呢？大家知道，**数据库连接的底层是一条Socket通道，创建和销毁很耗时**。在数据库连接过程中，为了防止数据库连接的频繁创建、销毁带来的性能损耗，常常会用到连接池(Connection Pool)，例如淘宝的Druid连接池、Tomcat的DBCP连接池。Jedis连接和数据库连接一样，也需要使用连接池(Connection Pool)来管理。
+
+​	Jedis开源库提供了一个负责管理Jedis连接对象的池，名为JedisPool类，位于redis.clients.jedis包中。
+
+> [Jedis和RedisTemplate有何区别？](https://blog.csdn.net/varyall/article/details/83476970)
+>
+> [Redis深入学习：Jedis和Spring的RedisTemplate](https://blog.csdn.net/CSDN2497242041/article/details/102675435)
+>
+> [[Redis的三个框架：Jedis,Redisson,Lettuce](https://www.cnblogs.com/liyan492/p/9858548.html)]
+
+#### 11.4.1 JedisPool的配置
+
+​	在使用JedisPool类创建Jedis连接池之前，首先要了解一个很重要的配置类——JedisPoolConfig配置类，它也位于redis.clients.jedis包中。这个连接池的配置类负责配置JedisPool的参数。JedisPoolConfig配置类涉及到很多与连接管理和使用有关的参数，下面对它的一些重要参数进行说明。
+
+（1）maxTotal：资源池中最大的连接数，默认值为8。
+
+（2）maxIdle：资源池允许最大空闲的连接数，默认值为8。
+
+（3）minIdle：资源池确保最少空闲的连接数，默认值为0。如果JedisPool开启了空闲连接的有效性检测，如果空闲连接无效，就销毁。销毁连接后，连接数量减少了，如果小于minIdle数量，就新建连接，维护数量不少于minIdle的数量。minIdle确保了线程池中有最小的空闲Jedis实例的数量。
+
+（4）blockWhenExhausted：当资源池用尽后，调用者是否要等待，默认值为true。当为true时，maxWaitMillis才会生效。
+
+（5）maxWaitMillis：当资源池连接用尽后，调用者的最大等待时间（单位为毫秒）。默认值为-1，表示永不超时，不建议使用默认值。
+
+（6）testOnBorrow：向资源池借用连接时，是否做有效性检查（ping命令），如果是无效连接，会被移除，默认值为false，表示不做检测。如果为true，则得到的Jedis实例均是可用的。**在业务量小的应用场景，建议设置为true，确保连接可用；在业务量很大的应用场景，建议设置为false（默认值），少一次ping命令的开销，有助于提升性能**。
+
+（7）testOnReturn：向资源池归还连接时，是否做有效性检测（ping命令），如果是无效连接，会被移除，默认值为false，表示不做检测。同样，在业务量很大的应用场景，建议设置为false(默认值)，少一次ping命令的开销。
+
+（8）testWhileIdle：如果为true，表示用一个专门的线程对空闲的连接进行有效性的检测扫描，如果有效性检测失败，则表示无效连接会从资源池中移除。默认值为true，表示进行空闲连接的检测。这个选项存在一个附加条件，需要配置项timeBetweenEvictionRunsMillis的值大于0；否则testWhileIdle不会生效。
+
+（9）timeBetweenEvictionRunsMillis：表示两次空闲连接扫描的活动之间要睡眠的毫秒数，默认为30000毫秒，也就是30秒钟。
+
+（10）minEvictableIdleTimeMillis：表示一个Jedis连接至少停留在空闲状态的最短时间，然后才能被空闲连接扫描线程进行有效性检测，默认值为60000毫秒，即60秒。也就是说在默认情况下，一条Jedis连接只有空闲60秒后，才会参与空闲线程的有效性检测。这个选项存在一个附加条件，需要在timeBetweenEvictionRunsMillis大于0时才会生效。也就是说，如果不启动空闲检测线程，这个参数也没有什么意义。
+
+（11）numTestsPerEvictionRun：表示空闲检测线程每次最多扫描的Jedis连接数，默认值为-1，表示扫描全部的空闲连接。
+
+​	空闲扫描的选项在JedisPoolConfig的构造器中都有默认值，具体如下：
+
+```java
+package redis.clients.jedis;
+import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
+public class JredisPoolBuilder extends GenericObjectPoolConfig {
+    public JedisPoolConfig() {
+        this.setTestWhileIdle(true);
+		this.setMinEvictableIdleTimeMillis(60000L);
+        this.setTimeBetweenEvictionRunsMillis(30000L);
+        this.setNumTestsPerEvictionRun(-1);
+    }
+}
+```
+
+（12）jmxEnabled：是否开启jmx监控，默认值为true，建议开启。
+
+​	有个实际的问题：如何推算一个连接池的最大连接数maxTotal呢？
+
+​	实际上，这是一个很难精准回答的问题，主要是依赖的因素比较多。大致的推算方法是：**业务QPS/单连接的QPS = 最大连接数。**
+
+​	如果推算单个Jedis连接的QPS呢？假设一个Jedis命令操作的时间约为5ms(包含borrow+return+Jedis执行命令+网络延迟)，那么，单个Jedis连接的QPS大约是100/5=200。如果业务期望的QPS是100000，那么需要的最大连接数为100000、200 = 500。
+
+​	实际上，上面的估算仅仅是个理论值。在实际的生产场景中，还要预留一些资源，通常来讲所配置的maxTotal要比理论值大一些。
+
+​	**如果连接数确实太多，可以考虑Redis集群，那么单个Redis节点的最大连接数的公式为：maxToal = 预估的连接数 / nodes节点数**
+
+​	在并发量不大时，maxTotal设置过高会导致不必要的连接资源的浪费。可以根据实际总QPS和nodes节点数，合理评估每个节点所使用的最大连接数。
+
+​	在看一个问题：如何推算连接池的最大空闲连接数maxIdle值呢？
+
+​	**实际上，maxTotal只是给出了一个连接数量的上限，maxIdle实际上才是业务可用的最大连接数**，从这个层面来说，maxIdle不能设置国小，否则会有创建、销毁连接的开销。使得连接池达到最佳性能的设置是maxTotal = maxIdle，应尽可能地避免由于频繁地创建和销毁Jedis连接所带来的连接池性能的下降。
+
+#### 11.4.2 JedisPool创建和预热
+
+​	创建JedisPool连接池的一般步骤为创建一个JedisPoolConfig配置实例；以JedisPoolConfig实例、Redis IP、Redis端口和其他可选选项（如超时时间、Auth密码）为参数，构造一个JedisPool连接池实例。
+
+```java
+public class JredisPoolBuilder {
+
+    public static final int MAX_IDLE = 50;
+    public static final int MAX_TOTAL = 50;
+    private static JedisPool pool = null;
+    //....
+   
+    //创建连接池
+    private static JedisPool buildPool() {
+        if (pool == null) {
+            long start = System.currentTimeMillis();
+            JedisPoolConfig config = new JedisPoolConfig();
+            config.setMaxTotal(MAX_TOTAL);
+            config.setMaxIdle(MAX_IDLE);
+            config.setMaxWaitMillis(1000 * 10);
+            // 在borrow一个jedis实例时，是否提前进行validate操作；
+            // 如果为true，则得到的jedis实例均是可用的；
+            config.setTestOnBorrow(true);
+            //new JedisPool(config, ADDR, PORT, TIMEOUT, AUTH);
+            pool = new JedisPool(config, "127.0.0.1", 6379, 10000);
+            long end = System.currentTimeMillis();
+            Logger.info("buildPool  毫秒数:", end - start);
+        }
+        return pool;
+    }
+}
+```
+
+​	<u>虽然JedisPool定义了最大空闲资源数、最小空闲资源数，但是在创建的时候，不会真的创建好Jedis连接并放到JedisPool池子里。这样会导致一个问题，刚创建好的连接池，池子没有Jedis连接资源在使用，在初次访问请求到来的时候，才开始创建新的连接，不过，这样会导致一定的时间开销。为了提升初次访问的性能，可以考虑在JedisPool创建后，为JedisPool提前进行预热，一般以最小空闲数量作为预热数量。</u>
+
+```java
+public class JredisPoolBuilder {
+    //...
+    
+    //连接池的预热
+    public static void hotPool() {
+
+        long start = System.currentTimeMillis();
+        List<Jedis> minIdleJedisList = new ArrayList<Jedis>(MAX_IDLE);
+        Jedis jedis = null;
+
+        for (int i = 0; i < MAX_IDLE; i++) {
+            try {
+                jedis = pool.getResource();
+                minIdleJedisList.add(jedis);
+                jedis.ping();
+            } catch (Exception e) {
+                Logger.error(e.getMessage());
+            } finally {
+            }
+        }
+
+        for (int i = 0; i < MAX_IDLE; i++) {
+            try {
+                jedis = minIdleJedisList.get(i);
+                jedis.close();
+            } catch (Exception e) {
+                Logger.error(e.getMessage());
+            } finally {
+
+            }
+        }
+        long end = System.currentTimeMillis();
+        Logger.info("hotPool  毫秒数:", end - start);
+
+    }
+}
+```
+
+​	在自己定义的JredisPoolBuilder连接池Builder类中，创建好连接池实例，并且进行预热，然后，定义一个从连接池中获取Jedis连接的新方法——getJedis()，供其他模块调用。
+
+```java
+public class JredisPoolBuilder {
+    private static JedisPool pool = null;
+    //...
+    
+    static {
+        //创建连接池
+        buildPool();
+        //预热连接池
+        hotPool();
+    }
+    
+    //获取连接
+    public synchronized static Jedis getJedis() {
+        return pool.getResource();
+    }
+    //...
+}
+```
+
+#### 11.4.3 JedisPool的使用
+
+​	可以使用前面定义好的getJedis()方法，间接地通过pool.getResource()从连接池获取连接；也可以直接通过pool.getResource()方法获取Jedis连接。
+
+​	**主要的要求是Jedis连接使用完之后，一定要调用close方法关闭连接，这个关闭操作不是真正地关闭连接，而是归还给连接池**。<u>这一点和使用数据库连接池是一样的。一般来说，关闭操作放在finally代码段中，确保Jedis的关闭最终都会被执行到。</u>
+
+```java
+public class JredisPoolTester {
+
+    public static final int NUM = 200;
+    public static final String ZSET_KEY = "zset1";
+
+    //测试删除
+    @Test
+    public void testDel() {
+        Jedis redis =null;
+        try  {
+            redis = JredisPoolBuilder.getJedis();
+            long start = System.currentTimeMillis();
+            redis.del(ZSET_KEY);
+            long end = System.currentTimeMillis();
+            Logger.info("删除 zset1  毫秒数:", end - start);
+        } finally {
+            //使用后一定关闭，还给连接池
+            if (redis != null) {
+                redis.close();
+            }
+        }
+    }
+    // ...
+}
+```
+
+​	**由于Jedis类实现了java.io.Closeable接口，故而在JDK1.7或者以上版本可以使用try-with-resources语句，在其隐藏的finally部分自动调用close方法。**
+
+```java
+public class JredisPoolTester {
+
+    public static final int NUM = 200;
+    public static final String ZSET_KEY = "zset1";
+
+    //测试创建zset
+    @Test
+    public void testSet() {
+        testDel();
+
+        try (Jedis redis = JredisPoolBuilder.getJedis()) {
+            int loop = 0;
+            long start = System.currentTimeMillis();
+            while (loop < NUM) {
+                redis.zadd(ZSET_KEY, loop, "field-" + loop);
+                loop++;
+            }
+            long end = System.currentTimeMillis();
+            Logger.info("设置 zset :", loop, "次, 毫秒数:", end - start);
+        }
+    }
+}
+```
+
+​	**这里使用try-with-resources的效果和使用try-finally写法是一样的，只是它会默认调用jedis.close()方法。这里优先推荐try-with-resources写法，因为比较简洁、干净。大家平时常用的数据库连接、输入输出流的关闭，都可以使用这个方法。**
+
+### 11.5 使用spring-data-redis完成CRUD的实践案例
+
+​	无论是Jedis还是JedisPool，都只是完成对Redis操作的极为基础的API，在不依靠任何中间件的开发环境中，可以使用他们。但是，一般的Java开发，都会使用了Spring框架，可以使用spring-data-redis开源库来简化Redis操作的代码逻辑，做到最大程度的业务聚焦。
+
+​	下面从缓存的应用场景入手，介绍spring-data-redis开源库的使用。
+
+#### 11.5.1 CRUD中应用缓存的场景
+
+​	在普通CRUD应用场景中，很多情况下需要同步操作缓存，推荐使用Spring的spring-data-redis开源库。注：CRUD是指Create创建，Retrieve查询，Update更新和Delete删除。
+
+​	一般来说，在普通的CRUD应用场景中，大致涉及到的缓存操作为：
+
+1. 创建缓存
+
+   ​	在创建Create一个POJO实例的时候，对POJO实例进行分布式缓存，一般以"缓存前缀+ID"为缓存的Key键，POJO对象为缓存的Value值，直接缓存POJO的二进制字节。前提是：POJO必须可序列化，实现java.Serializable空接口。<u>如果POJO不可序列化，也是可以缓存的，但是必须自己实现序列化的方法，例如使用JSON方式序列化。</u>
+
+2. 查询缓存
+
+   ​	<u>在查询Retrieve一个POJO实例的时候，首先应该根据POJO缓存的Key键，从Redis缓存中返回结果。如果不存在，才去查询数据库，并且能够将数据库的结果缓存起来。</u>
+
+3. 更新缓存
+
+   ​	在更新Update一个POJO实例的时候，既需要更新数据库的POJO数据记录，也需要更新POJO的缓存记录。
+
+4. 删除缓存
+
+   ​	在删除Delete一个POJO实例的时候，既需要删除数据库的POJO数据记录，也需要删除POJO的缓存记录。
+
+   ​	使用spring-data-redis开源库可以快速地完成上述的缓存CRUD操作。
+
+   ​	为了演示CRUD场景下的Redis缓存操作，首先定义一个简单的POJO实体类：聊天系统的用户类。此类拥有一些简单的属性，如uid和nickName，且这些属性都具备基本的getter和setter方法。
+
+   ```java
+   public class User implements Serializable {
+   
+       String uid;
+       String devId;
+       String token;
+       String nickName;
+       // .... 
+       //...省略getter和setter等方法
+   }
+   ```
+
+   ​	然后定义一个完成CRUD操作的Service接口，定义三个方法：
+
+   （1）saveUser完成创建C、更新操作U
+
+   （2）getUser完成查询操作R
+
+   （3）deleteUser完成删除操作D
+
+   Service接口的代码如下：
+
+   ```java
+   public interface UserService {
+   
+       /**
+        * CRUD 之   查询
+        *
+        * @param id id
+        * @return 用户
+        */
+       User getUser(long id);
+   
+       /**
+        * CRUD 之  新增/更新
+        *
+        * @param user 用户
+        */
+       User saveUser(final User user);
+   
+       /**
+        * CRUD 之 删除
+        *
+        * @param id id
+        */
+   
+       void deleteUser(long id);
+   
+       /**
+        * 删除全部
+        */
+       public void deleteAll();
+   
+   }
+   ```
+
+   ​	定义完了Service接口之后，接下来就是定义Service服务的具体实现。不过，这里聚焦的是：如何通过spring-data-redis库，使Service实现待缓存的功能？
