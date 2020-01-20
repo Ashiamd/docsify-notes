@@ -1,4 +1,4 @@
-# p按段《Netty、Redis、ZooKeeper高并发实战》学习笔记
+# 《Netty、Redis、ZooKeeper高并发实战》学习笔记
 
 > 最近一段时间学习IM编程，但是之前急于需要成品，所以学得不是很懂，最后也没能弄好，所以打算系统地学习一下，然后再继续IM编程。
 
@@ -3495,7 +3495,7 @@ public class JredisPoolTester {
 
 ### 11.5 使用spring-data-redis完成CRUD的实践案例
 
-​	无论是Jedis还是JedisPool，都只是完成对Redis操作的极为基础的API，在不依靠任何中间件的开发环境中，可以使用他们。但是，一般的Java开发，都会使用了Spring框架，可以使用spring-data-redis开源库来简化Redis操作的代码逻辑，做到最大程度的业务聚焦。
+​	无论是Jedis还是JedisPool，都只是完成对Redis操作的极为基础的API，在不依靠任何中间件的开发环境中，可以使用他们。但是，<u>一般的Java开发，都会使用了Spring框架，可以使用spring-data-redis开源库来简化Redis操作的代码逻辑，做到最大程度的业务聚焦。</u>
 
 ​	下面从缓存的应用场景入手，介绍spring-data-redis开源库的使用。
 
@@ -3582,3 +3582,1026 @@ public class JredisPoolTester {
    ```
 
    ​	定义完了Service接口之后，接下来就是定义Service服务的具体实现。不过，这里聚焦的是：如何通过spring-data-redis库，使Service实现待缓存的功能？
+
+#### 11.5.2 配置spring-redis.xml
+
+​	使用spring-data-redis库的第一步是，要在Maven的pom文件中加上spring-data-redis库的依赖，具体如下：
+
+```xml
+<!-- https://mvnrepository.com/artifact/org.springframework.data/spring-data-redis -->
+<dependency>
+    <groupId>org.springframework.data</groupId>
+    <artifactId>spring-data-redis</artifactId>
+    <version>2.2.4.RELEASE</version>
+</dependency>
+```
+
+​	使用spring-data-redis库的第二步，即配置spring-data-redis库的连接池实例和RedisTemplate模板实例。这是两个spring bean，可以配置在项目统一的spring xml配置文件中，也可以编写一个独立的spring-redis.xml配置文件。这里使用的是第二种方式。
+
+​	连接池实例和RedisTemplate模板实例的配置：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xmlns:cache="http://www.springframework.org/schema/cache"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+                           http://www.springframework.org/schema/beans/spring-beans.xsd
+                           http://www.springframework.org/schema/context
+                           http://www.springframework.org/schema/context/spring-context-4.0.xsd
+                           http://www.springframework.org/schema/cache
+                           http://www.springframework.org/schema/cache/spring-cache.xsd"
+       default-lazy-init="false">
+
+
+    <context:component-scan base-package="com.crazymakercircle.redis.springJedis"/>
+
+    <context:annotation-config/>
+
+    <!-- 启用缓存注解功能，这个是必须的，否则注解不会生效 -->
+    <cache:annotation-driven/>
+
+    <!-- 加载配置文件 -->
+    <context:property-placeholder location="classpath:redis.properties"/>
+    <!-- redis数据源 -->
+    <bean id="poolConfig" class="redis.clients.jedis.JedisPoolConfig">
+        <!-- 最大空闲数 -->
+        <property name="maxIdle" value="${redis.maxIdle}"/>
+        <!-- 最大空连接数 -->
+        <property name="maxTotal" value="${redis.maxTotal}"/>
+        <!-- 最大等待时间 -->
+        <property name="maxWaitMillis" value="${redis.maxWaitMillis}"/>
+        <!-- 连接超时时是否阻塞，false时报异常,ture阻塞直到超过maxWaitMillis, 默认true -->
+        <property name="blockWhenExhausted" value="${redis.blockWhenExhausted}"/>
+        <!-- 返回连接时，检测连接是否成功 -->
+        <property name="testOnBorrow" value="${redis.testOnBorrow}"/>
+    </bean>
+
+    <!-- Spring-redis连接池管理工厂 -->
+    <bean id="jedisConnectionFactory" class="org.springframework.data.redis.connection.jedis.JedisConnectionFactory">
+        <!-- IP地址 -->
+        <property name="hostName" value="${redis.host}"/>
+        <!-- 端口号 -->
+        <property name="port" value="${redis.port}"/>
+        <!-- 连接池配置引用 -->
+        <property name="poolConfig" ref="poolConfig"/>
+        <!-- usePool：是否使用连接池 -->
+        <property name="usePool" value="true"/>
+    </bean>
+
+    <!-- redis template definition -->
+    <bean id="redisTemplate" class="org.springframework.data.redis.core.RedisTemplate">
+        <property name="connectionFactory" ref="jedisConnectionFactory"/>
+        <property name="keySerializer">
+            <bean class="org.springframework.data.redis.serializer.StringRedisSerializer"/>
+        </property>
+        <property name="valueSerializer">
+            <bean class="org.springframework.data.redis.serializer.JdkSerializationRedisSerializer"/>
+        </property>
+        <property name="hashKeySerializer">
+            <bean class="org.springframework.data.redis.serializer.StringRedisSerializer"/>
+        </property>
+        <property name="hashValueSerializer">
+            <bean class="org.springframework.data.redis.serializer.JdkSerializationRedisSerializer"/>
+        </property>
+        <!--开启事务  -->
+        <property name="enableTransactionSupport" value="true"></property>
+    </bean>
+
+    <!--自定义redis工具类,在需要缓存的地方注入此类  -->
+    <bean id="cacheManager" class="org.springframework.data.redis.cache.RedisCacheManager">
+        <constructor-arg ref="redisTemplate"/>
+        <constructor-arg name="cacheNames">
+            <set>
+                <!--声明userCache-->
+                <value>userCache</value>
+            </set>
+        </constructor-arg>
+    </bean>
+
+
+    <!--将redisTemplate 封装成缓存service-->
+    <bean id="cacheOperationService" class="com.crazymakercircle.redis.springJedis.CacheOperationService">
+        <property name="redisTemplate" ref="redisTemplate"/>
+    </bean>
+    <!--业务service,依赖缓存service-->
+    <bean id="serviceImplWithTemplate" class="com.crazymakercircle.redis.springJedis.UserServiceImplWithTemplate">
+        <property name="cacheOperationService" ref="cacheOperationService"/>
+    </bean>
+
+    <bean id="serviceImplInTemplate" class="com.crazymakercircle.redis.springJedis.UserServiceImplInTemplate">
+        <property name="redisTemplate" ref="redisTemplate"/>
+    </bean>
+
+</beans>
+```
+
+​	spring-data-redis库在JedisPool提供连接池的基础上封装了自己的连接池——RedisConnectionFactory连接工厂；并且spring-data-redis封装了一个短期、非线程安全的连接类，名为RedisConnection连接类。RedisConnection类和Jedis库中的Jedis类原理一样，提供了与Redis客户端命令一对一的API函数，用于操作远程Redis服务。
+
+​	<u>在使用spring-data-redis时，虽然没有直接用到Jedis库，但是spring-data-redis库底层对Redis服务的操作还是调用Jedis库完成的</u>。也就是说，spring-data-redis库从一定程度上使大家更好地使用Jedis库。
+
+​	RedisConnection的API命令操作的对象都是字节级别的Key键和Value值。为了更进一步地减少开发的工作，spring-data-redis库在RedisConnection连接类的基础上，针对不同的缓存类型，设计了五大数据类型的命令API集合，用于完成不同类型的数据缓存操作，并封装在RedisTemplate模板类中。
+
+#### 11.5.3 使用RedisTemplate模板API
+
+​	RedisTemplate模板类位于核心包org.springframework.data.redis.core中，它封装了五大数据类型的命令API集合：
+
+1. ValueOperations字符串类型操作API集合
+2. ListOperations列表类型操作API集合
+3. SetOperations集合类型操作API集合
+4. ZSetOperations有序集合类型API集合
+5. HashOperations哈希类型操作API集合
+
+​	每一种类型的操作API基本上都和每一种类型的Redis客户端命令一一对应。但是在API的名称上并不完全一致，RedisTemplate的API名称更加人性化。例如，Redis客户端命令setNX——Key-Value不存在才设值，非常不直观，但是RedisTemplate的API名称为setIfAbsent，翻译过来就是——如果不存在，则设值。selfAbsent比setNX易懂多了。
+
+​	除了名称存在略微的调整，总体上而言，RedisTemplate模板类的API函数和Redis客户端命令是一一对应的关系。所以，本节不再一一赘述RedisTemplate模板类中的API函数，大家可以自行阅读API的源代码。
+
+​	在实际开发中，为了尽可能地减少第三方库的"入侵"，或者为了在不同的第三方库之间进行方便的切换，一般来说，要对第三方库进行封装。
+
+​	下面将RedisTemplate模板类的大部分缓存操作封装成一个自己的缓存操作Service服务——CacheOperationService，部分代码（完整500+行）如下：
+
+```java
+public class CacheOperationService {
+
+
+    private RedisTemplate redisTemplate;
+
+    public void setRedisTemplate(RedisTemplate redisTemplate) {
+        this.redisTemplate = redisTemplate;
+    }
+    // --------------RedisTemplate 基础操作  --------------------
+
+
+    /**
+     * 取得指定格式的所有的key
+     *
+     * @param patens 匹配的表达式
+     * @return key 的集合
+     */
+    public Set getKeys(Object patens) {
+        try {
+            return redisTemplate.keys(patens);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    /**
+     * 指定缓存失效时间
+     *
+     * @param key  键
+     * @param time 时间(秒)
+     * @return
+     */
+    public boolean expire(String key, long time) {
+        try {
+            if (time > 0) {
+                redisTemplate.expire(key, time, TimeUnit.SECONDS);
+            }
+            return true;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    //....
+
+    // --------------RedisTemplate 操作 String --------------------
+
+
+    /**
+     * 普通缓存获取
+     *
+     * @param key 键
+     * @return 值
+     */
+    public Object get(String key) {
+        return key == null ? null : redisTemplate.opsForValue().get(key);
+    }
+
+    /**
+     * 普通缓存放入
+     *
+     * @param key   键
+     * @param value 值
+     * @return true成功 false失败
+     */
+    public boolean set(String key, Object value) {
+        try {
+            redisTemplate.opsForValue().set(key, value);
+            return true;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+
+    }
+    // ...
+
+    /**
+     * 移除N个值为value
+     *
+     * @param key   键
+     * @param count 移除多少个
+     * @param value 值
+     * @return 移除的个数
+     */
+    public long lRemove(String key, long count, Object value) {
+        try {
+            Long remove = redisTemplate.opsForList().remove(key, count, value);
+            return remove;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return 0;
+        }
+    }
+}
+```
+
+​	在代码中，<u>除了基本数据类型的Redis操作（如keys、hasKey）直接使用redisTemplate实例完成。其他的API命令，都是在不同类型的命令集合类上完成的。</u>
+
+​	redisTemplate提供了5个方法，取得不同类型的命令集合，具体为：
+
+1. redisTemplate.opsForValue()取得String类型命令API集合。
+2. redisTemplate.opsForList()取得List类型命令API集合。
+3. redisTemplate.opsForSet()取得Set类型命令API集合。
+4. redisTemplate.opsForHash()取得Hash类型命令API集合。
+5. redisTemplate.opsForZset()取得Zset类型命令API集合。
+
+​	然后，在不同类型的命令API集合上，使用各种数据类型特有的API函数，完成具体的Redis API操作。
+
+#### 11.5.4 使用RedisTemplate模板API完成CRUD的实践案例
+
+​	封装完成了自己的CacheOperationService缓存管理服务后，可以注入到Spring的业务Service中，就可以完成缓存的CRUD操作了。
+
+​	这里的业务类是UserServiceImplWithTemplate类，用于完成User实例缓存的CRUD。使用CacheOperationService后，就能非常方便地进行缓存的管理，同时，在进行POJO的查询时，能优先使用缓存数据，省去了数据库访问的时间。
+
+```java
+@Service
+@CacheConfig(cacheNames = "userCache")
+public class UserServiceImplWithAnno implements UserService {
+
+    public static final String USER_UID_PREFIX = "'userCache:'+";
+
+    /**
+     * CRUD 之  新增/更新
+     *
+     * @param user 用户
+     */
+    @CachePut(key = USER_UID_PREFIX + "T(String).valueOf(#user.uid)")
+    @Override
+    public User saveUser(final User user) {
+        //保存到数据库
+        //返回值，将保存到缓存
+        Logger.info("user : save to redis");
+        return user;
+    }
+
+    /**
+     * 带条件缓存
+     *
+     * @param user 用户
+     * @return 用户
+     */
+    @CachePut(key = "T(String).valueOf(#user.uid)", condition = "#user.uid>1000")
+    public User cacheUserWithCondition(final User user) {
+        //保存到数据库
+        //返回值，将保存到缓存
+        Logger.info("user : save to redis");
+        return user;
+    }
+
+    /**
+     * CRUD 之   查询
+     *
+     * @param id id
+     * @return 用户
+     */
+    @Cacheable(key = USER_UID_PREFIX + "T(String).valueOf(#id)")
+    @Override
+    public User getUser(final long id) {
+        //如果缓存没有,则从数据库中加载
+        Logger.info("user : is null");
+        return null;
+    }
+
+    /**
+     * CRUD 之 删除
+     *
+     * @param id id
+     */
+
+    @CacheEvict(key = USER_UID_PREFIX + "T(String).valueOf(#id)")
+    @Override
+    public void deleteUser(long id) {
+
+        //从数据库中删除
+        Logger.info("delete  User:", id);
+    }
+
+    /**
+     * 删除userCache中的全部缓存
+     */
+    @CacheEvict(value = "userCache", allEntries = true)
+    public void deleteAll() {
+
+    }
+
+    /**
+     * 一个方法上，加上三类cache处理
+     */
+    @Caching(cacheable = @Cacheable(key = "'userCache:'+ #uid"),
+             put = @CachePut(key = "'userCache:'+ #uid"),
+             evict = {
+                 @CacheEvict(key = "'userCache:'+ #uid"),
+                 @CacheEvict(key = "'addressCache:'+ #uid"),
+                 @CacheEvict(key = "'messageCache:'+ #uid")
+             }
+            )
+    public User updateRef(String uid) {
+        //....业务逻辑
+        return null;
+    }
+}
+```
+
+​	在业务Service类使用CacheOperationService缓存管理之前，还需要在配置文件（这里为spring-redis.xml）中配置好依赖：
+
+```xml
+<!--将redisTemplate 封装成缓存service-->
+<bean id="cacheOperationService" class="com.crazymakercircle.redis.springJedis.CacheOperationService">
+    <property name="redisTemplate" ref="redisTemplate"/>
+</bean>
+<!--业务service,依赖缓存service-->
+<bean id="serviceImplWithTemplate" class="com.crazymakercircle.redis.springJedis.UserServiceImplWithTemplate">
+    <property name="cacheOperationService" ref="cacheOperationService"/>
+</bean>
+```
+
+​	编写一个用例，测试一下UserServiceImplWithTemplate，运行之后，可以从Redis客户端输入命令来查看缓存的数据。至此，缓存机制已经成功生效，数据访问的时间可以从数据库的百毫秒级别缩小到毫秒级别，性能提升了100倍。
+
+```java
+public class SpringRedisTester {
+
+
+    /**
+     * 测试 直接使用redisTemplate
+     */
+    @Test
+    public void testServiceImplWithTemplate() {
+        ApplicationContext ac = new ClassPathXmlApplicationContext("classpath:spring-redis.xml");
+        UserService userService =
+            (UserService) ac.getBean("serviceImplWithTemplate");
+        long userId = 1L;
+        userService.deleteUser(userId);
+        User userInredis = userService.getUser(userId);
+        Logger.info("delete user", userInredis);
+        User user = new User();
+        user.setUid("1");
+        user.setNickName("foo");
+        userService.saveUser(user);
+        Logger.info("save user:", user);
+        userInredis = userService.getUser(userId);
+        Logger.info("get user", userInredis);
+    }
+    //...其他测试用例
+}
+```
+
+#### 11.5.5 使用RedisCallback回调完成CRUD的实践案例
+
+​	前面讲到，RedisConnection连接类和RedisTemplate模板类都提供了整套Redis操作的API，只不过，它们的层次不同。**RedisConnection连接类更加底层，它负责二进制层面的Reids操作，Key、Value都是二进制字节数组。而RedisTemplate模板类，在RedisConnection的基础上，使用在spring-redis.xml中配置的序列化、反序列化的工具类，完成上层类型（如String、Object、POJO等类）的Redis操作**。
+
+​	<u>如果不需要RedisTemplate配置的序列化、反序列化的工具类，或者由于其他的原因，需要直接使用RedisConnection去操作Redis，怎么办呢？可以使用RedisCallback的doInRedis回调方法，在doInRedis回调方法中，直接使用实参RedisConnection连接类实例来完成Redis的操作。</u>
+
+​	当然，完成RedisCallback回调业务逻辑后，还需要使用RedisTemplate模板实例去执行，调用的是RedisTemplate.execute(ReidsCallback)方法。
+
+​	通过RedisCallback回调方法实现CRUD的实例代码如下：
+
+```java
+public class UserServiceImplInTemplate implements UserService {
+
+    public static final String USER_UID_PREFIX = "user:uid:";
+
+    private RedisTemplate redisTemplate;
+
+    public void setRedisTemplate(RedisTemplate redisTemplate) {
+        this.redisTemplate = redisTemplate;
+    }
+
+    private static final long CASHE_LONG = 60 * 4;//4分钟
+
+    /**
+     * CRUD 之  新增/更新
+     *
+     * @param user 用户
+     */
+    @Override
+    public User saveUser(final User user) {
+        //保存到缓存
+        redisTemplate.execute(new RedisCallback<User>() {
+
+            @Override
+            public User doInRedis(RedisConnection connection)
+                throws DataAccessException {
+                byte[] key = serializeKey(USER_UID_PREFIX + user.getUid());
+                connection.set(key, serializeValue(user));
+                connection.expire(key, CASHE_LONG);
+                return user;
+            }
+        });
+        //保存到数据库
+        //...如mysql
+        return user;
+    }
+
+    private byte[] serializeValue(User s) {
+        return redisTemplate
+            .getValueSerializer().serialize(s);
+    }
+
+    private byte[] serializeKey(String s) {
+        return redisTemplate
+            .getKeySerializer().serialize(s);
+    }
+
+    private User deSerializeValue(byte[] b) {
+        return (User) redisTemplate
+            .getValueSerializer().deserialize(b);
+    }
+
+    /**
+     * CRUD 之   查询
+     *
+     * @param id id
+     * @return 用户
+     */
+    @Override
+    public User getUser(final long id) {
+        //首先从缓存中获取
+        User value =  (User) redisTemplate.execute(new RedisCallback<User>() {
+            @Override
+            public User doInRedis(RedisConnection connection)
+                throws DataAccessException {
+                byte[] key = serializeKey(USER_UID_PREFIX + id);
+                if (connection.exists(key)) {
+                    byte[] value = connection.get(key);
+                    return deSerializeValue(value);
+                }
+
+                return null;
+            }
+        });
+        if (null == value) {
+            //如果缓存中没有，从数据库中获取
+            //...如mysql
+            //并且，保存到缓存
+        }
+        return value;
+    }
+
+    /**
+     * CRUD 之 删除
+     * @param id id
+     */
+    @Override
+    public void deleteUser(long id) {
+        //从缓存删除
+        redisTemplate.execute(new RedisCallback<Boolean>() {
+            @Override
+            public Boolean doInRedis(RedisConnection connection)
+                throws DataAccessException {
+                byte[] key = serializeKey(USER_UID_PREFIX + id);
+                if (connection.exists(key)) {
+                    connection.del(key);
+                }
+                return true;
+            }
+        });
+        //从数据库删除
+        //...如mysql
+    }
+
+    /**
+     * 删除全部
+     */
+    @Override
+    public void deleteAll() {
+
+    }
+}
+```
+
+​	同样的，在使用UserServiceImplTemplate之前，也需要在配置文件（这里为spring-redis.xml）配置好依赖关系：
+
+```xml
+<bean id="serviceImplInTemplate" class="com.crazymakercircle.redis.springJedis.UserServiceImplInTemplate">
+    <property name="redisTemplate" ref="redisTemplate"/>
+</bean>
+```
+
+### 11.6 Spring的Redis缓存注释
+
+​	前面讲的Redis缓存实现都是基于Java代码实现的。在Spring中，通过合理的添加缓存注解，也能实现和前面示例程序中一样的缓存功能。
+
+​	为了方便地提供缓存能力，Spring提供了一组缓存注解。但是，这组注解不仅仅是针对Redis，它本质上并不是一种具体的缓存实现方案（例如Redis、EHCache等），而是对缓存使用的统一抽象。通过这组缓存注解，然后加上与具体缓存相互匹配的Spring配置，不用编码就可以快速达到缓存的效果。
+
+​	下面先给大家展示一下Spring缓存注解的应用实例，然后对Spring cache的几个注解进行详细的介绍。
+
+#### 11.6.1 使用Spring缓存注解完成CRUD的实践案例
+
+​	这里简单介绍一下Spring的三个缓存注解：@CachePut、@CacheEvict、@Cacheable。这三个注解通常都加在方法的前面，大致的作用如下：
+
+（1）@CachePut作用是设置缓存。先执行方法，并将执行结果缓存起来。
+
+（2）@CacheEvict的作用是删除缓存。在执行方法前，删除缓存。
+
+（3）@Cacheable的作用更多是查询缓存。首先检查注解中的Key键是否在缓存中，如果是，则返回Key的缓存值，不再执行方法；否则，执行方法并将方法结果缓存起来。从后半部分来看，@Cacheable也具备@CachePut的能力。
+
+​	在展开介绍三个注释之前，先演示下它们的使用：用它们实现一个带缓存功能的用户操作UserService实现类，名为UserServiceImplWithAnno类。其功能和前面介绍的UserServiceImplWithTemplate类是一样的，只是这里使用注解去实现缓存，代码如下：
+
+```java
+@Service
+@CacheConfig(cacheNames = "userCache")
+public class UserServiceImplWithAnno implements UserService {
+
+    public static final String USER_UID_PREFIX = "'userCache:'+";
+
+    /**
+     * CRUD 之  新增/更新
+     *
+     * @param user 用户
+     */
+    @CachePut(key = USER_UID_PREFIX + "T(String).valueOf(#user.uid)")
+    @Override
+    public User saveUser(final User user) {
+        //保存到数据库
+        //返回值，将保存到缓存
+        Logger.info("user : save to redis");
+        return user;
+    }
+
+    /**
+     * 带条件缓存
+     *
+     * @param user 用户
+     * @return 用户
+     */
+    @CachePut(key = "T(String).valueOf(#user.uid)", condition = "#user.uid>1000")
+    public User cacheUserWithCondition(final User user) {
+        //保存到数据库
+        //返回值，将保存到缓存
+        Logger.info("user : save to redis");
+        return user;
+    }
+
+
+    /**
+     * CRUD 之   查询
+     *
+     * @param id id
+     * @return 用户
+     */
+    @Cacheable(key = USER_UID_PREFIX + "T(String).valueOf(#id)")
+    @Override
+    public User getUser(final long id) {
+        //如果缓存没有,则从数据库中加载
+        Logger.info("user : is null");
+        return null;
+    }
+
+    /**
+     * CRUD 之 删除
+     *
+     * @param id id
+     */
+
+    @CacheEvict(key = USER_UID_PREFIX + "T(String).valueOf(#id)")
+    @Override
+    public void deleteUser(long id) {
+
+        //从数据库中删除
+        Logger.info("delete  User:", id);
+    }
+
+    /**
+     * 删除userCache中的全部缓存
+     */
+    @CacheEvict(value = "userCache", allEntries = true)
+    public void deleteAll() {
+
+    }
+
+
+    /**
+     * 一个方法上，加上三类cache处理
+     */
+    @Caching(cacheable = @Cacheable(key = "'userCache:'+ #uid"),
+             put = @CachePut(key = "'userCache:'+ #uid"),
+             evict = {
+                 @CacheEvict(key = "'userCache:'+ #uid"),
+                 @CacheEvict(key = "'addressCache:'+ #uid"),
+                 @CacheEvict(key = "'messageCache:'+ #uid")
+             }
+            )
+    public User updateRef(String uid) {
+        //....业务逻辑
+        return null;
+    }
+
+}
+```
+
+#### 11.6.2 spring-redis.xml中配置的调整
+
+​	在使用Spring缓存注解前，首先需要配置文件中启用Spring对基类的Cache的支持：在spring-redis.xml中，加上\<cache:annotation-driven />配置项。
+
+​	\<cache:annotation-driven />有一个cache-manager属性，用来指定所需要用到的缓存管理器（CacheManager）的Spring Bean的名称。如果不进行特别设置，默认的名称是CacheManager。也就是说，如果使用了\<cache:annotation-driven />，还需要配置一个名为CacheManager的缓存管理器Spring Bean，这个Bean，要求实现CacheManager接口。而<u>CacheManager接口是Spring定义的一个用来管理Cache缓存的通用接口。对应于不同的缓存，需要使用不同的CacheManager实现</u>。Spring自身已经提供了一种CacheManager的实现，是基于Java API的ConcurrentMap简单的内存Key-Value缓存实现。但是，这里需要使用的缓存是Redis，所以使用spring-data-redis包中的RedisCacheManager实现。
+
+​	spring-reids.xml增加的配置项，具体如下：
+
+```xml
+<!-- 启用缓存注解功能，这个是必须的，否则注解不会生效 -->
+<cache:annotation-driven/>
+<!--自定义redis工具类,在需要缓存的地方注入此类  -->
+<bean id="cacheManager" class="org.springframework.data.redis.cache.RedisCacheManager">
+    <constructor-arg ref="redisTemplate"/>
+    <constructor-arg name="cacheNames">
+        <set>
+            <!--声明userCache-->
+            <value>userCache</value>
+        </set>
+    </constructor-arg>
+</bean>
+```
+
+​	\<cache:annotation-driven />还可以指定一个mode属性，可选值有proxy和aspectj，<u>默认是使用proxy</u>。**当mode为proxy时，只有当缓存注解的地方被对象外部的方法调用时，Spring Cache才会发生作用，反过来说，如果一个缓存方法，被其所在对象的内部方法调用时，Spring Cache是不会发生作用的。而mode为aspectj模式时，就不会发生上面的情况，只有注解方法被内部调用，缓存才会生效；非public类型的方法上，也可以使用Spring Cache注解。**
+
+​	\<cache:annotation-driven />还可以指定一个proxy-target-class属性，设置代理类的创建机制，有两个值：
+
+（1）值为true，表示使用CGLib创建代理类。
+
+（2）值为false，表示使用JDK的动态代理机制创建代理类，默认为false。
+
+​	大家知道，**JDK的动态代理是利用反射机制生成一个实现代理接口的匿名类(Class-based-Proxies)，在调用具体方法前，通过调用InvokeHandler来调用实际的代理方法**。而使用CGLib创建代理类，则不同。**CGLib底层采用ASM开源.class字节码生成框架，生成字节码级别的代理类（Inter-based Proxies）。对比来说，在实际的运行时，CGLib代理类比使用Java反射代理类的效率更高。**
+
+​	当proxy-target-class为true时，@Cacheable和@CacheInvalidate等注解，必须标记在具体类（Concrete Class）类上，不能标记在接口上，否则不会发生作用。当proxy-target-class为false时，@Cacheable和@CacheInvalidate等可以标记在接口上，也能发挥作用。
+
+​	在配置RedisCacheManager缓存管理器Bean时，需要配置两个构造函数：
+
+（1）redisTemplate模板Bean
+
+（2）cacheNames缓存名称
+
+​	但是，不同的spring-data-redis版本，构造函数不同，这里使用的是spring-data-redis的版本是1.4.3。对于2.0版本，在配置上发生了一些变化，但是原理大致是相同的，自行研究。
+
+> [CGLIB(Code Generation Library) 介绍与原理 | 菜鸟教程](https://www.runoob.com/w3cnote/cglibcode-generation-library-intro.html)
+
+#### 11.6.3 详解@CachePut和@Cacheable注解
+
+​	简单来说，这两个注解都可以增加缓存，但是有细微的区别：
+
+（1）@CachePut负责增加缓存。
+
+（2）@Cacheable负责查询缓存，如果没有查到，则将执行方法，并将方法的结果增加到缓存。
+
+​	下面我们呢将来详细介绍一下@CachePut和@Cacheable两个注解。
+
+​	在支持Spring Cache的环境下，如果@CachePut加在方法上，每次执行方法后，会将结果存入指定缓存的Key键上，如下所示：
+
+```java
+/**
+     * CRUD 之  新增/更新
+     * @param user 用户
+     */
+@CachePut(key = USER_UID_PREFIX + "T(String).valueOf(#user.uid)")
+@Override
+public User saveUser(final User user) {
+    //保存到数据库
+    //返回值，将保存到缓存
+    Logger.info("user : save to redis");
+    return user;
+}
+```
+
+​	大家知道，Redis缓存都是键-值对（Key-Value Pair）。Redis缓存中的Key键即为@CachePut注解配置的key属性值，一般是一个字符串，或者是结果为字符串的一个SpEL(StringEL)表达式。Redis缓存的Value值就是方法的返回结果，在经过序列化后所产生的序列化数据。
+
+​	一般来说，可以给@CachePut设置三个属性，Value、Key和Condition
+
+（1）value属性，指定Cache缓存的名字
+
+​	value值表示当前Key键被缓存在哪个Cache上，对应于Spring配置文件中的CacheManager缓存管理器的cacheNames属性中配置的某个Cache名称，如userCache。可以配置一个Cache，也可以是多个Cache，当配置多个Cache时，value值是一个数组，如value={userCache,otherCache1,otherCache2....}。
+
+​	<u>Value属性中的Cache名称，相当于缓存Key所属的命名空间。当使用@CacheEvict注解清除缓存时，可以通过合理配置清除指定Cache名称下的所有Key。</u>
+
+（2）key属性，指定Redis的Key属性值
+
+​	key属性，是用来指定Spring缓存方法的Key键，该属性支持SpringEL表达式。当没有指定该属性时，Spring将使用默认策略生成Key键。有关SpringEL表达式，稍后再详细介绍。
+
+（3）condition属性，指定缓存的条件
+
+​	并不是所有的函数结果都希望加入Redis缓存，可以通过condition属性来实现这一功能。condition属性值默认为空，表示将缓存所有的结果。可以通过SpringEL表达式设置，当表达式的值为true时，表示进行缓存处理；否则不进行缓存处理。如下示例程序表示只当user的id大于1000时，才会进行缓存，代码如下：
+
+```java
+@CachePut(key = "T(String).valueOf(#user.uid)", condition = "#user.uid>1000")
+public User cacheUserWithCondition(final User user){
+    // 保存到数据库
+    // 返回值将保存到缓存
+    Logger.info("user : save to redis");
+    return user;
+}
+```
+
+​	再来看一看@Cacheable注解，主要是查询缓存。
+
+​	<u>对于加上了@Cacheable注解的方法，Spring在每次执行前会检查Redis缓存中是否存在相同的Key键，如果存在，就不再直接该方法，而是直接从缓存中获取结果并返回；如果不存在，才会执行方法，并将返回结果存入Redis缓存中。</u>与@CachePut注解一样，@Cacheable也具备增加缓存的能力。
+
+​	@Cacheable与@CachePut不同之处的是：@Cacheable只有当Key键在Redis缓存不存在时，才会执行方法，将方法的结果缓存起来；如果Key键在Redis缓存中存在，则直接返回缓存结果。而加了@CachePut注解的方法，则缺少了检查的环节：<u>@CachePut在方法执行前不去进行缓存检查，无论之前是否有缓存，都会将新的执行结果加入到缓存中。</u>
+
+​	使用@Cacheable注解，一般也能指定三个属性：value、key和condition。三个属性的配置方法和@CachePut的三个属性的配置方法也是一样的，不再赘述。
+
+​	**@CachePut和@Cacheable注解也可以标注在类上，表示所有的方法都具缓存处理的功能。但是这种情况，用得比较少。**
+
+#### 11.6.4 详解@CacheEvict注解
+
+​	注解@CacheEvict主要用来清除缓存，可以指定的属性有value、key、condition、allEntries和beforeInvocation。其中value、key和condition的语义与@Cacheable对应的属性类似。value表示清除哪些Cache（对应Cache的名称）；key表示清除哪个Key键；condition 表示清除的条件。下面主要看一下两个属性allEnries和beforeInvocation。
+
+​	（1）allEntries属性：表示是否全部清空
+
+​	allEntries表示是否需要清除缓存中的所有Key键，是boolean类型，默认为false，表示不需要清除全部。当指定了allEntries为true时，表示清空value名称属性所指向的Cache中所有的缓存，这时候，所配置的key属性值已经没有意义，将被忽略。allEntries为true，用于需要全部清空某个Cache的场景，这比一个一个地清除Key键，效率更高。
+
+​	在下面的例子中，一次清理Cache名称为userCache中的所有Redis缓存，代码如下：
+
+```java
+@Service
+@CacheConfig(cacheNames = "userCache")
+public class UserServiceImplWithAnno implements UserService {
+    //... 省略其他内容
+
+    /**
+     * 删除userCache名字空间的全部缓存
+     */
+    @CacheEvict(value = "userCache", allEntries = true)
+    public void deleteAll() {
+
+    }
+}
+```
+
+​	（2）beforeInvocation属性：表示是否在方法执行前执行操作缓存
+
+​	一般情况下，是在对应方法成功执行之后，在触发清除操作。但是，如果方法执行过程中，有异常抛出，或者由于其他的原因，导致线程终止，就不会触发清除操作。所以，通过设置beforeInvocation属性来确保清理。
+
+​	beforeInvocation属性是boolean属性，当设置为true时，可以改变触发清除操作的次序，Spring会在执行注解的方法之前完成缓存的清理工作。
+
+​	<u>最后说明一下：注解@CacheEvict，除了加在方法上，还可以加在类上。当加在一个类上时，表示该类所有的方法都会触发缓存清除，一般情况下，很少这样使用。</u>
+
+#### 11.6.5 详解@Caching组合注解
+
+​		**@Caching注解，是一个缓存处理的组合注解。通过@Caching，可以一次指定多个Spring Cache注解的组合。**@Caching注解拥有三个属性：cacheable、put和evict。
+
+​		@Caching的组合能力，主要通过三个属性完成，具体如下：
+
+（1）cacheable属性：用于指定一个或者多个@Cacheable注解的组合，可以指定一个，也可以指定多个，如果指定多个@Cacheable注解，则直接使用数组的形式，即使用花括号，将多个@Cacheable注解包围起来。用于查询一个或者多个key的缓存，如果没有，则按照条件将结果加入缓存。
+
+（2）put属性：用于指定一个或者多个@CachePut注解的组合，可以指定一个，也可以指定多个，用于设置一个或多个key的缓存。如果指定多个@CachePut注解，则直接使用数组的形式。
+
+（3）evict属性：用于指定一个或者多个@CacheEvict注解的组合，可以指定一个，也可以指定多个，用于删除一个或多个key的缓存。如果指定多个@CacheEvict注解，则直接使用数组的形式。
+
+​	**在数据库中，往往需要进行外键的级联删除：在删除一个主键时，需要将一个主键的所有级联的外键，通通删除掉。如果外键都进行了缓存，在级联删除时，则可以使用@Caching注解，组合多个@CacheEvict注解，在删除主键缓存时，删除所有的外键缓存。**
+
+​	下面有一个简单的示例，模拟在更新一个用户时，需要删除与用户关联的多个缓存：用户信息、地址信息、用户的消息等等。
+
+​	使用@Caching注解，为各个方法加上一大票缓存注解，具体如下：
+
+```java
+/**
+ * 一个方法上，加上三类cache处理
+ */
+@Caching(cacheable = @Cacheable(key = "'userCache:'+ #uid"),
+         put = @CachePut(key = "'userCache:'+ #uid"),
+         evict = {
+             @CacheEvict(key = "'userCache:'+ #uid"),
+             @CacheEvict(key = "'addressCache:'+ #uid"),
+             @CacheEvict(key = "'messageCache:'+ #uid")
+         }
+        )
+public User updateRef(String uid) {
+    //....业务逻辑
+    return null;
+}
+```
+
+​	以上示例程序仅仅是一个组合注解的演示。@Caching有cacheable、put、evict三大类型属性，在实际使用时，可以进行类型的灵活裁剪。例如，实际的开发场景并不需要添加缓存，完全可以不给@Caching注解配置cacheable属性。
+
+​	至此，缓存注解已经介绍完毕。注解中需要用到SpEL表达式。
+
+### 11.7 详解SpringEL（SpEL）
+
+​	Spring表达式语言全称为"Spring Expression Language"，缩写为"SpEL"。SpEL提供一种强大、简洁的Spring Bean的动态操作表达式。**SpEL表达式可以在运行期间执行，表达式的值可以动态装配到Spring Bean属性或者构造函数中，表达式可以调用Java静态方法，可以访问Properties文件中的配置值等等，SpringEL能与Spring功能完美整合，给静态Java语言增加了动态功能**。
+
+​	大家知道，JSP页面的表达式使用${}进行声明。而SpringEL表达式使用#{}进行声明。SpEL支持如下的表达式：
+
+1. 基本表达式：字面量表达式、关系、逻辑与算数运算表达式、字符串连接及截取表达式、三目运算及Elivis表达式、正则表达式、括号优先级表达式。
+2. 类型表达式：类型访问、静态方法/属性访问、实例访问、实例属性值获取、实例属性导航、instanceof、变量定义及引用、赋值表达式、自定义函数等等。
+3. 集合相关表达式：内联列表、内联数组、集合，字典访问、列表、字典，数组修改、集合投影、集合选择；不支持多位内联数组初始化；不支持内联字典定义；
+4. 其他表达式：模板表达式。
+
+#### 11.7.1 SpEL运算符
+
+​	SpEL基本表达式是由各种基础运算符、常量、变量引用一起进行组合所构成的表达式。基础的运算符主要包括：算数运算符、关系运算符、逻辑运算符、字符串运算符、三目运算符、正则表达式匹配符、类型运算符、变量引用符等。
+
+1. 算数运算符：SpEL提供了以下算数运算符：如加（+）、减（-）、乘（*）、除（/）、求余（%）、幂（\^）、求余（MOD）和除（DIV）等算数运算符。MOD与"%"等价，DIV与"/"等价，并且**不区分大小写**。例如，#{1+2\*3/4-2}、#{2\^3}、#{100mod9}都是算数运算SpEL表达式。
+2. 关系运算符：SpEL提供了以下关系运算符：等于（==）、不等于（！=）、大于（>）、大于等于（>=）、小于（<）、小于等于（<=），区间（between）运算等等。例如：#{2>3}值为false。
+
+3. 逻辑运算符：SpEL提供了以下逻辑运算符：与（and）、或（or）、非（！或者NOT）。例如：#{2>3 or 4>3} 值为true。与Java逻辑运算不同，SqEL不支持"&&"和"||"。
+
+4. 字符串运算符：SpEL提供了以下字符串运算符：连接（+）和截取（\[\]）。例如：#{\'Hello\' + \'World!\'}的结果为"Hello World"。#{\'Hello World！\'[0]}截取第一个字符"H"，**目前只支持获取一个字符**。
+
+5. 三目运算符：SpEL提供了和Java一样的三目运算符："逻辑表达式 ？ 表达式1：表达式2"。例如：#{3>4？\'Hello\'：\'World\'}将返回’World‘。
+
+6. 正则表达式匹配符：SpEL提供了字符串的正则表达式匹配符：matches。例如：#{\'123\'matches\'\\d{3}\'}返回true。
+
+7. **类型访问运算符**：**SpEL提供了一个类型访问运算符："T（Type）"，"Type"表示某个Java类型，实际上对应于Java类java.lang.Class实例。**"Type"必须是类的全限定名（包括包名），但是核心包"java.lang"中的类除外。也就是说，<u>"java.lang"包下的类，可以不用指定完整的包名</u>。例如：T（String）表示访问的是java.lang.String类。#{T(String).valueOf(1)}，表示将整数1转换成字符串。
+
+8. **变量引用符：SpEL提供了一个上下文变量的引用符"#"，在表达式中使用"#variableName"引用上下文变量。**
+
+   <u>SpEL提供了一个变量定义的上下文接口——EvaluationContext，并且提供了标准的上下文实现——StandardEvaluationContext</u>。通过EvaluationContext接口的setVariable(variableName，value)方法，可以定义"上下文变量"，这些变量在表达式中采用"#variableName"的方式予以引用。**在创建变量上下文Context实例时，还可以在构造器参数中设置一个rootObject作为根，可以使用"#root"引用对象，也可以使用"#this"引用跟对象**。
+
+​	下面使用前面介绍的运算符定义几个SpEL表达式，示例程序如下：
+
+```java
+@Component
+@Data
+public class SpElBean {
+    /**
+     * 算术运算符
+     */
+    @Value("#{10+2*3/4-2}")
+    private int algDemoValue;
+
+
+    /**
+     * 字符串运算符
+     */
+    @Value("#{'Hello ' + 'World!'}")
+    private String stringConcatValue;
+
+    /**
+     * 类型运算符
+     */
+    @Value("#{ T(java.lang.Math).random() * 100.0 }")
+    private int randomInt;
+
+
+    /**
+     * 展示SpEl 上下文变量
+     */
+    public void showContextVar() {
+        ExpressionParser parser = new SpelExpressionParser();
+        EvaluationContext context = new StandardEvaluationContext();
+        context.setVariable("foo", "bar");
+        String foo = parser.parseExpression("#foo").getValue(context, String.class);
+        Logger.info(" foo:=", foo);
+
+        context = new StandardEvaluationContext("I am root");
+        String root = parser.parseExpression("#root").getValue(context, String.class);
+        Logger.info(" root:=", root);
+
+        String result3 = parser.parseExpression("#this").getValue(context, String.class);
+        Logger.info(" this:=", root);
+    }
+
+}
+```
+
+​	以上示例程序代码的测试用例如下：
+
+```java
+public class SpringRedisTester {
+    /**
+     * 测试   SpEl 表达式
+     */
+    @Test
+    public void testSpElBean() {
+        ApplicationContext ac = new ClassPathXmlApplicationContext("classpath:spring-redis.xml");
+        SpElBean spElBean =
+            (SpElBean) ac.getBean("spElBean");
+
+        /**
+         * 演示算术运算符
+         */
+        Logger.info(" spElBean.getAlgDemoValue():="
+                    , spElBean.getAlgDemoValue());
+
+        /**
+         * 演示 字符串运算符
+         */
+        Logger.info(" spElBean.getStringConcatValue():="
+                    , spElBean.getStringConcatValue());
+
+        /**
+         * 演示 类型运算符
+         */
+        Logger.info(" spElBean.getRandomInt():="
+                    , spElBean.getRandomInt());
+
+        /**
+         * 展示SpEl 上下文变量
+         */
+        spElBean.showContextVar();
+
+    }
+}
+```
+
+​	**一般来说，SpringEL表达式使用#{}进行声明。但是，不是所有注解中的SpringEL表达式都需要#{}进行声明。例如，@Value注解中的SpringEL表达式需要#{}进行声明；而ExpressionParser.parseExpression实例方法中的SpringEL表达式不需要#{}进行声明；另外，@CachePut和@Cacheable等缓存注解中的key属性值的SpringEL表达式，也不需要#{}进行声明。**
+
+#### 11.7.2 缓存注解中的SpringEL表达式
+
+​	对应于加在方法上的缓存注解（如@CachePut和@Cacheable），spring提供了专门的上下文类CacheEvaluationContext，这个类继承于基础的方法注解上下文MethodBasedEvaluationContext，而这个方法则继承于StandardEvaluationContext（大家熟悉的标准注解上下文）。
+
+​	CacheEvaluationContext的构造器如下：
+
+```java
+class CacheEvaluationContext extends MethodBasedEvaluationContext {
+    // 构造器
+    CacheEvaluationContext(Object rootObject,//根对象
+                          Method method,//当前方法
+                          Object[] arguments,//当前方法的参数
+                          ParameterNameDiscoverer parameterNameDiscoverer)
+    {
+        super(rootObject, method, arguments, parameterNameDiscoverera);
+    }
+    //...省略其他方法
+}
+```
+
+​	在配置缓存注解（如@CachePut）的Key时，可以用到CacheEvaluationContext的rootObject根对象。通过该根对象，可以获取到如表所示的属性。
+
+| 属性名称    | 说明                                                         | 示例                                                 |
+| ----------- | ------------------------------------------------------------ | ---------------------------------------------------- |
+| methodName  | 当前被调用的方法名                                           | 获取当前被调用的方法名：#root.methodName             |
+| Method      | 当前被调用的方法                                             | 获取当前被调用的方法：#root.method.name              |
+| Target      | 当前被调用的目标对象                                         | 当前被调用的目标对象：#root.target                   |
+| targetClass | 当前按被调用的目标对象类                                     | 当前被调用的目标对象类型：#root.targetClass          |
+| Args        | 当前被调用的方法的参数列表                                   | 当前被调用的方法的第0个参数：#root.args[0]           |
+| Caches      | 当前方法调用使用的缓存之列表，如：@Cacheable(value={"cache1"，"cache2"}),则有两个cache | 当前被调用方法的第0个cache名称：#root.caches[0].name |
+
+​	**在配置key属性时，如果用到SpEL表达式root对象的属性，也可以将"#root"省略，因为Spring默认使用的就是root对象的属性**。如：
+
+```java
+@Cacheable(value={"cache1"，"cache2"}, key="caches[1].name")
+public User find(User user){
+    // ...省略：查询数据库的代码
+}
+```
+
+​	在SpEL表达式中，处理访问SpEL表达式root对象，还可以访问当前方法的参数以及它们的属性，访问方法的参数有以下两种形式：
+
+（1）**方式一：使用"#p 参数index"形式访问方法的参数**
+
+​	展示使用"#p 参数 index"形式访问arguments参数的示例程序：
+
+```java
+//访问第0个参数，参数id
+@Cacheable(value="users", key="#p0")
+public User find(String id){
+    // ...省略：查询数据库的代码
+}
+```
+
+​	下面的示例程序中访问参数的属性，这里是参数user的id属性，具体如下：
+
+```java
+//访问参数user的id属性
+@Cacheable(value="users", key="#p0.id")
+public User find(User user){
+    // ...省略：查询数据库的代码
+}
+```
+
+（2）**方式二：使用"#参数名"形式访问方法的参数**
+
+​	可以使用"#参数名"的形式直接访问方法的参数。例如，使用"#user.id"的形式访问参数user的id属性，代码如下：
+
+```java
+//访问参数user的id属性
+@Cacheable(value="users", key="#user.id")
+public User find(User user){
+    // ...省略：查询数据库的代码
+}
+```
+
+​	通过对比可以看出，<u>在访问方法的参数以及参数的属性时，使用方式二"#参数名"的形式，比方式一"#p 参数index"的形式更加直观</u>。
+
+### 11.8 本章小结
+
+​	本章介绍了Redis的安装、客户端的使用、Jedis编程。对于如何使用spring-data-redis操作缓存进行了详细的介绍。同时介绍了如何使用Spring的缓存注解，节省编程使用缓存的编码工作量。
+
+​	本章重点内容是缓存操作的一个全面的知识基础，对大家的实际开发，有指导作用，尤其目前的市面上，还没有一本书具体介绍spring-data-redis和缓存注解的使用。然而，由于篇幅的原因，本章的内容没有涉及到Redis的高端架构和开发。包括如何搭建高可用、高性能的Redis集群，以及如何在Java中操作高可用、高性能的Redis集群等等。后续"疯狂创客圈"将结合本书，提供一些更加高端的教学视频，将这方面的内容呈现给大家，尽可能为大家的开发、面试等尽一份绵薄之力。
+
+## 第12章 亿级高并发IM架构的开发实践
