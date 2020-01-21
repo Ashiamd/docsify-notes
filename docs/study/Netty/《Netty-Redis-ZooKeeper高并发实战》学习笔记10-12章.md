@@ -263,7 +263,7 @@ bin目录 > ./zkCli.cmd -server 127.0.0.1:2181
 
 ​	通过ZNode树，ZooKeeper提供了一个多层级的树形命名空间。**与文件的目录系统中的目录有所不同的是，这些ZNode节点可以保存二进制有效负载数据（Payload）。而文件系统目录树中的目录，只能存放路径信息，而不能存放负载数据。**
 
-​	<u>ZooKeeper为了保证**高吞吐和低延迟**，整个树形的目录结构全部都放在内存中</u>。与硬盘和其他的外存设备相比，计算机的内存比较有限，使得ZooKeeper的目录结构不能用于存放大量的数据。ZooKeeper官方的要求是，**每个节点存放的有效负载数据（Payload）的上限仅为1MB**。
+​	<u>ZooKeeper为了保证**高吞吐和低延迟**，整个树形的目录结构全部都放在**内存**中</u>。与硬盘和其他的外存设备相比，计算机的内存比较有限，使得ZooKeeper的目录结构不能用于存放大量的数据。ZooKeeper官方的要求是，**每个节点存放的有效负载数据（Payload）的上限仅为1MB**。
 
 #### 10.2.2 zkCli客户端命令清单
 
@@ -4605,3 +4605,1259 @@ public User find(User user){
 ​	本章重点内容是缓存操作的一个全面的知识基础，对大家的实际开发，有指导作用，尤其目前的市面上，还没有一本书具体介绍spring-data-redis和缓存注解的使用。然而，由于篇幅的原因，本章的内容没有涉及到Redis的高端架构和开发。包括如何搭建高可用、高性能的Redis集群，以及如何在Java中操作高可用、高性能的Redis集群等等。后续"疯狂创客圈"将结合本书，提供一些更加高端的教学视频，将这方面的内容呈现给大家，尽可能为大家的开发、面试等尽一份绵薄之力。
 
 ## 第12章 亿级高并发IM架构的开发实践
+
+​	本章结合分布式缓存Redis、分布式协调ZooKeeper、高性能通信Netty，从架构的维度，设计一套亿级IM通信的高并发应用方案。并从学习和实战的角度出发，将联合"疯狂创客圈"社群的高性能发烧友们，一起持续迭代出一个支持亿级流量的IM项目，暂时命名为"CrazyIM"。
+
+### 12.1 如何支持亿级流量的高并发IM架构的理论基础
+
+​	支持亿级流量的高并发IM通信，需要用到Netty集群、ZooKeeper集群、Redis集群、MySql集群、SpringCloud WEB服务集群、RocketMQ消息队列集群等等。
+
+#### 12.1.1 亿级流量的系统架构的开发实践
+
+​	支持亿级流量的高并发IM通信的几大集群中，最为核心的是Netty集群、ZooKeeper集群、Redis集群，它们是主要实现亿级流量通信功能不可缺少的集群。其次是SpringCloud WEB 服务集群、MySql集群，完成海量用户的登录和存储，以及离线消息的存储。最后是RocketMQ消息队列集群，用于离线消息的保存。
+
+​	主要的集群介绍如下：
+
+（1）Netty服务集群
+
+​	主要用来负责维持和客户端的TCP连接，完成消息的发送和转发。
+
+（2）ZooKeeper集群
+
+​	负责Netty Server集群的管理，包括注册、路由、负载均衡。集群IP注册和节点ID分配。主要在基于ZooKeeper集群提供底层服务。
+
+（3）Redis集群
+
+​	负责用户、用户绑定关系、用户群组关系、用户远程会话等等数据的缓存。缓存其他的配置数据或者临时数据，加快读取速度。
+
+（4）MySql集群
+
+​	保存用户、群组、离线消息等。
+
+（5）RocketMQ消息队列集群
+
+​	主要是将优先级不高的操作，从高并发模式转成低并发的模式。例如，可以将离线消息发向消息队列，然后通过低并发的异步任务保存到数据库。
+
+​	上面的架构是"疯狂创客圈"高性能社群的"CrazyIM"学习项目的架构，并且只是涉及核心功能，并不是实践开发亿级流量系统架构的全部。从迭代的角度来看，还有很多的完善的空间，"疯狂创客圈"高性能社群将持续对"CrazyIM"高性能项目的架构和实现，进行不断的更新和迭代，所以最终的架构图和实现，以最后的版本为准。
+
+​	理论上来说，以上集群具备完全的扩展能力，进行合理的横向扩展和局部的优化，支持亿级流量是没有任何问题的。为什么这么说呢？
+
+​	单体的Netty服务器，远远不止支持10万个并发，在CPU、内存还不错的情况下，如果配置得当。甚至能撑到100万级别的并发。通过合理的高并发架构，能够让系统动态扩展到成百上千的Netty节点，支持亿级流量是没有任何问题的。
+
+​	至于如何通过配置，让单体的Netty服务器支撑100万高并发，请查询疯狂创客圈社群的文章《Netty100万级高并发服务器配置》
+
+#### 12.1.2 高并发架构的技术选型
+
+​	明确了架构之后，接下来就是平台的计数选型，大致如下：
+
+（1）核心
+
+Netty4.x+spring4.x+ZooKeeper3.x+redis3.x+rocketMQ3.x+mysql5.x+mongo3.x
+
+（2）短连接服务：spring cloud
+
+基于RESTful短链接的分布式微服务架构，完成用户在线管理、单点登录系统
+
+（3）长连接服务：Netty
+
+主要用来负责维护和客户端的TCP连接，完成消息的发送和转发
+
+（4）消息队列：rocketMQ高速消息队列
+
+（5）数据库：mysql+mongodb
+
+**mysql用来存储结构化数据，如用户数据。mongodb很重要，用来存储非结构化的离线消息。**
+
+（6）序列化协议：Protobuf+JSON
+
+**Protobuf是最高效的二进制序列化协议，用于长连接。JSON是最紧凑的文本协议，用于短链接。**
+
+#### 12.1.3 详解IM消息的序列化协议选型
+
+​	<u>IM系统的客户端和服务器节点之间，需要按照同一种数据序列化协议进行数据的交换。简而言之：就是规定网络中的字节流数据，如何与应用程序需要的结构化数据相互转换。</u>
+
+​	序列化协议主要的工作有两部分，结构化数据到二进制数据的序列化和反序列化。**序列化协议的类型：文本协议和二进制协议。**
+
+​	常见的文本协议包括XML和JSON。文本协议序列化之后，可读性好，便于调试，方便扩展。但文本协议的缺点在于解析效率一般，有很多的冗余数据，这一点主要体现在XML格式上。
+
+​	常见的二进制协议包括Protobuf、Thrift，这些协议都自带了数据压缩，编解码效率高，同时兼具扩展性。二进制协议的优势很明显，但是劣势也非常的突出。二进制协议和文本协议相反，序列化之后的二进制协议报文数据，基本上没有什么可读性，很显然，这点不利于大家开发和调试。
+
+​	因此，在协议的选择上，给大家的建议是：
+
++ **对于并发度不高的IM系统，建议使用文本协议，例如JSON。**
++ **对于并发度非常之高，QPS在千万级、亿级的通信系统，尽量选择二进制的协议。**
+
+​	"疯狂创客圈"社群持续迭代的"CrazyIM"项目，序列化协议选择的是Protobuf二进制协议，以便于容易达到对亿级流量的支持。
+
+#### 12.1.4 详解长连接和短连接
+
+​	<u>什么是长连接呢？客户端向服务器发起连接，服务器接受客户端的连接，双方建立连接。客户端与服务器完成一次读写之后，它们的连接并不会主动关闭，后续的读写操作会继续使用这个连接。</u>
+
+​	大家知道，TCP协议的连接过程比较烦琐，建立连接是需要三次握手的，而释放连接则需要4次握手，所以说每个连接的建立都需要消耗资源和时间。
+
+​	在高并发的IM系统中，客户端和服务器之间，需要大量的发送通信的消息，如果每次发送消息，都去建立连接，客户端的和服务器的连接建立和断开的开销是非常巨大的。所以，IM消息的发送，肯定是需要长连接的。
+
+​	<u>什么是短连接呢？客户端向服务器发起连接，服务器接收客户端连接，在三次握手之后，双方建立连接。客户端与服务器完成一次读写，发送数据包并得到返回的结果之后，通过客户端和服务器的四次握手断开连接。</u>
+
+​	短连接适用于数据请求频度较低的应用场景。例如网站的浏览和普通的Web请求。短连接的优点是，管理起来比较简单，存在的连接都是有用的连接，不需要额外的控制手段。
+
+​	在高并发的IM系统中，客户端和服务器之间，除了消息的通信外，还需要用户的登录与认证、好友的更新与获取等等一些低频的请求，这些都使用短连接来实现。
+
+​	综上所述，<u>在这个高并发IM系统中，存在两类的服务器。一类短连接服务器和一个长连接服务器。</u>
+
+​	**<u>短连接服务器也叫做Web服务器</u>，主要功能是实现用户的登录鉴权和拉取好友、群组、数据档案等相对低频的请求操作**。
+
+​	**<u>长连接服务器也叫做IM即时通信服务器</u>，主要作用就是用来和客户端建立并维护长连接，实现消息的传递和即时的转发**。并且，**分布式网络非常复杂，长连接管理是重中之重，需要考虑到连接的保活、连接检测、自动重连等方方面面的工作**。
+
+​	<u>短连接Web服务器和长连接IM服务器之间，是相互配合的。在分布式集群的环境下，用户首先通过短连接登录Web服务器。Web服务器在完成用户的账号/密码验证，返回uid和token时，还需通过一定策略，获取目标IM服务器的IP地址和端口号列表，并返回给客户端。客户端开始连接IM服务器，连接成功后，发送鉴权请求，鉴权成功则授权的长连接正式建立。</u>
+
+​	如果用户规模庞大，无论是短连接Web服务器，还是长连接IM服务器，都需要进行横向的扩展，都需要扩展到上十台、百台、甚至上千台服务器。只有这样，才能有良好性能的用户体验。因此，需要引入一个新的角色，短连接Web网关（WebGate）。
+
+​	**WebGate短连接网关的职责，首先是代理大量的Web服务器，从而无感知地实现短连接的高并发。在客户端登录时和进行其他短连接时，不直接连接Web服务器，而是连接Web网关**。<u>围绕Web网关和Web高并发的相关技术，目前非常成熟，可以使用SpringCloud或者Dubbo等分布式Web技术，也很容易扩展。</u>
+
+​	<u>除此之外，大量的IM服务器，又如何协同和管理呢？基于ZooKeeper或者其他的分布式协调中间件，可以非常方便、轻松地实现一个IM服务器集群的管理，包括而且不限于命名服务、服务注册、服务发现、负载均衡等管理。</u>
+
+​	当用户登录成功的时候，WebGate短连接网关可以通过负载均衡技术，从ZooKeeper集群中，找出一个可用的IM服务器的地址，返回给用户，让用户建立长连接。
+
+### 12.2 分布式IM的命名服务的实践案例
+
+​	前面提到，一个高并发系统是由很多的节点所组成，而且节点的数量是不断动态变化的。在一个即时消息（IM）通信系统中，从0到1到N，用户量可能会越来越多，或者说由于某些活动影响，会不断出现流量洪流。这时需要动态加入大量的节点。另外，由于服务器或者网络的原因，一些节点主动离开了集群。如何为大量的动态节点命名呢？最好的方法是使用分布式命名服务，按照一定的规则，为动态上线和下线的工作节点命名。
+
+​	疯狂创客圈的高并发"CrazyIM"实战学习项目，基于ZooKeeper构建分布式命名服务，为每一个IM工作服务器节点动态命名。
+
+#### 12.2.1 IM节点的POJO类
+
+​	首先定义一个POJO类，保存IM Worker节点的基础信息如Netty服务IP、Netty服务端口，以及Netty的服务连接数。具体如下：
+
+```java
+@Data
+public class ImNode implements Comparable<ImNode>, Serializable {
+
+    private static final long serialVersionUID = -499010884211304846L;
+
+
+    //worker 的Id,zookeeper负责生成
+    private long id;
+
+    //Netty 服务 的连接数
+    private Integer balance = 0;
+
+    //Netty 服务 IP
+    private String host;
+
+    //Netty 服务 端口
+    private Integer port;
+
+    public ImNode() {
+    }
+
+    public ImNode(String host, Integer port) {
+        this.host = host;
+        this.port = port;
+    }
+
+
+    @Override
+    public String toString() {
+        return "ImNode{" +
+            "id='" + id + '\'' +
+            "host='" + host + '\'' +
+            ", port='" + port + '\'' +
+            ",balance=" + balance +
+            '}';
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        ImNode node = (ImNode) o;
+        //        return id == node.id &&
+        return Objects.equals(host, node.host) &&
+            Objects.equals(port, node.port);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id, host, port);
+    }
+
+    /**
+     * 用来按照负载升序排列
+     */
+    public int compareTo(ImNode o) {
+        int weight1 = this.balance;
+        int weight2 = o.balance;
+        if (weight1 > weight2) {
+            return 1;
+        } else if (weight1 < weight2) {
+            return -1;
+        }
+        return 0;
+    }
+
+
+    public void incrementBalance() {
+        balance++;
+    }
+
+    public void decrementBalance() {
+        balance--;
+    }
+}
+```
+
+​	这个POJO类的IP、端口、balance负载和每一个节点的Netty服务器相关。而id属性，则利用ZooKeeper中的ZNode子节点可以顺序编号的性质，由ZooKeeper生成。
+
+#### 12.2.2 IM节点的ImWorker类
+
+​	节点的命名服务的思路是，所有的工作节点都在ZooKeeper的同一个父节点下，创建顺序节点。然后从返回的临时路径上，取得属于自己的那个后缀的编号。主要的代码如下：
+
+```java
+public class ImWorker {
+
+    //Zk curator 客户端
+    private CuratorFramework client = null;
+
+    //保存当前Znode节点的路径，创建后返回
+    private String pathRegistered = null;
+
+    private ImNode localNode = null;
+
+    private static ImWorker singleInstance = null;
+
+    //取得单例
+    public static ImWorker getInst() {
+
+        if (null == singleInstance) {
+
+            singleInstance = new ImWorker();
+            singleInstance.client =
+                ZKclient.instance.getClient();
+            singleInstance.localNode = new ImNode();
+        }
+        return singleInstance;
+    }
+
+    private ImWorker() {
+
+    }
+
+    // 在zookeeper中创建临时节点
+    public void init() {
+
+        createParentIfNeeded(ServerConstants.MANAGE_PATH);
+
+        // 创建一个 ZNode 节点
+        // 节点的 payload 为当前worker 实例
+
+        try {
+            byte[] payload = JsonUtil.object2JsonBytes(localNode);
+
+            pathRegistered = client.create()
+                .creatingParentsIfNeeded()
+                .withMode(CreateMode.EPHEMERAL_SEQUENTIAL)
+                .forPath(ServerConstants.PATH_PREFIX, payload);
+
+            //为node 设置id
+            localNode.setId(getId());
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+    }
+
+    public void setLocalNode(String ip, int port) {
+        localNode.setHost(ip);
+        localNode.setPort(port);
+    }
+
+    /**
+     * 取得IM 节点编号
+     *
+     * @return 编号
+     */
+    public long getId() {
+
+        return getIdByPath(pathRegistered);
+
+    }
+
+    /**
+     * 取得IM 节点编号
+     *
+     * @return 编号
+   * @param path  路径
+     */
+    public long getIdByPath(String path) {
+        String sid = null;
+        if (null == path) {
+            throw new RuntimeException("节点路径有误");
+        }
+        int index = path.lastIndexOf(ServerConstants.PATH_PREFIX);
+        if (index >= 0) {
+            index += ServerConstants.PATH_PREFIX.length();
+            sid = index <= path.length() ? path.substring(index) : null;
+        }
+
+        if (null == sid) {
+            throw new RuntimeException("节点ID获取失败");
+        }
+
+        return Long.parseLong(sid);
+
+    }
+
+
+    /**
+     * 增加负载，表示有用户登录成功
+     *
+     * @return 成功状态
+     */
+    public boolean incBalance() {
+        if (null == localNode) {
+            throw new RuntimeException("还没有设置Node 节点");
+        }
+        // 增加负载：增加负载，并写回zookeeper
+        while (true) {
+            try {
+                localNode.incrementBalance();
+                byte[] payload = JsonUtil.object2JsonBytes(localNode);
+                client.setData().forPath(pathRegistered, payload);
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+    }
+
+    /**
+     * 减少负载，表示有用户下线，写回zookeeper
+     *
+     * @return 成功状态
+     */
+    public boolean decrBalance() {
+        if (null == localNode) {
+            throw new RuntimeException("还没有设置Node 节点");
+        }
+        while (true) {
+            try {
+
+                localNode.decrementBalance();
+
+                byte[] payload = JsonUtil.object2JsonBytes(localNode);
+                client.setData().forPath(pathRegistered, payload);
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+    }
+
+    /**
+     * 创建父节点
+     *
+     * @param managePath 父节点路径
+     */
+    private void createParentIfNeeded(String managePath) {
+
+        try {
+            Stat stat = client.checkExists().forPath(managePath);
+            if (null == stat) {
+                client.create()
+                    .creatingParentsIfNeeded()
+                    .withProtection()
+                    .withMode(CreateMode.PERSISTENT)
+                    .forPath(managePath);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+    }
+
+
+    /**
+     * 返回本地的节点信息
+     *
+     * @return 本地的节点信息
+     */
+    public ImNode getLocalNodeInfo() {
+        return localNode;
+    }
+
+}
+```
+
+​	注意，这里有三个ZNode相关的路径：
+
+（1）MANAGE_PATH
+
+（2）PATH_PREFIX
+
+（3）pathRegistered
+
+​	第一个MANAGE_PATH是一个常量，值为"/im/nodes"，<u>为所有Worker临时工作节点的父亲节点的路径</u>，在创建Worker节点之前，首先要检查一下，父亲ZNode节点是否存在，否则的话，先创建父亲节点。<u>"/im/nodes"父亲节点的创建方式是，持久化节点，而不是临时节点</u>。ps：(10.3.5提过，临时节点下面不能创建子节点)
+
+​	第二路径PATH_PREFIX是所有临时节点的前缀，值为MANAGE_PATH + "/seq-"，即"/im/nodes/seq-"。通常可以是在工作路径后，加上一个"/"分隔符，也可以是在工作路径的后面，加上"/"分隔符和其他的前缀字符，如"/im/nodes/id-"、"/im/nodes/seq-"等等。
+
+​	第三路径pathRegistered是临时节点创建成功之后，返回的完整路径。例如：/im/nodes/seq-0000000000，/im/nodes/seq-0000000001等等。后面的编号是顺序的。
+
+​	创建节点成功后，截取后边的编号数字，放在POJO对象的id属性中供后边使用：
+
+```java
+//为node设置id
+node.setId(getId());
+```
+
+### 12.3 Worker集群的负载均衡之实践案例
+
+​	**理论上来说，负载均衡是一种手段，用来把对某种资源的访问分摊给不同的服务器，从而减轻单点的压力。在高并发的IM系统中，负载均衡就是需要将IM长连接分摊给不同的Netty服务器，防止单个Netty服务器负载过大，而导致其不可用**。
+
+​	前面讲到，当用户登录成功的时候，短连接网关WebGate需要返回给用户一个可用的Netty服务器地址，让用户来建立Netty长连接。而每台Netty工作服务器在启动时，都会去ZooKeeper的"/im/nodes"节点下注册临时节点。
+
+​	因此，<u>短连接网关WebGate可以在用户登录成功之后，去"/im/nodes"节点下面取得所有可用的Netty服务器列表，并通过一定的负载均衡算法计算得出一台Netty工作服务器，并且返回给客户端</u>。
+
+#### 12.3.1 ImLoadBalance负载均衡器
+
+​	短连接网关WebGate如何获得最佳的Netty服务器呢？需要通过查询ZooKeeper集群来实现。定义一个负载均衡器ImLoadBalance类，将计算最佳Netty服务器的算法，放在负载均衡器中，ImLoadBalance的代码，大致如下：
+
+```java
+@Data
+@Slf4j
+@Service
+public class ImLoadBalance {
+
+    //Zk客户端
+    private CuratorFramework client = null;
+    //工作节点的路径
+    private String managerPath;
+
+    public ImLoadBalance() {
+        this.client = ZKclient.instance.getClient();
+        //        managerPath=ServerConstants.MANAGE_PATH+"/";
+        managerPath=ServerConstants.MANAGE_PATH;
+    }
+
+    /**
+     * 获取负载最小的IM节点
+     *
+     * @return
+     */
+    public ImNode getBestWorker() {
+        List<ImNode> workers = getWorkers();
+
+        log.info("全部节点如下：");
+        workers.stream().forEach(node -> {
+            log.info("节点信息：{}", JsonUtil.pojoToJson(node));
+        });
+        ImNode best = balance(workers);
+
+        return best;
+    }
+
+    /**
+     * 按照负载排序
+     *
+     * @param items 所有的节点
+     * @return 负载最小的IM节点
+     */
+    protected ImNode balance(List<ImNode> items) {
+        if (items.size() > 0) {
+            // 根据balance值由小到大排序
+            Collections.sort(items);
+
+            // 返回balance值最小的那个
+            ImNode node = items.get(0);
+
+            log.info("最佳的节点为：{}", JsonUtil.pojoToJson(node));
+            return node;
+        } else {
+            return null;
+        }
+    }
+
+
+    /**
+     * 从zookeeper中拿到所有IM节点
+     */
+    protected List<ImNode> getWorkers() {
+
+        List<ImNode> workers = new ArrayList<ImNode>();
+
+        List<String> children = null;
+        try {
+            children = client.getChildren().forPath(managerPath);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+
+        for (String child : children) {
+            log.info("child:", child);
+            byte[] payload = null;
+            try {
+                payload = client.getData().forPath(managerPath+"/"+child);
+
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            if (null == payload) {
+                continue;
+            }
+            ImNode worker = JsonUtil.jsonBytes2Object(payload, ImNode.class);
+            workers.add(worker);
+        }
+        return workers;
+
+    }
+    /**
+     * 从zookeeper中删除所有IM节点
+     */
+    public void removeWorkers() {
+
+
+        try {
+            client.delete().deletingChildrenIfNeeded().forPath(managerPath);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+
+    }
+
+}
+```
+
+​	短连接网关WebGate会调用getBestWorker()方法，取得最佳的IM服务器。而在这个方法中，有两个很重要的方法，一是取得所有的IM服务器列表，注意是带负载的；二是通过负载信息，计算最小负载的服务器。
+
+​	代码中的getWorkers()方法，调用了Cutator的getChildren()方法获取子节点，取得"/im/nodes"目录下的所有的临时节点。然后，调用getData方法取得每一个子节点的二进制负载。最后，将负载信息转成POJOImNode对象。
+
+​	取到了工作节点的POJO列表之后，在balance()方法中，通过一个简单的排序算法，计算出balance值最小的ImNode对象。
+
+#### 12.3.2 与WebGate的整合
+
+​	<u>短连接网关WebGate登录成功之后，需要通过负载均衡器ImLoadBalance类，查询到最佳的Netty服务器，并且返回给客户端</u>，代码如下：
+
+```java
+//@EnableAutoConfiguration
+@RestController
+@RequestMapping(value = "/user", produces = MediaType.APPLICATION_JSON_UTF8_VALUE)
+@Api("User 相关的api")
+public class UserAction extends BaseController {
+    @Resource
+    private UserService userService;
+    @Resource
+    private ImLoadBalance imLoadBalance;
+
+    /**
+     * Web短连接登录
+     *
+     * @param username 用户名
+     * @param password 命名
+     * @return 登录结果
+     */
+    @ApiOperation(value = "登录", notes = "根据用户信息登录")
+    @RequestMapping(value = "/login/{username}/{password}",method = RequestMethod.GET)
+    public String loginAction(
+        @PathVariable("username") String username,
+        @PathVariable("password") String password) {
+        UserPO user = new UserPO();
+        user.setUserName(username);
+        user.setPassWord(password);
+        user.setUserId(user.getUserName());
+
+        //        User loginUser = userService.login(user);
+
+        LoginBack back = new LoginBack();
+        /**
+         * 取得最佳的Netty服务器
+         */
+        ImNode bestWorker = imLoadBalance.getBestWorker();
+        back.setImNode(bestWorker);
+        UserDTO userDTO = new UserDTO();
+        BeanUtils.copyProperties(user, userDTO);
+        back.setUserDTO(userDTO);
+        back.setToken(user.getUserId().toString());
+        String r = JsonUtil.pojoToJson(back);
+        return r;
+    }
+
+
+    /**
+     * 从zookeeper中删除所有IM节点
+     *
+     * @return 删除结果
+     */
+    @ApiOperation(value = "删除节点", notes = "从zookeeper中删除所有IM节点")
+    @RequestMapping(value = "/removeWorkers",method = RequestMethod.GET)
+    public String removeWorkers(){
+        imLoadBalance.removeWorkers();
+        return "已经删除";
+    }
+
+}
+```
+
+> [领域驱动设计系列文章（2）——浅析VO、DTO、DO、PO的概念、区别和用处](https://www.cnblogs.com/qixuejia/p/4390086.html)
+
+### 12.4 即时通讯消息的路由和转发的实践案例
+
+​	**如果连接在不同的Netty Worker工作站点的客户端之间，需要相互进行消息的发送，那么就需要在不同的Worker节点之间进行路由和转发。Worker节点的路由是指，根据消息需要转发的目标用户，找到用户的连接所在的Worker节点。由于节点和节点之间都有可能需要相互转发， 因此节点之间的连接是一种网状结构。每一个节点都需要具备路由的能力。**
+
+#### 12.4.1 IM路由器WorkerRouter(代码中改为PeerManager)
+
+​	为每一个Worker节点增加一个IM路由器类，名为PeerManager。<u>为了能够转发到所有的节点，一是要订阅到集群中所有的在线Netty服务器，并且保存起来，二是要其他的Netty服务器建立一个长连接，用于转发消息。</u>
+
+​	PeerManager初始化代码，节选如下：
+
+```java
+@Slf4j
+public class PeerManager {
+    //Zk客户端
+    private CuratorFramework client = null;
+
+    private String pathRegistered = null;
+    private ImNode node = null;
+
+	//唯一实例模式
+    private static PeerManager singleInstance = null;
+    //监听路径
+    private static final String path = ServerConstants.MANAGE_PATH;
+	//节点的容器
+    private ConcurrentHashMap<Long, PeerSender> peerMap =
+        new ConcurrentHashMap<>();
+
+
+    public static PeerManager getInst() {
+        if (null == singleInstance) {
+            singleInstance = new PeerManager();
+            singleInstance.client = ZKclient.instance.getClient();
+        }
+        return singleInstance;
+    }
+
+    private PeerManager() {
+
+    }
+
+
+    /**
+     * 初始化节点管理
+     */
+    public void init() {
+        try {
+
+            //订阅节点的增加和删除事件
+
+            PathChildrenCache childrenCache = new PathChildrenCache(client, path, true);
+            PathChildrenCacheListener childrenCacheListener = new PathChildrenCacheListener() {
+
+                @Override
+                public void childEvent(CuratorFramework client,
+                                       PathChildrenCacheEvent event) throws Exception {
+                    log.info("开始监听其他的ImWorker子节点:-----");
+                    ChildData data = event.getData();
+                    switch (event.getType()) {
+                        case CHILD_ADDED:
+                            log.info("CHILD_ADDED : " + data.getPath() + "  数据:" + data.getData());
+                            processNodeAdded(data);
+                            break;
+                        case CHILD_REMOVED:
+                            log.info("CHILD_REMOVED : " + data.getPath() + "  数据:" + data.getData());
+                            processNodeRemoved(data);
+                            break;
+                        case CHILD_UPDATED:
+                            log.info("CHILD_UPDATED : " + data.getPath() + "  数据:" + new String(data.getData()));
+                            break;
+                        default:
+                            log.debug("[PathChildrenCache]节点数据为空, path={}", data == null ? "null" : data.getPath());
+                            break;
+                    }
+
+                }
+
+            };
+
+            childrenCache.getListenable().addListener(childrenCacheListener);
+            System.out.println("Register zk watcher successfully!");
+            childrenCache.start(PathChildrenCache.StartMode.POST_INITIALIZED_EVENT);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+    //...省略其他方法
+}
+```
+
+​	在上一小节中，我们已经知道，一个节点上线时，首先要通过命名服务加入到Netty集群中。在上面的代码中，PeerManager路由器使用Curator的PathChildrenCache缓存订阅了节点的CHILD_ADDED子节点添加消息。当一个新的Netty节点加入时，调用processNodeAdded(data)方法在本地保存一份节点的POJO消息，并且建立一个消息中转的Netty客户连接。
+
+​	处理节点添加的方法processNodeAdded(data)比较重要，代码如下：
+
+```java
+/**
+ * 节点增加的处理
+ * @param data 新节点
+ */
+private void processNodeAdded(ChildData data) {
+    byte[] payload = data.getData();
+    ImNode n = ObjectUtil.JsonBytes2Object(payload, ImNode.class);
+
+    long id = ImWorker.getInst().getIdByPath(data.getPath());
+    n.setId(id);
+
+    log.info("[TreeCache]节点更新端口, path={}, data={}",
+             data.getPath(), JsonUtil.pojoToJson(n));
+
+    if(n.equals(getLocalNode()))
+    {
+        log.info("[TreeCache]本地节点, path={}, data={}",
+                 data.getPath(), JsonUtil.pojoToJson(n));
+        return;
+    }
+    PeerSender peerSender = peerMap.get(n.getId());
+    if (null != peerSender && peerSender.getNode().equals(n)) {
+
+        log.info("[TreeCache]节点重复增加, path={}, data={}",
+                 data.getPath(), JsonUtil.pojoToJson(n));
+        return;
+    }
+    if (null != peerSender) {
+        //关闭老的连接
+        peerSender.stopConnecting();
+    }
+    peerSender = new PeerSender(n);
+    peerSender.doConnect();
+
+    peerMap.put(n.getId(), peerSender);
+}
+```
+
+​	PeerManager路由器有一个容器成员peerMap，用于封装和保存所有的在线节点。当一个节点添加时，PeerManager取到添加的ZNode路径和负载。ZNode路径中所有新节点的ID，ZNode的payload负载中的有新节点的Netty服务的IP地址和端口号，这三个信息共同够成新节点的POJO消息——ImNode节点信息。PeerManager在检查完和确定本地不存在该节点的准发器后，添加一个转发器peerSender，将新节点的转发器保存在自己的容器中。
+
+​	<u>这里有一个问题，为什么在PeerManager路由器中不简单地保存新节点的POJO信息呢？因为PeerManager路由器的主要作用，除了路由节点，还需要进行消息的转发，所以PeerManager路由器保存的是转发器PeerSender，而添加的远程Netty节点的POJO信息被封装在转发器中</u>。
+
+#### 12.4.2 IM转发器WorkerReSender(代码中改为PeerSender)
+
+​	IM转发器PeerSender封装了远程节点的IP地址、端口号以及ID。另外，PeerSender还维持了一个到远程节点的长连接。也就是说，<u>它是一个Netty的NIO客户端，维护了一个远程节点的Netty Channel通道，通过这个通道将消息转发给远程的节点</u>。
+
+​	IM转发器PeerSender的核心代码如下：
+
+```java
+@Slf4j
+@Data
+public class PeerSender {
+	//连接远程节点的Netty通道
+    private Channel channel;
+	//连接远程节点的POJO信息
+    private ImNode node;
+    /**
+     * 唯一标记
+     */
+    private boolean connectFlag = false;
+    private UserDTO user;
+
+    GenericFutureListener<ChannelFuture> closeListener = (ChannelFuture f) ->
+    {
+        log.info("分布式连接已经断开……{}", node.toString());
+        channel = null;
+        connectFlag = false;
+    };
+
+    private GenericFutureListener<ChannelFuture> connectedListener = (ChannelFuture f) ->
+    {
+        final EventLoop eventLoop = f.channel().eventLoop();
+        if (!f.isSuccess()) {
+            log.info("连接失败!在10s之后准备尝试重连!");
+            eventLoop.schedule(() -> PeerSender.this.doConnect(), 10, TimeUnit.SECONDS);
+
+            connectFlag = false;
+        } else {
+            connectFlag = true;
+
+            log.info(new Date() + "分布式节点连接成功:{}", node.toString());
+
+            channel = f.channel();
+            channel.closeFuture().addListener(closeListener);
+
+            /**
+             * 发送链接成功的通知
+             */
+            Notification<ImNode> notification=new Notification<>(ImWorker.getInst().getLocalNodeInfo());
+            notification.setType(Notification.CONNECT_FINISHED);
+            String json= JsonUtil.pojoToJson(notification);
+            ProtoMsg.Message pkg = NotificationMsgBuilder.buildNotification(json);
+            writeAndFlush(pkg);
+        }
+    };
+
+
+    private Bootstrap b;
+    private EventLoopGroup g;
+
+    public PeerSender(ImNode n) {
+        this.node = n;
+
+        /**
+         * 客户端的是Bootstrap，服务端的则是 ServerBootstrap。
+         * 都是AbstractBootstrap的子类。
+         **/
+
+        b = new Bootstrap();
+        /**
+         * 通过nio方式来接收连接和处理连接
+         */
+
+        g = new NioEventLoopGroup();
+
+
+    }
+
+    /**
+     * 重连
+     */
+    public void doConnect() {
+
+        // 服务器ip地址
+        String host = node.getHost();
+        // 服务器端口
+        int port =node.getPort();
+
+        try {
+            if (b != null && b.group() == null) {
+                b.group(g);
+                b.channel(NioSocketChannel.class);
+                b.option(ChannelOption.SO_KEEPALIVE, true);
+                b.option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
+                b.remoteAddress(host, port);
+
+                // 设置通道初始化
+                b.handler(
+                    new ChannelInitializer<SocketChannel>() {
+                        public void initChannel(SocketChannel ch) {
+                            ch.pipeline().addLast("decoder", new ProtobufDecoder());
+                            ch.pipeline().addLast("encoder", new ProtobufEncoder());
+                            ch.pipeline().addLast("imNodeHeartBeatClientHandler",new ImNodeHeartBeatClientHandler());
+                            ch.pipeline().addLast("exceptionHandler",new ImNodeExceptionHandler());
+                        }
+                    }
+                );
+                log.info(new Date() + "开始连接分布式节点:{}", node.toString());
+
+                ChannelFuture f = b.connect();
+                f.addListener(connectedListener);
+
+
+                // 阻塞
+                //                 f.channel().closeFuture().sync();
+            } else if (b.group() != null) {
+                log.info(new Date() + "再一次开始连接分布式节点", node.toString());
+                ChannelFuture f = b.connect();
+                f.addListener(connectedListener);
+            }
+        } catch (Exception e) {
+            log.info("客户端连接失败!" + e.getMessage());
+        }
+
+    }
+
+    public void stopConnecting() {
+        g.shutdownGracefully();
+        connectFlag = false;
+    }
+
+    /**
+ 	 * 消息转发的方法
+ 	 * @param pkg 聊天信息
+ 	 */
+    public void writeAndFlush(Object pkg) {
+        if (connectFlag == false) {
+            log.error("分布式节点未连接:", node.toString());
+            return;
+        }
+        channel.writeAndFlush(pkg);
+    }
+}
+```
+
+​	在IM转发器中，主体是与Netty相关的代码，比较简单。严格来说，IM转发器是一个Netty客户端，它比Netty服务器的代码简单一点。
+
+​	转发器有一个消息转发的方法，直接通过Netty Channel通道将消息发送到远程节点，代码如下：
+
+```java
+/**
+ * 消息转发的方法
+ * @param pkg 聊天信息
+ */
+public void writeAndFlush(Object pkg) {
+    if (connectFlag == false) {
+        log.error("分布式节点未连接:", node.toString());
+        return;
+    }
+    channel.writeAndFlush(pkg);
+}
+```
+
+### 12.5 Feign短连接RESTful调用
+
+​	<u>一般来说，短连接的服务接口都是基于应用层HTTP协议的HTTP API或者RESTful API实现的，通过JSON文本格式返回数据</u>。如何在Java服务器端调用其他节点的HTTP API或者RESTful API呢？
+
+​	至少有以下几种方式：
+
++ JDK原生的URLConnection
++ **Apache的HttpClient/HttpComponents**
++ Netty的异步HttpClient
++ Spring的RestTemplate
+
+​	目前用的最多的，基本上是第二种，这也是在单体服务时代最为成熟和稳定的方式，也是效率最高的短连接方式。
+
+​	首先做一个解释，什么是RESTful API。**REST的全称是Representational State Transfer（表征状态转移，也有译成表述性状态转移），它是一种API接口的风格而不是标准，只是提供了一组调用的原则和约束条件。也就是说，在短连接服务的领域，它算是一种特殊格式的HTTP API**。
+
+​	**言归正传，如果同一个HTTP API/RESTful API接口，倘若不止一个短连接服务器提供服务，而是有多个节点提供服务，那么简单使用HttpClient就无能为力了。**
+
+​	HttpClient/HttpComponents调用不能根据接口的负载或者其他的条件，去判断哪一个接口应该调用，哪一个接口不应该调用。解决这个问题的方式如何呢？
+
+​	<u>可以使用Feign来调用多个服务器的同一个接口。Feign不仅可以进行同接口多服务器的负载均衡，一旦使用了Feign作为HTTP API的客户端，调用远程的HTTP接口就会变得像调用本地方法一样简单</u>。
+
+​	Feign是Netflix开发的一个声明式、模板化的HTTP客户端，Feign的目标是帮助Java工程师更快捷、优雅地调用HTTP API/RESTful API。Netflix Feign目前改名为[OpenFeign](https://github.com/OpenFeign/feign)。Feign在Java应用中负责处理与远程Web服务的请求响应，最大限度地降低了编程的复杂性。另外，Feign被无缝集成到了SpringCloud微服务框架，使用Feign后，可以非常方便地在项目中使用SpringCloud微服务技术。如果项目使用了SpringCloud技术，同样可以更方便地使用Feign。即便项目中没有使用SpringCloud，使用Feign也非常简单。总之，它是Java中调用Web服务的客户端历器。
+
+​	下面就看看在单独使用Feign的应用场景下是怎么调用远程的HTTP服务的。
+
+​	引入Feign依赖的jar包到pom.xml
+
+```java
+<!-- https://mvnrepository.com/artifact/io.github.openfeign/feign-core -->
+<dependency>
+    <groupId>io.github.openfeign</groupId>
+    <artifactId>feign-core</artifactId>
+    <version>10.7.3</version>
+</dependency>
+<!-- https://mvnrepository.com/artifact/io.github.openfeign/feign-gson -->
+<dependency>
+    <groupId>io.github.openfeign</groupId>
+    <artifactId>feign-gson</artifactId>
+    <version>10.7.3</version>
+</dependency>
+```
+
+​	接下来就可以开始使用Feign来调用远程的HTTP API了。
+
+#### 12.5.1 短连接API的接口准备
+
+​	前面讲到，在高并发的IM系统中，用户的登陆与认证、好友的更新与获取等等一些低频的请求都使用短连接来实现。
+
+​	作为演示，这里仅仅举例两个短连接的API接口：
+
+（1）http://localhost:8080/user/{userid}
+
+​	这个接口的功能是获取用户信息，是一个典型的RESTful类型的接口。{userid}是一个占位符，在调用的时候需要替换成用户id。例如，如果用户id为1，Feign最终生成的实际调用的链接为：http://localhost:8080/user/1
+
+（2）http://localhost:8080/login/{username}/{password}
+
+​	这个接口实现的功能是用户登录的认证。这里有两个占位符，占位符{username}表示用户名称，占位符{password}表示用户密码。例如，如果用户名称为zhangsan，密码为123，那么Feign最终生成的实际调用的链接为：http://localhost:8080/login/zhangsan/123
+
+​	上面的接口很简单，仅仅是为了演示，不能用于生产场景。这些API的开发和实现可以利用Spring MVC/JSP Servlet等常见的WEB技术。
+
+#### 12.5.2 声明远程接口的本地代理
+
+​	如何通过Feign技术来调用上面的这些HTTP API呢？
+
+​	第一步，需要创建一个本地的API的代理接口。具体如下：
+
+```java
+/**
+ * 远程接口的本地代理
+ * Created by 尼恩 at 疯狂创客圈
+ */
+public interface UserAction {
+
+    /**
+     * 登录代理
+     * @param username  用户名
+     * @param password  密码
+     * @return  登录结果
+     */
+    @RequestLine("GET /user/login/{username}/{password}")
+    public String loginAction(
+        @Param("username") String username,
+        @Param("password") String password);
+
+    /**
+     * 获取用户信息代理
+     * @param userid  用户id
+     * @return  用户信息
+     */
+    @RequestLine("GET /{userid}")
+    public String getById(@Param("userid") Integer userid);
+
+}
+```
+
+​	在代理接口中，为每一个远程HTTP API定义一个本地代理方法。
+
+​	<u>如何将方法对应到远程接口呢？在方法的前面加上一个@RequestLine注解，注明远程HTTP API的请求地址</u>。这个地址不需要从域名和端口开始，只需要从URI的根目录"/"开始即可。例如，如果远程HTTP API的URL为：http://localhost:8080/user/{userid}，@RequestLine声明的值只需要配成/user/{userid}即可。
+
+​		如何给接口传递参数值呢？在方法的参数前面加上一个@Param注解即可。@Param内容为HTTP链接中参数占位符的名称。绑定好之后，实际这个Java接口中的参数值会替换到@Param注解的占位符。例如，由于在getById的唯一参数userid的@Param注解中用到的占位符是userid，那么通过调用userAction.getById(100)，即userid的值为100，就会用来替换掉请求链接http://localhost:8080/user/{userid}中的占位符userid，最终得到的请求连接为：http://localhost:8080/user/100。
+
+#### 12.5.3 远程API的本地调用
+
+​	在完成远程API的本地代理接口的定义之后，接下来的工作就是调用本地代理，这个工作也是非常简单的。
+
+​	还是以疯狂创客圈"CrazyIM"实战项目中获取用户信息和用户登录这两个API的代理接口的调用为例。实践案例的代码如下：
+
+```java
+public class LoginActionTest {
+    /**
+     * 测试登录
+     */
+    @Test
+    public void testLogin() {
+
+        UserAction action = Feign.builder()
+            //                .decoder(new GsonDecoder())
+            .decoder(new StringDecoder())
+            .target(UserAction.class, "http://localhost:8080/user");
+
+        String s = action.loginAction("zhangsan", "zhangsan");
+
+        LoginBack back= JsonUtil.jsonToPojo(s,LoginBack.class);
+        System.out.println("s = " + s);
+
+    }
+
+    /**
+     * 测试登录
+     */
+    @Test
+    public void testLogin2() {
+
+        LoginBack back= WebOperator.login("lisi","lisi");
+        System.out.println("s = " + "");
+
+    }
+
+
+    /**
+     * 测试获取用户信息
+     */
+    @Test
+    public void testGetById() {
+
+        UserAction action = Feign.builder()
+            //                .decoder(new GsonDecoder())
+            .decoder(new StringDecoder())
+            .target(UserAction.class, "http://localhost:8080/user");
+
+        String s = action.getById(2);
+        System.out.println("s = " + s);
+
+    }
+}
+```
+
+​	**最为核心的就一步，构建一个远程代理接口的本地实例**。调用Feign.builder()构造器模式的方法，带上一票配置方法的链式调用。主要的链式调用的配置方法介绍如下：
+
+（1）options配置方法
+
+​	options方法指定连接超时的时长以及响应超时的时长。
+
+（2）retryer配置方法
+
+​	retryer方法主要是指定重试策略。
+
+（3）decoder配置方法
+
+​	decoder方法指定对象解码方式，这里用的是基于String字符串的解码方式。如果需要使用Jackson的解码方式，需要在pom.xml中添加Jackson的依赖。
+
+（4）client配置方法
+
+​	<u>此方法用于底层的请求客户端。Feign默认使用Java的HttpURLConnection作为HTTP请求客户端</u>。Feign也可以直接使用现有的公共第三方HTTP客户端类库，如Apache HttpClient，OKHttp，来编写Java客户端以访问HTTP服务。
+
+​	集成Apache HttpComponentsHttpClient的例子为：
+
+```java
+Feign.builder().client(new ApacheHttpClient())
+```
+
+​	集成OKHttp的例子为：
+
+```java
+Feign.builder().client(new OkHttpClient()).target(...)
+```
+
+​	继承Ribbon的例子为：
+
+```java
+Feign.builder().client(RibbonClient.create()).target(...)
+```
+
+​	**Feign集成了Ribbon后，利用Ribbon维护了API服务列表信息，并且通过轮询实现了客户端的负载均衡**。而与Ribbon不同的是，Feign只需要定义服务绑定接口且以声明的方法，可以优雅而简单地实现服务调用。
+
+（5）target方法
+
+​	是构造器模式最后面的方法，通过它可以最终得到本地代理实例。它有两个参数，第一个是本地的代理接口的class类型，第二个是远程URL的根目录地址。第一个代理接口类很重要，最终Feign.builder()构造器返回的本地代理实例类型就这个接口的类型。代理接口类中每一个接口方法前用@RequestLine声明的URI链接，最终都会加上target方法的第二个参数的根目录值，来形成最终的URL。
+
+​	**target方法是最后面的一个方法，也就是说它的后面不能再链接调用其他的配置方法**。
+
+​	主要的构造器方法就介绍这些，具体的使用细节和其他方法看官网说明文档。
+
+​	使用配置方法完成配置之后，再通过Feign.builder()构造完成代理实例，调用远程API，这就和调用Java函数一样简单了。
+
+​	<u>总之，如果是独立调用HTTP服务，那么尽量使用Feign。原因：一是很简单；二是如果采用HttpClient或其他相对较"重"的框架，对初学者来说编码量与学习曲线都会是一个挑战；三是既可以独立使用Feign，又方便后续Spring Cloud微服务架构的集成，那么使用Feign代替HttpClient等其他方式，何乐而不为呢？</u>
+
+### 12.6 分布式的在线用户统计的实践案例
+
+​	顾名思义，计数器是用来计数的。在分布式环境中，常规的计数器是不能使用的，再次介绍ZooKeeper实现的分布式计数器。**利用ZooKeeper可以实现一个集群共享的计数器，只要使用相同的path就可以得到最新的计数器值，这是由ZooKeeper的一致性保证的**。
+
+#### 12.6.1 Curator的分布式计数器
+
+​	Curator有两个计数器，一个是用int类型来计数（SharedCount），一个用long类型来计数（DistributedAtomicLong）。下面使用DistributedAtomicLong来实现高并发IM系统中的在线用户统计，代码如下：
+
+```java
+/**
+ * 分布式计数器
+ * create by 尼恩 @ 疯狂创客圈
+ **/
+@Data
+public class OnlineCounter {
+
+    private static final String PATH =
+        ServerConstants.COUNTER_PATH;
+
+    //Zk客户端
+    private CuratorFramework client = null;
+
+    //单例模式
+    private static OnlineCounter singleInstance = null;
+
+    DistributedAtomicLong distributedAtomicLong = null;
+    private Long curValue;
+
+    public static OnlineCounter getInst() {
+        if (null == singleInstance) {
+            singleInstance = new OnlineCounter();
+            singleInstance.client = ZKclient.instance.getClient();
+            singleInstance.init();
+        }
+        return singleInstance;
+    }
+
+    private void init() {
+
+        /**
+         *  分布式计数器，失败时重试10，每次间隔30毫秒
+         */
+
+        distributedAtomicLong = new DistributedAtomicLong(client, PATH, new RetryNTimes(10, 30));
+
+    }
+
+    private OnlineCounter() {
+
+    }
+
+    /**
+     * 增加计数
+     */
+    public boolean increment() {
+        boolean result = false;
+        AtomicValue<Long> val = null;
+        try {
+            val = distributedAtomicLong.increment();
+            result = val.succeeded();
+            System.out.println("old cnt: " + val.preValue()
+                               + "   new cnt : " + val.postValue()
+                               + "  result:" + val.succeeded());
+            curValue = val.postValue();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return result;
+    }
+
+    /**
+     * 减少计数
+     */
+    public boolean decrement() {
+        boolean result = false;
+        AtomicValue<Long> val = null;
+        try {
+            val = distributedAtomicLong.decrement();
+            result = val.succeeded();
+            System.out.println("old cnt: " + val.preValue()
+                               + "   new cnt : " + val.postValue()
+                               + "  result:" + val.succeeded());
+            curValue = val.postValue();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return result;
+
+    }
+
+}
+```
+
+#### 12.6.2 用户上线和下线的统计
+
+​	当用户上线的时候，调用increase方法分布式地增加一次计数：
+
+```java
+/**
+ * 增加 远程的 session
+ */
+public void addRemoteSession(RemoteSession remoteSession) {
+    String sessionId = remoteSession.getSessionId();
+    if (localSessionMap.containsKey(sessionId)) {
+        log.error("通知有误，通知到了会话所在的节点");
+        return;
+    }
+
+    remoteSessionMap.put(sessionId, remoteSession);
+    //删除本地保存的 远程session
+    String uid = remoteSession.getUserId();
+    UserSessions sessions = sessionsLocalCache.get(uid);
+    if (null == sessions) {
+        sessions = new UserSessions(uid);
+        sessionsLocalCache.put(uid, sessions);
+    }
+
+    sessions.addSession(sessionId, remoteSession.getImNode());
+}
+```
+
+​	当用户下线地时候，调用decrease方法分布式地减少一次计数：
+
+```java
+/**
+ * 删除 远程的 session
+ */
+public void removeRemoteSession(String sessionId) {
+    if (localSessionMap.containsKey(sessionId)) {
+        log.error("通知有误，通知到了会话所在的节点");
+        return;
+    }
+
+    RemoteSession s = remoteSessionMap.get(sessionId);
+    remoteSessionMap.remove(sessionId);
+
+    //删除本地保存的 远程session
+    String uid = s.getUserId();
+    UserSessions sessions = sessionsLocalCache.get(uid);
+    sessions.removeSession(sessionId);
+
+}
+```
+
+### 12.7 本章小结
+
+​	本章介绍了支亿级流量地高并发IM架构以及高并发架构下的技术选型。然后，集中介绍了Netty集群所涉及的分布式IM的命名服务、Worker集群的负载均衡、即时通信消息的路由和转发、分布式的在线用户统计等技术实现。
+
+​	本章的示例代码来自"疯狂创客圈"社群的高并发学习项目"CrazyIM"，由于项目不断地迭代，因此在看书的时候，建议参考最新版本的代码。不过，细节如何迭代，设计思路基本都是一致的。
+
+​	本章的目的仅仅是抛砖引玉。寥寥数千字，无法彻底地将一个支持亿级流量的IM项目的架构及其实现剖析得非常清楚，后续"疯狂创客圈"会结合本书将内容更加全面呈现给大家。
