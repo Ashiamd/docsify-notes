@@ -1,6 +1,6 @@
-# SpringCloud最新教程IDEA版【狂神说Java系列】
+# SpringCloud最新教程IDEA版【狂神说Java系列】学习笔记
 
-> 视频链接 https://www.bilibili.com/video/av76020761?p=1
+> 视频链接 https://www.bilibili.com/video/av76020761
 
 ## 1. 这个阶段该如何学习
 
@@ -592,3 +592,87 @@ SpringCloud中使用Ribbon时，Ribbon的默认算法即轮询算法
 
 ## 16. Hystrix：Dashboard流监控
 
+> [解决Hystrix Dashboard 一直是Loading ...的情况](https://www.cnblogs.com/hejianjun/p/8670693.html)
+>
+> [hystrix-dashboard](https://blog.csdn.net/Leon_Jinhai_Sun/article/details/100633310)
+>
+> [hystrixDashboard(服务监控)](https://www.cnblogs.com/yufeng218/p/11489175.html)
+
+## 17. Zuul：路由网关
+
+### 概述
+
+#### 什么是Zuul？
+
+​	Zuul包含了对请求的路由和过滤两个最主要的功能：
+
+​	其中路由功能负责将外部请求转发到具体的微服务实例上,是实现外部访问统一入口的基础,而过滤器功能则负责对请求的处理过程进行干预,是实现请求校验,服务聚合等功能的基础。Zuul和Eureka进行整合,将Zuul自身注册为 Eureka服务治理下的应用,同时从Eureka中获得其他微服务的消息,也即以后的访问微服务都是通过Zuul跳转后获得。
+
+​	注意:Zuul服务最终还是会注册进Eureka
+
+​	提供:代理+路由+过滤三大功能!
+
+#### Zuul能干嘛？
+
++ 路由
++ 过滤
+
+>  [官方文档](https://github.com/Netflix/zuul)
+>
+> [ZUUL-API网关](https://blog.csdn.net/qq_27384769/article/details/82991261)
+>
+> [zuul路由网关](https://www.jianshu.com/p/ca76a4f396d1)
+
+## 18. Config：Git环境搭建
+
+### SpringCloud config分布式配置
+
+#### 概述
+
+##### 分布式系统面临的--配置文件的问题
+
+​	微服务意味着要将单体应用中的业务拆分成一个个子服务,每个服务的粒度相对较小,因此系统中会出现大量的服务,由于每个服务都需要必要的配置信息才能运行,所以一套集中式的,动态的配置管理设施是必不可少的。Spring Cloud提供了ConfigServer来解決这个问题,我们每一个微服务自己帯着一个application.yml,那上百的的配置文件要修改起来,岂不是要发疯!
+
+##### 什么是SpringCloud config分布式配置中心
+
+​	Spring Cloud Config为微服务架构中的微服务提供集中化的外部配置支持,配置服务器为**各个不同微服务应用**的所有环节提供了一个**中心化的外部配置**。
+
+​	Spring Cloud Config分为**服务端**和**客户端**两部分
+
+​	服务端也称为分布式配置中心,它是一个独立的微服务应用,用来连接配置服务器并为客户端提供获取配置信息,加密,解密信息等访问接口。
+
+​	客户端则是通过指定的配置中心来管理应用资源,以及与业务相关的配置内容,并在启动的时候从配置中心获取和加载配置信息。配置服务器默认采用git来存储配置信息,这样就有助于对环境配置进行版本管理。并且可以通过git客户端工具来方便的管理和访问配置内容。
+
+##### SpringCloud config分布式配置中心能干嘛
+
++ 集中管理配置文件
++ 不同环境,不同配置,动态化的配置更新,分环境部署,比如 /dev /test /prod /beta /release
++ 运行期间动态调整配置,不再需要在每个服务部署的机器上编写配置文件,服务会向配置中心统一拉取配置自己的信息。
++ 当配置发生变动时,服务不需要重启,即可感知到配置的变化,并应用新的配置
++ 将配置信息以REST接口的形式暴露
+
+##### Spring Cloud config分布式配置中心与github整合
+
+​	由于Spring Cloud Config默认使用Git来存储配置文件(也有其他方式,比如支持SVN和本地文件),但是最推荐的还是Git,而且使用的是http / https访可的形式
+
+## 19. Config：服务端链接Git配置
+
+## 20. Config：客户端连接服务端访问远程
+
++ bootstrap.yml 系统级配置
++ application.yml 用户级配置
+
+配置与代码分离，解耦
+
+## 21. Config：远程配置实战测试
+
+## 22. SpringCloud总结与展望
+
+未来发展方向：
+
++ 框架源码
++ 设计模式
++ 新知识探索
++ Java新特性
++ Netty / MyCat / Http
++ JVM

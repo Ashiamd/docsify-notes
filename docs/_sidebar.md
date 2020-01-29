@@ -13,6 +13,9 @@
       + [Python数据处理](/study/Python/python数据处理)
     * **SpringBoot**
       + [SpringBoot](/study/SpringBoot/SpringBoot蚂蚁课堂)
+    * **SpringCloud**
+      + [SpringCloud最新教程IDEA版【狂神说Java系列】学习笔记](/study/SpringCloud/SpringCloud最新教程IDEA版【狂神说Java系列】-学习笔记)
+      + [SpringCloud视频教程-蚂蚁课堂-学习笔记](/study/SpringCloud/SpringCloud视频教程-蚂蚁课堂-学习笔记)
     * **Netty**
       + [Netty学习](/study/Netty/Netty学习)
       + [《Netty-Redis-ZooKeeper高并发实战》学习笔记1-6章](/study/Netty/《Netty-Redis-ZooKeeper高并发实战》学习笔记1-6章)
