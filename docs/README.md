@@ -10,6 +10,7 @@
 * [Vue](/study/Vue)
 * [Python](/study/Python)
 * [SpringBoot](/study/SpringBoot)
+* [SpringCloud](/study/SpringCloud)
 * [Netty](/study/Netty)
 * [Linux](/study/Linux)
 * [计算机网络](/study/计算机网络)
