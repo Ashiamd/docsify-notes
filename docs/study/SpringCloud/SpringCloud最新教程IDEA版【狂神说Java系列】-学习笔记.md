@@ -668,7 +668,30 @@ SpringCloud中使用Ribbon时，Ribbon的默认算法即轮询算法
 
 ## 22. SpringCloud总结与展望
 
-未来发展方向：
+### SpringCloud：
+
++ 知识点
++ 看看面试题
++ 微服务和微服务架构
++ Euerka AP
+  + 集群配置
+  + 对比ZooKeeper CP
++ Ribbon （IRule负载均衡决策）
++ Feign 接口、社区要求、更加面向接口编程
++ Hystrix
+  + 熔断
+  + 降级
+  + dashboard
++ Zuul
++ Spring Cloud Config （C-S-GIT）
+
+### 开发流程套路
+
+1. 导入依赖
+2. 编写配置
+3. @EnableXXX等
+
+### 未来发展方向：
 
 + 框架源码
 + 设计模式
@@ -676,3 +699,7 @@ SpringCloud中使用Ribbon时，Ribbon的默认算法即轮询算法
 + Java新特性
 + Netty / MyCat / Http
 + JVM
+
+> [Spring Cloud Alibaba 实战(四) - NACOS 服务发现与注册中心](https://blog.csdn.net/qq_33589510/article/details/102020934)
+>
+> [redis集群架构（含面试题解析）](https://www.cnblogs.com/wanghaokun/p/10366689.html)
