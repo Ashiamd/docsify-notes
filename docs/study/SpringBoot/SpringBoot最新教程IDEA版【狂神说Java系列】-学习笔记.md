@@ -2196,5 +2196,194 @@ public class ScheduledService {
 
 ## 55. 什么是RPC
 
+HTTP	SpringCloud（生态）
 
+RPC两个核心模块：通讯，序列化
+
+序列化：数据传输需要转换
+
+Netty：这个我之前看了本书还不错，github我有对应的笔记
+
+Dubbo：18年重启，Dubbo 3.x RPC
+
+## 56.  Dubbo及ZooKeeper安装
+
+![img](https://dubbo.apache.org/img/architecture.png)
+
+前台 中台 后台
+
+> [漫画：什么是中台？](https://mp.weixin.qq.com/s/rF7_xJBq4NJP6CmkW3HPpQ)
+>
+> [前台、中台和后台](https://www.douban.com/note/722859684/)
+
+## 57. Dubbo-admin安装测试
+
+zookeeper：注册中心
+
+dubbo-admin：是一个监控管理后台~查看我们注册了哪些服务，哪些服务被消费了~
+
+Dubbo：jar包~
+
+## 58. 服务注册发现实战
+
++ provider-server
+
+dubbo也有@Service注解，容易和Spring的搞混，所以建议如果使用Spring的@Service时就改用@Component
+
+```properties
+server.port=8001
+# 服务应用名字
+dubbo.application.name=provider-server
+# 注册中心地址
+dubbo.registry.address=zookeeper://127.0.0.1:2181
+# 哪些服务要被注册
+dubbo.scan.base-packages=com.ash.service
+```
+
+```java
+//zookeeper：服务注册与发现
+
+@Service // 可以被扫描到，在项目自己启动就自动注册到注册中心
+@Component // 使用了Dubbo后尽量不要用Service注解
+public class TicketServiceImpl implements TicketService {
+
+    @Override
+    public String getTicket() {
+        return "我假装拿一张票";
+    }
+
+}
+```
+
++ consumer-server
+
+```properties
+server.port=8002
+# 服务应用名字
+dubbo.application.name=consumer-server
+# 注册中心地址，可以在任何的电脑上
+dubbo.registry.address=zookeeper://127.0.0.1:2181
+## 哪些服务要被注册 ,消费者就不用注册了
+#dubbo.scan.base-packages=com.ash.service
+```
+
+```java
+public interface TicketService {
+
+    public String getTicket();
+
+}//必须和服务提供者有相同的全限定类名，因为dubbo注册时就是按照全限制类名注册的，如果消费者和提供者的该类的全限定类名不同，则消费者无法正常调用到提供者的服务
+```
+
+```java
+@Service // 放到容器中~
+public class UserService {
+
+    //想拿到provider-server提供的类，要去注册中心拿到服务
+    @Reference //引用， Pom坐标，可以定义路径相同的接口名
+    TicketService ticketService;
+
+    public void buyTicket(){
+        String ticket = ticketService.getTicket();
+        System.out.println("在注册中心拿到=>"+ticket);
+    }
+}
+```
+
+回顾一下步骤：
+
+1. 提供者提供服务
+   1. 导入依赖
+   2. 配置注册中心的地址，以及服务发现名，和要扫描的包~
+      1. 在想要被注册的服务上面~增加一个注解~@Service，这个是指dubbo的，不是spring注册到容器的@Service
+2. 消费者如何消费
+   1. 导入依赖
+   2. 配置注册中心的地址，配置自己的服务名~
+   3. 从远程注入服务~@Reference
+
+## 59. 聊聊现在和未来
+
+回顾以前，架构
+
+```none
+三层架构 + MVC
+	架构 ---> 解耦
+	
+开发框架
+	Spring
+        IOC	AOP
+        	IOC:控制反转
+        		约泡：
+        			泡温泉、泡茶...，泡友
+        			附近的人，打招呼。加微信，聊天，天天聊，... ---> 约泡
+        		浴场(容器):温泉，茶庄，泡友
+        			直接进温泉，就有人和你在一起了！
+                原来我们都是自己一步步操作，现在交给容器了！我们需要什么就去拿就可以了
+            AOP:切面(本质，动态代理)
+            	为了解决什么？不影响业务本来的情况下，实现动态增加功能，大量应用在日志、事务...等等方面
+           	
+            
+        Spring是一个轻量级的Java开源框架,容器
+        目的:解决企业开发的复杂性问题
+        Spring是春天,觉得它是春天,也十分复杂,配置文件!
+	
+	SpringBoot
+		SpringBoot并不是新东西，就是Spring的升级版！
+		新一代JavaEE的开发标准，开箱即用！->拿过来就可以用！
+		它自动帮我们配置了非常多的东西，我们拿来即用！
+		特性：约定大于配置！
+		
+随着公司体系越来越大，用户越来越多！
+
+微服务架构 ---> 新架构
+	模块化，功能化！
+	用户、支付、签到、娱乐......
+	人越来越多，一台服务器解决不了;再增加服务器!	横向
+	假设A服务器占用98%资源，B服务器只占用了10%。 ---负载均衡
+	
+	将原来的整体项目，分成模块化，用户就是一个单独的项目，签到也是一个单独的项目，项目和项目之间需要通信，如何通信？
+	用户非常多，而签到十分少！给用户多一点服务器，给签到少一点服务器！
+	
+微服务架构问题？
+	分布式架构会遇到的四个核心问题？
+	1. 这么多服务，客户端该如何去访问？
+	2. 这么多服务，服务之间如何进行通信？
+	3. 这么多服务，如何治理？
+	4. 服务挂了，怎么办？
+
+解决方案：
+	SpringCloud，是一套生态，就是来解决以上分布式架构的4个问题
+	想使用SpringCloud，必须掌握SpringBoot，因为SpringCloud是基于SpringBoot的
+	
+	1.Spring Cloud Netflix，出来了一套解决方案!一站式解决方案，我们都可以去这里拿？
+		Api网关，zuul组件
+		Feign --> HttpClient --> HTTP的通信方式，同步并阻塞
+		服务注册与发现，Eureka
+		熔断机制，Hystrix
+		
+		2018年年底，NetFlix宣布无限期停止维护。
+	2. Apache Dubboo zookeeper,第二套解决系统
+		API:没有！要么借助第三方组件，要么自己实现
+		Dubbo是一个高性能的基于Java实现的RPC通信框架! 2.6.x
+		服务注册与发现，zookeeper：动物管理员(Hadoop,Hive)
+		没有：借助了Hystrix
+		
+		不完善，Dubbo
+		
+	3. SpringCloud Alibaba 一站式解决方案
+	
+目前，又提出了一种方案；
+	服务网络：下一代微服务标准，Server Mesh
+	代表解决方案：istio (未来可能需要掌握)
+	
+万变不离其宗，一通百通!
+	1. API网关，服务路由
+	2. HTTP，RPC框架，异步调用
+	3. 服务注册与发现，高可用
+	4. 熔断机制，服务降级
+	
+如果，基于这四个问题，开发一套解决方案，也叫SpringCloud!
+
+为社么要解决这个问题？本质：网络是不可靠的！
+```
 
