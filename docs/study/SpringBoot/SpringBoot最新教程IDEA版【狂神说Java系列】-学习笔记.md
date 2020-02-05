@@ -1777,6 +1777,8 @@ public class UserRealm extends AuthorizingRealm {
 
 ## 46. 鸡汤分析开源项目
 
+简言之，学习某个东西到一定入门情况，可以考虑看看用到相同技术点的优秀开源项目进行学习
+
 ## 47. Swagger介绍及集成
 
 ### 学习目标
@@ -1802,6 +1804,10 @@ Vue + SpringBoot
 + 前后端相对独立，松耦合
 + 前后但甚至可以部署在不同的服务器上
 
+产生一个问题：
+
++ 前后端集成联调，前端人员和后端人员无法做到"即时协商，尽早解决"，最终导致问题集中爆发
+
 解决方案：
 
 + 首先指定schema[计划的提纲]，实时更新最新APl，降低集成的风险;
@@ -1816,4 +1822,379 @@ Vue + SpringBoot
 + Restful Api文档在线自动生成工具=> ==Api文档与API定义同步更新==
 + 直接运行,可以在线测试AP接口;
 + 支持多种语言:(Java,Php…)
+
+在项目中使用Swagger需要Springfox；
+
++ swagger2
++ ui
+
+### SpringBoot集成Swagger
+
+1. 新建一个SpringBoot = web项目
+2. 导入相关依赖
+
+```xml
+<!-- https://mvnrepository.com/artifact/io.springfox/springfox-swagger2 -->
+<dependency>
+    <groupId>io.springfox</groupId>
+    <artifactId>springfox-swagger2</artifactId>
+    <version>2.9.2</version>
+</dependency>
+<!-- https://mvnrepository.com/artifact/io.springfox/springfox-swagger-ui -->
+<dependency>
+    <groupId>io.springfox</groupId>
+    <artifactId>springfox-swagger-ui</artifactId>
+    <version>2.9.2</version>
+</dependency>
+```
+
+3. 编写一个HelloWorld工程
+
+4. 配置Swagger
+
+   ```java
+   @Configuration
+   @EnableSwagger2 //开启Swagger2
+   public class SwaggerConfig {
+   }
+   
+   ```
+
+5. 测试运行，访问页面`localhost:8080/swagger-ui.html`
+
+## 48. 配置Swagger信息
+
+```java
+@Configuration
+@EnableSwagger2 //开启Swagger2
+public class SwaggerConfig {
+
+    //配置了Swagger的Docket的bean实例
+    @Bean
+    public Docket docket(){
+        return new Docket(DocumentationType.SWAGGER_2)
+                .apiInfo(apiInfo());
+    }
+
+    //配置Swagger信息 = apiInfo
+    private ApiInfo apiInfo(){
+
+        // 作者信息
+        Contact contact = new Contact("ashiamd", "https://ashiamd.github.io/docsify-notes/#/README", "UK70em__817rIWlLX2@163.com");
+
+        return new ApiInfo("Ashiamd的API文档",
+                "ずっと真夜中でいいのに。",
+                "1.0", "https://ashiamd.github.io/docsify-notes/#/README",
+                contact,
+                "Apache 2.0",
+                "http://www.apache.org/licenses/LICENSE-2.0",
+                new ArrayList());
+    }
+}
+```
+
+## 49. 配置扫描接口及开关
+
+### Swagger配置扫描接口
+
+```java
+//配置了Swagger的Docket的bean实例
+@Bean
+public Docket docket(){
+    return new Docket(DocumentationType.SWAGGER_2)
+        .apiInfo(apiInfo())
+        //                .enable(false)//enable是否启动Swagger，如果为False，则Swagger不能在浏览器中访问
+        .select()
+        //RequestHandlerSelectors,配置要扫描接口的方式
+        //basePackage：指定要扫描的包（常用）
+        //any()：扫描全部
+        //none():不扫描
+        //withClassAnnotation：扫描类上的注解，参数是一个注解的反射对象
+        //withMethodAnnotation：扫描方法上的注解
+        .apis(RequestHandlerSelectors.basePackage("com.ash.swagger.controller"))
+        //过滤路径，只用映射对映规则的url的集合会被扫描到
+        //.paths(PathSelectors.ant("/ash/**"))
+        .build();
+}
+```
+
+### 我只希望我的Swagger在生产环境中使用，在发布的时候不使用
+
++ **判断是不是生产环境 flag=false**
++ **注入enable（flag）**
+
+```java
+@Configuration
+@EnableSwagger2 //开启Swagger2
+public class SwaggerConfig {
+
+    //配置了Swagger的Docket的bean实例
+    @Bean
+    public Docket docket(Environment environment){
+
+        //配置要显示的Swagger的环境
+        Profiles profiles = Profiles.of("dev","test");
+        //通过environment.acceptsProfiles判断是否处在自己设定的环境当中
+        boolean flag = environment.acceptsProfiles(profiles);
+
+        return new Docket(DocumentationType.SWAGGER_2)
+            .apiInfo(apiInfo())
+            .enable(flag)//enable是否启动Swagger，如果为False，则Swagger不能在浏览器中访问
+            .select()
+            //RequestHandlerSelectors,配置要扫描接口的方式
+            //basePackage：指定要扫描的包（常用）
+            //any()：扫描全部
+            //none():不扫描
+            //withClassAnnotation：扫描类上的注解，参数是一个注解的反射对象
+            //withMethodAnnotation：扫描方法上的注解
+            .apis(RequestHandlerSelectors.basePackage("com.ash.swagger.controller"))
+            //过滤路径，只用映射对映规则的url的集合会被扫描到
+            //.paths(PathSelectors.ant("/ash/**"))
+            .build();
+    }
+
+    //配置Swagger信息 = apiInfo
+    private ApiInfo apiInfo(){
+
+        // 作者信息
+        Contact contact = new Contact("ashiamd", "https://ashiamd.github.io/docsify-notes/#/README", "UK70em__817rIWlLX2@163.com");
+
+        return new ApiInfo("Ashiamd的API文档",
+                           "ずっと真夜中でいいのに。",
+                           "1.0", "https://ashiamd.github.io/docsify-notes/#/README",
+                           contact,
+                           "Apache 2.0",
+                           "http://www.apache.org/licenses/LICENSE-2.0",
+                           new ArrayList());
+    }
+}
+```
+
+## 50. 分组和接口注释及小结
+
+配置API文档的分组
+
+```java
+.groupName("ashiamd-group")
+```
+
+如何配置多个分组：配置多个Docket实例即可
+
+**实体类配置**
+
+只要我们的接口中，返回值中存在实体类，它就会被扫描到Swagger中（所以Controller配置到Swagger扫描中时，其实体类的返回值也被扫描）
+
+或者使用@ApiModel注解
+
+```java
+//@Api(注释)
+@ApiModel("用户实体类")
+public class User {
+
+    @ApiModelProperty("用户名")
+    public String username;
+    @ApiModelProperty("密码")
+    public String password;
+}
+```
+
+ApiModel
+
+```java
+@RestController
+public class HelloController {
+
+    @GetMapping(value = "/hello")
+    public String hello(){
+        return "hello";
+    }
+
+    //只要我们的接口中，返回值中存在实体类，它就会被扫描到Swagger中（所以Controller配置到Swagger扫描中时，其实体类的返回值也被扫描）
+    @PostMapping(value = "/user")
+    public User user(){
+        return new User();
+    }
+
+    //Operation接口,不是放在类上的，需放在方法上
+    @ApiOperation("Hello控制类")
+    @PostMapping(value = "/hello2")
+    public String hello2(@ApiParam("用户名") String username){
+        return "hello" + username;
+    }
+
+    @ApiOperation("Post测试类")
+    @GetMapping(value = "/postt")
+    public User postt(@ApiParam("用户名") User user){
+        return user;
+    }
+
+}
+```
+
+**总结**：
+
+1. 我们可以通过Swagger给一些比较难理解的属性或者接口，增加注释信息
+2. 接口文档实时更新
+3. 可以在线测试
+
+Swagger是一个优秀的工具，几乎所有大公司都使用它
+
+【注意点】在正式发布的时候，关闭Swagger！！出于安全考虑。而且节省运行的内存
+
+## 51. 异步任务
+
+```java
+@Service
+public class AsyncService {
+
+    //告诉Spring这是一个异步的方法
+    @Async
+    public void hello(){
+        try{
+            Thread.sleep(3000);
+        }catch (InterruptedException e){
+            e.printStackTrace();
+        }
+        System.out.println("数据正在处理...");
+    }
+}
+
+//--------------------------------------
+//--------------------------------------
+
+// 开启异步注解功能
+@EnableAsync
+@SpringBootApplication
+public class Springboot09TestApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(Springboot09TestApplication.class, args);
+    }
+
+}
+```
+
+## 52. 邮件任务
+
+> [SpringBoot配置Email发送功能](https://www.cnblogs.com/muliu/p/6017622.html)
+>
+> [Spring Boot笔记之邮件（spring-boot-starter-mail）](https://blog.csdn.net/yimcarson/article/details/84936440)
+
+```xml
+<!-- javax.mail配置 -->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-mail</artifactId>
+</dependency>
+```
+
+```xml
+spring.mail.username=邮箱用户名
+spring.mail.password=授权码
+spring.mail.host=163或者qq或者其他，邮箱页面有提示
+# 开启加密验证
+spring.mail.properties.mail.smtp.ssl.enable=true
+```
+
+```java
+@SpringBootTest
+class Springboot09TestApplicationTests {
+
+    @Autowired
+    private JavaMailSenderImpl sender;
+
+    @Test
+    void contextLoads() {
+
+        // 一个简单的邮件发送
+        SimpleMailMessage message = new SimpleMailMessage();
+
+        message.setSubject("邮件标题");
+        message.setText("邮件内容");
+        message.setFrom("配置文件的username");
+        message.setTo("收信人邮箱");
+
+        sender.send(message);
+    }
+
+    @Test
+    void contextLoads2() throws MessagingException {
+
+        // 一个复杂的邮件发送
+        MimeMessage mimeMessage = sender.createMimeMessage();
+        // 组装
+        MimeMessageHelper helper = new MimeMessageHelper(mimeMessage,true);
+
+        // 正文
+        helper.setSubject("[Subject]测试发送复杂邮件");
+        helper.setText("<p style='color:red'>[Text]复杂邮件的内容</p>",true);
+
+        // 附件
+        helper.addAttachment("XXX.mp3", new File("E:/docs/music/sss.mp3"));
+        helper.addAttachment("菠萝.jpg",new File("E:/docs/pictures/菠萝.jpg"));
+
+        helper.setFrom("配置的发送邮箱");
+        helper.setTo("选择自己要的接收方邮箱");
+
+        sender.send(mimeMessage);
+    }
+
+}
+```
+
+## 53. 定时执行任务
+
+> [Java并发编程：Callable、Future和FutureTask](https://www.cnblogs.com/dolphin0520/p/3949310.html)
+>
+> [FutureTask](https://blog.csdn.net/weixin_44970764/article/details/90443619)
+>
+> [cron表达式](https://www.cnblogs.com/daxiangfei/p/10219706.html)
+
+```java
+TaskExecutor	//任务执行者
+TaskScheduler 	//任务调度者
+```
+
+```java
+@EnableScheduling   // 开启定时功能的注解
+@SpringBootApplication
+public class Springboot09TestApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(Springboot09TestApplication.class, args);
+    }
+
+}
+
+// @Scheduled // 什么时候执行
+// Cron表达式
+```
+
+```java
+@Service
+public class ScheduledService {
+
+    // 在一个特定的时间执行这个方法~ Timer
+    // Cron表达式
+    // 秒 分 时 日 月 周几（这里是所有工作日，其中0和7都代表周日）
+
+    /**
+     * 30 15 10 * * ？ 每天10点15分30 执行一次
+     */
+    @Scheduled(cron = "0 * * * * 0-7")
+    public void hello() {
+        System.out.println("Hello,你被执行了~");
+    }
+}
+```
+
+## 54. 分布式系统理论
+
+### 分布式Dubbo + ZooKeeper + SpringBoot
+
+>  [SpringBoot分布式：Dubbo+zookeeper](https://www.cnblogs.com/hellokuangshen/p/11330606.html)
+
+## 55. 什么是RPC
+
+
 
