@@ -13,7 +13,7 @@
       + [Python数据处理](/study/Python/python数据处理)
     * **SpringBoot**
       + [SpringBoot蚂蚁课堂-学习笔记](/study/SpringBoot/SpringBoot蚂蚁课堂-学习笔记)
-      + [SpringBoot最新教程IDEA版【狂神说Java系列】-学习笔记](/study/SpringBoot/SpringBoot最新教程IDEA版[狂神说Java系列]-学习笔记)
+      + [SpringBoot最新教程IDEA版【狂神说Java系列】学习笔记](/study/SpringBoot/SpringBoot最新教程IDEA版[狂神说Java系列]-学习笔记)
     * **SpringCloud**
       + [SpringCloud最新教程IDEA版【狂神说Java系列】学习笔记](/study/SpringCloud/SpringCloud最新教程IDEA版【狂神说Java系列】-学习笔记)
       + [SpringCloud视频教程-蚂蚁课堂-学习笔记](/study/SpringCloud/SpringCloud视频教程-蚂蚁课堂-学习笔记)
