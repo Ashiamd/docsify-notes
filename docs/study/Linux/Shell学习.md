@@ -294,3 +294,21 @@ Shell批量监控服务发送邮件报警
      tcpdump -vvv -X -n udp port 端口号
 
      例如tcpdump -vvv -X -n udp port 12345
+
+## 13. Docker操作RabbitMQ
+
+> [docker安装与使用](https://www.cnblogs.com/glh-ty/articles/9968252.html)
+>
+> [docker快速安装rabbitmq](https://www.cnblogs.com/angelyan/p/11218260.html)
+>
+> [docker 安装rabbitMQ](https://www.cnblogs.com/yufeng218/p/9452621.html)
+>
+> [阿里云-docker安装rabbitmq及无法访问主页](https://www.cnblogs.com/hellohero55/p/11953882.html)
+
+1. docker安装RabbitMQ后，启动
+
+   ```shell
+   docker run -d --name rabbitmq3.8.2 -p 5672:5672 -p 15672:15672 -v `pwd`/data:/var/lib/rabbitmq --hostname XX-xxx-Docker-RabbitMQ-主机名 -e RABBITMQ_DEFAULT_VHOST=XX-xxx-Docker-RabbitMQ-vhost -e RABBITMQ_DEFAULT_USER=用户名 -e RABBITMQ_DEFAULT_PASS=密码 docker中RabbitMQ的imageID
+   ```
+
+   

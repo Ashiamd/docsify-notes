@@ -703,3 +703,6 @@ SpringCloud中使用Ribbon时，Ribbon的默认算法即轮询算法
 > [Spring Cloud Alibaba 实战(四) - NACOS 服务发现与注册中心](https://blog.csdn.net/qq_33589510/article/details/102020934)
 >
 > [redis集群架构（含面试题解析）](https://www.cnblogs.com/wanghaokun/p/10366689.html)
+>
+> [Ribbon与Nginx区别](https://blog.csdn.net/Websphere_zxf/article/details/92833670)
+
