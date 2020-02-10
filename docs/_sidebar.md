@@ -27,5 +27,12 @@
     * **Linux**
       + [Linux](/study/Linux/Shell学习)
     * **计算机网络**
-    * + [计算机网络](/study/计算机网络/计算机网络杂记)
+      + [计算机网络](/study/计算机网络/计算机网络杂记)
+    * **DB**
+      * [mysql入门很简单系列视频-学习笔记](/study/DB/mysql入门很简单系列视频-学习笔记)
+      * [2020最新Redis完整教程[千锋南京]-学习笔记](/study/DB/2020最新Redis完整教程[千锋南京]-学习笔记)
+      * [尚硅谷_Mycat视频教程-学习笔记](/study/DB/尚硅谷_Mycat视频教程-学习笔记)
+    * **Docker**
+      * [Docker杂学记录](/study/Docker/Docker杂学记录)
 * 暂无更多...
+

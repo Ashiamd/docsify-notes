@@ -705,4 +705,22 @@ SpringCloud中使用Ribbon时，Ribbon的默认算法即轮询算法
 > [redis集群架构（含面试题解析）](https://www.cnblogs.com/wanghaokun/p/10366689.html)
 >
 > [Ribbon与Nginx区别](https://blog.csdn.net/Websphere_zxf/article/details/92833670)
+>
+> [SpringCloudConfig私有库服务端搭建](https://my.oschina.net/u/3420587/blog/893140)
+>
+> [spring cloud config将配置存储在数据库中](https://www.cnblogs.com/forezp/p/10414586.html)
+>
+> [maven多模块打包---必成功](https://blog.csdn.net/majipeng19950610/article/details/89358448)
+>
+> [Docker SpringCloud微服务集群 Eureka、Config、Zuul](https://blog.csdn.net/weixin_34556470/article/details/85001182)
+>
+> [关于docker里面为什么要运行linux容器的疑问？求大神科普。](https://bbs.csdn.net/topics/393081770)
+>
+> [docker的宿主系统是centos，为什么可以运行ubuntu的镜像呢？](https://blog.csdn.net/llsmingyi/article/details/79255373)
+>
+> [请教为什么大多数使用 docker 是在 ubuntu/debian, 而 centos 下很少](https://www.v2ex.com/t/636092)
+>
+> [Docker中选择CentOS还是Ubuntu/Debian？](https://www.zhihu.com/question/32160729?sort=created)
+>
+> [Docker上定制CentOS7镜像](https://www.linuxidc.com/Linux/2018-12/155993.htm)
 

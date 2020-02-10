@@ -5861,3 +5861,10 @@ public void removeRemoteSession(String sessionId) {
 ​	本章的示例代码来自"疯狂创客圈"社群的高并发学习项目"CrazyIM"，由于项目不断地迭代，因此在看书的时候，建议参考最新版本的代码。不过，细节如何迭代，设计思路基本都是一致的。
 
 ​	本章的目的仅仅是抛砖引玉。寥寥数千字，无法彻底地将一个支持亿级流量的IM项目的架构及其实现剖析得非常清楚，后续"疯狂创客圈"会结合本书将内容更加全面呈现给大家。
+
+> [netty无缝切换rabbitmq、activemq、rocketmq实现聊天室单聊、群聊功能](https://segmentfault.com/a/1190000020220432)
+>
+> [基于Netty与RabbitMQ的消息服务](https://www.cnblogs.com/luxiaoxun/p/4257105.html)
+>
+> [netty与MQ使用心得](https://www.cnblogs.com/xingjunli/p/4923986.html)
+

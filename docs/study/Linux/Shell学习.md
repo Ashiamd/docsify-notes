@@ -1,6 +1,6 @@
 # Shell学习
 
-> 结合网课、课内交材、网文学习
+> 结合网课、课内教材、网文学习
 >
 > [【IT】Shell编程从入门到放弃（2016）【全20集】]( https://www.bilibili.com/video/av8104450?p=12 )
 
@@ -304,11 +304,34 @@ Shell批量监控服务发送邮件报警
 > [docker 安装rabbitMQ](https://www.cnblogs.com/yufeng218/p/9452621.html)
 >
 > [阿里云-docker安装rabbitmq及无法访问主页](https://www.cnblogs.com/hellohero55/p/11953882.html)
+>
+> [docker运行jar文件](https://www.cnblogs.com/zhangwufei/p/9034997.html)
 
 1. docker安装RabbitMQ后，启动
 
    ```shell
    docker run -d --name rabbitmq3.8.2 -p 5672:5672 -p 15672:15672 -v `pwd`/data:/var/lib/rabbitmq --hostname XX-xxx-Docker-RabbitMQ-主机名 -e RABBITMQ_DEFAULT_VHOST=XX-xxx-Docker-RabbitMQ-vhost -e RABBITMQ_DEFAULT_USER=用户名 -e RABBITMQ_DEFAULT_PASS=密码 docker中RabbitMQ的imageID
+   ```
+
+
+2. docker使用国内的加速源
+
+   ```shell
+   vim /etc/docker/daemon.json
+   ```
+
+   修改上述json文件为以下内容
+
+   ```json
+   {"registry-mirrors": ["http://95822026.m.daocloud.io","https://registry.docker-cn.com","http://hub-mirror.c.163.com","https://almtd3fa.mirror.aliyuncs.com"]}
+   ```
+
+## 14. 用户操作
+
+1. 切换用户
+
+   ```she
+   su 用户名
    ```
 
    

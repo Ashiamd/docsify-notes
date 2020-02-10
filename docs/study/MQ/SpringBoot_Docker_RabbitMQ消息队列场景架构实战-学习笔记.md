@@ -131,3 +131,11 @@ AMQP全称：Advanced Message Queuing Protocol（高级消息队列协议）
 > [Windows 下安装RabbitMQ服务器及基本配置](https://www.cnblogs.com/vaiyanzi/p/9531607.html)
 >
 > [Springboot 整合RabbitMq ，用心看完这一篇就够了](https://blog.csdn.net/qq_35387940/article/details/100514134)
+>
+> [SPRINGBOOT + JAVAMAIL + RABBITMQ实现异步邮件发送功能](http://www.freesion.com/article/4814171772/)
+>
+> [springboot2.x集成RabbitMQ实现消息发送确认 与 消息接收确认（ACK）](https://blog.csdn.net/qq_36850813/article/details/103296210)
+>
+> [RabbitMQ的死信队列详解](https://www.jianshu.com/p/986ee5eb78bc)
+>
+> [RabbitMQ基本概念（三）：后台管理界面](https://baijiahao.baidu.com/s?id=1608453370506467252&wfr=spider&for=pc)
