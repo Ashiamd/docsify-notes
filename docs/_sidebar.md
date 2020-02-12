@@ -34,5 +34,7 @@
       * [尚硅谷_Mycat视频教程-学习笔记](/study/DB/尚硅谷_Mycat视频教程-学习笔记)
     * **Docker**
       * [Docker杂学记录](/study/Docker/Docker杂学记录)
+    * **kubernetes**
+      * [【kubernetes入门】快速了解和上手容器编排工具k8s-学习记录](/study/kubernetes/[kubernetes入门]快速了解和上手容器编排工具k8s-学习记录)
 * 暂无更多...
 
