@@ -87,7 +87,7 @@ FROM nginx
 ADD ./ /usr/share/nginx/html/
 ```
 
-## 0.1 docker入门2-如何组织一个多容器项目docker-compose
+## 0.1 docker入门2-如z何组织一个多容器项目docker-compose
 
 > [docker入门2-如何组织一个多容器项目docker-compose](https://www.bilibili.com/video/av61131351)
 >
@@ -348,3 +348,5 @@ docker run test
 > [docker 容器之间互相访问（互联）](https://www.jianshu.com/p/c5e39d6a5307)
 >
 > [Docker网络管理之docker跨主机通信](https://blog.51cto.com/14157628/2458487?source=dra)
+>
+> [外部访问docker容器(docker run -p/-P 指令)](https://www.cnblogs.com/williamjie/p/9915019.html)

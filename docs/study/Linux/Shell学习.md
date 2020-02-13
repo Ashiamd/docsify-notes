@@ -242,6 +242,8 @@ Shell批量监控服务发送邮件报警
 ## 8. 查看端口占用
 
 > [Linux中netstat和ps命令的使用](https://blog.csdn.net/u014303647/article/details/82530495)
+>
+> [Linux 查看服务器开放的端口号](https://www.cnblogs.com/wanghuaijun/p/8971152.html)
 
 1. Linux查看端口号占用命令
 
@@ -250,6 +252,16 @@ Shell批量监控服务发送邮件报警
 2. 通过进程ID查找程序
 
    ps -aux | grep 12345
+   
+3. 使用nmap工具
+
+   + 查看本机开放的端口
+
+     ```shell
+     nmap 127.0.0.1
+     ```
+
+     
 
 ## 9. 强制结束某进程
 
@@ -268,8 +280,28 @@ Shell批量监控服务发送邮件报警
 ## 11. 查看、修改网络接口配置
 
 > [ifconfig 命令详解](https://blog.csdn.net/u011857683/article/details/83758503)
+>
+> [linux服务器查看公网IP信息的方法](https://www.cnblogs.com/ksguai/p/6090115.html)
+>
+> [linux命令之ifconfig详细解释](https://www.cnblogs.com/jxhd1/p/6281427.html)
+>
+> [ifconfig 命令详解](https://blog.csdn.net/u011857683/article/details/83758503)
+>
+> [ifconfig 中的 eth0 eth0:1 eth0.1 与 lo](https://www.cnblogs.com/jokerjason/p/10695189.html)]
+>
+> [Linux 查看网卡全双工 还是半双工 以及设置网卡为半双工](https://www.osgeo.cn/post/30ggg)
 
 1. ifconfig
+
+   + 查看自己的公网IP即信息
+
+     ```shell
+     curl ifconfig.me
+     #不起效可以用下面这条
+     curl cip.cc
+     ```
+
+     
 
 ## 12. 网络通讯TCP/UDP等
 
