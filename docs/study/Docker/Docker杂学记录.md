@@ -92,6 +92,22 @@ ADD ./ /usr/share/nginx/html/
 > [docker入门2-如何组织一个多容器项目docker-compose](https://www.bilibili.com/video/av61131351)
 >
 > [curl 的用法指南](https://www.ruanyifeng.com/blog/2019/09/curl-reference.html)
+>
+> [docker-compose简介(一)](https://www.cnblogs.com/maduar/p/10777355.html)
+>
+> [docker-compose安装](https://www.jianshu.com/p/f323aa0416da)
+>
+> [解决“ImportError: 'module' object has no attribute 'check_specifier'”](https://blog.csdn.net/yanghx9013/article/details/79496527)
+>
+> [docker-compose.yml配置文件详解](https://blog.csdn.net/Aria_Miazzy/article/details/89326829)
+>
+> [/usr/lib/python2.7/site-packages/requests/__init__.py:80: RequestsDependencyWarning: urllib3 (1.22) or chardet (2.2.1) doesn't match a supported version! RequestsDependencyWarning)](https://www.cnblogs.com/insane-Mr-Li/p/10914716.html)
+>
+> [docker-compose up使用自定义的网段的两种方式（从其根源指定）](https://www.cnblogs.com/lemon-le/p/10531449.html)
+>
+> [docker-compose关于网络名的定义](https://www.jianshu.com/p/d70c61d45364)
+>
+> [docker network基础](https://www.cnblogs.com/jsonhc/p/7823286.html)
 
 ### 概述
 
@@ -279,7 +295,33 @@ services:
 		- MYSQL_ROOT_PASSWORD=123456 # 因为mysql容器里面默认的密码123456，所以这里这么配置	
 ```
 
+下面举例docker-compose使用自己创建的bridge网桥网络
 
+```yaml
+version: '3.3'
+services:
+  http-config-n0-3344:
+    container_name: http-config-n0-3344
+    build: .
+    image: http-config-n0-3344
+    restart: always
+    hostname: http-config-n0-3344
+    networks: 
+      ash-http-bridge:
+        ipv4_address: 172.20.0.2
+networks: 
+  ash-http-bridge:
+    external:
+      name: ash-http-bridge
+```
+
+ps：需要实现创建ash-http-bridge网络
+
+```shell
+docker network create --subnet=172.20.0.0/16 --gateway=172.20.0.1 ash-http-bridge
+```
+
+创建后可以通过`docker network ls`查看创建的网络，发现创建了ash-http-bridge网络
 
 ## 1. Dockerfile
 
@@ -350,3 +392,328 @@ docker run test
 > [Docker网络管理之docker跨主机通信](https://blog.51cto.com/14157628/2458487?source=dra)
 >
 > [外部访问docker容器(docker run -p/-P 指令)](https://www.cnblogs.com/williamjie/p/9915019.html)
+>
+> [在docker下运行mysql](https://www.cnblogs.com/jasonboren/p/11362342.html)
+
+## 4. 项目运行示例
+
+### 1. cloud config和eureka
+
+1. config的启动类使用@EnableConfigServer注解，eureka的启动类用@EnableEurekaServer
+
+```java
+//Config的Application启动类
+@SpringBootApplication
+@EnableConfigServer // 启动Cloud Config服务端服务，获取远程git/gitee的配置
+public class HttpConfigN03344Application {
+
+    public static void main(String[] args) {
+        SpringApplication.run(HttpConfigN03344Application.class, args);
+    }
+
+}
+
+//Eureka的Applicatoin启动类
+@SpringBootApplication
+@EnableEurekaServer // EnableEurekaSever 服务端的启动类，可以接收别人注册进来~
+public class HttpEurekaN17001Application {
+
+    public static void main(String[] args) {
+        SpringApplication.run(HttpEurekaN17001Application.class, args);
+    }
+
+}
+```
+
+2. 编写Config项目的application.yml以及Eureka的application.yml和bootstrap.yml
+
+```yaml
+###### Config项目的配置文件 application.yml
+server:
+  port: 3344 # 服务的端口，只用来docker网络网桥内访问，docker中不用另外配置-p 3344:3344来映射到宿主机，因为我们只要本地的eureka访问网桥bridge下的该Cloud Config服务的3344端口即可
+
+spring:
+  application:
+    name: http-config-n0-3344 #应用名
+    # 连接远程仓库
+  cloud:
+    config:
+      server:
+        git:
+          uri: https://gitee.com/XXXXXX.git # https，不是git，https才能使用下面的账号密码形式，如果用ssh，那么需要用rsa密钥访问。本来我打算用ssh方式，但是尝试了之后失败了，可能我配置下面参数的rsa出错了，但是我按照网络上各种文章以及官方示例，都没整好，就不折腾了
+          username: gitee账号
+          password: gitee密码
+
+# 通过 config-server可以连接到git，访问其中的资源以及配置~
+
+
+
+###### Eureka项目的application.yml
+spring:
+  application:
+    name: http-eureka-n1-7001
+    
+
+
+##### Eureka项目的bootstrap.yml
+spring:
+  cloud:
+    config:
+      name: config-eureka-n1
+      label: master
+      profile: dev
+      uri: http://http-config-n0-3344:3344
+```
+
+3. gitee上的几个配置文件
+
+   + application.yml
+
+     ```yaml
+     # 选择启动的环境 dev test prod
+     spring:
+       profiles:
+         active: dev
+     
+     ---
+     spring:
+       profiles: dev
+       application:
+         name: http-config-dev-n0-3344
+     
+     ---
+     spring:
+       profiles: test
+       application:
+         name: http-config-test-n0-3344
+     
+     ---
+     spring:
+       profiles: prod
+       application:
+         name: http-config-prod-n0-3344
+     ```
+
+   + config-eureka-n1.yml（我配置了3个节点，其他2个文件类似，就是n1变成n2和n3，defaultZone把n2、n3对应改成n1、n3以及n1、n2）
+
+     ```yaml
+     # eureka节点n1的配置 ip: 服务器IP
+     # 选择启动的环境 dev test prod
+     spring:
+       profiles:
+         active: dev
+     
+     ---
+     # 服务启动项
+     server:
+       port: 7001
+     
+     #spring配置
+     spring:
+       profiles: dev
+       application:
+         name: http-eureka-dev-n1-7001
+     
+     #eureka配置
+     eureka:
+       instance:
+         hostname: http-eureka-n1-7001 # 服务主机名，需要修改对应的hosts文件，才能连接到其他eureka服务。实际我在docker-compose里面配置了hosts，而不是运行后再自己进docker容器内修改
+       client: 
+         register-with-eureka: false     #false表示不向注册中心注册自己。
+         fetch-registry: false     #false表示自己端就是注册中心，职责就是维护服务实例，并不需要去检索其他服务
+         service-url: 
+           #单机 defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
+           #设置与Eureka Server交互的地址查询服务和注册服务都需要依赖这个地址（单机）。
+           defaultZone: http://http-eureka-n2-7001/eureka/,http://http-eureka-n3-7001/eureka/
+     
+     ---
+     # 服务启动项
+     server:
+       port: 7001
+     
+     #spring配置
+     spring:
+       profiles: test
+       application:
+         name: http-eureka-test-n1-7001
+     
+     #eureka配置
+     eureka:
+       instance:
+         hostname: http-eureka-n1-7001 
+       client: 
+         register-with-eureka: false     #false表示不向注册中心注册自己。
+         fetch-registry: false     #false表示自己端就是注册中心，职责就是维护服务实例，并不需要去检索其他服务
+         service-url: 
+           #单机 defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
+           #设置与Eureka Server交互的地址查询服务和注册服务都需要依赖这个地址（单机）。
+           defaultZone: http://http-eureka-n2-7001/eureka/,http://http-eureka-n3-7001/eureka/
+     
+     ---
+     # 服务启动项
+     server:
+       port: 7001
+     
+     #spring配置
+     spring:
+       profiles: prod
+       application:
+         name: http-eureka-prod-n1-7001
+     
+     #eureka配置
+     eureka:
+       instance:
+         hostname: http-eureka-n1-7001 
+       client: 
+         register-with-eureka: false     #false表示不向注册中心注册自己。
+         fetch-registry: false     #false表示自己端就是注册中心，职责就是维护服务实例，并不需要去检索其他服务
+         service-url: 
+           #单机 defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
+           #设置与Eureka Server交互的地址查询服务和注册服务都需要依赖这个地址（单机）。
+           defaultZone: http://http-eureka-n2-7001/eureka/,http://http-eureka-n3-7001/eureka/
+     ```
+
+4. pom依赖不贴了，就贴其中一个要点，不配置会发现maven执行package操作后生成的jar文件很小，docker上运行不起来。
+
+   ```xml
+   <build>
+       <plugins>
+           <plugin>
+               <groupId>org.springframework.boot</groupId>
+               <artifactId>spring-boot-maven-plugin</artifactId>
+               <version>${springboot.version}</version>
+               <configuration>
+                   <!-- 指定该Main Class为全局的唯一入口 -->
+                   <mainClass>com.ash.springcloud.HttpConfigN03344Application</mainClass>
+                   <layout>ZIP</layout>
+               </configuration>
+               <executions>
+                   <execution>
+                       <goals>
+                           <goal>repackage</goal><!--可以把依赖的包都打包到生成的Jar包中-->
+                       </goals>
+                   </execution>
+               </executions>
+           </plugin>
+       </plugins>
+   </build>
+   ```
+
+   5. 重点来了，Dockerfile和docker-compose.yml的编写
+      
+      1. Config项目的Dockerfile
+      
+         ```dockerfile
+         FROM java:8-alpine
+         ADD http-config-n0-3344-0.0.1-SNAPSHOT.jar http-config-n0-3344-0.0.1-SNAPSHOT.jar
+         EXPOSE 3344
+         ENTRYPOINT ["java","-jar","/http-config-n0-3344-0.0.1-SNAPSHOT.jar"]
+         ```
+      
+      2. Config项目的docker-compose.yml
+      
+         ```yaml
+         version: '3.3'
+         services:
+           http-config-n0-3344:
+             container_name: http-config-n0-3344
+             build: .
+             image: http-config-n0-3344
+             restart: always
+             hostname: http-config-n0-3344
+             networks: 
+               ash-http-bridge:
+                 ipv4_address: 172.20.0.2
+         networks: 
+           ash-http-bridge:
+             external:
+               name: ash-http-bridge
+         ```
+      
+      3. Eureka项目的Dockerfile
+      
+         ```dockerfile
+         FROM java:8-alpine
+         ADD http-eureka-n1-7001-0.0.1-SNAPSHOT.jar http-eureka-n1-7001-0.0.1-SNAPSHOT.jar
+         EXPOSE 7001
+         ENTRYPOINT ["java","-jar","/http-eureka-n1-7001-0.0.1-SNAPSHOT.jar"]
+         ```
+      
+      4. Eureka项目的docker-compose.yml
+      
+         ```yaml
+         version: '3.3'
+         services:
+           http-eureka-n1-7001:
+             container_name: http-eureka-n1-7001
+             build: .
+             image: http-eureka-n1-7001
+             restart: always
+             hostname: http-eureka-n1-7001
+             ports:
+               - 7001:7001 # 对宿主机提供端口，这样其他Eureka服务器才能访问到这个服务器节点的docker容器的7001端口
+             extra_hosts:
+               - "http-eureka-n2-7001:第二个服务器节点的IP"
+               - "http-eureka-n3-7001:第三个服务器节点的IP"
+             networks: 
+               ash-http-bridge:
+                 ipv4_address: 172.20.0.3 # 我自己创建的网桥bridge网络，下面会说
+         networks: 
+           ash-http-bridge:
+             external:
+               name: ash-http-bridge
+         ```
+   
+   6. 把项目生成的Config和Eureka的jar包放到服务器上
+   
+      ```shell
+      # linux上自己找文件夹放，这个文件夹内保证只有jar包、Dockerfile和docker-compose.yml
+      # 我创建文件夹后，执行ls获取目录下文件如下，另一个eureka同理
+      docker-compose.yml  Dockerfile  http-config-n0-3344-0.0.1-SNAPSHOT.jar
+      ```
+   
+   7. 安装docker不讲了，这个讲安装docker-compose（我的环境是CentOS7，其他环境不确定是否相同）
+   
+      > [腾讯云服务器Centos7.6中docker-compose工具安装](https://blog.csdn.net/kellerxq/article/details/103326664)
+   
+      ```shell
+      # 推荐根据上面的文章安装，因为我自己安装也出过问题，下面直接贴上面文章的安装方式
+      # 首先我说下我的环境 CentOS7，自带python2.7.5,环境不同的情况不保证安装方式相同，自己解决
+      yum -y install epel-release
+      yum -y install python-pip
+      pip install --upgrade pip
+      pip install docker-compose 
+      # 如果安装docker-compose报错了，安装不了，就执行以下几个步骤后再重新安装
+      pip install cffi==1.6.0
+      yum install python-devel
+      pip install --ignore-installed requests
+      #上面几个步骤我也没细追究，但是执行完后，我就能成功安装docker-compose了
+      pip install docker-compose
+      docker-compose --version #查看安装的版本，我是docker-compose version 1.25.4, build unknown
+      ```
+   
+   8. 自定义网桥
+   
+      ```shell
+      # 先通过ifconfig查看docker0网卡的ip，一般都是172.17.0.1或者172.18.0.1等(172.1X.0.1)左右，我们需要保证自定义的网桥和当前所有的其他网络网段不冲突，包括eth0->linux服务器自带的网卡
+      # 这里我172.20.0.1不存在于ifconfig里面已有的网卡信息中，所以我使用这个来演示
+      docker network ls # 查看当前docker配置的网络，一般会默认有bridge、host和none
+      docker network inspect bridge #查看bridge的详细配置
+      # 发现我们要配置的设置项有Subnet和Gateway
+      docker network create ash-http-bridge --subnet=172.20.0.0/16 --gateway=172.20.0.1 # 创建名为ash-http-bridge的网络
+      ifconfig # 发现出现了新的网络设备(br-XXXX),inet为172.20.0.1,netmask为255.255.0.0符合我们刚才的配置
+      docker network ls # 看到我们新建的ash-http-bridge
+      docker network inspect ash-http-bridge # 查看ash-http-bridge具体配置，确认Subnet和Gateway参数设置正确
+      ```
+   
+   9. 因我项目还没完全确立下来，所以前面的docker-compose.yml分2个写，不然一般都是整合在一个文件里面写的。下面分别到两个docker-compose.yml所在的文件夹，启动项目(因为eureka的配置要从config那里读取，所以需要先启动config)
+   
+      ```shell
+      # 先到config的jar包所在目录，确保只有jar、Dockerfile和docker-compose.yml
+      docker-compose up -d --build # -d后台运行，--build临时通过Dockerfile构建image后使用该image来构建、运行容器
+      
+      # 再到eureka的jar包所在目录进行相同操作。之后只要开放服务器的7001端口。就可以通过ip:7001访问到eureka的界面了
+      ```
+   
+      
+
