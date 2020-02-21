@@ -5,6 +5,10 @@
 > [【docker入门】10分钟，快速学会docker](https://www.bilibili.com/video/av58402749)
 >
 > [Play with Docker](https://labs.play-with-docker.com/)
+>
+> [Docker 命令详解（run篇）](https://www.cnblogs.com/shijunjie/p/10488603.html)
+>
+> [docker与虚拟机性能比较](https://blog.csdn.net/cbl709/article/details/43955687)
 
 —————————仓库
 
@@ -382,6 +386,8 @@ docker run test
 ## 2. 定制镜像
 
 > [Docker 定制镜像](https://www.jianshu.com/p/ff65a4db85ca)
+>
+> [dockerfile运行mysql并初始化数据](https://www.cnblogs.com/UniqueColor/p/11150314.html)
 
 ## 3. 运行项目
 
@@ -394,10 +400,18 @@ docker run test
 > [外部访问docker容器(docker run -p/-P 指令)](https://www.cnblogs.com/williamjie/p/9915019.html)
 >
 > [在docker下运行mysql](https://www.cnblogs.com/jasonboren/p/11362342.html)
+>
+> [主机无法访问容器映射的端口：Connection reset by peer](https://www.jianshu.com/p/964b268e1fc8)
+>
+> [docker容器内存占用过高(例如mysql)](https://www.cnblogs.com/bingogo/p/12144873.html)
+>
+> [使用docker-compose配置mysql数据库并且初始化用户](https://www.cnblogs.com/mmry/p/8812599.html)
 
 ## 4. 项目运行示例
 
-### 1. cloud config和eureka
+### 1. cloud config、eureka+security（3个不同公网ip、不同局域网环境的服务器）
+
+每个服务器分别有一个eureka（整合security）和一个config，config只在本地局域网中，eureka向互联网暴露端口。
 
 1. config的启动类使用@EnableConfigServer注解，eureka的启动类用@EnableEurekaServer
 
@@ -422,10 +436,18 @@ public class HttpEurekaN17001Application {
         SpringApplication.run(HttpEurekaN17001Application.class, args);
     }
 
+    @EnableWebSecurity //用到了security，如果不写这个，会发现服务之间没法相互注册，明明有开放端口
+    static class WebSecurityConfig extends WebSecurityConfigurerAdapter {
+        @Override
+        protected void configure(HttpSecurity http) throws Exception {
+            http.csrf().ignoringAntMatchers("/eureka/**");
+            super.configure(http);
+        }
+    }
 }
 ```
 
-2. 编写Config项目的application.yml以及Eureka的application.yml和bootstrap.yml
+2. IDEA中编写Config项目的application.yml以及Eureka的application.yml和bootstrap.yml
 
 ```yaml
 ###### Config项目的配置文件 application.yml
@@ -497,7 +519,7 @@ spring:
    + config-eureka-n1.yml（我配置了3个节点，其他2个文件类似，就是n1变成n2和n3，defaultZone把n2、n3对应改成n1、n3以及n1、n2）
 
      ```yaml
-     # eureka节点n1的配置 ip: 服务器IP
+     # eureka节点n1的配置 ip: 你的第一个服务器公网ip
      # 选择启动的环境 dev test prod
      spring:
        profiles:
@@ -513,18 +535,25 @@ spring:
        profiles: dev
        application:
          name: http-eureka-dev-n1-7001
+       security: # 使得Eureka需要账号密码才能访问
+         user:
+           name: 账号
+           password: 密码
+           roles: SUPERUSER
      
      #eureka配置
      eureka:
        instance:
-         hostname: http-eureka-n1-7001 # 服务主机名，需要修改对应的hosts文件，才能连接到其他eureka服务。实际我在docker-compose里面配置了hosts，而不是运行后再自己进docker容器内修改
+         hostname: http-eureka-n1-7001 
+         appname: http-eureka-7001
+         instance-id: n1-服务器1的公网ip
+         prefer-ip-address: true
+         ip-address: 服务器1的公网ip
        client: 
-         register-with-eureka: false     #false表示不向注册中心注册自己。
-         fetch-registry: false     #false表示自己端就是注册中心，职责就是维护服务实例，并不需要去检索其他服务
          service-url: 
            #单机 defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
            #设置与Eureka Server交互的地址查询服务和注册服务都需要依赖这个地址（单机）。
-           defaultZone: http://http-eureka-n2-7001/eureka/,http://http-eureka-n3-7001/eureka/
+           defaultZone: http://账号:密码@服务器2公网ip:7001/eureka/,http://账号:密码@服务器3公网ip:7001/eureka/
      
      ---
      # 服务启动项
@@ -536,18 +565,25 @@ spring:
        profiles: test
        application:
          name: http-eureka-test-n1-7001
+       security: # 使得Eureka需要账号密码才能访问
+         user:
+           name: 账号
+           password: 密码
+           roles: SUPERUSER
      
      #eureka配置
      eureka:
        instance:
          hostname: http-eureka-n1-7001 
+         appname: http-eureka-7001
+         instance-id: n1-服务器1公网ip
+         prefer-ip-address: true
+         ip-address: 服务器1的公网ip
        client: 
-         register-with-eureka: false     #false表示不向注册中心注册自己。
-         fetch-registry: false     #false表示自己端就是注册中心，职责就是维护服务实例，并不需要去检索其他服务
          service-url: 
            #单机 defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
            #设置与Eureka Server交互的地址查询服务和注册服务都需要依赖这个地址（单机）。
-           defaultZone: http://http-eureka-n2-7001/eureka/,http://http-eureka-n3-7001/eureka/
+           defaultZone: http://账号:密码@服务器2公网ip:7001/eureka/,http://账号:密码@服务器3公网ip:7001/eureka/
      
      ---
      # 服务启动项
@@ -559,21 +595,28 @@ spring:
        profiles: prod
        application:
          name: http-eureka-prod-n1-7001
+       security: # 使得Eureka需要账号密码才能访问
+         user:
+           name: 账号
+           password: 密码
+           roles: SUPERUSER
      
      #eureka配置
      eureka:
        instance:
          hostname: http-eureka-n1-7001 
+         appname: http-eureka-7001
+         instance-id: n1-服务器1的公网ip
+         prefer-ip-address: true
+         ip-address: 服务器1的公网ip
        client: 
-         register-with-eureka: false     #false表示不向注册中心注册自己。
-         fetch-registry: false     #false表示自己端就是注册中心，职责就是维护服务实例，并不需要去检索其他服务
          service-url: 
            #单机 defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
            #设置与Eureka Server交互的地址查询服务和注册服务都需要依赖这个地址（单机）。
-           defaultZone: http://http-eureka-n2-7001/eureka/,http://http-eureka-n3-7001/eureka/
+           defaultZone: http://账号:密码@服务器2公网ip:7001/eureka/,http://账号:密码@服务器3公网ip:7001/eureka/
      ```
-
-4. pom依赖不贴了，就贴其中一个要点，不配置会发现maven执行package操作后生成的jar文件很小，docker上运行不起来。
+   
+4. pom依赖不贴了，就贴其中一个要点，不配置会发现maven执行package操作后生成的jar文件很小，docker上运行不起来。eureka的pom还需加security的依赖，自己查
 
    ```xml
    <build>
@@ -652,9 +695,6 @@ spring:
              hostname: http-eureka-n1-7001
              ports:
                - 7001:7001 # 对宿主机提供端口，这样其他Eureka服务器才能访问到这个服务器节点的docker容器的7001端口
-             extra_hosts:
-               - "http-eureka-n2-7001:第二个服务器节点的IP"
-               - "http-eureka-n3-7001:第三个服务器节点的IP"
              networks: 
                ash-http-bridge:
                  ipv4_address: 172.20.0.3 # 我自己创建的网桥bridge网络，下面会说
@@ -663,7 +703,7 @@ spring:
              external:
                name: ash-http-bridge
          ```
-   
+      
    6. 把项目生成的Config和Eureka的jar包放到服务器上
    
       ```shell
@@ -715,5 +755,21 @@ spring:
       # 再到eureka的jar包所在目录进行相同操作。之后只要开放服务器的7001端口。就可以通过ip:7001访问到eureka的界面了
       ```
    
-      
+   
+   10. 不同网络环境（局域网）的几台公网IP服务器，必须开放eureka的端口给互联网访问才能互相注册。
 
+## 5. Docker网络
+
+> [跨宿主机Docker网络访问](https://blog.csdn.net/chenzhanhai/article/details/100694087)
+>
+> [docker容器间跨主机通信](https://www.cnblogs.com/lyhero11/p/9967328.html)
+>
+> [容器云技术选择之kubernetes和swarm对比](https://www.cnblogs.com/i6first/p/9399213.html)
+>
+> [Docker网络解决方案 - Weave部署记录](https://www.cnblogs.com/kevingrace/p/6859173.html)
+>
+> [Docker Swarm - Overlay 网络长连接问题](https://www.jianshu.com/p/f05294c0a456)
+>
+> [Docker Swarm - 网络管理](https://www.jianshu.com/p/60bccbdb6af9)
+>
+> [centos7 安装 openvswitch](https://blog.csdn.net/xinxing__8185/article/details/51900444)

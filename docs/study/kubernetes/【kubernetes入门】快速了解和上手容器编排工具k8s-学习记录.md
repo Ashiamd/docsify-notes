@@ -177,3 +177,15 @@ curl -H "Host: a.b.d" 172.17.0.8
 ```
 
 通过配置本地的域名，用户可以通过不同的域名访问到不同的service，解决了master无法访问到service的问题，这样用户也可以调用到内部service的服务了
+
+## k8s网络
+
+> [K8S 容器之间通讯方式](https://www.jianshu.com/p/b4eabf55533d)
+>
+> [k8s通过service访问pod（五）](https://www.cnblogs.com/it-peng/p/11393779.html)
+>
+> [[k8s重要概念及部署k8s集群（一）](https://www.cnblogs.com/it-peng/p/11393762.html)]
+>
+> [在Play with Kubernetes平台上以测试驱动的方式部署Istio](https://www.jianshu.com/p/7f7919f598ca)
+>
+> [[k8s\]kubeadm k8s免费实验平台labs.play-with-k8s.com,k8s在线测试](https://www.cnblogs.com/iiiiher/p/8203529.html)

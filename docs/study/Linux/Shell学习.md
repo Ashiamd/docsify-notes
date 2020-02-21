@@ -147,11 +147,47 @@ Shell批量监控服务发送邮件报警
 
      ps -ef|grep java
 
-## 5. 查看系统运行状态(Linux任务管理器)
+## 5. 查看系统信息
 
 > [Linux top命令](https://www.runoob.com/linux/linux-comm-top.html)
+>
+> [linux 下 取进程占用内存(MEM)最高的前10个进程](https://www.cnblogs.com/liuzhengliang/p/5343988.html)
+>
+> [linux系统查看系统内存和硬盘大小](https://www.cnblogs.com/yangzailu/p/10939126.html)
 
-1. top指令
+1. top指令(类似windows的任务管理器)
+
+2. 查看总的内存使用情况
+
+   ```shell
+   free -m | sed -n '2p' | awk '{print""($3/$2)*100"%"}'
+   ```
+
+3. linux 下 取进程占用 cpu 最高的前10个进程
+
+   ```shell
+   ps aux|head -1;ps aux|grep -v PID|sort -rn -k +3|head
+   ```
+
+4. linux 下 取进程占用内存(MEM)最高的前10个进程
+
+   ```shell
+   ps aux|head -1;ps aux|grep -v PID|sort -rn -k +4|head
+   ```
+
+5. 查看系统运行内存
+
+   ```shell
+   free -m
+   # （Gb查看） 
+   free -g
+   ```
+
+6. 查看硬盘大小
+
+   ```shell
+   df -hl 
+   ```
 
 ## 6. ICMP检测服务器是否可连通
 
@@ -253,7 +289,11 @@ Shell批量监控服务发送邮件报警
 
    ps -aux | grep 12345
    
-3. 使用nmap工具
+3. 通过关键字查找进程
+
+   ps -ef | grep java
+
+4. 使用nmap工具
 
    + 查看本机开放的端口
 

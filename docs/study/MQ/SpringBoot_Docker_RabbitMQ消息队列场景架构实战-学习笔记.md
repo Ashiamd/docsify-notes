@@ -139,3 +139,7 @@ AMQP全称：Advanced Message Queuing Protocol（高级消息队列协议）
 > [RabbitMQ的死信队列详解](https://www.jianshu.com/p/986ee5eb78bc)
 >
 > [RabbitMQ基本概念（三）：后台管理界面](https://baijiahao.baidu.com/s?id=1608453370506467252&wfr=spider&for=pc)
+>
+> [利用Docker-compose一键搭建rabbitmq服务器](https://www.jianshu.com/p/1127ad6ee546)
+>
+> [使用docker-compose安装RabbitMQ](https://blog.csdn.net/chuishuwu3807/article/details/100893787)

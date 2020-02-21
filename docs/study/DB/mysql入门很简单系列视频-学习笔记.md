@@ -9,6 +9,12 @@
 ## 第1章 数据库概述
 
 > [mysql中 的 ENGINE = innodb; 是什么意思？](https://zhidao.baidu.com/question/329349963.html)
+>
+> [MYSQL8创建、删除用户和授权、消权操作](https://www.cnblogs.com/gychomie/p/11013442.html)
+>
+> [存储JWT令牌的最佳MYSQL或Maria DB数据类型是什么？](http://www.voidcn.com/article/p-avmcopfc-bwm.html)
+>
+> [MySQL Geometry扩展在地理位置计算中的效率优势](https://www.cnblogs.com/hargen/p/9674958.html)
 
 
 

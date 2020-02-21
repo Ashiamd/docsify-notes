@@ -392,6 +392,8 @@ Spring Cloud是一个由众多独立子项目组成的大型综合项目，每�
 > [Spring Cloud下配置eureka.instance.instance-id使得服务实例在eureka界面增加显示版本号](https://blog.csdn.net/qq_27680317/article/details/79181236)
 >
 > [Spring Cloud Eureka 自我保护机制](https://www.cnblogs.com/xishuai/p/spring-cloud-eureka-safe.html)
+>
+> [spring Cloud Eureka增加security后注册失败解决方案](https://blog.csdn.net/jerry_player/article/details/85952023)
 
 **自我保护机制：好死不如赖活着**
 
@@ -407,6 +409,8 @@ Spring Cloud是一个由众多独立子项目组成的大型综合项目，每�
 > [Spring Cloud：使用Eureka集群搭建高可用服务注册中心](http://blog.itpub.net/31558358/viewspace-2375380/)
 >
 > [**relay start error: java.lang.SecurityException: Cannot locate policy or framework files!**](https://www.ibm.com/mysupport/s/question/0D50z00005pgfSQCAY/relay-start-error-javalangsecurityexception-cannot-locate-policy-or-framework-files?language=zh_CN&sort=newest)
+>
+> [Eureka控制台相关介绍及自我保护机制解说](https://blog.csdn.net/qq_25112523/article/details/83028529)
 
 ## 9. CAP原则及对比ZooKeeper
 
@@ -727,5 +731,7 @@ SpringCloud中使用Ribbon时，Ribbon的默认算法即轮询算法
 > [springcloud(十三)：注册中心 Consul 使用详解](https://blog.csdn.net/love_zngy/article/details/82216696)
 >
 > [Spring Cloud官方文档中文版-Spring Cloud Config（上）-服务端（配置中心）](https://www.cnblogs.com/dreamingodd/p/7737318.html)
+>
+> [spring-cloud-starter-security与spring-boot-starter-security有什么不同？](https://www.oschina.net/question/2489154_2283940)
 
  
