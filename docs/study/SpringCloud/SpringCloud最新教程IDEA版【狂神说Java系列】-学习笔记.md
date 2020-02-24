@@ -733,5 +733,7 @@ SpringCloud中使用Ribbon时，Ribbon的默认算法即轮询算法
 > [Spring Cloud官方文档中文版-Spring Cloud Config（上）-服务端（配置中心）](https://www.cnblogs.com/dreamingodd/p/7737318.html)
 >
 > [spring-cloud-starter-security与spring-boot-starter-security有什么不同？](https://www.oschina.net/question/2489154_2283940)
+>
+> [我们能否在 spring-boot-starter-web 中用 jetty 代替 tomcat？](https://www.koofun.com/pro/queanswers?proquestionId=7505)
 
  

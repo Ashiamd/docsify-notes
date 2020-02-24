@@ -28,6 +28,9 @@
       + [Linux](/study/Linux/Shell学习)
     * **计算机网络**
       + [计算机网络](/study/计算机网络/计算机网络杂记)
+    * **网络安全**
+      * [OAuth](/study/计算机网络/OAuth学习杂记)
+      * [XSS](/study/计算机网络Web安全-XSS教程)
     * **DB**
       * [mysql入门很简单系列视频-学习笔记](/study/DB/mysql入门很简单系列视频-学习笔记)
       * [2020最新Redis完整教程[千锋南京]-学习笔记](/study/DB/2020最新Redis完整教程[千锋南京]-学习笔记)
