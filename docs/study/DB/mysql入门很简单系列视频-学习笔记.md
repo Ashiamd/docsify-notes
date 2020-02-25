@@ -38,6 +38,14 @@
 
 ## 第7章 索引
 
+> [单个索引与复合索引](https://www.cnblogs.com/jiqing9006/p/10130928.html)
+>
+> [单索引拆成多索引。性能问题猜想。不知道对不对。](https://elasticsearch.cn/question/5015)
+>
+> [MySQL中explain执行计划中额外信息字段(Extra)详解](https://blog.csdn.net/poxiaonie/article/details/77757471)
+>
+> [MySQL explain，Extra分析（转）](https://www.cnblogs.com/myseries/p/11262054.html)
+
 ## 第8章 视图
 
 ## 第9章 触发器
@@ -70,11 +78,13 @@
 
 ## 第X章 个人记录
 
-### 1. MySQL的NULL值、空值查询；模糊查询的like、=、%、_
+### 1. MySQL的NULL值、空值查询；模糊查询的like、=、%、_（用初略测试数据）
 
 > [mysql 用法 Explain](https://blog.csdn.net/lvhaizhen/article/details/90763799)
 >
 > [MySQL_执行计划详细说明](https://www.cnblogs.com/xinysu/p/7860609.html)
+>
+> [MySQL执行计划extra中的using index 和 using where using index 的区别](https://www.cnblogs.com/wy123/p/7366486.html)
 
 #### 提要
 
@@ -169,7 +179,7 @@ SELECT * FROM	room WHERE `password` is NULL;
 
 **对比**
 
-​	可以看出 `is NOT NULL`没有用到索引，直接全表查询了。
+​	可以看出 `is NOT NULL`没有用到索引，直接全表查询了（主要还是因为搜索的字段是*，所有列）。
 
 ```sql
 EXPLAIN	SELECT * FROM	room WHERE `password` is NOT NULL;
@@ -203,12 +213,203 @@ EXPLAIN SELECT * FROM	room WHERE `profile` = "";
 SELECT * FROM	room WHERE `profile` = "";
 ```
 
-+ `=''`
++ `=''`，因为获取所有字段，所以没有用到索引。
 
 ```sql
 EXPLAIN SELECT * FROM	room WHERE `profile` = '';
 ```
 
-| id   | select_type | table | partitions | type | possible_keys | key      | key_len | ref   | rows  | filtered | Extra                 |
-| ---- | ----------- | ----- | ---------- | ---- | ------------- | -------- | ------- | ----- | ----- | -------- | --------------------- |
-| 1    | SIMPLE      | room  | (Null)     | ref  | password      | password | 1023    | const | 15176 | 100.00   | Using index condition |
+| id   | select_type | table | partitions | type | possible_keys | key     | key_len | ref   | rows  | filtered | Extra  |
+| ---- | ----------- | ----- | ---------- | ---- | ------------- | ------- | ------- | ----- | ----- | -------- | ------ |
+| 1    | SIMPLE      | room  | (Null)     | ref  | profile       | profile | 1022    | const | 15152 | 100.00   | (Null) |
+
+... 实在有点太多了。都有点打算放弃打字的形式了。
+
+​	**上面不完整，主要觉得自己讲得不是很清楚，直接贴出我测的所有情况应该会更直观一点。反正看到这里的人应该都大概懂了。我就直接按照我想到的情况，把测试结果都贴出来得了。**
+
+*****
+
+下面贴出我测试的各种情况的结果（下面查询时间都是取多次查询后的稳定时间）
+
+1. `password`和`is NULL`
+
++ password有设置NORMAL索引，索引方式为BTREE时
+
+```sql
+EXPLAIN SELECT * FROM	room WHERE `password` is NULL; -- Using index condition
+EXPLAIN SELECT `id` FROM	room WHERE `password` is NULL; -- Using where; Using index
+EXPLAIN SELECT `title` FROM	room WHERE `password` is NULL; -- Using index condition
+EXPLAIN SELECT `profile` FROM	room WHERE `password` is NULL; -- Using index condition
+EXPLAIN SELECT `password` FROM	room WHERE `password` is NULL; -- Using where; Using index
+EXPLAIN SELECT COUNT(*) FROM	room WHERE `password` is NULL; -- Using where; Using index
+```
+
+| id   | select_type              | table | partitions | type | possible_keys            | key      | key_len | ref   | rows  | filtered | Extra                    |
+| ---- | ------------------------ | ----- | ---------- | ---- | ------------------------ | -------- | ------- | ----- | ----- | -------- | ------------------------ |
+| 1    | SIMPLE                   | room  | (Null)     | ref  | password                 | password | 1023    | const | 15152 | 100.00   | Using index condition    |
+
+```sql
+SELECT * FROM	room WHERE `password` is NULL; -- 0.144 
+SELECT `id` FROM	room WHERE `password` is NULL; -- 0.036
+SELECT `title` FROM	room WHERE `password` is NULL; -- 0.124
+SELECT `profile` FROM	room WHERE `password` is NULL; -- 0.101
+SELECT `password` FROM	room WHERE `password` is NULL; -- 0.025
+SELECT COUNT(*) FROM	room WHERE `password` is NULL; -- 0.016
+```
+
++ password没设置索引
+
+| id   | select_type | table | partitions | type | possible_keys | key    | key_len | ref    | rows  | filtered | Extra        |
+| ---- | ----------- | ----- | ---------- | ---- | ------------- | ------ | ------- | ------ | ----- | -------- | ------------ |
+| 1    | SIMPLE      | room  | (Null)     | ALL  | password      | (Null) | (Null)  | (Null) | 30304 | 10.00    | Using  where |
+
+```sql
+SELECT * FROM	room WHERE `password` is NULL; -- 0.125s
+SELECT `id` FROM	room WHERE `password` is NULL; -- 0.066s
+SELECT `title` FROM	room WHERE `password` is NULL; -- 0.061s 
+SELECT `profile` FROM	room WHERE `password` is NULL; -- 0.065s
+SELECT `password` FROM	room WHERE `password` is NULL; -- 0.034s
+SELECT COUNT(*) FROM	room WHERE `password` is NULL; -- 0.024s
+```
+
+**初略得出： Using where; Using index > Using index > Using where > Using index condition**
+
+2. `password`和`is NOT NULL`
+
++ password有设置NORMAL索引，索引方式为BTREE时
+
+```sql
+EXPLAIN SELECT * FROM	room WHERE `password` is NOT NULL; 
+EXPLAIN SELECT `id` FROM	room WHERE `password` is NOT NULL; 
+EXPLAIN SELECT `title` FROM	room WHERE `password` is NOT NULL; 
+EXPLAIN SELECT `profile` FROM	room WHERE `password` is NOT NULL; 
+EXPLAIN SELECT `password` FROM	room WHERE `password` is NOT NULL; 
+EXPLAIN SELECT COUNT(*) FROM	room WHERE `password` is NOT NULL; 
+```
+
+| id   | select_type | table | partitions | type  | possible_keys | key      | key_len | ref    | rows  | filtered | Extra                    |
+| ---- | ----------- | ----- | ---------- | ----- | ------------- | -------- | ------- | ------ | ----- | -------- | ------------------------ |
+| 1    | SIMPLE      | room  | (Null)     | ALL   | password      | (Null)   | (Null)  | (Null) | 30304 | 50.00    | Using where              |
+|      |             |       |            | index |               | password | 1023    |        |       |          | Using where; Using index |
+|      |             |       |            | ALL   |               | (Null)   | (Null)  |        |       |          | Using where              |
+|      |             |       |            |       |               |          |         |        |       |          |                          |
+|      |             |       |            | index |               | password | 1023    |        |       |          | Using where; Using index |
+|      |             |       |            |       |               |          |         |        |       |          |                          |
+
+```sql
+SELECT * FROM	room WHERE `password` is NOT NULL; -- 0.046
+SELECT `id` FROM	room WHERE `password` is NOT NULL; -- 0.023
+SELECT `title` FROM	room WHERE `password` is NOT NULL; -- 0.026
+SELECT `profile` FROM	room WHERE `password` is NOT NULL; -- 0.024
+SELECT `password` FROM	room WHERE `password` is NOT NULL; -- 0.018
+SELECT COUNT(*) FROM	room WHERE `password` is NOT NULL; -- 0.015
+```
+
++ password没设置索引
+
+| id   | select_type | table | partitions | type | possible_keys | key    | key_len | ref    | rows  | filtered | Extra       |
+| ---- | ----------- | ----- | ---------- | ---- | ------------- | ------ | ------- | ------ | ----- | -------- | ----------- |
+| 1    | SIMPLE      | room  | (Null)     | ALL  | (Null)        | (Null) | (Null)  | (Null) | 30304 | 90.00    | Using where |
+
+```sql
+SELECT * FROM	room WHERE `password` is NOT NULL; -- 0.053
+SELECT `id` FROM	room WHERE `password` is NOT NULL; -- 0.036
+SELECT `title` FROM	room WHERE `password` is NOT NULL; -- 0.036
+SELECT `profile` FROM	room WHERE `password` is NOT NULL; -- 0.032
+SELECT `password` FROM	room WHERE `password` is NOT NULL; -- 0.029
+SELECT COUNT(*) FROM	room WHERE `password` is NOT NULL; -- 0.039
+```
+
+3. `profile` 和 `=''`
+
++ profile有设置NORMAL索引，索引方式为BTREE时(没标注的默认和上一行一样，或者都一样)
+
+```sql
+EXPLAIN SELECT * FROM	room WHERE `profile` =''; -- (Null)
+EXPLAIN SELECT `id` FROM	room WHERE `profile` =''; -- Using index 
+EXPLAIN SELECT `title` FROM	room WHERE `profile` =''; -- (Null) 
+EXPLAIN SELECT `profile` FROM	room WHERE `profile` =''; -- Using index 
+EXPLAIN SELECT `password` FROM	room WHERE `profile` =''; -- (Null) 
+EXPLAIN SELECT COUNT(*) FROM	room WHERE `profile` =''; -- Using index 
+```
+
+| id   | select_type | table | partitions | type | possible_keys | key     | key_len | ref   | rows  | filtered | Extra  |
+| ---- | ----------- | ----- | ---------- | ---- | ------------- | ------- | ------- | ----- | ----- | -------- | ------ |
+| 1    | SIMPLE      | room  | (Null)     | ref  | profile       | profile | 1022    | const | 15152 | 100.00   | (Null) |
+
+```sql
+SELECT * FROM	room WHERE `profile` =''; -- 0.164
+SELECT `id` FROM	room WHERE `profile` =''; -- 0.053
+SELECT `title` FROM	room WHERE `profile` =''; -- 0.105
+SELECT `profile` FROM	room WHERE `profile` =''; -- 0.029
+SELECT `password` FROM	room WHERE `profile` =''; -- 0.093
+SELECT COUNT(*) FROM	room WHERE `profile` =''; -- 0.015
+```
+
+光这么看，用=''所有上面列举的情况看下来，平均会比NULL的空值查找快一点。
+
++ profile没设置索引
+
+| id   | select_type | table | partitions | type | possible_keys | key    | key_len | ref    | rows  | filtered | Extra       |
+| ---- | ----------- | ----- | ---------- | ---- | ------------- | ------ | ------- | ------ | ----- | -------- | ----------- |
+| 1    | SIMPLE      | room  | (Null)     | ALL  | (Null)        | (Null) | (Null)  | (Null) | 30304 | 10.00    | Using where |
+
+```sql
+SELECT * FROM	room WHERE `profile` =''; -- 0.09
+SELECT `id` FROM	room WHERE `profile` =''; -- 0.114
+SELECT `title` FROM	room WHERE `profile` =''; -- 0.081
+SELECT `profile` FROM	room WHERE `profile` =''; -- 0.049
+SELECT `password` FROM	room WHERE `profile` =''; -- 0.069
+SELECT COUNT(*) FROM	room WHERE `profile` =''; -- 0.003
+```
+
+4. `profile` 和 `!=''`
+
++ profile有设置NORMAL索引，索引方式为BTREE时(没标注的默认和上一行一样，或者都一样)
+
+```sql
+EXPLAIN SELECT * FROM	room WHERE `profile` !=''; -- ALL
+EXPLAIN SELECT `id` FROM	room WHERE `profile` !=''; -- range
+EXPLAIN SELECT `title` FROM	room WHERE `profile` !=''; -- ALL
+EXPLAIN SELECT `profile` FROM	room WHERE `profile` !=''; -- range
+EXPLAIN SELECT `password` FROM	room WHERE `profile` !=''; -- ALL
+EXPLAIN SELECT COUNT(*) FROM	room WHERE `profile` !=''; -- range
+```
+
+| id   | select_type | table | partitions | type  | possible_keys | key     | key_len | ref    | rows  | filtered | Extra                    |
+| ---- | ----------- | ----- | ---------- | ----- | ------------- | ------- | ------- | ------ | ----- | -------- | ------------------------ |
+| 1    | SIMPLE      | room  | (Null)     | ALL   | profile       | (Null)  | (Null)  | (Null) | 30304 | 33.06    | Using where              |
+|      |             |       |            | range |               | profile | 1022    |        | 10017 | 100.00   | Using where; Using index |
+
+```sql
+SELECT * FROM	room WHERE `profile` !=''; -- 0.055
+SELECT `id` FROM	room WHERE `profile` !=''; -- 0.017
+SELECT `title` FROM	room WHERE `profile` !=''; -- 0.039
+SELECT `profile` FROM	room WHERE `profile` !=''; -- 0.015
+SELECT `password` FROM	room WHERE `profile` !=''; -- 0.034
+SELECT COUNT(*) FROM	room WHERE `profile` !=''; -- 0.009
+```
+
++ profile没设置索引
+
+| id   | select_type | table | partitions | type | possible_keys | key    | key_len | ref    | rows  | filtered | Extra       |
+| ---- | ----------- | ----- | ---------- | ---- | ------------- | ------ | ------- | ------ | ----- | -------- | ----------- |
+| 1    | SIMPLE      | room  | (Null)     | ALL  | (Null)        | (Null) | (Null)  | (Null) | 30304 | 90.00    | Using where |
+
+```sql
+SELECT * FROM	room WHERE `profile` !=''; -- 0.041
+SELECT `id` FROM	room WHERE `profile` !=''; -- 0.023
+SELECT `title` FROM	room WHERE `profile` !=''; -- 0.037
+SELECT `profile` FROM	room WHERE `profile` !=''; -- 0.026
+SELECT `password` FROM	room WHERE `profile` !=''; -- 0.025
+SELECT COUNT(*) FROM	room WHERE `profile` !=''; -- 0.017
+```
+
+可能因为我数据量太少，`!=''`没看出来有比`is NOT NULL`好到哪去，但是还是能大致推测数据量大的时候，`!=''`会比`is NOT NULL`表现好。
+
+​	**至少到这里为止，我靠上面的数据+一些主观推测，认为要是单表情况下考虑索引的效率，那么空值会比NULL效率高。**
+
+5. `profile` 和 `=""`
+
++ profile有设置NORMAL索引，索引方式为BTREE时
+
