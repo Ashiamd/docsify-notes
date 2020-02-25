@@ -78,7 +78,7 @@
 
 ## 第X章 个人记录
 
-### 1. MySQL的NULL值、空值查询；模糊查询的like、=、%、_（用初略测试数据）
+### 1. MySQL的NULL值、空值查询；模糊查询的like、%和=比较
 
 > [mysql 用法 Explain](https://blog.csdn.net/lvhaizhen/article/details/90763799)
 >
@@ -413,3 +413,162 @@ SELECT COUNT(*) FROM	room WHERE `profile` !=''; -- 0.017
 
 + profile有设置NORMAL索引，索引方式为BTREE时
 
+```sql
+EXPLAIN SELECT * FROM	room WHERE `profile` =""; 
+EXPLAIN SELECT `id` FROM	room WHERE `profile` =""; 
+EXPLAIN SELECT `title` FROM	room WHERE `profile` =""; 
+EXPLAIN SELECT `profile` FROM	room WHERE `profile` =""; 
+EXPLAIN SELECT `password` FROM	room WHERE `profile` =""; 
+EXPLAIN SELECT COUNT(*) FROM	room WHERE `profile` =""; 
+-- 结果和 ='' 一样，就不贴出来了
+```
+
+```sql
+SELECT * FROM	room WHERE `profile` =""; -- 0.122
+SELECT `id` FROM	room WHERE `profile` =""; -- 0.037
+SELECT `title` FROM	room WHERE `profile` =""; -- 0.093
+SELECT `profile` FROM	room WHERE `profile` =""; -- 0.026
+SELECT `password` FROM	room WHERE `profile` =""; -- 0.089
+SELECT COUNT(*) FROM	room WHERE `profile` =""; -- 0.016
+-- 和 ='' 结果差不多下面不多做展开，毕竟也都说""和''没区别，我就好奇试试而已，看看有没有啥‘魔法’
+```
+
+6. `profile` 和 `like ''`
+
++ profile有设置NORMAL索引，索引方式为BTREE时
+
+```sql
+EXPLAIN SELECT * FROM	room WHERE `profile` like ''; -- ALL
+EXPLAIN SELECT `id` FROM	room WHERE `profile` like ''; -- index
+EXPLAIN SELECT `title` FROM	room WHERE `profile` like ''; -- ALL
+EXPLAIN SELECT `profile` FROM	room WHERE `profile` like ''; -- index
+EXPLAIN SELECT `password` FROM	room WHERE `profile` like ''; -- ALL
+EXPLAIN SELECT COUNT(*) FROM	room WHERE `profile` like ''; -- index
+```
+
+| id   | select_type | table | partitions | type  | possible_keys | key     | key_len | ref  | rows  | filtered | Extra        |
+| ---- | ----------- | ----- | ---------- | ----- | ------------- | ------- | ------- | ---- | ----- | -------- | ------------ |
+| 1    | SIMPLE      | room  | (Null)     | ALL   | profile       | (Null)  | (Null)  |      | 30304 | 50.00    | Using where  |
+|      |             |       |            | index |               | profile | 1022    |      | 30304 | 50.00    | Using where; Using index |
+
+```sql
+SELECT * FROM	room WHERE `profile` like ''; -- 0.071
+SELECT `id` FROM	room WHERE `profile` like ''; -- 0.036
+SELECT `title` FROM	room WHERE `profile` like ''; -- 0.048
+SELECT `profile` FROM	room WHERE `profile` like ''; -- 0.032
+SELECT `password` FROM	room WHERE `profile` like ''; -- 0.044
+SELECT COUNT(*) FROM	room WHERE `profile` like ''; -- 0.022
+```
+
++ profile没设置索引
+
+| id   | select_type | table | partitions | type | possible_keys | key    | key_len | ref    | rows  | filtered | Extra       |
+| ---- | ----------- | ----- | ---------- | ---- | ------------- | ------ | ------- | ------ | ----- | -------- | ----------- |
+| 1    | SIMPLE      | room  | (Null)     | ALL  | (Null)        | (Null) | (Null)  | (Null) | 30304 | 11.11    | Using where |
+
+```sql
+SELECT * FROM	room WHERE `profile` like ''; -- 0.094
+SELECT `id` FROM	room WHERE `profile` like ''; -- 0.047
+SELECT `title` FROM	room WHERE `profile` like ''; -- 0.044
+SELECT `profile` FROM	room WHERE `profile` like ''; -- 0.04
+SELECT `password` FROM	room WHERE `profile` like ''; -- 0.042
+SELECT COUNT(*) FROM	room WHERE `profile` like ''; -- 0.02
+```
+
+​	**从上面几个比较，考虑like一般用于模糊查询，且从EXPLAIN的结果和查询的时间来看，有字段属性犹豫要为NULL还是空值''，如果极端要求索引速度可以使用''空值。（我这里数据量少、查询情况也不够复杂，可能没啥太大说服力）。要是NULL没有什么特别的优化的话(这个我没怎么了解)，我个人可能偏向用空值而不是NULL，因为NULL再之后要是修改数据库属性或者java类，会有更多协商问题，但是如果用空值，就可以省去很多事情。**
+
+7. `title`  和 `like 'title%'`
+
++ title有设置NORMAL索引，索引方式为BTREE时
+
+```sql
+EXPLAIN SELECT * FROM	room WHERE `title` like 'title%'; -- ALL
+EXPLAIN SELECT `id` FROM	room WHERE `title` like 'title%'; -- index
+EXPLAIN SELECT `title` FROM	room WHERE `title` like 'title%'; -- index
+EXPLAIN SELECT `profile` FROM	room WHERE `title` like 'title%'; -- ALL
+EXPLAIN SELECT `password` FROM	room WHERE `title` like 'title%'; -- ALL
+EXPLAIN SELECT COUNT(*) FROM	room WHERE `title` like 'title%'; -- index
+```
+
+| id   | select_type | table | partitions | type  | possible_keys | key    | key_len | ref    | rows  | filtered | Extra           |
+| ---- | ----------- | ----- | ---------- | ----- | ------------- | ------ | ------- | ------ | ----- | -------- | --------------- |
+| 1    | SIMPLE      | room  | (Null)     | ALL   | title         | (Null) | (Null)  | (Null) | 30304 | 50.00    | Using  where    |
+|      |             |       |            | index | title         | title  | 1022    |        |       | 50.00    | Using  where; Using index |
+
+```sql
+SELECT * FROM	room WHERE `title` like 'title%'; -- 0.103
+SELECT `id` FROM	room WHERE `title` like 'title%'; -- 0.087
+SELECT `title` FROM	room WHERE `title` like 'title%'; -- 0.08
+SELECT `profile` FROM	room WHERE `title` like 'title%'; -- 0.046
+SELECT `password` FROM	room WHERE `title` like 'title%'; -- 0.048
+SELECT COUNT(*) FROM	room WHERE `title` like 'title%'; -- 0.042
+```
+
++ title没设置索引
+
+| id   | select_type | table | partitions | type | possible_keys | key    | key_len | ref    | rows  | filtered | Extra       |
+| ---- | ----------- | ----- | ---------- | ---- | ------------- | ------ | ------- | ------ | ----- | -------- | ----------- |
+| 1    | SIMPLE      | room  | (Null)     | ALL  | (Null)        | (Null) | (Null)  | (Null) | 30304 | 11.11    | Using where |
+
+```sql
+SELECT * FROM	room WHERE `title` like 'title%'; -- 0.089
+SELECT `id` FROM	room WHERE `title` like 'title%'; -- 0.049
+SELECT `title` FROM	room WHERE `title` like 'title%'; -- 0.053
+SELECT `profile` FROM	room WHERE `title` like 'title%'; -- 0.049
+SELECT `password` FROM	room WHERE `title` like 'title%'; -- 0.045
+SELECT COUNT(*) FROM	room WHERE `title` like 'title%'; -- 0.027
+```
+
+8. `title`  和 `like '%title%'`
+
++ title有设置NORMAL索引，索引方式为BTREE时
+
+```sql
+EXPLAIN SELECT * FROM	room WHERE `title` like '%title%'; -- ALL
+EXPLAIN SELECT `id` FROM	room WHERE `title` like '%title%'; -- index
+EXPLAIN SELECT `title` FROM	room WHERE `title` like '%title%'; -- index
+EXPLAIN SELECT `profile` FROM	room WHERE `title` like '%title%'; -- ALL
+EXPLAIN SELECT `password` FROM	room WHERE `title` like '%title%'; -- ALL
+EXPLAIN SELECT COUNT(*) FROM	room WHERE `title` like '%title%'; -- index
+```
+
+| id   | select_type | table | partitions | type  | possible_keys | key    | key_len | ref    | rows  | filtered | Extra                     |
+| ---- | ----------- | ----- | ---------- | ----- | ------------- | ------ | ------- | ------ | ----- | -------- | ------------------------- |
+| 1    | SIMPLE      | room  | (Null)     | ALL   | (Null)        | (Null) | (Null)  | (Null) | 30304 | 11.11    | Using where               |
+|      |             |       |            | index |               | title  | 1022    |        | 30304 |          | Using  where; Using index |
+
+```sql
+SELECT * FROM	room WHERE `title` like '%title%'; -- 0.045
+SELECT `id` FROM	room WHERE `title` like '%title%'; --  0.025
+SELECT `title` FROM	room WHERE `title` like '%title%'; -- 0.024
+SELECT `profile` FROM	room WHERE `title` like '%title%'; -- 0.031
+SELECT `password` FROM	room WHERE `title` like '%title%'; -- 0.03
+SELECT COUNT(*) FROM	room WHERE `title` like '%title%'; -- 0.012
+```
+
++ title没设置索引
+
+```sql
+EXPLAIN SELECT * FROM	room WHERE `title` like '%title%'; -- ALL
+EXPLAIN SELECT `id` FROM	room WHERE `title` like '%title%'; -- index
+EXPLAIN SELECT `title` FROM	room WHERE `title` like '%title%'; -- index
+EXPLAIN SELECT `profile` FROM	room WHERE `title` like '%title%'; -- ALL
+EXPLAIN SELECT `password` FROM	room WHERE `title` like '%title%'; -- ALL
+EXPLAIN SELECT COUNT(*) FROM	room WHERE `title` like '%title%'; -- index
+-- `title`  和 `like 'title%'`, 和这个没区别
+```
+
+```sql
+SELECT * FROM	room WHERE `title` like '%title%'; -- 0.118
+SELECT `id` FROM	room WHERE `title` like '%title%'; -- 0.056
+SELECT `title` FROM	room WHERE `title` like '%title%'; -- 0.076
+SELECT `profile` FROM	room WHERE `title` like '%title%'; -- 0.042
+SELECT `password` FROM	room WHERE `title` like '%title%'; -- 0.044
+SELECT COUNT(*) FROM	room WHERE `title` like '%title%'; -- 0.023
+```
+
+#### 总结
+
+​	like 模糊查询的%不要乱用，够用就好，但是一般图方便都是%string%，这种场景也相对比较多。
+
+​	然后就是NULL和空值的选择，速度上我这里极少量数据是认为空值快一点，而且可以避免一些麻烦的协商问题。但是NULL也有NULL的特性，比如COUNT(含有NULL的列)是不会记录含有NULL的行的。不过要是为了方便后期调整，个人觉得空值会更方便一点。
