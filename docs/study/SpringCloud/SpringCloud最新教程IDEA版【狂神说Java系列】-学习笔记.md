@@ -4,6 +4,12 @@
 
 ## 1. 这个阶段该如何学习
 
+> [maven模块化项目总共模块相互引用打包失败问题](https://blog.csdn.net/liqi_q/article/details/80557157) 很重要，说三遍，而且容易忘记，用了旧版的jar包！
+>
+> [maven模块化项目总共模块相互引用打包失败问题](https://blog.csdn.net/liqi_q/article/details/80557157) 很重要，说三遍，而且容易忘记，用了旧版的jar包！
+>
+> [maven模块化项目总共模块相互引用打包失败问题](https://blog.csdn.net/liqi_q/article/details/80557157) 很重要，说三遍，而且容易忘记，用了旧版的jar包！
+
 ### 回顾之前的知识
 
 + JavaSE
@@ -394,6 +400,8 @@ Spring Cloud是一个由众多独立子项目组成的大型综合项目，每�
 > [Spring Cloud Eureka 自我保护机制](https://www.cnblogs.com/xishuai/p/spring-cloud-eureka-safe.html)
 >
 > [spring Cloud Eureka增加security后注册失败解决方案](https://blog.csdn.net/jerry_player/article/details/85952023)
+>
+> [Eureka的自我保护机制](https://www.cnblogs.com/ericnie/p/9393995.html)
 
 **自我保护机制：好死不如赖活着**
 
@@ -469,6 +477,14 @@ CAP的三进二：CA、AP、CP
 ## 10. Ribbon：负载均衡及Ribbon
 
 > [30张图带你彻底理解红黑树](https://www.jianshu.com/p/e136ec79235c)
+>
+> [Spring Cloud之Ribbon转发请求头(header参数)](http://www.manongjc.com/article/59734.html)
+>
+> [详解 RestTemplate 操作](https://blog.csdn.net/itguangit/article/details/78825505)
+>
+> [Spring Cloud - Ribbon 使用以及自动请求头签名信息](https://www.jianshu.com/p/2e87d96023c8)
+>
+> [Springboot -- 用更优雅的方式发HTTP请求(RestTemplate详解)](https://www.jianshu.com/p/27a82c494413)
 
 ### Ribbon是什么？
 
@@ -736,4 +752,150 @@ SpringCloud中使用Ribbon时，Ribbon的默认算法即轮询算法
 >
 > [我们能否在 spring-boot-starter-web 中用 jetty 代替 tomcat？](https://www.koofun.com/pro/queanswers?proquestionId=7505)
 
- 
+## X1. 开发中遇到的坑
+
+1. springcloud多模块项目，每个项目执行maven package后生成的jar包大小很小，并不是可执行的jar包。
+
++ 解决方案(修改pom依赖文件)：
+  1. spring-boot-maven-plugin的版本使用与当前springgboot相符合的
+  2. 下面的`<configuration>`里面的`mainClass`修改值为自己服务启动类的全限制类名
+
+```xml
+<!-- 修改原本的build字段 -->
+
+<build>
+    <plugins>
+        <plugin>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-maven-plugin</artifactId>
+            <version>${springboot.version}</version>
+            <configuration>
+                <!-- 指定该Main Class为全局的唯一入口 -->
+                <mainClass>com.ash.springcloud.TestApplication</mainClass>
+                <layout>ZIP</layout>
+            </configuration>
+            <executions>
+                <execution>
+                    <goals>
+                        <goal>repackage</goal><!--可以把依赖的包都打包到生成的Jar包中-->
+                    </goals>
+                </execution>
+            </executions>
+        </plugin>
+    </plugins>
+</build>
+```
+
+2. 共用的api模块，比如存放pojo、工具类utils，如果用Feign可能还存放service接口等。这个打包不需要生成可执行文件，但是记得，别的module模块要是使用到其po类等，需要在pom依赖文件中声明
+
+```xml
+<!-- api，示例如下，根据自己实际的api模块修改对应的3个值 -->
+<dependency>
+    <groupId>com.ash.springcloud</groupId>
+    <artifactId>http-api-n0-0000</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+</dependency>
+```
+
+3. 引用到公共api模块的项目，除了在pom声明外，如果该项目mvn package成执行jar包，找不到po类之类的，那就是之前没有对api模块执行mvn clean -> mvn install。install才能把之前的公共api模块存到本地maven仓库，这时候别的模块的pom对api模块依赖才算真正起到作用（指可执行jar包可以使用到公共的po类）
+
++ api模块不需要打成可执行jar包，所以不需要在自带的`spring-boot-maven-plugin`里配置`mainClass`等
+
+```xml
+<build>
+    <plugins>
+        <plugin>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-maven-plugin</artifactId>
+        </plugin>
+    </plugins>
+</build>
+```
+
++ 假如provider用到了api模块的po类，那么要生成provider的可执行jar包需要执行以下几步骤
+  1. 对api模块执行 mvn clean -> mvn install（注意一定要记得每次都install，因为我之前有次忘记install结果用的旧的api的po类，打包没问题，但是运行项目mybatis提示mapper里面的属性却好啊setter之类的。因为用的不是最新的po类！！）
+  2. provider的pom依赖中打包插件`spring-boot-maven-plugin`里配置`mainClass`等属性（前面提过了）。
+  3. provider模块执行 mvn clean -> mvn package就可以生成而执行jar包了
+
+4. 项目布置在几台不同公网IP的服务器，每个Eureka互相注册，需要用到真实ip。
+
+```yaml
+# 服务启动项
+server:
+  port: 7001
+
+#spring配置
+spring:
+  profiles: dev
+  application:
+    name: http-eureka-dev-n1-7001
+ # security: # 使得Eureka需要账号密码才能访问 ,没有用到 security依赖就不用。之前文章应该有提过这个配置了
+ #   user:
+ #     name: test
+ #     password: 123456
+ #     roles: SUPERUSER
+
+#eureka配置
+eureka:
+  server:
+    enable-self-preservation: false
+  instance:
+    hostname: http-eureka-n1-7001 
+    appname: http-eureka-7001
+    instance-id: n1-XXX.YYY.ZZZ.NNN
+    prefer-ip-address: true # 使用真实的ip注册
+    ip-address: XXX.YYY.ZZZ.NNN # 真实的公网ip
+  client: 
+    service-url: 
+      #单机 defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
+      #设置与Eureka Server交互的地址查询服务和注册服务都需要依赖这个地址（单机）。
+      defaultZone: #这个自己根据实际情况配置了
+
+```
+
+5. Provider注册到Eureka后，Ribbon根据服务名访问不到
+
++ 可能是没有设置`spring.application.name`属性，Ribbon负载均衡要用到的serviceId就是这个。
++ 因为是不同公网IP服务器，加上如果用到docker之类的，Eureka会识别成本地局域网网桥的ip地址，需要自己手动配置
+
+```yaml
+# 服务启动项
+server:
+  port: 8081
+  
+# spring配置
+spring:
+  profiles: prod
+  application:
+    name: http-provider-n1 # Ribbon负载均衡要用到的serviceId就是这个
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    driver-class-name: com.mysql.cj.jdbc.Driver # 用的mysql 8
+    url: jdbc:mysql://服务器IP:3306/表名?useUnicode=true&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8&useSSL=false
+    username: 数据库账号
+    password: 数据库密码
+  
+#mybatis配置
+mybatis:
+  type-aliases-package: com.ash.springcloud.po
+  config-location: classpath:mybatis/mybatis-config.xml
+  mapper-locations: classpath:mybatis/mapper/*.xml
+  
+#eureka配置
+eureka:
+  instance:
+    appname: http-provider-n1
+    instance-id: n1-XXX.YYY.ZZZ.NNN
+    prefer-ip-address: true
+    ip-address: 你的服务器公网ip  # 服务提供者通过我们自己指定的ip注册到Eureka
+    non-secure-port: 你的服务用到的端口port # 服务提供者通过我们自己指定的port注册到Eureka
+  client:
+    service-url:
+      defaultZone: # 这个根据你自己的实际配置
+  
+#info配置
+info: #点击Eureka的页面的服务的Status进入的页面显示的信息
+  app.name: provider
+  author: ash
+```
+

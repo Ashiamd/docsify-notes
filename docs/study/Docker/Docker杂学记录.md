@@ -406,6 +406,12 @@ docker run test
 > [docker容器内存占用过高(例如mysql)](https://www.cnblogs.com/bingogo/p/12144873.html)
 >
 > [使用docker-compose配置mysql数据库并且初始化用户](https://www.cnblogs.com/mmry/p/8812599.html)
+>
+> [Docker：MySQL连接慢问题解决](https://blog.csdn.net/bacteriumx/article/details/82792984)
+>
+> [Docker方式启动tomcat,访问首页出现404错误](https://blog.csdn.net/qq_40891009/article/details/103898876?depth_1-utm_source=distribute.pc_relevant.none-task&utm_source=distribute.pc_relevant.none-task)
+>
+> [Docker中启动Tomcat外部访问报HTTP Status 404 – 未找到](https://blog.csdn.net/mah666/article/details/104055180/)
 
 ## 4. 项目运行示例
 

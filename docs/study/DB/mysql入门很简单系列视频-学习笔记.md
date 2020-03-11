@@ -23,6 +23,18 @@
 > [NULL与MySQL空字符串的区别](https://blog.csdn.net/lovemysea/article/details/82317043)
 >
 > [mysql partition 实战](https://blog.csdn.net/alex_xfboy/article/details/85245502)
+>
+> [数据库设计及ER模型](https://www.cnblogs.com/dayle/p/9946714.html)
+>
+> 地理位置计算、处理：
+>
+> [使用MySQL的geometry类型处理经纬度距离问题的方法](https://www.jb51.net/article/155712.htm)
+>
+> [MySQL Geometry扩展在地理位置计算中的效率优势](https://www.cnblogs.com/hargen/p/9674958.html)
+>
+> [mysql根据经纬度查找排序](https://www.chengxiaobai.cn/sql/mysql-according-to-the-latitude-and-longitude-search-sort.html)
+>
+> [mysql距离函数st_distance](https://blog.csdn.net/u013628152/article/details/51560272)
 
 
 
@@ -45,6 +57,10 @@
 > [MySQL中explain执行计划中额外信息字段(Extra)详解](https://blog.csdn.net/poxiaonie/article/details/77757471)
 >
 > [MySQL explain，Extra分析（转）](https://www.cnblogs.com/myseries/p/11262054.html)
+>
+> [mysql索引命中规则](https://www.cnblogs.com/starluke/p/11741041.html)
+>
+> [SQL IN 一定走索引吗？](https://www.cnblogs.com/stoneFang/p/11032746.html)
 
 ## 第8章 视图
 
@@ -570,5 +586,7 @@ SELECT COUNT(*) FROM	room WHERE `title` like '%title%'; -- 0.023
 #### 总结
 
 ​	like 模糊查询的%不要乱用，够用就好，但是一般图方便都是%string%，这种场景也相对比较多。
+
+​	如果是确定值的字符串比较，那当然还是用=，而不是模糊查询了。
 
 ​	然后就是NULL和空值的选择，速度上我这里极少量数据是认为空值快一点，而且可以避免一些麻烦的协商问题。但是NULL也有NULL的特性，比如COUNT(含有NULL的列)是不会记录含有NULL的行的。不过要是为了方便后期调整，个人觉得空值会更方便一点。
