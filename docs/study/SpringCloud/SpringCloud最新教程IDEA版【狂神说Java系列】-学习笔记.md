@@ -485,6 +485,8 @@ CAP的三进二：CA、AP、CP
 > [Spring Cloud - Ribbon 使用以及自动请求头签名信息](https://www.jianshu.com/p/2e87d96023c8)
 >
 > [Springboot -- 用更优雅的方式发HTTP请求(RestTemplate详解)](https://www.jianshu.com/p/27a82c494413)
+>
+> [Ribbon详解](https://www.jianshu.com/p/1bd66db5dc46)
 
 ### Ribbon是什么？
 

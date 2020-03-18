@@ -5869,4 +5869,6 @@ public void removeRemoteSession(String sessionId) {
 > [netty与MQ使用心得](https://www.cnblogs.com/xingjunli/p/4923986.html)
 >
 > [Netty中Channel的生命周期（SimpleChannelInboundHandler）](https://blog.csdn.net/u014131617/article/details/86476522)
+>
+> [Reactor详解](https://blog.csdn.net/bingxuesiyang/article/details/89888664)
 

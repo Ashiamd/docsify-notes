@@ -1,4 +1,4 @@
-# 【kubernetes入门】快速了解和上手容器编排工具k8s-学习笔记
+# [kubernetes入门]快速了解和上手容器编排工具k8s-学习笔记
 
 > 视频链接 [【kubernetes入门】快速了解和上手容器编排工具k8s](https://www.bilibili.com/video/av61990770) https://www.bilibili.com/video/av61990770
 

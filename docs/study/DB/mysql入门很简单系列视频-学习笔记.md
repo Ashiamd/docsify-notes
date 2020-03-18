@@ -590,3 +590,13 @@ SELECT COUNT(*) FROM	room WHERE `title` like '%title%'; -- 0.023
 ​	如果是确定值的字符串比较，那当然还是用=，而不是模糊查询了。
 
 ​	然后就是NULL和空值的选择，速度上我这里极少量数据是认为空值快一点，而且可以避免一些麻烦的协商问题。但是NULL也有NULL的特性，比如COUNT(含有NULL的列)是不会记录含有NULL的行的。不过要是为了方便后期调整，个人觉得空值会更方便一点。
+
+### 2. 一些数据库连接、配置坑
+
+> Druid:
+>
+> [spring boot 2.1.3 打开 druid 连接池监控报错 Sorry, you are not permitted to view this page.](https://blog.csdn.net/mxcai2005/article/details/89928806)
+
+### 3. 幂等
+
+> [幂等技术及实现方式](https://blog.csdn.net/xktxoo/article/details/96765193)
