@@ -20,6 +20,12 @@
 >
 > [Redis几种对象序列化的比较](https://www.jianshu.com/p/e72ec3681fea)
 >
+> 分布式锁
+>
+> [Springboot分别使用乐观锁和分布式锁（基于redisson）完成高并发防超卖](https://blog.csdn.net/tianyaleixiaowu/article/details/90036180)
+>
+> [redis乐观锁（适用于秒杀系统）](https://www.cnblogs.com/crazylqy/p/7742097.html)
+>
 > Redis基本操作：
 >
 > [redis 获取key 过期时间](https://blog.csdn.net/zhaoyangjian724/article/details/51790977)

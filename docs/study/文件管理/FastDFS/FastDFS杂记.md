@@ -11,6 +11,10 @@
 > [如何用docker部署FastDFS（分布式文件系统）](https://blog.csdn.net/qq_43455410/article/details/84797814?depth_1-utm_source=distribute.pc_relevant.none-task&utm_source=distribute.pc_relevant.none-task)
 >
 > [阿里云使用docker-compose 部署fastdfs+nginx分布式文件存储系统](https://blog.csdn.net/bondsui/article/details/90115486)
+>
+> [基于 Docker 安装 FastDFS](https://www.jianshu.com/p/1038b4d95912)
+>
+> [如何用docker部署FastDFS（分布式文件系统）](https://blog.csdn.net/qq_43455410/article/details/84797814)
 
 ## 2. 分布式文件系统对比
 

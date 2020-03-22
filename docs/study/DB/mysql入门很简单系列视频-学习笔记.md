@@ -16,8 +16,6 @@
 >
 > [MySQL Geometry扩展在地理位置计算中的效率优势](https://www.cnblogs.com/hargen/p/9674958.html)
 >
-> [MySQL事务隔离性说明](https://blog.csdn.net/qq_42517220/article/details/88779932)
->
 > [Mysql 5.7 的‘虚拟列’是做什么？](https://www.techug.com/post/mysql-5-7-generated-virtual-columns.html)
 >
 > [NULL与MySQL空字符串的区别](https://blog.csdn.net/lovemysea/article/details/82317043)
@@ -25,6 +23,44 @@
 > [mysql partition 实战](https://blog.csdn.net/alex_xfboy/article/details/85245502)
 >
 > [数据库设计及ER模型](https://www.cnblogs.com/dayle/p/9946714.html)
+>
+> 事务，4种隔离级别和7种传播行为
+>
+> [mysql的表锁和行锁，排他锁和共享锁。](https://www.cnblogs.com/shamgod-lct/p/9318032.html)
+>
+> [mysql 四种隔离级别](https://www.cnblogs.com/jian-gao/p/10795407.html)
+>
+> [MySQL事务隔离性说明](https://blog.csdn.net/qq_42517220/article/details/88779932)
+>
+> [mysql的默认隔离级别](https://www.cnblogs.com/shoshana-kong/p/10516404.html)
+>
+> [说说@Transactional(readOnly = true),和mysql事务隔离级别](https://blog.csdn.net/myth_g/article/details/89921025)
+>
+> [spring @Transactional注解参数详解](https://www.cnblogs.com/xinruyi/p/11037724.html)
+>
+> [Spring 事务 readOnly 到底是怎么回事？](https://www.cnblogs.com/hackem/p/3890656.html)
+>
+> [Spring中 PROPAGATION_REQUIRED 解释](https://blog.csdn.net/bigtree_3721/article/details/53966617)
+>
+> [Spring boot中配置事务管理](https://blog.csdn.net/weixin_44554160/article/details/86775915)
+>
+> [脱离 Spring 实现复杂嵌套事务，之六（NOT_SUPPORTED - 非事务方式）](https://blog.csdn.net/lijiangjava/article/details/51088581)
+>
+> [请问事务挂起什么意思啊，出自下面，谢谢？](https://zhidao.baidu.com/question/109536055.html)
+>
+> [mysql数据库隔离级别及其原理、Spring的7种事物传播行为](https://www.cnblogs.com/wzk-0000/p/9928883.html)
+>
+> [spring 事务回滚](https://www.cnblogs.com/0201zcr/p/5962578.html)
+>
+> [事务挂起引起的死锁问题](https://blog.csdn.net/u011330604/article/details/86481791)
+>
+> [十九、spring事务之创建事务](https://www.jianshu.com/p/47fb41b78dce)
+>
+> [spring 是如何保证一个事务内获取同一个Connection?](https://blog.csdn.net/qq_33363618/article/details/102649197)
+>
+> [Spring事务的传播级别 _](https://www.spldeolin.com/posts/spring-tx-propagation/)
+>
+> [【面试】足够“忽悠”面试官的『Spring事务管理器』源码阅读梳理（建议珍藏） ](https://www.sohu.com/a/306497169_465221)
 >
 > 地理位置计算、处理：
 >
@@ -35,6 +71,145 @@
 > [mysql根据经纬度查找排序](https://www.chengxiaobai.cn/sql/mysql-according-to-the-latitude-and-longitude-search-sort.html)
 >
 > [mysql距离函数st_distance](https://blog.csdn.net/u013628152/article/details/51560272)
+>
+> 存储引擎：
+>
+> [InnoDB与Myisam的六大区别](https://www.cnblogs.com/vicenteforever/articles/1613119.html)
+
+### 1. 事务(各路学习后的总结)
+
+1. 事务级别选择
+
+   ​	MySQL默认的事务级别是可重复读（repeatable-read），但是这种模式下，如果SQL没有命中索引，就会锁表。而比这个事务低一个级别的读提交（read-committed）在没有命中索引的时候，会放弃对当前扫描到的数据行的S/X锁，只对不符合索引条件的进行S/X锁。
+
+   ​	==所以建议分布式事务使用RC不可重复读，避免高并发的表锁拖累响应速度==。
+
+   ​	推荐阅读文章，[mysql的默认隔离级别](https://www.cnblogs.com/shoshana-kong/p/10516404.html) 和 [mysql数据库隔离级别及其原理、Spring的7种事物传播行为](https://www.cnblogs.com/wzk-0000/p/9928883.html) 还有 [【面试】足够“忽悠”面试官的『Spring事务管理器』源码阅读梳理（建议珍藏） ](https://www.sohu.com/a/306497169_465221)
+
+2. 据说Spring会对只读事务会做一些优化，建议get类型的方法事务指定read-only="true"
+
+   ```java
+   /**
+   	 * A boolean flag that can be set to {@code true} if the transaction is
+   	 * effectively read-only, allowing for corresponding optimizations at runtime.
+   	 * <p>Defaults to {@code false}.
+   	 * <p>This just serves as a hint for the actual transaction subsystem;
+   	 * it will <i>not necessarily</i> cause failure of write access attempts.
+   	 * A transaction manager which cannot interpret the read-only hint will
+   	 * <i>not</i> throw an exception when asked for a read-only transaction
+   	 * but rather silently ignore the hint.
+   	 * @see org.springframework.transaction.interceptor.TransactionAttribute#isReadOnly()
+   	 * @see org.springframework.transaction.support.TransactionSynchronizationManager#isCurrentTransactionReadOnly()
+   	 */
+   	boolean readOnly() default false;
+   ```
+
+3. 事务传播行为选择
+
+   ​	建议**改变数据**的操作update/insert/delete采用”`PROPAGATION_REQUIRED`“；
+
+   ​	建议**不改变数据**的操作update/insert/delete采用”`PROPAGATION_SUPPORTS`“；
+
+   网上也有用`PROPAGATION_NOT_SUPPORTED`而不是`PROPAGATION_SUPPORTS`的。我个人是觉得前者挂起事务对增删改的事务流程效率有一定影响。
+
+   ​	而且挂起事务，虽然前面update锁定的行是排他锁(X锁)使得我select无法加共享锁(S锁)，但是不加锁不代表我获取不到数据，只不过不能再加S锁而已。平时加S锁主要就是为了不能在上面继续加X锁。我select获取到的还是修改后的(本地测试了，没能获取修改前的)。更何况挂起事务=另开一个连接线程 -> 浪费连接数。
+
+   ​	要是读频繁导致写不进入，可以考虑用乐观锁代替事务加上去的S锁，这样不会锁住数据，但是如果乐观锁验证version不同就不读取的话，那么可能出现写频繁导致读不到的情况（当然也可以设置自旋，直到version两次读取相同，返回结果，但是同样可能导致长时间自旋，浪费资源）。
+
+4. 事务最好在impl实现类上使用`@Transactional`，而不是在接口上。如果在接口上使用`@Transactional`，只有使用基于接口的代理时才会生效。
+
+   且`@Transactional`只对public方法生效（不是pulic不生效也不会报错） 
+
+5. 配置类
+
+```java
+// 启动类 添加注解
+@EnableTransactionManagement // 开启事务支持
+public class XXXXXApplication {
+    .....
+}
+/**************************************************************/
+/**************************************************************/
+/**************************************************************/
+
+// TransactionAopConfig.java 配置类，配置事务
+
+@Aspect
+@Configuration
+public class TransactionAopConfig {
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @Pointcut("execution(* com.XXXX.service.impl.*.*(..))")
+    public String transactionPoint(){
+        return "execution(* com.XXXX.service.impl.*.*(..))";
+    }
+
+    /**
+     * 事务管理配置
+     */
+    @Bean("txAdvice")
+    public TransactionInterceptor txAdvice() {
+        // 事务管理规则，承载需要进行事务管理的方法名（模糊匹配）及设置的事务管理属性
+        NameMatchTransactionAttributeSource source = new NameMatchTransactionAttributeSource();
+
+        /* 配置增C删D改U INSERT DELETE UPDATE */
+        RuleBasedTransactionAttribute ruleForCUD = new RuleBasedTransactionAttribute();
+        ruleForCUD.setRollbackRules(Collections.singletonList(new RollbackRuleAttribute(Exception.class))); // 抛出异常 -> 事务回滚
+        ruleForCUD.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);  // 事务传播行为: 已存在事务则加入事务，否则新建事务
+        ruleForCUD.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);   // 事务隔离级别：读已提交，索引没有命中时时放行锁
+
+        /* 配置读R SELECT */
+        RuleBasedTransactionAttribute ruleForR = new RuleBasedTransactionAttribute();
+        ruleForR.setRollbackRules(Collections.singletonList(new RollbackRuleAttribute(Exception.class))); // 抛出异常 -> 事务回滚
+        ruleForR.setPropagationBehavior(TransactionDefinition.PROPAGATION_SUPPORTS);   // 事务传播行为: 已存在事务则加入，不存在就不使用事务
+        ruleForR.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED); // 事务隔离级别：读已提交，索引没有命中时时放行锁
+        ruleForR.setReadOnly(true); // 只读，数据库会对只读的操作进行优化
+
+        // 需要事务管理的方法，模糊匹配
+        Map<String, TransactionAttribute> txMap = new HashMap<>();
+        /* 增 */
+        txMap.put("insert*", ruleForCUD);
+        txMap.put("add*", ruleForCUD);
+        txMap.put("create*", ruleForCUD);
+        txMap.put("new*", ruleForCUD);
+        /* 改 */
+        //        txMap.put("update*", ruleForCUD);
+        txMap.put("up*", ruleForCUD);
+        txMap.put("set*", ruleForCUD);
+        txMap.put("alter*", ruleForCUD);
+        /* 删除 */
+        txMap.put("remove*", ruleForCUD);
+        txMap.put("delete*", ruleForCUD);
+        txMap.put("del*", ruleForCUD);
+        /* 查 */
+        txMap.put("query*", ruleForR);
+        txMap.put("select*", ruleForR);
+        txMap.put("get*", ruleForR);
+        txMap.put("find*", ruleForR);
+
+        source.setNameMap(txMap);
+        // 实例化事务拦截器
+        return new TransactionInterceptor(transactionManager, source);
+    }
+
+    /**
+     * 设置切面规则，容器自动注入
+     */
+    @Bean
+    public Advisor advisor() {
+        // 声明切点要切入的面
+        AspectJExpressionPointcut pointcut = new AspectJExpressionPointcut();
+        // 设置需要被拦截的路径
+        pointcut.setExpression(transactionPoint());
+        // 设置切面和配置好的事务管理
+        return new DefaultPointcutAdvisor(pointcut, txAdvice());
+    }
+
+
+}
+```
 
 
 

@@ -26,6 +26,10 @@
       + [《Netty-Redis-ZooKeeper高并发实战》学习笔记10-12章](/study/Netty/《Netty-Redis-ZooKeeper高并发实战》学习笔记10-12章)
     * **Linux**
       + [Linux](/study/Linux/Shell学习)
+    * **分布式策略**
+      * [分布式策略](/study/分布式策略/分布式策略-杂记)
+    * **负载均衡-代理**
+      * [负载均衡-代理](/study/负载均衡-代理/负载均衡-代理-杂记)
     * **计算机网络**
       + [计算机网络](/study/计算机网络/计算机网络杂记)
     * **网络安全**

@@ -21,6 +21,10 @@
 > [java内存dump文件导出与查看](https://blog.csdn.net/lsh2366254/article/details/84911374)
 >
 > [记一次频繁gc排查过程](https://www.jianshu.com/p/13915f4a562b)
+>
+> [[jvm\][面试]JVM 调优总结](https://www.cnblogs.com/diegodu/p/9849611.html)
+>
+> [深入浅出JVM调优，看完你就懂](https://blog.csdn.net/Javazhoumou/article/details/99298624)
 
 ## 2. 动态代理
 

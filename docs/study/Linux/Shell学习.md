@@ -293,6 +293,8 @@ Shell批量监控服务发送邮件报警
 
    ps -ef | grep java
 
+   netstat -unltp|grep fdfs
+
 4. 使用nmap工具
 
    + 查看本机开放的端口
