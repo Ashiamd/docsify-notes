@@ -36,6 +36,8 @@
       * [OAuth](/study/网络安全/OAuth/OAuth学习杂记)
       * [XSS](/study/网络安全/XSS/Web安全-XSS教程)
       * [加密解密](/study/网络安全/加密解密/加密解密杂谈)
+    * **设计模式**
+      * [设计模式-学习杂记](/study/设计模式/设计模式-学习杂记)
     * **文件管理**
       + [FastDFS](/study/文件管理/FastDFS/FastDFS杂记)
     * **DB**

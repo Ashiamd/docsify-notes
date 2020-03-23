@@ -31,5 +31,18 @@ NIO提供了Channel、Buffer、Charset、Selector
 
 在网课里面，这个被称作粘包、拆包问题。
 
+## 3. EventLoopGroup
 
+> [NioEventLoopGroup源码分析与线程设定](https://www.cnblogs.com/linlf03/p/11373834.html)
+>
+> [netty实战之百万级流量NioEventLoopGroup线程数配置](https://blog.csdn.net/linsongbin1/article/details/77698479)
+>
+> [[netty源码分析]--EventLoopGroup与EventLoop 分析netty的线程模型](https://blog.csdn.net/u010853261/article/details/62043709)
+>
+> [Netty源码阅读——handler()和childHandler()有什么区别](Netty源码阅读——handler()和childHandler()有什么区别)
 
+​	看了一些网文，想起自己之前不知道在哪里看到的Netty代码，对boss线程设置为CPU内核数，而work线程设置为CPU内核数*10，客户端子channel的线程数为handler数量。感觉有点迷惑行为。除非把耗时操作全交给EventLoop了，不然想不到为什么需要那么多线程。
+
+## 4. 心跳
+
+> [netty 实现长连接，心跳机制，以及重连](https://blog.csdn.net/weixin_41558061/article/details/80582996)

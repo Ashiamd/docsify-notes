@@ -5873,4 +5873,12 @@ public void removeRemoteSession(String sessionId) {
 > [Reactor详解](https://blog.csdn.net/bingxuesiyang/article/details/89888664)
 >
 > [Netty ChannelOption参数详解](https://www.jianshu.com/p/975b30171352)
+>
+> EventLoopGroup 反应器线程组线程数量，现在想想之前看过一个代码一下子给工作线程配置CPU内核数*10，感觉有点迷惑行为；
+>
+> [netty实战之百万级流量NioEventLoopGroup线程数配置](https://blog.csdn.net/linsongbin1/article/details/77698479)
+>
+> [NioEventLoopGroup源码分析与线程设定](https://www.cnblogs.com/linlf03/p/11373834.html)
+>
+> [[netty源码分析]--EventLoopGroup与EventLoop 分析netty的线程模型](https://blog.csdn.net/u010853261/article/details/62043709)
 

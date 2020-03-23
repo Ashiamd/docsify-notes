@@ -62,6 +62,8 @@
 >
 > [【面试】足够“忽悠”面试官的『Spring事务管理器』源码阅读梳理（建议珍藏） ](https://www.sohu.com/a/306497169_465221)
 >
+> [频繁的访问数据库,sqlconnection可以一直open不close吗(2) ](https://bbs.csdn.net/topics/390843492)
+>
 > 地理位置计算、处理：
 >
 > [使用MySQL的geometry类型处理经纬度距离问题的方法](https://www.jb51.net/article/155712.htm)
@@ -75,6 +77,8 @@
 > 存储引擎：
 >
 > [InnoDB与Myisam的六大区别](https://www.cnblogs.com/vicenteforever/articles/1613119.html)
+>
+> [InnoDB和MyISAM的区别](https://www.cnblogs.com/amiezhang/p/10029585.html)
 
 ### 1. 事务(各路学习后的总结)
 

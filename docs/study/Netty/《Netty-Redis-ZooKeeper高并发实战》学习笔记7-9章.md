@@ -2223,6 +2223,8 @@ EchoClient客户端连接成功!
 
 ### 8.5 详解Protobuf协议语法
 
+> [Protobuf 的 proto3 与 proto2 的区别](https://solicomo.com/network-dev/protobuf-proto3-vs-proto2.html)
+
 ​	在Protobuf中，通信协议的格式是通过”.proto“文件定义的。**一个”.proto“文件有两大组成部分：头部声明、消息结构体的定义**。
 
 ​	**头部声明部分，包含了协议的版本、包名、特定语言的选项设置等；消息结构体部分，可以定义一个或者多个消息结构体。**

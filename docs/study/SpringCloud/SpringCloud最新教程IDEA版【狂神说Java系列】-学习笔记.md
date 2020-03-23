@@ -486,7 +486,13 @@ CAP的三进二：CA、AP、CP
 >
 > [Springboot -- 用更优雅的方式发HTTP请求(RestTemplate详解)](https://www.jianshu.com/p/27a82c494413)
 >
+> [SpringCloud（五） 使用Ribbon进行Restful请求](https://www.cnblogs.com/hellxz/p/8875452.html)
+>
 > [Ribbon详解](https://www.jianshu.com/p/1bd66db5dc46)
+>
+> 出错or异常
+>
+> [RestTemplate踩坑笔记-中文乱码与json被解析成xml](https://www.jianshu.com/p/8be6efeb17b1)
 
 ### Ribbon是什么？
 
