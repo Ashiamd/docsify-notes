@@ -79,6 +79,12 @@
 > [InnoDB与Myisam的六大区别](https://www.cnblogs.com/vicenteforever/articles/1613119.html)
 >
 > [InnoDB和MyISAM的区别](https://www.cnblogs.com/amiezhang/p/10029585.html)
+>
+> 主键：
+>
+> [深入分析mysql为什么不推荐使用uuid或者雪花id作为主键](https://www.cnblogs.com/wyq178/p/12548864.html)
+>
+> [深入浅出mybatis之返回主键ID](https://www.cnblogs.com/nuccch/p/9067305.html)
 
 ### 1. 事务(各路学习后的总结)
 

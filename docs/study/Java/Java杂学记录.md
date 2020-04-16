@@ -67,3 +67,7 @@
 > 
 
 ​	如果试图通过多用final来提升性能啥的，那还是算了。提升性能应该在算法使用、设计模式、业务逻辑等方面下功夫，而不是咬文嚼字地钻牛角尖。
+
+## 4. 并发
+
+> [Java并发——Executor框架详解（Executor框架结构与框架成员）](https://blog.csdn.net/tongdanping/article/details/79604637)

@@ -31,6 +31,18 @@
 > [redis 获取key 过期时间](https://blog.csdn.net/zhaoyangjian724/article/details/51790977)
 >
 > [请问，redis为什么是单线程？](https://www.nowcoder.com/questionTerminal/9e7c2b4fff1d4507814346cf370fa8f6)
+>
+> SpringBoot-Redis连接超时-坑
+>
+> [springboot项目中redis连接超时问题](https://blog.csdn.net/distinySmile/article/details/105192539)
+>
+> [redis报错远程主机强迫关闭了一个现有的连接以及超时问题](http://www.classinstance.cn/detail/77.html)
+>
+> [springboot整合redis时使用Jedis代替Lettuce](https://blog.csdn.net/xianyirenx/article/details/84207393)
+>
+> 缓存
+>
+> [redis缓存在项目中的使用](https://www.cnblogs.com/fengli9998/p/6755591.html)
 
 
 

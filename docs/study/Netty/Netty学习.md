@@ -44,6 +44,8 @@ NIO提供了Channel、Buffer、Charset、Selector
 > [netty5 客户端 NioEventLoopGroup的问题。为什么全都是单线程处理？](https://www.oschina.net/question/3659437_2271832?p=1)
 >
 > [Netty 系列之 Netty 线程模型](https://www.infoq.cn/article/netty-threading-model/)
+>
+> [Netty 源码分析之 三 我就是大名鼎鼎的 EventLoop(一)](https://segmentfault.com/a/1190000007403873)
 
 ​	看了一些网文，想起自己之前不知道在哪里看到的Netty代码，对boss线程设置为CPU内核数，而work线程设置为CPU内核数*10，客户端子channel的线程数为handler数量。感觉有点迷惑行为。除非把耗时操作全交给EventLoop了，不然想不到为什么需要那么多线程。
 
