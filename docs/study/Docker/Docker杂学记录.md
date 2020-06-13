@@ -9,6 +9,18 @@
 > [Docker 命令详解（run篇）](https://www.cnblogs.com/shijunjie/p/10488603.html)
 >
 > [docker与虚拟机性能比较](https://blog.csdn.net/cbl709/article/details/43955687)
+>
+> 安装和配置
+>
+> [如何在 CentOS 上安装 RPM 软件包](https://www.linuxidc.com/Linux/2019-08/159875.htm)
+>
+> [centos8 安装 docker](https://blog.csdn.net/yucaifu1989/article/details/103111317)
+>
+> [RHEL8-安装Docker Problem: package docker-ce-3:19.03.6-3.el7.x86_64 requires containerd.io](https://www.cnblogs.com/leoshi/p/12324827.html)
+>
+> [docker_清华源国内的选择](http://www.mamicode.com/info-detail-2862950.html)
+>
+> [安装docker-compose的两种方式](https://blog.csdn.net/LUCKWXF/article/details/96131392)
 
 —————————仓库
 
@@ -720,7 +732,15 @@ spring:
    
    7. 安装docker不讲了，这个讲安装docker-compose（我的环境是CentOS7，其他环境不确定是否相同）
    
+      > [RHEL8-安装Docker Problem: package docker-ce-3:19.03.6-3.el7.x86_64 requires containerd.io](https://www.cnblogs.com/leoshi/p/12324827.html)
+      >
       > [腾讯云服务器Centos7.6中docker-compose工具安装](https://blog.csdn.net/kellerxq/article/details/103326664)
+      >
+      > [centos 7.4 安装docker 19.03.6 版本。附带离线安装包](https://www.cnblogs.com/wangzy-tongq/p/12361880.html)
+      >
+      > [基于docker19.03.6的服务虚拟化的坑（系统内核版本）](https://blog.csdn.net/HK_poguan/article/details/104657849)
+      >
+      > [安装docker-compose的两种方式](https://blog.csdn.net/LUCKWXF/article/details/96131392)
    
       ```shell
       # 推荐根据上面的文章安装，因为我自己安装也出过问题，下面直接贴上面文章的安装方式

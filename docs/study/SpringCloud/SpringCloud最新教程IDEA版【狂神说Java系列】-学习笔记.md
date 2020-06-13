@@ -112,6 +112,10 @@
 > [Spring Cloud Alibaba实战(一) - 概述](https://developer.aliyun.com/article/718349)
 >
 > [ServiceMesh简介](https://www.cnblogs.com/stay-foolisher/p/10422971.html)
+>
+> SOA和微服务等概念
+>
+> [SOA架构和微服务架构的区别](https://blog.csdn.net/zpoison/article/details/80729052)
 
 ### 常见面试题
 

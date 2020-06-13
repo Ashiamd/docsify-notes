@@ -5,6 +5,7 @@
     * **LeetCode**
       * [探索-初级算法](/study/LeetCode_Study/初级算法/README.md)
       * [探索-中级算法](/study/LeetCode_Study/中级算法/README.md)
+      * [探索-高级算法](/study/LeetCode_Study/高级算法/README.md)
     * **React**
       * [官方入门教程学习](/study/React/官方入门教程学习) 
     * **Vue**
@@ -26,7 +27,8 @@
       + [《Netty-Redis-ZooKeeper高并发实战》学习笔记7-9章](/study/Netty/《Netty-Redis-ZooKeeper高并发实战》学习笔记7-9章)
       + [《Netty-Redis-ZooKeeper高并发实战》学习笔记10-12章](/study/Netty/《Netty-Redis-ZooKeeper高并发实战》学习笔记10-12章)
     * **Linux**
-      + [Linux](/study/Linux/Shell学习)
+      + [Shell](/study/Linux/Shell学习)
+      + [Linux知识-学习笔记](/study/Linux/Linux知识-学习笔记)
     * **分布式策略**
       * [分布式策略](/study/分布式策略/分布式策略-杂记)
     * **负载均衡-代理**

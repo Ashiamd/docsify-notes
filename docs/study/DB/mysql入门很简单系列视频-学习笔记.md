@@ -85,6 +85,26 @@
 > [深入分析mysql为什么不推荐使用uuid或者雪花id作为主键](https://www.cnblogs.com/wyq178/p/12548864.html)
 >
 > [深入浅出mybatis之返回主键ID](https://www.cnblogs.com/nuccch/p/9067305.html)
+>
+> 主从复制
+>
+> [Mysql 主从复制](https://www.jianshu.com/p/faf0127f1cb2)
+>
+> 锁
+>
+> [求教 For Update 解锁](https://bbs.csdn.net/topics/330034068)
+>
+> timeout变量
+>
+> [mysql timeout知多少](https://blog.csdn.net/weixin_33766805/article/details/93818673?utm_medium=distribute.pc_relevant.none-task-blog-BlogCommendFromMachineLearnPai2-3&depth_1-utm_source=distribute.pc_relevant.none-task-blog-BlogCommendFromMachineLearnPai2-3)
+>
+> 元数据
+>
+> [MySQL的元数据解释说明](https://blog.csdn.net/qq_34672033/article/details/90145387)
+>
+> 数据库查询流程（MySQL基本架构）
+>
+> [数据库基础知识](https://blog.csdn.net/qq_35190492/article/details/104203466?utm_medium=distribute.pc_feed.none-task-blog-alirecmd-20&depth_1-utm_source=distribute.pc_feed.none-task-blog-alirecmd-20&request_id=)
 
 ### 1. 事务(各路学习后的总结)
 
@@ -246,6 +266,10 @@ public class TransactionAopConfig {
 > [mysql索引命中规则](https://www.cnblogs.com/starluke/p/11741041.html)
 >
 > [SQL IN 一定走索引吗？](https://www.cnblogs.com/stoneFang/p/11032746.html)
+>
+> 聚簇索引
+>
+> [MYSQL索引：对聚簇索引和非聚簇索引的认识](https://blog.csdn.net/alexdamiao/article/details/51934917)
 
 ## 第8章 视图
 

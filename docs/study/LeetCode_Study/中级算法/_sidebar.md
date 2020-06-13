@@ -5,3 +5,6 @@
   * [回溯算法](/study/LeetCode_Study/中级算法/中级算法-回溯算法)
   * [排序和搜索](/study/LeetCode_Study/中级算法/中级算法-排序和搜索)
   * [动态规划](/study/LeetCode_Study/中级算法/中级算法-动态规划)
+  * [设计问题](/study/LeetCode_Study/中级算法/中级算法-设计问题)
+  * [数学](/study/LeetCode_Study/中级算法/中级算法-数学)
+  * [其他](/study/LeetCode_Study/中级算法/中级算法-其他)

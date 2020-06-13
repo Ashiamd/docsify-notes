@@ -55,6 +55,8 @@
 > [Spring Security OAuth2 Demo —— 客户端模式（ClientCredentials）](https://www.cnblogs.com/hellxz/p/12041588.html)
 >
 > [使用JWT作为Spring Security OAuth2的token存储](https://www.cnblogs.com/hellxz/p/12044340.html)
+>
+> [理解OAuth2.0认证与客户端授权码模式详解](https://segmentfault.com/a/1190000010540911)
 
 + SSO
 
