@@ -6,7 +6,7 @@
       * [探索-初级算法](/study/LeetCode_Study/初级算法/README.md)
       * [探索-中级算法](/study/LeetCode_Study/中级算法/README.md)
       * [探索-高级算法](/study/LeetCode_Study/高级算法/README.md)
-      * [剑指Offer](/study/LeetCode_Study/剑指Offer)
+      * [剑指Offer](/study/LeetCode_Study/剑指Offer/剑指Offer)
     * **React**
       * [官方入门教程学习](/study/React/官方入门教程学习) 
     * **Vue**
