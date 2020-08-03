@@ -14,6 +14,7 @@
 * [MQ](/study/MQ)
 * [Netty](/study/Netty)
 * [Linux](/study/Linux)
+* [操作系统和硬件](/study/操作系统和硬件)
 * [计算机网络](/study/计算机网络)
 * [网络安全](/study/网络安全)
 * [DB](/study/DB)
