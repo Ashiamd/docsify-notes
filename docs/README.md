@@ -8,6 +8,7 @@
 * [LeetCode](/study/LeetCode_Study)
 * [React](/study/React)
 * [Vue](/study/Vue)
+* [Java](/study/Java)
 * [Python](/study/Python)
 * [SpringBoot](/study/SpringBoot)
 * [SpringCloud](/study/SpringCloud)
