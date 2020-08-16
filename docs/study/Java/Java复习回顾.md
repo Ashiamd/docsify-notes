@@ -26,7 +26,7 @@
 #### 1.1.1.2 线程-启动
 
 1. Thread对象调用`start()`
-2. 线程池`ExecutorService`提交线程任务<small>(池内有空闲则直接复用，无线程可用且未达到线程池上限容量，则新建并启动</small>
+2. 线程池`ExecutorService`提交线程任务<small>(池内有空闲则直接复用，无线程可用且未达到线程池上限容量，则新建并启动)</small>
 
 线程启动，即进入"就绪态"，是否"运行态"还看CPU调度情况。
 
@@ -39,6 +39,8 @@ yield、sleep、join
 > yield是就绪
 >
 > 是的，wait 放对象锁 sleep不放。sleep不出让系统资源；wait是进入线程等待池等待，出让系统资源，其他线程可以占用CPU
+>
+> [Java中interrupt的使用](https://www.cnblogs.com/jenkov/p/juc_interrupt.html)
 
 
 
