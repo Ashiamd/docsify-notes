@@ -38,7 +38,7 @@
 
 > [多线程系列（一）------ 线程的状态及转换](https://blog.csdn.net/qq_35206261/article/details/88873820) <= 文章不错，图很形象了。
 >
-> [LockSupport（park/unpark）源码分析](https://www.jianshu.com/p/e3afe8ab8364)
+> [LockSupport（park/unpark）源码分析](https://www.jianshu.com/p/e3afe8ab8364) <= 推荐阅读
 
 按照Thread类定义，java线程共有6个状态：(以下内容在官方Thread类上的注解都能看到->除了我的额外备注外)
 
@@ -72,7 +72,7 @@
 
   + 调用`LockSupport.park()`的线程t1,需要等待其他线程执行`LockSupport.unlock(t1)`之后，才能退出WAITING状态。
 
-    <small>unpark(t1)不叠加，多次unpark(t1)和一次的效果相同，内部都是信号量计数置为1。unpark可以先于park执行，只要使得计数为1,park就无需进入WAITING直接往下执行。</small>
+    <small>**unpark(t1)不叠加，多次unpark(t1)和一次的效果相同，内部都是二进制信号量计数置为1**。unpark可以先于park执行，只要使得计数为1,park就无需进入WAITING直接往下执行。park在监听的二进制信号量/条件变量>0时置0并继续往下执行;而upark不管二进制信号量/条件变量值为多少，将值置1。这里park和unpark相当于操作系统的条件变量机制，只有条件变量满足>0，park才无需等待，否则等待直到满足条件变量（有人对该线程执行unpark）or参数设置的至多等待时间到达。</small>
 
   ​	<small>(`park()`方法和`unpark()`方法类似`wait()`和`notify()/notifyAll()`，前者能够指定要"许可"的线程，后者唤醒具有随机性。`park()`和`unpark()`底层用到Unsafe类，用mutex二进制信号量、条件变量来实现。且`park`和`unpark`不要求在同步代码块内使用。)</small>
 
@@ -340,21 +340,103 @@ Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
 
 ​	*前面"1.2.1 java对象锁本质"，我们得知java对象锁，本质上就是在对象头的"Mark Word"记录锁信息。（这和操作系统、CPU实现的锁策略类似，都是通过访问共享资源，根据值判断是否加锁、是否自己占有锁等。）*
 
-​	在JDK1.6之前，`synchronized`直接申请重量级锁，而JDK1.6之后，添加了"锁升级"过程，提高了`synchronized`的综合效益。(注意：锁只能升级,不能降级,如果最后升级成了重量级锁,没法降级回之前的状态。)
+​	在JDK1.6之前，`synchronized`直接申请重量级锁，而JDK1.6之后，添加了"锁升级"过程，提高了`synchronized`的综合效益。(注意：锁只能升级,不能降级,如果最后升级成了重量级锁,没法降级回之前的状态。当然你如果说重新新建了一个对象当作锁，那当然是从头升级了，不过这和锁升级就没关联了。)
 
 ​	介绍锁升级之前，我们需要了解每个锁的大致作用/区别。
 
 ![img](https://img-blog.csdnimg.cn/20181207170638115.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3BhbmdlMTk5MQ==,size_16,color_FFFFFF,t_70)
 
-1. 无锁：字面意，不对对象加锁。
+1. 无锁：字面意，不对对象加锁。(有两种无锁情况,一种是偏向锁标志位1可用,一种是偏向锁标志位0不可用。只有偏向锁标志位1的无锁对象才可能添加偏向锁)
 2. 偏向锁：在Mark Word记录拥有该偏向锁的线程，不实际加"锁"。（因为即使是线上项目，也存在某些同步方法/代码块在一段时间内仅只有一个线程访问，此时如果直接加重量级锁，显然不合适。）
-
 3. 轻量级锁：当同一锁被两个或两个以上的线程抢占时，偏向锁自动升级为轻量级锁。（也有可能一开始无锁直接升级成轻量级锁。上一小节的示例代码即存在该现象。）轻量级锁，又称自旋锁，因为当多个线程抢占轻两级锁时，内部使用while循环实现，循环判断是否能够抢占到锁。这里的锁，指JVM层面的对象锁，并非向操作系统申请的锁。
-4. 重量级锁：需要向操作系统申请的锁，该锁是操作系统级别的，不再是JVM用户空间级别的（需要经过上下文切换，效率较低，在线程任务量小的时候，应该尽量避免使用重量级锁）。当抢占自旋锁的线程数量超过CPU核数的1/2，或者某线程自旋超过10次，自旋锁将自动升级为重量级锁。另外，当线程执行了wait等阻塞方法，将直接升级为重量级锁。（所以不建议使用wait等显式阻塞的方法）
+4. 重量级锁：需要向操作系统申请的锁，该锁是操作系统级别的，不再是JVM用户空间级别的（需要经过上下文切换，效率较低，在线程任务量小的时候，应该尽量避免使用重量级锁）。当抢占自旋锁的线程数量超过CPU核数的1/2，或者某线程自旋超过10次，自旋锁将自动升级为重量级锁。另外，当线程执行了wait方法，将直接升级为重量级锁。（所以不建议使用wait方法，其他显式阻塞线程的方法也不建议使用，除非代码逻辑不得不这么做，且对死锁等特殊情况必须有明确把握能处理。）
 
-#### 1.2.2.2 偏向锁
+#### 1.2.2.2 重量级锁
 
-​	
+> [通过openjdk源码ObjectMonitor底层实现分析wait/notify](https://blog.csdn.net/qq_33249725/article/details/104212364) <= 拿图当大纲看即可
+>
+> [深入分析wait/notify为什么要在同步块内](https://blog.csdn.net/lsgqjh/article/details/61915074) <== 推荐这篇
+>
+> [**调用了wait()的线程进入等待池，只有被notify唤醒之后才进入锁池，这两个池的内涵是什么？**](https://www.zhihu.com/question/64725629) <== 强烈推荐
+>
+> 下面用到的图片来自上述几篇文章。
+
+​	JDK1.6之前`synchronized`修饰区域，需要向操作系统申请重量级锁之后才能访问。重量级锁不归JVM管控，由操作系统管理，即操作系统提供接口，java通过native方法实现（C/C++代码）。**重量级锁对应"管程"机制（Monitor），管程要求其管理的函数被访问前必须加锁，而函数执行完毕退出前必须释放锁，且同一时刻管程所管理的某函数只能被其中一个线程占有**。
+
+​	管程的加锁、解锁由操作系统内核态完成，所以JVM中的java程序需要经历上下文切换（用户态与内核态之间切换，内核态的`task_struct`需要保存当前进程执行状态，然后完成锁操作，再将表示锁的信息传给用户态JVM进程）。*可想而知，本来用户态能完成的事情，现在需要经过操作系统中转，换来系统安全和进程间可靠执行的代价就是执行效率降低。*
+
+​	关于Java管程的native实现，同样可以通过hotspot源码中查看。（`OpenJDK/hotspot-37240c1019fd/src/share/vm/runtime/objectMonitor.hpp`)
+
+![[外链图片转存失败,源站可能有防盗链机制,建议将图片保存下来直接上传(img-k3WKuRUO-1581065675036)(https://i.loli.net/2020/02/07/GQDUqBdIZnJoehY.jpg)]](https://img-blog.csdnimg.cn/20200207165547327.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzMzMjQ5NzI1,size_16,color_FFFFFF,t_70)
+
+​	![这里写图片描述](https://img-blog.csdn.net/20170313112310275?watermark/2/text/aHR0cDovL2Jsb2cuY3Nkbi5uZXQvbHNncWpo/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70/gravity/SouthEast)
+
+```c++
+// objectMonitor.hpp文件
+ObjectWaiter * volatile _EntryList ;     // Threads blocked on entry or reentry.
+```
+
+​	假设`synchronized`的对象锁已经升级到重量级锁，此时多个线程抢占该锁，根据管程定义和底层代码实现，保证了只能有一个线程成为`Owner`，其余访问同一个管程所管理的函数的线程，进入`Entry Set`（处于阻塞状态BLOCKED，不会抢占CPU时间片）。当`Owner`执行了`wait`操作时，将释放锁，自身进入`Wait Set`（处于WAITING状态），此时`Entry Set`中随机一个BLOCKED的线程被唤醒(进入RUNNABLE状态)，和其他此刻本来就是RUNNABLE状态的线程抢占锁，流程和前面相同。如果`Owner`正常结束同步代码块并释放锁，同样会随机唤醒一个`Entry Set`的线程（BLOCKED状态转为RUNNABLE）。
+
+​	当某一个`Owner`在`synchronized`代码块内执行了`notify()`或`notifyAll()`之后，如果`Wait Set`不为空，则唤醒第一个（Wait Set是双向链表），由于java线程被加入`Wait Set`的顺序不确定，所以对JVM来说就是随机一个线程被唤醒了。被唤醒的线程从WAITING进入到RUNNABLE状态，等待下次操作系统调度和其他RUNNABLE的线程抢占锁（`notify/notifyAll`唤醒，实际有两种处理策略，一种是直接加入`Entry Set`;另一种是先自旋尝试占锁，占锁未果则进入`Entry Set`）。
+
+回顾操作系统中，管程的wait方法主要包含几个步骤：
+
++ 释放锁
++ 加入等待队列
++ 请求操作系统重新调度
++ 请求锁（这一步需要下次该线程被notify/notifyAll唤醒并成功占用CPU时间片）
+
+----
+
+小结：
+
++ 重量级锁，需要操作系统参与上下文切换。牺牲效率保证系统安全和线程同步互斥。
++ `wait`需要Monitor，所以需要重量级锁，即在`synchronized`代码块中使用。而`notify/notifyAll`只有和`wait`一起使用才有意义，同样需要在同步代码块中使用。
++ 管程Monitor主要组件包括3个：
+  + WaitSet等待队列（执行过wait操作的旧`Owner`）
+  + EntryList（可以理解为阻塞队列，阻塞条件即是否为锁的`Owner`）
+  + `Owner`（锁的占有者-线程）。
++ 适用于线程任务耗时长or线程数量极多的情况<small>（此时重量级锁上下文切换的开销 < 占用CPU时间片的轻量级锁（反复自旋尝试占锁））</small>
+
+#### 1.2.2.3 轻量级锁
+
+> [深入理解CAS算法原理](https://www.jianshu.com/p/21be831e851e) <= 操作系统笔记里已经介绍够多了，这里java推荐看这篇就够了。
+>
+> [CMPXCHG - 比较并交换](https://www.hgy413.com/hgydocs/IA32/instruct32_hh/vc42.htm)
+>
+> | 操作码      | 指令                  | 说明                                                         |
+> | ----------- | --------------------- | ------------------------------------------------------------ |
+> | 0F B0/**r** | CMPXCHG **r/m8,r8**   | 比较 AL 与 **r/m8**。如果相等，则设置 ZF，并将 **r8** 加载到 **r/m8**。否则清除 ZF，并将 **r/m8** 加载到 AL。 |
+> | 0F B1/**r** | CMPXCHG **r/m16,r16** | 比较 AX 与 **r/m16**。如果相等，则设置 ZF，并将 **r16** 加载到 **r/m16**。否则清除 ZF，并将 **r/m16** 加载到 AL。 |
+> | 0F B1/**r** | CMPXCHG **r/m32,r32** | 比较 EAX 与 **r/m32**。如果相等，则设置 ZF，并将 **r32** 加载到 **r/m32**。否则清除 ZF，并将 **r/m32** 加载到 AL。 |
+>
+> [cpu cmpxchg 指令理解 (CAS)](https://blog.csdn.net/xiuye2015/article/details/53406432) <== 内含测试的汇编代码
+>
+> cmpxchg是汇编指令
+> 作用：比较并交换操作数.
+> 如：CMPXCHG r/m,r 将累加器AL/AX/EAX/RAX中的值与首操作数（目的操作数）比较，如果相等，第2操作数（源操作数）的值装载到首操作数，zf置1。如果不等， 首操作数的值装载到AL/AX/EAX/RAX并将zf清0
+> 该指令只能用于486及其后继机型。第2操作数（源操作数）只能用8位、16位或32位寄存器。第1操作数（目地操作数）则可用寄存器或任一种存储器寻址方式。
+
+​	显而易见，需要上下文切换的重量级锁效率较低。轻量级锁使用JVM层面的CAS操作（Compare And Swap/Set），无需和操作系统交互，效率更高。CAS的底层实现由CPU提供原子性机械原语`cmpxchg`，就像其他机械码一样被执行。
+
+​	![img](https://img-blog.csdnimg.cn/20181207170638115.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3BhbmdlMTk5MQ==,size_16,color_FFFFFF,t_70)
+
+​	轻两级
+
+#### 1.2.2.4 偏向锁
+
+
+
+### 1.2.3 synchronized
+
+> [synchronized 是可重入锁吗？为什么？](https://www.cnblogs.com/incognitor/p/9894604.html)
+
+synchronized是可重入锁，非公平锁。
+
+### 1.2.4 volatile
+
+​		
 
 
 
