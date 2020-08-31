@@ -417,14 +417,497 @@ ObjectWaiter * volatile _EntryList ;     // Threads blocked on entry or reentry.
 > 作用：比较并交换操作数.
 > 如：CMPXCHG r/m,r 将累加器AL/AX/EAX/RAX中的值与首操作数（目的操作数）比较，如果相等，第2操作数（源操作数）的值装载到首操作数，zf置1。如果不等， 首操作数的值装载到AL/AX/EAX/RAX并将zf清0
 > 该指令只能用于486及其后继机型。第2操作数（源操作数）只能用8位、16位或32位寄存器。第1操作数（目地操作数）则可用寄存器或任一种存储器寻址方式。
+>
+> [jvm学习：轻量级锁，偏向锁，重量级锁，重偏量锁流程及测试](https://juejin.im/post/6844904071850098701) <==  还不错，推荐阅读。下面部分图片，文字也摘自于该文章。
 
 ​	显而易见，需要上下文切换的重量级锁效率较低。轻量级锁使用JVM层面的CAS操作（Compare And Swap/Set），无需和操作系统交互，效率更高。CAS的底层实现由CPU提供原子性机械原语`cmpxchg`，就像其他机械码一样被执行。
 
-​	![img](https://img-blog.csdnimg.cn/20181207170638115.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3BhbmdlMTk5MQ==,size_16,color_FFFFFF,t_70)
+​	轻量级锁，适用于线程并发量小且线程任务量小的场景。在并发量不高且线程任务量小的情况下，线程A占有锁的时间不长，线程B、C、D等完全可以自旋等待一小会，这样短时间内线程A、B、C、D都能执行完同步代码块的代码，中途无需退出RUNNING状态（就绪态和运行态）。
 
-​	轻两级
+![img](https://img-blog.csdnimg.cn/20181207170638115.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3BhbmdlMTk5MQ==,size_16,color_FFFFFF,t_70)
 
-#### 1.2.2.4 偏向锁
+​	轻两级锁上锁过程（CAS）如下：
+
+1. 预进入`synchronized`的线程，在线程独享的栈空间**新建一条锁记录（Lock Record）对象**。
+
+   ![img](https://user-gold-cdn.xitu.io/2020/2/25/1707a4d82d286632?imageView2/0/w/1280/h/960/format/webp/ignore-error/1)
+
+   <small>(上图右侧，就是充当锁的java对象，最上面是Mark Word，往下是类元信息`union _metadata `中的指针,指向JVM方法区Method Area的类信息对象上；最下面Object body就是普通的需对象成员变量的。类内定义的方法当然也是存放在方法区的类信息中。)</small>
+
+
+2. 让锁记录中的Object reference指向锁对象，并尝试用CAS**替换**Object的Mark Word，将Mark Word的值存入锁记录
+
+   ![img](https://user-gold-cdn.xitu.io/2020/2/25/1707a4e43929ee69?imageView2/0/w/1280/h/960/format/webp/ignore-error/1)
+   
+   + 如果 **CAS替换成功**，对象头中存储了**锁记录地址和状态00**<small>（前面Mark Word表格可知，最后2bit为00表示轻量级锁）</small>，表示由该线程给对象加锁。
+   
+     ![img](https://user-gold-cdn.xitu.io/2020/2/25/1707a4f764023858?imageView2/0/w/1280/h/960/format/webp/ignore-error/1)
+   
+     （这里CAS替换了对象的Mark Word信息，所以前面查表时可看到无锁or偏向锁转换成自旋锁时明显Mark Word存储的信息不一样）
+   
+   + **CAS替换失败**，需要分两种情况考虑
+   
+     + 如果是其它线程已经持有了该 Object 的轻量级锁，这时表明有竞争，进入**锁膨胀过程(流程转重量级锁)**
+   
+     + **如果是自己执行了`synchronized`锁重入，那么再添加一条Lock Record作为重入的计数**
+   
+       （这里因为已经加过锁了，所以CAS打算加第二次锁时，会发现锁对象Object的Mark Word后两bit已是00即已被加锁，接着对比前面的信息发现lock record地址和自身线程拥有的lock record地址相同，所以不再替换Mark Word信息=>CAS失败，但是新增一条仅用来计数的Lock Record，其Object reference同样指向锁对象Object）
+   
+     ![img](https://user-gold-cdn.xitu.io/2020/2/25/1707a5066cdd602f?imageView2/0/w/1280/h/960/format/webp/ignore-error/1)
+   
+3. 当拥有轻量级锁（自旋锁）的线程退出`synchronized`代码块（解锁时）如果有取值为 null 的锁记录，表示有重入，这时重置锁记录，表示重入计数减一。
+
+   如果退出`synchronized`代码块时，栈中的锁记录Lock Record的Mark Word存储值不为null，则通过CAS将Mark Word恢复给Object锁对象。
+
+   + 成功，则解锁成功
+
+   + **失败，说明轻量级锁进行了锁膨胀或已经升级为重量级锁，进入重量级锁解锁流程**
+
+     (前面查表可知，64bit版本的Mark Word中，重量级锁前62bit用来标识锁对象Object向操作系统申请到的管程Monitor对象指针。)
+
+     (轻量级锁前62bit标识锁对象的占有者线程的Lock Record地址指针)
+
+   ![img](https://user-gold-cdn.xitu.io/2020/2/25/1707a51519432368?imageView2/0/w/1280/h/960/format/webp/ignore-error/1)
+
+> [Java synchronized中轻量级锁LockRecord存在栈帧中的哪里？](https://www.zhihu.com/question/409046921/answer/1359657467)
+
+#### 1.2.2.4 锁膨胀（轻量级锁升级为重量级锁）
+
+> [并发编程（JAVA版）-------------（四)](https://blog.csdn.net/weixin_44350891/article/details/104733661) 
+>
+> [并发编程之线程第二篇](https://blog.csdn.net/zhao1299002788/article/details/104215554#t8) <= 图片出处
+
+​	如果在尝试加轻量级锁的过程中，CAS操作无法成功，这时一种情况就是有其他线程为此对象加上了轻量级锁（有竞争），这时需要进行锁膨胀，将轻量级锁变为重量级锁。
+
+​	轻量级锁升级为重量级锁的2种默认界限（满足其一就升级为重量级锁）：
+
++ 存在线程为争夺轻量级锁已自旋10次
++ 争夺轻量级锁的线程数 > CPU总核数的 1/2
+
+当Thread-1准备进行轻量级加锁时，Thread-0已经对该对象加了轻量级锁，Thread-1的CAS操作失败，继续自旋反复进行CAS操作。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200208215534845.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3poYW8xMjk5MDAyNzg4,size_16,color_FFFFFF,t_70)
+
+当Thread-1的CAS自旋超过10次时（或当前争夺轻量级锁的线程总数 > CPU核数的1/2）时，Thread-1明确轻量级加锁失败，进入锁膨胀流程。
+
++ 即**为Object锁对象申请Monitor锁，让Object指向重量级锁地址**
+
++ 然后自己（Thread-1）进入Monitor的Entry List （BLOCKED状态，不再占用CPU时间片）
+
+  （注意，这里原本占用轻量级锁的Thread-0的Lock Record中的Mark Word仍然存储的是锁对象Object最初的Mark Word）
+
+  （由于升级为重量级锁，锁对象Object的Mark Word变为指向管程对象Monitor的指针，最后2bit变为10表示重量级锁）
+
++ **之后当Thread-0退出同步块解锁时，使用CAS将Mark Word的值恢复给对象头，失败。这时会进入重量级解锁流程，即按照Monitor地址找到Monitor对象，设置Owner为null，唤醒EntryList中BLOCKED线程。**
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200208220009273.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3poYW8xMjk5MDAyNzg4,size_16,color_FFFFFF,t_70)
+
+#### 1.2.2.5 偏向锁（Biased Locking）
+
+> [并发编程（JAVA版）-------------（四)](https://blog.csdn.net/weixin_44350891/article/details/104733661) 
+>
+> [jvm学习：轻量级锁，偏向锁，重量级锁，重偏量锁流程及测试](https://juejin.im/post/6844904071850098701) 
+
+​	轻量级锁在没有竞争时（就自己这个线程），每次重入仍然需要执行CAS操作。Jdk6中引入了偏向锁来进一步优化：只有第一次使用CAS将线程ID设置到对象的Mark Word头，之后发现这个线程ID是自己的就表示没有竞争，不用重新CAS，以后只要不发生竞争，这个对象就归该线程所有。
+
+​	在实际开发场景中，只有某几个时间段真正存在高并发，其他时间段比如凌晨3-4点等时间段，JVM中的方法其实很少被用户访问，很有可能一个锁对象被GC回收且重建创建后，在某1-3秒内只有一个在线用户访问了`synchronized`修饰的该方法，这时候完全可以只用偏向锁，因为不存在多线程竞争。
+
+一个对象创建时：
+
+- **如果开启了偏向锁（默认开启，且默认JVM初始化的4s后才启动->延迟启动）**，那么对象创建后，Mark Word值为0x05即最后3位为101，这时它的thread、epoch、age都为0（匿名偏向锁，因为对象新建时，并非一定拿来当作偏向锁使用）
+
+  （通过命令行`java -XX:+PrintFlagsFinal -version | grep BiasedLocking`查看偏向锁相关的JVM非标准参数)
+
+- **偏向锁是默认是延迟的**(j**dk1.8是JVM初始化后延迟4s**，因为JVM初始化时新建的GC等线程本身需要加锁同步互斥，已知多个线程抢占锁，则没必要用偏向锁。偏向锁的锁撤销本身也需要消耗资源。)，不会在程序启动时立即生效如果想避免延迟，可以加VM参数 `- xx:BiasedLockingStartupDelay=0`来禁用延迟。
+
+- 如果没有开启偏向锁，那么对象创建后，Mark Word值为0x01即最后三位为001，这时它的Hash Code、age都为0，**第一次用到Hash Code时才会赋值**。
+
+```shell
+## Linux查看JDK关于 偏向锁Biased Locking的 非标准参数（凡是带X的都是非标准参数），正好主力机是Arch Linux。
+## JDK1.8
+./java -XX:+PrintFlagsFinal -version | grep BiasedLocking
+     intx BiasedLockingBulkRebiasThreshold          = 20                                  {product} ## 偏向锁批量重偏向的阈值20，以class为单位，该类的偏向锁对象被执行第20次偏向撤销操作时，JVM假设当前偏向的线程不合适，重新把该class下所有对象锁对象实例偏向于新的线程。
+     intx BiasedLockingBulkRevokeThreshold          = 40                                  {product} ## 偏向锁批量撤销的阈值40,当执行过偏向锁批量重偏向后，锁对象对应的class类上的锁撤销次数继续累加达到第40次时，JVM认为当前锁存在多线程争夺，将所有该class下的锁对象标记为不可偏向，即Mark Word后3bit从101变成000，直接走轻量级锁的逻辑。
+     intx BiasedLockingDecayTime                    = 25000                               {product}
+     intx BiasedLockingStartupDelay                 = 4000                                {product}   ## 这个4000 表示4000毫秒后延迟启动 偏向锁，
+     bool TraceBiasedLocking                        = false                               {product}
+     bool UseBiasedLocking                          = true                                {product}
+java version "1.8.0_261"
+Java(TM) SE Runtime Environment (build 1.8.0_261-b12)
+Java HotSpot(TM) 64-Bit Server VM (build 25.261-b12, mixed mode)
+
+## OpenJDK 14
+java -XX:+PrintFlagsFinal -version | grep BiasedLocking 
+     intx BiasedLockingBulkRebiasThreshold         = 20                                        {product} {default}
+     intx BiasedLockingBulkRevokeThreshold         = 40                                        {product} {default}
+     intx BiasedLockingDecayTime                   = 25000                                     {product} {default}
+     intx BiasedLockingStartupDelay                = 0                                         {product} {default}
+     bool UseBiasedLocking                         = true                                      {product} {default}
+openjdk version "14.0.2" 2020-07-14
+OpenJDK Runtime Environment (build 14.0.2+12)
+OpenJDK 64-Bit Server VM (build 14.0.2+12, mixed mode)
+```
+
+轻量级锁和偏向锁对比：
+
+```java
+static final Object obj = new Object();
+public static void m1() {
+    synchronized( obj ) {
+        // 同步块 A
+        m2();
+    }
+}
+public static void m2() {
+    synchronized( obj ) {
+        // 同步块 B
+        m3();
+    }
+}
+public static void m3() {
+    synchronized( obj ) {
+        // 同步块 C
+    }
+}
+```
+
+![img](https://user-gold-cdn.xitu.io/2020/2/25/1707a5b930bf65b0?imageView2/0/w/1280/h/960/format/webp/ignore-error/1)
+
+![img](https://user-gold-cdn.xitu.io/2020/2/25/1707a5c5810fe154?imageView2/0/w/1280/h/960/format/webp/ignore-error/1)
+
+​	使用轻量级锁，每次CAS操作前都需要暂时生成一个Lock Reord锁记录，用于和轻量级锁对象的Mark Word信息比对，只有成功替换时，线程才能占有锁。
+
+​	使用偏向锁时，线程同样CAS操作替换对象的Mark Word信息。当已有线程占有锁时，其他占用偏向锁失败的线程只需在之后的自旋CAS中比对锁对象MarkWord中的Thread ID。
+
+​	只要存在2个or2个以上的线程抢占偏向锁，就会触发偏向锁撤销的操作。例如Thread-0占有偏向锁，Thread-1抢占偏向锁时，Thread-0在安全点（无执行指令时）暂停，锁对象的Mark Word中的Thread ID被清零（即偏向锁撤销），Thread-0和Thread-1重新抢占锁（抢夺偏向锁的过程中，锁对象已经升级为轻量级锁，但是可偏向标志位还是1,表示之后抢占到锁的线程仍然得到偏向锁。一般原本占有偏向锁的线程有更大概率再次占有锁。）
+
+```java
+public class ThreadTest005 {
+
+    public static void main(String[] args) throws InterruptedException {
+
+        // 偏向锁延迟4s的干扰（jdk8延迟4s后启动偏向锁，这之后创建的对象可偏向标志位为1）
+        Thread.sleep(4100);
+
+        Object lock = new Object();
+        ClassLayout classLayout = ClassLayout.parseInstance(lock);
+        new Thread(() -> {
+            System.out.println(classLayout.toPrintable());
+            synchronized (lock) {
+                System.out.println(classLayout.toPrintable());
+            }
+            for(int i = 0;i<10000_00000;++i); // 确保 同步代码块执行结束后，线程不再占用锁
+            System.out.println(classLayout.toPrintable());
+        }, "t1").start();
+    }
+}
+```
+
+输出如下：（只截取 3 次 输出的Mark Word）
+
+可以看出来，即使**占有偏向锁的线程已经退出`synchronized`同步代码块，但偏向锁的Thread ID仍然不会被清除。**
+
+```none
+// 偏向锁枷锁前
+OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 00 00 00 (00000101 00000000 00000000 00000000) (5)
+      4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+
+// 偏向锁加锁后
+OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 f1 45 28 (00000101 11110001 01000101 00101000) (675672325)
+      4     4        (object header)                           b2 7f 00 00 (10110010 01111111 00000000 00000000) (32690)
+      
+// 偏向锁解锁后
+OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 f1 45 28 (00000101 11110001 01000101 00101000) (675672325)
+      4     4        (object header)                           b2 7f 00 00 (10110010 01111111 00000000 00000000) (32690)
+```
+
+#### 1.2.2.6 偏向锁撤销
+
+触发偏向锁撤销的方式主要有以下几种：
+
++ 调用偏向锁对象的`hashCode()`方法<small>（正常对象一开始没有hashCode，第一次调用`hashCode()`时才生成）</small>。（升级为轻量级锁）
+
+  *(轻量级锁会在锁记录中记录hashCode)*
+
+  *(重量级锁会在Monitor中记录hashCode)*
+
++ 存在其他线程抢占偏向锁（升级为轻量级锁）
++ 线程使用`wait()`方法（`wait()`需要Monitor管程才能正常工作）。（升级为重量级锁）
+
+----
+
+1. 调用`hashCode()`方法
+
+   ```java
+   public class ThreadTest005 {
+       // 运行前添加虚拟机参数，取消偏向锁延迟 -XX:BiasedLockingStartupDelay=0
+       public static void main(String[] args) throws InterruptedException {
+   
+           Object lock = new Object();
+           ClassLayout classLayout = ClassLayout.parseInstance(lock);
+           // 调用hashCode()之前
+           System.out.println(classLayout.toPrintable());
+           lock.hashCode();
+           new Thread(() -> {
+               // 调用hashCode()之后，执行同步代码块之前
+               System.out.println(classLayout.toPrintable());
+               synchronized (lock) {
+                   System.out.println(classLayout.toPrintable());
+               }
+               System.out.println(classLayout.toPrintable());
+           }, "t1").start();
+       }
+   
+   }
+   ```
+
+   执行结果如下:(只摘取每次输出的Mark Word)
+
+   很明显，调用`hashCode()`之前，对象还是正常的匿名偏向锁。调用了`hashCode()`之后，偏向锁标志位变为0，变成普通的无锁对象。且之后的加锁解锁都是轻量级锁的流程。
+
+   ```none
+   // 调用hashCode()之前
+   OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           05 00 00 00 (00000101 00000000 00000000 00000000) (5)
+         4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+         
+   // 调用hashCode()之后，执行同步代码块之前
+   OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           01 84 08 20 (00000001 10000100 00001000 00100000) (537428993)
+         4     4        (object header)                           3f 00 00 00 (00111111 00000000 00000000 00000000) (63)
+         
+   OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           70 78 0b 3d (01110000 01111000 00001011 00111101) (1024161904)
+         4     4        (object header)                           97 7f 00 00 (10010111 01111111 00000000 00000000) (32663)
+   
+   OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           01 84 08 20 (00000001 10000100 00001000 00100000) (537428993)
+         4     4        (object header)                           3f 00 00 00 (00111111 00000000 00000000 00000000) (63)
+   ```
+
+2. 其他线程抢占偏向锁
+
+   + 代码1:（偏向锁-> 轻量级锁 -> 重量级锁）
+
+     ```java
+     public class ThreadTest005 {
+         // 运行前添加虚拟机参数，取消偏向锁延迟 -XX:BiasedLockingStartupDelay=0
+         public static void main(String[] args) throws InterruptedException {
+     
+             Object lock = new Object();
+             ClassLayout classLayout = ClassLayout.parseInstance(lock);
+     
+             new Thread(() -> {
+                 System.out.println("t1 -- before sync:\n"+classLayout.toPrintable());
+                 synchronized (lock) {
+                     System.out.println("t1 -- sync:\n"+classLayout.toPrintable());
+                 }
+                 System.out.println("t1 -- after sync:\n"+classLayout.toPrintable());
+             }, "t1").start();
+     
+             new Thread(() -> {
+                 System.out.println("t2 -- before sync:\n"+classLayout.toPrintable());
+                 synchronized (lock) {
+                     System.out.println("t2 -- sync:\n"+classLayout.toPrintable());
+                 }
+                 System.out.println("t2 -- after sync:\n"+classLayout.toPrintable());
+             }, "t2").start();
+         }
+     
+     }
+     ```
+
+     输出（只截取部分内容）：
+
+     可以看出来这种代码写法，一开始两个线程正式抢占锁之前，对象的后3bit101表示匿名偏向锁状态。之后由于偏向锁抢占，t1输出的信息表明锁升级为轻量级锁，而t2执行时更是升级为重量级锁。（我的电脑才4核，猜测是因为轻量级锁竞争线程数 >= CPU核数的1/2导致之后轻量级锁升级为重量级锁）
+
+     ```java
+     t1 -- before sync:
+      OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+           0     4        (object header)                           05 00 00 00 (00000101 00000000 00000000 00000000) (5)
+           4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+          
+     t2 -- before sync:
+      OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+           0     4        (object header)                           05 00 00 00 (00000101 00000000 00000000 00000000) (5)
+           4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+          
+     t1 -- sync:
+      OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+           0     4        (object header)                           70 18 25 a4 (01110000 00011000 00100101 10100100) (-1541072784)
+           4     4        (object header)                           f1 7f 00 00 (11110001 01111111 00000000 00000000) (32753)
+     
+     t2 -- sync:
+      OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+           0     4        (object header)                           0a 41 00 88 (00001010 01000001 00000000 10001000) (-2013249270)
+           4     4        (object header)                           f1 7f 00 00 (11110001 01111111 00000000 00000000) (32753)
+          
+     t1 -- after sync:
+      OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+           0     4        (object header)                           0a 41 00 88 (00001010 01000001 00000000 10001000) (-2013249270)
+           4     4        (object header)                           f1 7f 00 00 (11110001 01111111 00000000 00000000) (32753)
+          
+     t2 -- after sync:
+      OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+           0     4        (object header)                           0a 41 00 88 (00001010 01000001 00000000 10001000) (-2013249270)
+           4     4        (object header)                           f1 7f 00 00 (11110001 01111111 00000000 00000000) (32753)
+     ```
+
+   + 代码2：使用`LockSupport`的`park`和`unpark`，保证线程t2在线程t1执行完偏向锁锁定的同步代码块后，才执行`synchronized`修饰的代码块
+
+     ```java
+     public class ThreadTest005 {
+     
+         // 运行前添加虚拟机参数，取消偏向锁延迟 -XX:BiasedLockingStartupDelay=0
+         public static void main(String[] args){
+     
+             Object lock = new Object();
+             ClassLayout classLayout = ClassLayout.parseInstance(lock);
+     
+             Thread t2 = new Thread(() -> {
+     
+                 LockSupport.park(ThreadTest005.class); // 确保t2线程在t1退出同步方法块后运行
+     
+                 System.out.println("t2 -- before sync:\n"+classLayout.toPrintable());
+     
+                 synchronized (lock) {
+                     System.out.println("t2 -- sync:\n"+classLayout.toPrintable());
+                 }
+                 System.out.println("t2 -- after sync:\n"+classLayout.toPrintable());
+             }, "t2");
+     
+             Thread t1 = new Thread(() -> {
+     
+                 System.out.println("t1 -- before sync:\n"+classLayout.toPrintable());
+                 synchronized (lock) {
+                     System.out.println("t1 -- sync:\n"+classLayout.toPrintable());
+                 }
+                 System.out.println("t1 -- after sync:\n"+classLayout.toPrintable());
+     
+                 LockSupport.unpark(t2);
+     
+             }, "t1");
+     
+             t1.start();
+             t2.start();
+         }
+     
+     }
+     ```
+
+     输出结果（只提取关键信息）：
+
+     ​	这里t1和t2线程实际运行时不存在偏向锁竞争，因为t2等待t1执行结束后才执行。偏向锁占用者在执行完同步方法后，并不会主动再CAS一次来修改锁对象的Mark Word。所以t2线程CAS准备占用偏向锁时，发现偏向锁已经有Thread ID记录且与自身记录不同，则偏向锁加锁失败，由于原本占有锁的线程已经不再占用该偏向锁对象，所以t2撤消偏向锁，并且让锁对象升级为轻量级锁。可以看到，<u>t2升级轻量级锁后，将对象Mark Word的可偏向标志位置0，并且轻量级锁释放后，会恢复对象的Mark Word（但是原本修改的可偏向位改成0不会重新变为1）</u>。
+
+     ```none
+     t1 -- before sync:
+      OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+           0     4        (object header)                           05 00 00 00 (00000101 00000000 00000000 00000000) (5)
+           4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+     
+     t1 -- sync:
+      OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+           0     4        (object header)                           05 38 43 ec (00000101 00111000 01000011 11101100) (-331139067)
+           4     4        (object header)                           6a 7f 00 00 (01101010 01111111 00000000 00000000) (32618)
+     
+     t1 -- after sync:
+      OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+           0     4        (object header)                           05 38 43 ec (00000101 00111000 01000011 11101100) (-331139067)
+           4     4        (object header)                           6a 7f 00 00 (01101010 01111111 00000000 00000000) (32618)
+           
+     t2 -- before sync:
+      OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+           0     4        (object header)                           05 38 43 ec (00000101 00111000 01000011 11101100) (-331139067)
+           4     4        (object header)                           6a 7f 00 00 (01101010 01111111 00000000 00000000) (32618)
+     
+     t2 -- sync:
+      OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+           0     4        (object header)                           70 a8 7b d4 (01110000 10101000 01111011 11010100) (-730093456)
+           4     4        (object header)                           6a 7f 00 00 (01101010 01111111 00000000 00000000) (32618)
+     
+     t2 -- after sync:
+      OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+           0     4        (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+           4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+     ```
+
+3. 在同步代码块中使用`wait`操作
+
+   代码：前面说过了，`synchronized`中使用wait，将导致锁直接升为重量级锁。（因为`wait`和`notify/notifyAll`依赖Monitor，而Monitor管程使用的是操作系统级别的重量级锁。
+
+   ```java
+   // 运行前添加虚拟机参数，取消偏向锁延迟 -XX:BiasedLockingStartupDelay=0
+   public static void main(String[] args){
+       Object lock = new Object();
+       ClassLayout classLayout = ClassLayout.parseInstance(lock);
+   
+       Thread t1 = new Thread(() -> {
+           System.out.println("t1 -- before sync:\n"+classLayout.toPrintable());
+           synchronized (lock) {
+               System.out.println("t1 -- sync:\n"+classLayout.toPrintable());
+               try {
+                   lock.wait();
+               } catch (InterruptedException e) {
+                   e.printStackTrace();
+               }
+           }
+           System.out.println("t1 -- after sync:\n"+classLayout.toPrintable());
+       }, "t1");
+   
+       Thread t2 = new Thread(() -> {
+           System.out.println("t2 -- before sync:\n"+classLayout.toPrintable());
+           synchronized (lock) {
+               System.out.println("t2 -- sync:\n"+classLayout.toPrintable());
+               lock.notifyAll();
+           }
+           System.out.println("t2 -- after sync:\n"+classLayout.toPrintable());
+       }, "t2");
+       
+       t1.start();
+       t2.start();
+   }
+   ```
+
+   输出如下（同样只截取关键信息）：明显升级成了重量级锁（Mark Word最后2bit为00）
+
+   ```java
+   t1 -- before sync:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           05 00 00 00 (00000101 00000000 00000000 00000000) (5)
+         4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+   
+   t1 -- sync:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           05 61 41 6c (00000101 01100001 01000001 01101100) (1816224005)
+         4     4        (object header)                           3a 7f 00 00 (00111010 01111111 00000000 00000000) (32570)
+        
+   t2 -- before sync:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           8a 46 00 34 (10001010 01000110 00000000 00110100) (872433290)
+         4     4        (object header)                           3a 7f 00 00 (00111010 01111111 00000000 00000000) (32570)
+   
+   t2 -- sync:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           8a 46 00 34 (10001010 01000110 00000000 00110100) (872433290)
+         4     4        (object header)                           3a 7f 00 00 (00111010 01111111 00000000 00000000) (32570)
+   
+   t1 -- after sync:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           8a 46 00 34 (10001010 01000110 00000000 00110100) (872433290)
+         4     4        (object header)                           3a 7f 00 00 (00111010 01111111 00000000 00000000) (32570)
+   
+   t2 -- after sync:
+    OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+         0     4        (object header)                           8a 46 00 34 (10001010 01000110 00000000 00110100) (872433290)
+         4     4        (object header)                           3a 7f 00 00 (00111010 01111111 00000000 00000000) (32570)
+   ```
+
+#### 1.2.2.7 偏向锁批量重偏向
+
+#### 1.2.2.8 偏向锁批量锁撤销
 
 
 
