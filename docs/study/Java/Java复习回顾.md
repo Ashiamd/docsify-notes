@@ -905,15 +905,596 @@ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
          4     4        (object header)                           3a 7f 00 00 (00111010 01111111 00000000 00000000) (32570)
    ```
 
-#### 1.2.2.7 偏向锁批量重偏向
+----
 
-#### 1.2.2.8 偏向锁批量锁撤销
+> [【转载】Java中的锁机制 synchronized & 偏向锁 & 轻量级锁 & 重量级锁 & 各自优缺点及场景 & AtomicReference](https://www.cnblogs.com/charlesblc/p/5994162.html) <== 以下内容出至该文章
+
+![img](https://images2015.cnblogs.com/blog/899685/201610/899685-20161025102843468-151954717.png)
+
+上图中只讲了偏向锁的释放，其实还涉及偏向锁的抢占，其实就是两个进程对锁的抢占，在`synchronized`锁下表现为**轻量锁方式进行抢占**。
+
+注：也就是说**一旦偏向锁冲突，双方都会升级为轻量级锁**。（这一点与轻量级->重量级锁不同，那时候失败一方直接升级，成功一方在释放时候notify，加下文后面详细描述）
+
+如下图。之后会进入到轻量级锁阶段，两个线程进入锁竞争状态（注，我理解仍然会遵守先来后到原则；注2，的确是的，下图中提到了mark word中的lock record指向堆栈中最近的一个线程的lock record），一个具体例子可以参考`synchronized`锁机制。（图后面有介绍）
+
+![img](https://images2015.cnblogs.com/blog/899685/201610/899685-20161025103757531-1715338870.jpg)
+
+> [JAVA虚拟机锁机制的升级流程](https://www.iteye.com/blog/xly1981-1766224)
+>
+> 每一个线程在准备获取共享资源时：
+> 第一步，检查MarkWord里面是不是放的自己的ThreadId ,如果是，表示当前线程是处于 “偏向锁”
+> 第二步，如果MarkWord不是自己的ThreadId,锁升级，这时候，用CAS来执行切换，新的线程根据MarkWord里面现有的ThreadId，通知之前线程暂停，之前线程将Markword的内容置为空。
+> 第三步，两个线程都把对象的HashCode复制到自己新建的用于存储锁的记录空间，接着开始通过CAS操作，把共享对象的MarKword的内容修改为自己新建的记录空间的地址的方式竞争MarkWord,
+> 第四步，第三步中成功执行CAS的获得资源，失败的则进入自旋
+> 第五步，自旋的线程在自旋过程中，成功获得资源(即之前获的资源的线程执行完成并释放了共享资源)，则整个状态依然处于 轻量级锁的状态，如果自旋失败
+> 第六步，进入重量级锁的状态，这个时候，自旋的线程进行阻塞，等待之前线程执行完成并唤醒自己
+
+
+#### 1.2.2.7 偏向锁批量重偏向和批量撤销
+
+> **[synchronized原理和锁优化策略(偏向/轻量级/重量级)](https://my.oschina.net/lscherish/blog/3117851)** <=== **推荐阅读，很详细**。以下内容出至该文
+
+​	只有一个线程反复进入同步块时，偏向锁带来的性能开销基本可以忽略，但是当有其他线程尝试获得锁时，就需要等到safe point时将偏向锁撤销为无锁状态或升级为轻量级/重量级锁。**safe point这个词我们在GC中经常会提到，其代表了一个状态，在该状态下所有线程都是暂停的**。总之，偏向锁的撤销是有一定成本的，**如果说运行时的场景本身存在多线程竞争的，那偏向锁的存在不仅不能提高性能，而且会导致性能下降**。因此，JVM中增加了一种批量重偏向/撤销的机制。
+
+存在如下两种情况：
+
+1. 一个线程创建了大量对象并执行了初始的同步操作，之后在另一个线程中将这些对象作为锁进行之后的操作。这种case下，会导致大量的偏向锁撤销操作。
+2. 存在明显多线程竞争的场景下使用偏向锁是不合适的，例如生产者/消费者队列。 批量重偏向（bulk rebias）机制是为了解决第一种场景。批量撤销（bulk revoke）则是为了解决第二种场景。
+
+​	其做法是：**以class为单位，为每个class维护一个偏向锁撤销计数器，每一次该class的对象发生偏向撤销操作时，该计数器+1，当这个值达到重偏向阈值（默认20，jvm参数`BiasedLockingBulkRebiasThreshold`控制）时，JVM就认为该class的偏向锁有问题，因此会进行批量重偏向。**
+
+​	当**达到重偏向阈值后，假设该class计数器继续增长，当其达到批量撤销的阈值后（默认40，jvm参数`BiasedLockingBulkRevokeThreshold`控制），JVM就认为该class的使用场景存在多线程竞争，执行批量撤销，会标记该class为不可偏向，之后，对于该class的锁，直接走轻量级锁的逻辑。**
+
+​	`BiasedLockingDecayTime`是开启一次新的批量重偏向距离上次批量重偏向的后的延迟时间，默认25000。也就是开启批量重偏向后，如果经过了一段较长的时间（>=`BiasedLockingDecayTime`），撤销计数器才超过阈值，那我们会重置计数器。
+
+#### 1.2.2.8 偏向锁批量锁重偏向
+
+> **[synchronized原理和锁优化策略(偏向/轻量级/重量级)](https://my.oschina.net/lscherish/blog/3117851)** <=== **推荐阅读，很详细**
+
+​	介绍完偏向，我们发现如果锁先偏向了线程B，那么等另外任何一个线程来竞争的时候，都会导致进入偏向锁的撤销流程，在撤销流程里，才会判断线程B是否还活着，如果已经不活动了，则重偏向。
+
+​	但**偏向锁的撤销流程需要等到全局安全点**，这是一个极大的消耗，为了能够让许多本应该重偏向的偏向锁无须等到全局安全点时才被重偏向，jvm引入了批量重偏向的逻辑。(默认阈值是20,即进行第20次某class的偏向锁撤销时触发批量锁重偏向。)
+
+该机制的主要工作原理如下：
+
+- 引入一个概念epoch，其本质是一个时间戳，代表了偏向锁的有效性，epoch存储在可偏向对象的MarkWord中。除了对象中的epoch,对象所属的类class信息中，也会保存一个epoch值
+- 每当遇到一个全局安全点时，比如要对class C 进行批量再偏向，则首先对 class C中保存的epoch进行增加操作，得到一个新的epoch_new
+- 然后扫描所有持有 class C 实例的线程栈，根据线程栈的信息判断出该线程是否锁定了该对象，仅将epoch_new的值赋给被锁定的对象中。（也就是现在偏向锁还在被使用的对象才会被赋值epoch_new）
+- 退出安全点后，当有线程需要尝试获取偏向锁时，直接检查 class C 中存储的 epoch 值是否与目标对象中存储的 epoch 值相等， 如果不相等，则说明该对象的偏向锁已经无效了，可以尝试对此对象重新进行偏向操作。
+
+测试代码如下：
+
+```java
+package concurrency;
+import org.openjdk.jol.info.ClassLayout;
+import java.util.Vector;
+
+public class ThreadTest006 {
+
+    static class Tmp{}
+
+    public static void main(String[] args) {
+
+        Vector<Tmp> locks = new Vector<>();
+
+        Thread t1 = new Thread(()->{
+            for(int i = 0;i<25;++i){
+                System.out.println("  -------  "+i+"  -------  ");
+                Tmp lock = new Tmp();
+                locks.add(lock);
+                synchronized (lock){
+                    System.out.println(i+ClassLayout.parseInstance(lock).toPrintable());
+                }
+            }
+            synchronized (locks){
+                locks.notify();
+            }
+            /*try {
+                Thread.sleep(500000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }*/
+        },"t1");
+
+        t1.start();
+
+        Thread t2 = new Thread(()->{
+
+            synchronized (locks){
+                try {
+                    locks.wait();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+
+            System.out.println("==================================================");
+
+            for(int i = 0;i<25;++i){
+                System.out.println("  -------  "+i+"  -------  ");
+                Object lock = locks.get(i);
+
+                System.out.println(i+ClassLayout.parseInstance(lock).toPrintable());
+                synchronized (lock){
+                    System.out.println(i+ClassLayout.parseInstance(lock).toPrintable());
+                }
+                System.out.println(i+ClassLayout.parseInstance(lock).toPrintable());
+
+            }
+
+        },"t2");
+
+        t2.start();
+
+        try {
+            t2.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+       // 验证偏向锁 的 批量重偏向是class级别的(并且只对重偏向阈值之后的对象锁生效,因为前19次偏向锁撤销后，对应的对象锁Mark Word已标识为不可偏向)
+        for (int i = 0;i<25;++i){
+            System.out.println(i+ClassLayout.parseInstance(locks.get(i)).toPrintable());
+        }
+
+        Tmp newOne = new Tmp();
+        System.out.println("newOne:\n"+ClassLayout.parseInstance(newOne).toPrintable());
+    }
+}
+```
+
+最后输出可以看到：
+
+​	t1线程使用的25个对象的偏向锁MarkWord一致。
+
+​	而t2线程，0～18的这前19次偏向锁撤销，都是走的CAS轻量级锁的流程;但是19～24，后面这6次偏向锁竞争，变成了锁重新偏向了t2线程。
+
+​	验证了JDK8环境下，偏向锁重偏向的默认阈值为20。当同一个对象锁发生第20次锁撤销时，触发偏向锁重定向。这个偏向锁重定向是class级别的，所有该class下的对象中Mark Word的可偏向标志位为1的对象，将重偏向到线程t2。新建的该class下的锁对象，并不受影响（不管是否发生过批量重偏向，这个把代码的循环25次改成循环15次，最后输出的newOne对象的Mark Word依旧是后3bit为101）
+
+```none
+// 只截取部分内容
+
+  -------  0  -------  
+0concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 a8 2c 1c (00000101 10101000 00101100 00011100) (472688645)
+      4     4        (object header)                           06 7f 00 00 (00000110 01111111 00000000 00000000) (32518)
+      
+      
+      .........
+
+
+  -------  24  -------  
+24concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 a8 2c 1c (00000101 10101000 00101100 00011100) (472688645)
+      4     4        (object header)                           06 7f 00 00 (00000110 01111111 00000000 00000000) (32518)
+      
+==================================================
+  -------  0  -------  
+0concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 a8 2c 1c (00000101 10101000 00101100 00011100) (472688645)
+      4     4        (object header)                           06 7f 00 00 (00000110 01111111 00000000 00000000) (32518)
+
+0concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           68 18 db 00 (01101000 00011000 11011011 00000000) (14358632)
+      4     4        (object header)                           06 7f 00 00 (00000110 01111111 00000000 00000000) (32518)
+
+0concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      
+      
+      ..........
+
+
+  -------  18  -------  
+18concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 a8 2c 1c (00000101 10101000 00101100 00011100) (472688645)
+      4     4        (object header)                           06 7f 00 00 (00000110 01111111 00000000 00000000) (32518)
+
+18concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           68 18 db 00 (01101000 00011000 11011011 00000000) (14358632)
+      4     4        (object header)                           06 7f 00 00 (00000110 01111111 00000000 00000000) (32518)
+
+18concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      
+  -------  19  -------  
+19concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 a8 2c 1c (00000101 10101000 00101100 00011100) (472688645)
+      4     4        (object header)                           06 7f 00 00 (00000110 01111111 00000000 00000000) (32518)
+
+19concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 c9 2c 1c (00000101 11001001 00101100 00011100) (472697093)
+      4     4        (object header)                           06 7f 00 00 (00000110 01111111 00000000 00000000) (32518)
+
+19concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 c9 2c 1c (00000101 11001001 00101100 00011100) (472697093)
+      4     4        (object header)                           06 7f 00 00 (00000110 01111111 00000000 00000000) (32518)
+      
+      
+      ........
+      
+
+  -------  24  -------  
+24concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 a8 2c 1c (00000101 10101000 00101100 00011100) (472688645)
+      4     4        (object header)                           06 7f 00 00 (00000110 01111111 00000000 00000000) (32518)
+
+24concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 c9 2c 1c (00000101 11001001 00101100 00011100) (472697093)
+      4     4        (object header)                           06 7f 00 00 (00000110 01111111 00000000 00000000) (32518)
+
+24concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 c9 2c 1c (00000101 11001001 00101100 00011100) (472697093)
+      4     4        (object header)                           06 7f 00 00 (00000110 01111111 00000000 00000000) (32518)
+      
+      ..........
+      
+0concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      
+      ..........
+      
+18concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+
+19concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 c9 2c 1c (00000101 11001001 00101100 00011100) (472697093)
+      4     4        (object header)                           06 7f 00 00 (00000110 01111111 00000000 00000000) (32518)
+      
+      ...........
+      
+24concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 c9 2c 1c (00000101 11001001 00101100 00011100) (472697093)
+      4     4        (object header)                           06 7f 00 00 (00000110 01111111 00000000 00000000) (32518)
+      
+      .............
+      
+newOne:
+concurrency.ThreadTest006$Tmp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 01 00 00 (00000101 00000001 00000000 00000000) (261)
+      4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+```
+
+#### 1.2.2.9 偏向锁批量锁撤销
+
+> **[synchronized原理和锁优化策略(偏向/轻量级/重量级)](https://my.oschina.net/lscherish/blog/3117851)** <=== **推荐阅读，很详细**
+
+偏向锁的批量锁撤销的阈值是40。当某个class下的对象偏向锁撤销达到第40次时，JVM会将该class下的所有对象都变成不可偏向的。之后新建的对象也都是不可偏向的。
+
+**同一个类class，批量锁重定向和批量锁撤销 只会发生一次。**（设置成不可偏向是整个class而言的，非单独几个对象）
+
+- 将类的偏向标记关闭，之后当该类已存在的实例获得锁时，就会升级为轻量级锁；该类新分配的对象的mark word则是无锁模式。
+- 处理当前正在被使用的锁对象，通过遍历所有存活线程的栈，找到所有正在使用的偏向锁对象，然后撤销偏向锁。
+
+测试代码：循环39和38次。3个线程。
+
+```java
+package concurrency;
+
+import org.openjdk.jol.info.ClassLayout;
+
+import java.util.Vector;
+
+/**
+ * 偏向锁 批量撤销
+ */
+public class ThreadTest007 {
+
+    static class Temp {
+    }
+
+    static Thread t1, t2, t3;
+
+    public static void main(String[] args) {
+
+        Vector<Temp> locks = new Vector<>();
+
+        int round = 39; // 38
+
+        t1 = new Thread(() -> {
+            for (int i = 0; i < round; ++i) {
+                System.out.println("  -------  " + Thread.currentThread().getName() + "   " + i + "  -------  \n");
+                Temp lock = new Temp();
+                locks.add(lock);
+                synchronized (lock) {
+                    System.out.println(i + ClassLayout.parseInstance(lock).toPrintable());
+                }
+            }
+        }, "t1");
+
+        t1.start();
+
+        t2 = new Thread(() -> {
+
+            try {
+                t1.join();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
+            System.out.println("==================================================");
+
+            for (int i = 0; i < round; ++i) {
+                System.out.println("  -------  " + Thread.currentThread().getName() + "   " + i + "  -------  \n");
+                Temp lock = locks.get(i);
+
+                System.out.println(i + ClassLayout.parseInstance(lock).toPrintable());
+                synchronized (lock) {
+                    System.out.println(i + ClassLayout.parseInstance(lock).toPrintable());
+                }
+                System.out.println(i + ClassLayout.parseInstance(lock).toPrintable());
+
+            }
+
+
+        }, "t2");
+
+        t2.start();
+
+        t3 = new Thread(() -> {
+
+            try {
+                t2.join();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
+            System.out.println("==================================================");
+
+            for (int i = 0; i < round; ++i) {
+                System.out.println("  -------  " + Thread.currentThread().getName() + "   " + i + "  -------  \n");
+                Temp lock = locks.get(i);
+
+                System.out.println(i + ClassLayout.parseInstance(lock).toPrintable());
+                synchronized (lock) {
+                    System.out.println(i + ClassLayout.parseInstance(lock).toPrintable());
+                }
+                System.out.println(i + ClassLayout.parseInstance(lock).toPrintable());
+
+            }
+
+        }, "t3");
+
+        t3.start();
+
+        try {
+            t3.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        System.out.println("+-++-+-+-+-+-+-+-+---+--+-+-+-+-+--+-");
+
+       
+        for (int i = 0; i < round; ++i) {
+            System.out.println(i + " ---- \n" + ClassLayout.parseInstance(locks.get(i)).toPrintable());
+        }
+
+        System.out.println("+-++-+-+-+-+-+-+-+---+--+-+-+-+-+--+-");
+
+        Temp newOne = new Temp();
+        System.out.println("newOne:\n" + ClassLayout.parseInstance(newOne).toPrintable());
+    }
+
+}
+
+```
+
+
+
+输出结果：
+
+​	（t1、t2、t3。t2在偏向锁撤销第20次时触发过class的批量重定向后，下次t3在第20次锁撤销时并不会在触发批量锁重定向，但是t3在第39次批量锁撤销时触发批量锁撤销，之后整个类class的新对象也会被标志成不可偏向。
+
+**设置成不可偏向，是针对整个class而言的**。
+
++ round设置39，则最后新建出来的对象，被标志为“不可偏向” （Mark Word后3bit 001）
++ round设置38，则最后新建出来的对象，被标志为“可偏向的” （Mark Word后3bit 101）
+
+```none
+...... t1都是 偏向自己的锁，没什么好看的
+  -------  t1   38  -------  
+
+38concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 38 31 e4 (00000101 00111000 00110001 11100100) (-466536443)
+      4     4        (object header)                           42 7f 00 00 (01000010 01111111 00000000 00000000) (32578)
+      
+      
+      .........
+      
+==================================================
+  -------  t2   0  -------  
+
+0concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 38 31 e4 (00000101 00111000 00110001 11100100) (-466536443)
+      4     4        (object header)                           42 7f 00 00 (01000010 01111111 00000000 00000000) (32578)
+      
+      ..........
+      
+  -------  t2   18  -------  
+
+18concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 38 31 e4 (00000101 00111000 00110001 11100100) (-466536443)
+      4     4        (object header)                           42 7f 00 00 (01000010 01111111 00000000 00000000) (32578)
+
+18concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           60 38 55 d0 (01100000 00111000 01010101 11010000) (-799721376)
+      4     4        (object header)                           42 7f 00 00 (01000010 01111111 00000000 00000000) (32578)
+
+18concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      
+ -------  t2   19  -------  
+
+19concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 38 31 e4 (00000101 00111000 00110001 11100100) (-466536443)
+      4     4        (object header)                           42 7f 00 00 (01000010 01111111 00000000 00000000) (32578)
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+
+19concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 51 31 e4 (00000101 01010001 00110001 11100100) (-466530043)
+      4     4        (object header)                           42 7f 00 00 (01000010 01111111 00000000 00000000) (32578)
+
+19concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 51 31 e4 (00000101 01010001 00110001 11100100) (-466530043)
+      4     4        (object header)                           42 7f 00 00 (01000010 01111111 00000000 00000000) (32578)
+      
+      
+     ........
+     
+       -------  t2   38  -------  
+
+38concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 38 31 e4 (00000101 00111000 00110001 11100100) (-466536443)
+      4     4        (object header)                           42 7f 00 00 (01000010 01111111 00000000 00000000) (32578)
+
+38concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 51 31 e4 (00000101 01010001 00110001 11100100) (-466530043)
+      4     4        (object header)                           42 7f 00 00 (01000010 01111111 00000000 00000000) (32578)
+
+38concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 51 31 e4 (00000101 01010001 00110001 11100100) (-466530043)
+      4     4        (object header)                           42 7f 00 00 (01000010 01111111 00000000 00000000) (32578)
+      
+      
+      ..........
+      
+      ==================================================
+  -------  t3   0  -------  
+
+0concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      
+0concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           60 28 45 d0 (01100000 00101000 01000101 11010000) (-800774048)
+      4     4        (object header)                           42 7f 00 00 (01000010 01111111 00000000 00000000) (32578)
+
+0concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      
+     ......
+     
+       -------  t3   38  -------  
+
+38concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 51 31 e4 (00000101 01010001 00110001 11100100) (-466530043)
+      4     4        (object header)                           42 7f 00 00 (01000010 01111111 00000000 00000000) (32578)
+
+38concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           60 28 45 d0 (01100000 00101000 01000101 11010000) (-800774048)
+      4     4        (object header)                           42 7f 00 00 (01000010 01111111 00000000 00000000) (32578)
+
+38concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      
+      
+      ........
+      
+38 ---- 
+concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      8     4        (object header)                           43 c1 00 f8 (01000011 11000001 00000000 11111000) (-134168253)
+     12     4        (loss due to the next object alignment)
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+
++-++-+-+-+-+-+-+-+---+--+-+-+-+-+--+-
+newOne:
+concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      8     4        (object header)                           43 c1 00 f8 (01000011 11000001 00000000 11111000) (-134168253)
+     12     4        (loss due to the next object alignment)
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+
+
+// 如果循环round 设置38,最后一小块输出如下：
+// 如果循环round 设置38,最后一小块输出如下：
+// 如果循环round 设置38,最后一小块输出如下：
+
+37 ---- 
+concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      8     4        (object header)                           43 c1 00 f8 (01000011 11000001 00000000 11111000) (-134168253)
+     12     4        (loss due to the next object alignment)
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+
++-++-+-+-+-+-+-+-+---+--+-+-+-+-+--+-
+newOne:
+concurrency.ThreadTest007$Temp object internals:
+ OFFSET  SIZE   TYPE DESCRIPTION                               VALUE
+      0     4        (object header)                           05 01 00 00 (00000101 00000001 00000000 00000000) (261)
+      4     4        (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      8     4        (object header)                           43 c1 00 f8 (01000011 11000001 00000000 11111000) (-134168253)
+     12     4        (loss due to the next object alignment)
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
+```
+
+
+
+
+
+
 
 
 
 ### 1.2.3 synchronized
 
 > [synchronized 是可重入锁吗？为什么？](https://www.cnblogs.com/incognitor/p/9894604.html)
+>
+> **[synchronized原理和锁优化策略(偏向/轻量级/重量级)](https://my.oschina.net/lscherish/blog/3117851)** <=== **推荐阅读，很详细**
 
 synchronized是可重入锁，非公平锁。
 
