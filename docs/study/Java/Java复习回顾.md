@@ -1867,15 +1867,176 @@ Process finished with exit code 0
 
 
 
-#### 1.2.3.2 
+#### 1.2.3.2 synchronized内部实现
 
-#### 1.2.3.3 
+##### java字节码层面
 
-#### 1.2.3.4 
+> [jvms-6--monitorenter](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-6.html#jvms-6.5.monitorenter) <= 官方定义、介绍monitorenter
+>
+> The *objectref* must be of type `reference`.
+>
+> Each object is associated with a monitor. A monitor is locked if and only if it has an owner. The thread that executes *monitorenter* attempts to gain ownership of the monitor associated with *objectref*, as follows:
+>
+> - If the entry count of the monitor associated with *objectref* is zero, the thread enters the monitor and sets its entry count to one. The thread is then the owner of the monitor.
+> - If the thread already owns the monitor associated with *objectref*, it reenters the monitor, incrementing its entry count.
+> - If another thread already owns the monitor associated with *objectref*, the thread blocks until the monitor's entry count is zero, then tries again to gain ownership.
+>
+> .....（还有其他内容，建议直接点击上面链接阅读官方介绍文章）
+>
+> <u>下面monitorenter和monitorexit的可能抛出的异常，这里没有写出来，可以直接到官方原文看</u>。
+
+`synchronized`在java字节码中，以`monitorenter`和`monitorexit`的形式出现。
+
+1. monitorenter
+
+   ​	根据官方对`monitorenter`的定义和介绍可知，每个Java对象都有一个与之关联的monitor。Monitor当且仅当有一个对应的`owner`时，才会被锁住。执行`monitorenter`的线程尝试通过引用关联monitor，获取monitor的所有权（也就是成为Monitor数据结构中的`owner`）。
+
+   + 如果当前线程是第一个与monitor产生关联的，那么将monitor的entry count数值设置为0，并且成为monitor的`owner`
+
+   + 如果当前线程已经拥有与该monitor关联的引用（指针），那么线程重入monitor时，将entry count的计数+1
+
+   + 如果其他线程已经通过对象引用和monitor产生关联，那么该尝试访问monitor的线程阻塞，直到monitor的entry count计数为0时，该后来者线程才能尝试竞争获取monitor的所有权
+
+   注意：
+
+   ​	在java的`synchronized`实现中，**1个`monitorenter`可能对应1个或n个`monitorexit`**。尽管`monitorenter`和`monitorexit`不会在同步方法的java实现代码中直接出现，但是他们俩能够提供等效于锁的语义。<small>（换言之就是java中没有直接使用monitorenter和monitorexit的方法，但是他们确实存在，且能提供等效于锁的功能）</small>JVM隐式地在同步代码块/方法前使用`monitorenter`，并且在同步代码块/方法结束return前使用`monitorexit`。<small>（使用`synchronized`时，JVM帮我们自动在字节码层面添加`monitorenter`和`monitorexit`，使得往后实际的汇编代码执行能够同步互斥）</small>
+
+   ​	<small>The association of a monitor with an object may be managed in various ways that are beyond the scope of this specification. For instance, the monitor may be allocated and deallocated at the same time as the object. Alternatively, it may be dynamically allocated at the time when a thread attempts to gain exclusive access to the object and freed at some later time when no thread remains in the monitor for the object.</small>
+
+   ​	关联monitor的对象以及如何管控该对象，JVM没有严格要求实现该遵守什么标准。比如，关联monitor的对象可能同时被分配和回收。另外，monitor对象可能在某个线程尝试独占关联monitor的对象时动态创建（也就是说可能`synchronized(Object){}`锁定的对象Object所关联的Monitor可能在线程预备独占该对象（重量级锁）时，才临时创建与充当锁的对象Object关联的monitor对象），并且在之后的某个时间段内如果没有线程保留关联monitor的对象（即不占用充当锁的Object）再回收monitor的内存。
+
+   ​	java关于同步功能的数据结构设计，除了支持monitor的entry和exit操作之外，还需要对等待monitor中的线程、唤醒monitor中的线程操作提供支持（`Object.wait`、`Object.notify/notifyAll`）。wait和nontify/notifyAll在`java.lang`包中，需要我们显式在java代码中使用，而非JVM隐式添加monitorenter等来实现。（自己试试看新建两个线程分别用wait和notify，其在java字节码中的体现就是` invokevirtual `，这里不多介绍了，感兴趣看看上面文档）
+
+2. monitorexit
+
+   ​	执行`monitorexit`的线程必须是和monitor关联的对象的拥有者`owner`。执行`monitorexit`后，与monitor关联的对象上记录的entry count计数-1，当值为0时，该线程不再是monitor的`owner`占有者。其他原本想进入monitor而blocking的线程在entry count值为0时，能够再尝试抢占monitor。
+
+   注意：
+
+   ​	JVM支持在`synchronized`同步代码块和同步方法内抛出不同的异常：
+
+   + Monitor exit on normal `synchronized` method completion is handled by the Java Virtual Machine's return instructions. Monitor exit on abrupt `synchronized` method completion is handled implicitly by the Java Virtual Machine's *athrow* instruction.
+   + When an exception is thrown from within a `synchronized` statement, exit from the monitor entered prior to the execution of the `synchronized` statement is achieved using the Java Virtual Machine's exception handling mechanism ([§3.14](https://docs.oracle.com/javase/specs/jvms/se7/html/jvms-3.html#jvms-3.14))
+
+
+
+示例代码1如下：
+
+```java
+public class ThreadTest002 {
+    public static void main(String[] args) {
+        Object o = new Object();
+        synchronized (o){
+        }
+    }
+}
+```
+
+使用IDEA的Jclasslib方便查看字节码等信息：
+
+```none
+0 new #2 <java/lang/Object>
+ 3 dup
+ 4 invokespecial #1 <java/lang/Object.<init>>
+ 7 astore_1
+ 8 aload_1
+ 9 dup
+10 astore_2
+11 monitorenter  // (1) 进入sync代码块
+12 aload_2
+13 monitorexit  // (2) sync代码块正常退出，则goto return那行（字节码等于抽象的汇编语言了）
+14 goto 22 (+8)
+17 astore_3
+18 aload_2
+19 monitorexit  // (3) sync代码块异常退出
+20 aload_3
+21 athrow
+22 return
+```
+
+----
+
+##### Java的native方法对应的C++代码
+
+> **[JVM源码分析之synchronized实现](https://www.jianshu.com/p/c5058b6fe8e5) <== 强烈建议阅读**
+>
+> **强烈建议阅读**
+>
+> **强烈建议阅读**
+
+上面这篇文章讲解还不错了。建议阅读。这里就简单讲讲。
+
+网上下载OpenJDK代码，然后进到`OpenJDK/hotspot-37240c1019fd/src/share/vm/interpreter/`目录，查看`InterpreterRuntime.cpp`就可以看到monitorenter和monitorexit的调用了。
+
+```c++
+//%note monitor_1
+IRT_ENTRY_NO_ASYNC(void, InterpreterRuntime::monitorenter(JavaThread* thread, BasicObjectLock* elem))
+    #ifdef ASSERT
+    thread->last_frame().interpreter_frame_verify_monitor(elem);
+#endif
+if (PrintBiasedLockingStatistics) {
+    Atomic::inc(BiasedLocking::slow_path_entry_count_addr());
+}
+Handle h_obj(thread, elem->obj());
+assert(Universe::heap()->is_in_reserved_or_null(h_obj()),
+       "must be NULL or an object");
+if (UseBiasedLocking) {
+    // Retry fast entry if bias is revoked to avoid unnecessary inflation
+    ObjectSynchronizer::fast_enter(h_obj, elem->lock(), true, CHECK);
+} else {
+    ObjectSynchronizer::slow_enter(h_obj, elem->lock(), CHECK);
+}
+assert(Universe::heap()->is_in_reserved_or_null(elem->obj()),
+       "must be NULL or an object");
+#ifdef ASSERT
+thread->last_frame().interpreter_frame_verify_monitor(elem);
+#endif
+IRT_END
+```
+
+上面可以看到java中`synchronized`修饰的代码，底层C++实现，首先判断是否启用偏向锁，如果启动用则使用偏向锁（`ObjectSynchronizer::fast_enter(h_obj, elem->lock(), true, CHECK);`），否则使用自旋锁（` ObjectSynchronizer::slow_enter(h_obj, elem->lock(), CHECK);`）
+
+```c++
+//%note monitor_1
+IRT_ENTRY_NO_ASYNC(void, InterpreterRuntime::monitorexit(JavaThread* thread, BasicObjectLock* elem))
+    #ifdef ASSERT
+    thread->last_frame().interpreter_frame_verify_monitor(elem);
+#endif
+Handle h_obj(thread, elem->obj());
+assert(Universe::heap()->is_in_reserved_or_null(h_obj()),
+       "must be NULL or an object");
+if (elem == NULL || h_obj()->is_unlocked()) {
+    THROW(vmSymbols::java_lang_IllegalMonitorStateException());
+}
+ObjectSynchronizer::slow_exit(h_obj(), elem->lock(), thread);
+// Free entry. This must be done here, since a pending exception might be installed on
+// exit. If it is not cleared, the exception handling code will try to unlock the monitor again.
+elem->set_obj(NULL);
+#ifdef ASSERT
+thread->last_frame().interpreter_frame_verify_monitor(elem);
+#endif
+IRT_END
+```
+
+
+
+1.2.3.3 留着之后可能补充
+
+1.2.3.4 留着之后可能补充
 
 ### 1.2.4 volatile
 
-​		
+#### 1.2.4.1 volatile概述
+
+
+
+#### 1.2.4.2
+
+#### 1.2.4.3
+
+#### 1.2.4.4
+
+
 
 
 
