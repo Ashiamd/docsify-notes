@@ -1482,21 +1482,396 @@ Instance size: 16 bytes
 Space losses: 0 bytes internal + 4 bytes external = 4 bytes total
 ```
 
-
-
-
-
-
-
-
-
 ### 1.2.3 synchronized
+
+#### 1.2.3.1 synchronized概述和注意点
 
 > [synchronized 是可重入锁吗？为什么？](https://www.cnblogs.com/incognitor/p/9894604.html)
 >
 > **[synchronized原理和锁优化策略(偏向/轻量级/重量级)](https://my.oschina.net/lscherish/blog/3117851)** <=== **推荐阅读，很详细**
 
-synchronized是可重入锁，非公平锁。
+​	`synchronized`是可重入锁，非公平锁。`synchronized`在JDK6之前使用重量级锁，系统开销大。而JDK6之后，有了完善的锁升级机制，使得`synchronized`的性能大大提升。`synchronized`底层也是依靠CAS操作。
+
+*<small>（纵使java还有AQS、原子类等各种花样的类可用于同步互斥，但是其实平时开发还是以使用`synchronized`为主。锁升级使得`synchronized`在很多时候性能并不亚于其他同步互斥操作。建议非底层部件开发or非中间件开发，如果真有需要同步互斥，用`synchronized`即可。虽然大多数时候还是直接借助Spring的事务机制完成数据库的同步互斥操作保证ACID就够了。）</small>*
+
+​	`synchronized`的用法很简单，一般就2种写法：
+
+1. 同步代码块
+
+   （使用我们指定的对象作为"锁"）
+
+   ```java
+   public class ThreadTest001 {
+       @Test
+       public void test1(){
+           synchronized (this){
+               System.out.println(this); // 输出concurrency.ThreadTest001@67784306
+           }
+           synchronized (new Object()){
+   
+           }
+       }
+   }
+   ```
+
+2. 同步"方法"
+
+   （相当于使用this作为"锁"的同步代码块，this即类的java.lang.Class对象。所有java类的class字节码文件加载到内存中，都会有对应的java.lang.Class类对象）
+
+   （所有Java类在初始化时经历3步骤：内存分配、根据默认构造函数初始化内存区域内的成员变量、Class指针指向初始化后的内存）
+
+   ```java
+   public class ThreadTest001 {
+       @Test
+       public synchronized void test(){ // 相当于使用synchronized(this){}代码块
+           System.out.println(this);  // 输出concurrency.ThreadTest001@67784306
+       }
+   }
+   ```
+
+使用`synchronized`进行互斥同步操作时，需要注意以下几点：
+
++ `synchronized`是非公平、可重入锁
+
++ 充当锁的对象，不要使用String常量、基本类型包装类（Byte、Short、Integer、Long、Float、Double、Boolean、Character）
+
+  <small>因为String常量有常量池易被混淆，且有些jar包里面用的就是String常量作为锁，容易导致难以发现的错误。</small>
+
+  <small>包装类的话，除了浮点数Float和Double没缓存，其他数值类型（Character是0～127）会缓存-128～127的数值，而Boolean缓存了value为true和false的两个对象。**包装类的自动拆箱和自动装箱是编译器默认认可的，自动装箱会导致包装类对象引用指向新的包装类对象**。</small> ==> 建议阅读 [[Java synchronized 中使用Integer对象遇到的问题](https://www.jianshu.com/p/b7c5c8bd9702)]
+
+  <small>java的锁是根据对象的hashCode来区分的，hashCode不一样则认为不是同一个锁对象。</small>
+
++ `synchronized`在JDK6开始有完善的锁升级机制
+
++ 锁对象的hashCode**只有调用了Object的`hashCode()`方法后，hashCode才会写入对象头的Mark Word中**。（继承后重写的`hashCode()`不会触发写入对象头的事件）
+
++ **带有锁的线程异常退出时，默认情况会释放锁**
+
++ **同一个对象的对象头Mark Word中的hashCode只会计算一次**。
+
+  OpenJDK8 默认hashCode的计算方法是通过**和当前线程有关的一个随机数+三个确定值**，运用Marsaglia's xorshift scheme随机数算法得到的一个随机数。**和对象内存地址无关**。<u>生成的hashcode会放在对象的头部，已生成对象的hashcode不会变化，所以虽然不在同一个线程，但是是同一个对象，hashcode不会变化。</u> ===> 出至[[Java Object.hashCode()返回的是对象内存地址？](https://www.jianshu.com/p/be943b4958f4)]
+
+
+
+----
+
+##### 调用Object.hashCode()才会更新对象头MarkWord的hashCode
+
+> **[Java 对象头中你可能不知道的事](https://blog.csdn.net/L__ear/article/details/105486403)** <== 建议阅读
+>
+> **[Java Object.hashCode()返回的是对象内存地址？](https://www.jianshu.com/p/be943b4958f4)** <== 推荐阅读
+>
+> OpenJDK8 默认hashCode的计算方法是通过**和当前线程有关的一个随机数+三个确定值**，运用Marsaglia's xorshift scheme随机数算法得到的一个随机数。**和对象内存地址无关**。<u>生成的hashcode会放在对象的头部，已生成对象的hashcode不会变化，所以虽然不在同一个线程，但是是同一个对象，hashcode不会变化。</u>
+
+
+
+测试代码如下：
+
+```java
+package concurrency;
+
+import org.junit.Test;
+import org.openjdk.jol.info.ClassLayout;
+
+public class ThreadTest008 {
+
+    class Temp_001 { // 没有重写Object的hashCode，默认调用Object.hashCode()
+
+    }
+
+    class Temp_002 {// 重写Object的hashCode()，但是内部调用了Object.hashCode()
+
+        @Override
+        public int hashCode() {
+            return super.hashCode();
+        }
+    }
+
+    class Temp_003 {// 重写Object的hashCode()，但是内部没有调用Object.hashCode()
+
+        @Override
+        public int hashCode() {
+            //return super.hashCode();
+            return 0xFFFF;
+        }
+    }
+
+    @Test
+    public void test1() {
+
+        // 预期因为调用了Object.hashCode()，将hashCode写入对象头MarkWord
+        Temp_001 tmp_001 = new Temp_001();
+        System.out.println(ClassLayout.parseInstance(tmp_001).toPrintable());
+        tmp_001.hashCode();
+        System.out.println(ClassLayout.parseInstance(tmp_001).toPrintable());
+        System.out.println(tmp_001);
+
+        System.out.println("---------------------------------------------------");
+
+        // 预期因为重写的方法hashCode()中调用了Object.hashCode()，将hashCode写入对象头MarkWord
+        Temp_002 tmp_002 = new Temp_002();
+        System.out.println(ClassLayout.parseInstance(tmp_002).toPrintable());
+        tmp_002.hashCode();
+        System.out.println(ClassLayout.parseInstance(tmp_002).toPrintable());
+        System.out.println(tmp_002);
+
+        System.out.println("---------------------------------------------------");
+
+        // 预期因为没有调用Object.hashCode()，所以不会修改对象头的MarkWord
+        Temp_003 tmp_003 = new Temp_003();
+        System.out.println(ClassLayout.parseInstance(tmp_003).toPrintable());
+        tmp_003.hashCode();
+        System.out.println(ClassLayout.parseInstance(tmp_003).toPrintable());
+        System.out.println(tmp_003);
+    }
+}
+```
+
+输出结果：
+
+```java
+concurrency.ThreadTest008$Temp_001 object internals:
+ OFFSET  SIZE                        TYPE DESCRIPTION                               VALUE
+      0     4                             (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4                             (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      8     4                             (object header)                           38 14 01 f8 (00111000 00010100 00000001 11111000) (-134147016)
+     12     4   concurrency.ThreadTest008 Temp_001.this$0                           (object)
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 0 bytes external = 0 bytes total
+
+concurrency.ThreadTest008$Temp_001 object internals:
+ OFFSET  SIZE                        TYPE DESCRIPTION                               VALUE
+      0     4                             (object header)                           01 73 9c e3 (00000001 01110011 10011100 11100011) (-476286207)
+      4     4                             (object header)                           13 00 00 00 (00010011 00000000 00000000 00000000) (19)
+      8     4                             (object header)                           38 14 01 f8 (00111000 00010100 00000001 11111000) (-134147016)
+     12     4   concurrency.ThreadTest008 Temp_001.this$0                           (object)
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 0 bytes external = 0 bytes total
+
+concurrency.ThreadTest008$Temp_001@13e39c73
+---------------------------------------------------
+concurrency.ThreadTest008$Temp_002 object internals:
+ OFFSET  SIZE                        TYPE DESCRIPTION                               VALUE
+      0     4                             (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4                             (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      8     4                             (object header)                           8c 16 01 f8 (10001100 00010110 00000001 11111000) (-134146420)
+     12     4   concurrency.ThreadTest008 Temp_002.this$0                           (object)
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 0 bytes external = 0 bytes total
+
+concurrency.ThreadTest008$Temp_002 object internals:
+ OFFSET  SIZE                        TYPE DESCRIPTION                               VALUE
+      0     4                             (object header)                           01 52 56 22 (00000001 01010010 01010110 00100010) (576082433)
+      4     4                             (object header)                           09 00 00 00 (00001001 00000000 00000000 00000000) (9)
+      8     4                             (object header)                           8c 16 01 f8 (10001100 00010110 00000001 11111000) (-134146420)
+     12     4   concurrency.ThreadTest008 Temp_002.this$0                           (object)
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 0 bytes external = 0 bytes total
+
+concurrency.ThreadTest008$Temp_002@9225652
+---------------------------------------------------
+concurrency.ThreadTest008$Temp_003 object internals:
+ OFFSET  SIZE                        TYPE DESCRIPTION                               VALUE
+      0     4                             (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4                             (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      8     4                             (object header)                           4d 16 01 f8 (01001101 00010110 00000001 11111000) (-134146483)
+     12     4   concurrency.ThreadTest008 Temp_003.this$0                           (object)
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 0 bytes external = 0 bytes total
+
+concurrency.ThreadTest008$Temp_003 object internals:
+ OFFSET  SIZE                        TYPE DESCRIPTION                               VALUE
+      0     4                             (object header)                           01 00 00 00 (00000001 00000000 00000000 00000000) (1)
+      4     4                             (object header)                           00 00 00 00 (00000000 00000000 00000000 00000000) (0)
+      8     4                             (object header)                           4d 16 01 f8 (01001101 00010110 00000001 11111000) (-134146483)
+     12     4   concurrency.ThreadTest008 Temp_003.this$0                           (object)
+Instance size: 16 bytes
+Space losses: 0 bytes internal + 0 bytes external = 0 bytes total
+
+concurrency.ThreadTest008$Temp_003@ffff
+Disconnected from the target VM, address: '127.0.0.1:47895', transport: 'socket'
+
+Process finished with exit code 0
+
+```
+
+**很明显，只有当调用了`Object.hashCode()`方法时，对象头的MarkWord中的hashCode才会被更新**。
+
+
+
+> [java八种基本数据类型及包装类详解](https://blog.csdn.net/qq_37688023/article/details/85106894)
+>
+> jdk1.5之后包装类的自动拆箱和装箱，该特性是**编译器**认可的。
+>
+> 1. **自动拆箱 包装类——>基本数据类型** (原理是调用了xxxValue方法)  
+> 2. **自动装箱** **基本数据类型——>包装类** (原理是调用了valueOf方法)
+>
+> ```java
+> @Test
+> public void d() {
+>     /*自动装箱：valueOf*/
+>     Integer i=123;//原理是 Integer i=Integer.valueOf(123);
+> 
+>     /*自动拆箱*/
+>     int i1=i+1;//原理是	int i1=i.intValue()+1;
+> 
+>     Integer a=123;
+>     Integer b=123;
+>     Integer c=a+b;
+>     /*原理为Integer c=Integer.valueOf(a.intValue()+b.intValue());*/
+> }
+> ```
+>
+> [在java中==和equals()的区别](https://blog.csdn.net/lcsy000/article/details/82782864)
+>
+> ==比较对象的堆内存地址，equals默认Object的实现就是==。但是我们可以自己重写equals方法。
+>
+> （一般自定义的类，都需要重写hashCode方法和equals方法）
+>
+> **[Java 对象头中你可能不知道的事](https://blog.csdn.net/L__ear/article/details/105486403)**  <=== 文章到底层C++代码分析，建议阅读
+>
+> 1. **对象创建完毕后，对象头中的 hashCode 为 0**。
+> 2. **只有对象调用了从 Object 继承下来的 hashCode 方法，HotSpot 才会把对象 hashCode 写入对象头，否则不会写入**。
+>
+> 
+>
+> **[Java equals() and hashCode()](https://www.journaldev.com/21095/java-equals-hashcode)** <= 外国人的优质博客，推荐阅读原文（下面直接搬运内容过来，省得次次翻墙。中间去掉了一些简单代码演示的内容）
+>
+> Java equals()
+>
+> ```java
+> public boolean equals(Object obj) {
+>         return (this == obj);
+> }
+> ```
+>
+> According to java documentation of equals() method, any implementation should adhere to following principles.
+>
+> - For any object x, `x.equals(x)` should return `true`.
+> - For any two object x and y, `x.equals(y)` should return `true` if and only if `y.equals(x)` returns `true`.
+> - For multiple objects x, y, and z, if `x.equals(y)` returns `true` and `y.equals(z)` returns `true`, then `x.equals(z)` should return `true`.
+> - Multiple invocations of `x.equals(y)` should return same result, unless any of the object properties is modified that is being used in the `equals()` method implementation.
+> - Object class equals() method implementation returns `true` only when both the references are pointing to same object.
+>
+> 
+>
+> Java hashCode()
+>
+> Java Object hashCode() is a native method and returns the integer hash code value of the object. The general contract of hashCode() method is:
+>
+> - Multiple invocations of hashCode() should return the same integer value, unless the object property is modified that is being used in the equals() method.
+> - An object hash code value can change in multiple executions of the same application.
+> - If two objects are equal according to equals() method, then their hash code must be same.
+> - **If two objects are unequal according to equals() method, their hash code are not required to be different. Their hash code value may or may-not be equal.**
+>
+> Importance of equals() and hashCode() method
+>
+> Java hashCode() and equals() method are used in Hash table based implementations in java for storing and retrieving data. I have explained it in detail at [How HashMap works in java?](https://www.journaldev.com/11560/java-hashmap#how-hashmap-works-in-java)
+>
+> The implementation of equals() and hashCode() should follow these rules.
+>
+> - **If `o1.equals(o2)`, then `o1.hashCode() == o2.hashCode()` should always be `true`.**
+> - **If `o1.hashCode() == o2.hashCode` is true, it doesn’t mean that `o1.equals(o2)` will be `true`.**
+>
+> 
+>
+> When to override equals() and hashCode() methods?
+>
+> When we override equals() method, it’s almost necessary to override the hashCode() method too so that their contract is not violated by our implementation.
+>
+> **Note that your program will not throw any exceptions if the equals() and hashCode() contract is violated, if you are not planning to use the class as Hash table key, then it will not create any problem.**
+>
+> If you are planning to use a class as Hash table key, then it’s must to override both equals() and hashCode() methods.
+>
+> Let’s see what happens when we rely on default implementation of equals() and hashCode() methods and use a custom class as HashMap key.
+>
+> 
+>
+> Implementing equals() and hashCode() method
+>
+> We can define our own equals() and hashCode() method implementation but if we don’t implement them carefully, it can have weird issues at runtime. Luckily most of the IDE these days provide ways to implement them automatically and if needed we can change them according to our requirement.
+>
+> We can use Eclipse to auto generate equals() and hashCode() methods.
+>
+> Here is the auto generated equals() and hashCode() method implementations.
+>
+> ```java
+> @Override
+> public int hashCode() {
+>     final int prime = 31;
+>     int result = 1;
+>     result = prime * result + id;
+>     result = prime * result + ((name == null) ? 0 : name.hashCode());
+>     return result;
+> }
+> 
+> @Override
+> public boolean equals(Object obj) {
+>     if (this == obj)
+>         return true;
+>     if (obj == null)
+>         return false;
+>     if (getClass() != obj.getClass())
+>         return false;
+>     DataKey other = (DataKey) obj;
+>     if (id != other.id)
+>         return false;
+>     if (name == null) {
+>         if (other.name != null)
+>             return false;
+>     } else if (!name.equals(other.name))
+>         return false;
+>     return true;
+> }
+> ```
+>
+> Notice that both equals() and hashCode() methods are using same fields for the calculations, so that their contract remains valid.
+>
+> We can also use [Project Lombok](https://www.journaldev.com/18124/java-project-lombok) to auto generate equals and hashCode method implementations.
+>
+> 
+>
+> What is Hash Collision
+>
+> In very simple terms, Java Hash table implementations uses following logic for get and put operations.
+>
+> 1. First identify the “Bucket” to use using the “key” hash code.
+> 2. If there are no objects present in the bucket with same hash code, then add the object for put operation and return null for get operation.
+> 3. **If there are other objects in the bucket with same hash code, then “key” equals method comes into play.**
+>    - **If equals() return true and it’s a put operation, then object value is overridden.**
+>    - **If equals() return false and it’s a put operation, then new entry is added to the bucket.**
+>    - **If equals() return true and it’s a get operation, then object value is returned.**
+>    - **If equals() return false and it’s a get operation, then null is returned.**
+>
+> Below image shows a bucket items of HashMap and how their equals() and hashCode() are related.
+>
+> ![java hashmap, how hashmap works in java](https://cdn.journaldev.com/wp-content/uploads/2013/01/java-hashmap-entry-impl.png)
+>
+> **The phenomenon when two keys have same hash code is called hash collision**. If hashCode() method is not implemented properly, there will be higher number of hash collision and map entries will not be properly distributed causing slowness in the get and put operations. <u>This is the reason for prime number usage in generating hash code so that map entries are properly distributed across all the buckets.</u>
+>
+> 
+>
+> What if we don’t implement both hashCode() and equals()?
+>
+> We have already seen above that if hashCode() is not implemented, we won’t be able to retrieve the value because HashMap use hash code to find the bucket to look for the entry.
+>
+> If we only use hashCode() and don’t implement equals() then also value will be not retrieved because equals() method will return false.
+>
+> 
+>
+> Best Practices for implementing equals() and hashCode() method
+>
+> - **Use same properties in both equals() and hashCode() method implementations, so that their contract doesn’t violate when any properties is updated.**
+> - **It’s better to use immutable objects as Hash table key so that we can cache the hash code rather than calculating it on every call. That’s why String is a good candidate for Hash table key because it’s immutable and cache the hash code value.**
+> - Implement hashCode() method so that least number of hash collision occurs and entries are evenly distributed across all the buckets.
+
+
+
+#### 1.2.3.2 
+
+#### 1.2.3.3 
+
+#### 1.2.3.4 
 
 ### 1.2.4 volatile
 
