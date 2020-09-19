@@ -107,3 +107,14 @@ UserServiceImpl userService; // JDK报错，因为该类型不是接口，JDK是
 ## 7. 浅拷贝和深拷贝
 
 > [Java中的clone方法-理解浅拷贝和深拷贝](https://www.cnblogs.com/JamesWang1993/p/8526104.html)
+
+## 8. 类型擦除
+
+> [Java类型擦除机制](https://www.cnblogs.com/chenpi/p/5508177.html)
+>
+> 范型仅在编译时有效，运行时都是Object。范型不具备继承关系。
+>
+> 通配符"?" => 编译时不知道类型，所以只能get不能add；
+>
+> 有界通配符"\<? extends Object\>","\<? super Object\>"可以add对应Object或其子类/父类。（因为我们编译前给定了父类/子类）
+

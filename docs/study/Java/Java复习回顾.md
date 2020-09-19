@@ -2028,9 +2028,397 @@ IRT_END
 
 #### 1.2.4.1 volatile概述
 
+> [volatile (computer programming)--wiki](https://en.wikipedia.org/wiki/Volatile_(computer_programming)) <= 大部分英文wiki都比中文wiki要全，且用词歧义往往小一点
+>
+> The [Java programming language](https://en.wikipedia.org/wiki/Java_programming_language) also has the `volatile` keyword, but it is used for a somewhat different purpose. When applied to a field, the Java qualifier `volatile` provides the following guarantees:
+>
+> - In all versions of Java, there is a global ordering on reads and writes of all volatile variables (this global ordering on volatiles is a partial order over the larger *synchronization order* (which is a total order over all *synchronization actions*)). This implies that every [thread](https://en.wikipedia.org/wiki/Thread_(computer_science)) accessing a volatile field will read its current value before continuing, instead of (potentially) using a cached value. (However, there is no guarantee about the relative ordering of volatile reads and writes with regular reads and writes, meaning that it's generally not a useful threading construct.)
+> - In Java 5 or later, volatile reads and writes establish a [happens-before relationship](https://en.wikipedia.org/wiki/Happened-before), much like acquiring and releasing a mutex.[[7\]](https://en.wikipedia.org/wiki/Volatile_(computer_programming)#cite_note-7)
+>
+> Using `volatile` may be faster than a [lock](https://en.wikipedia.org/wiki/Lock_(computer_science)), but it will not work in some situations before Java 5[[8\]](https://en.wikipedia.org/wiki/Volatile_(computer_programming)#cite_note-8). The range of situations in which volatile is effective was expanded in Java 5; in particular, [double-checked locking](https://en.wikipedia.org/wiki/Double-checked_locking) now works correctly.[[9\]](https://en.wikipedia.org/wiki/Volatile_(computer_programming)#cite_note-9)
+
+​	volatile主要作用：保证线程可见性、禁止指令重排序
+
++ 保证线程可见性
+  + MESI
+  + Cache coherence
++ 禁止指令重排序（CPU）
+  + DCL单例（Double Check Lock）
+
+----
+
+下面先大致讲讲 线程可见性问题 和 指令重排序问题
 
 
-#### 1.2.4.2
+
+线程可见性问题：
+
+​	每个线程都有独自的调用栈的内存数据结构，对CPU的寄存器状态缓存不同，当多核CPU同时并行多个线程时，很可能线程之间打算互斥共享的数据在最后因为多核CPU之间的寄存器、缓存状态不同，导致数据不同步。
+
+​	比如变量var由Thread-0和Thread-1共享，且使用var时外层用`synchronized`保证同步互斥。var=0
+
+1. Thread-0 执行 var++; 同时Therad-1也执行var++。
+2. 由于没有使用volatile修饰var，最后var的值不确定，可能0,1,2,或者甚至抛出异常。
+3. 尽管`synchronized`保证了线程对var的操作同步互斥，但是不能保证CPU在执行时也能对内存的数据"同步互斥"。
+4. CPU-0和CPU-1并行运行Thread-0和Thread-1，由于CPU的寄存器和缓存原因，可能正好CPU-0从寄存器or缓存得到var值为0,而CPU-1同理。
+5. **由于缓存不一致**，CPU-0将1写入var所在的内存时，CPU-1就算受`synchronized`影响，在CPU-0之后才写回内存，此时var在内存中值也还是1，而不是预期的进行两次++变成2。
+
+
+
+指令重排序问题：
+
+​	CPU有一个规范是规定store-store和load-load不能乱序（即连续两个写不能乱序，连续两个读不能乱序），但是毕竟CPU开发厂家对CPU的实现闭源，你也没法百分之百保证他们怎么设计的CPU流水执行机械指令。
+
+​	对于store-load，load-store，更是没有明确的规定需要保证顺序。但是厂家对CPU的实现，都会提供FENCE系列机械原语，其能够在一定程度上保证CPU指令执行顺序。
+
++ SFENCE保证SFENCE之前的store一定先于SFENCE之后的store被执行
+
++ LFENCE保证LFENCE之前的load一定先于LFENCE之后的load被执行
++ MFENCE保证MFENCE之前的load、store操作一定先于MFENCE后面的load、store被执行
+
+FENCE具体如何实现，CPU设计我们也不清楚（毕竟厂家也没公开），但是其提供机械原语保证CPU一定会做到对应的要求。
+
+重排序一个好理解的例子就是：java对象的创建其实可以分成3步骤（内存分配、根据构造函数初始化对应内存的数据、将对象的引用指向该内存区域）
+
+如果CPU指令重排序java的对象创建过程，很可能出现对象的内存数据还没有根据构造函数初始化，但是对象的引用就指向内存区域了（对象引用!=null，但是其实内部成员变量还没初始化，可能导致之后的对象成员变量操作出现异常）
+
+
+
+#### 1.2.4.2 volatile-保证线程可见性
+
+> [Cache coherence--wiki](https://en.wikipedia.org/wiki/Cache_coherence#:~:text=In%20computer%20architecture%2C%20cache%20coherence,CPUs%20in%20a%20multiprocessing%20system.)
+>
+> [MESI protocol--wiki](https://en.wikipedia.org/wiki/MESI_protocol)
+>
+> [Memory barrier--wiki](https://en.wikipedia.org/wiki/Memory_barrier)
+
+*<small>（这个其实操作系统笔记里涵盖了类似内容了，其实就是CPU缓存不一致的问题+CPU优化指令流水的指令重排序问题。这里再讲讲）</small>*
+
+##### 缓存一致性、MESI、内存屏障-小结
+
+1. 缓存一致性：
+
+   ​	本质是CPU的寄存器、CPU缓存（L1-D、L1-I，L2）在多核之间数据不同步的问题。软件层面的同步互斥，往往通过同步互斥地访问同一个变量or同一块内存来实现。但是如果硬件层面（主要是CPU）没法做到多核之间互相同步同一个变量or统一块内存的修改，即缓存不一致，将导致程序的同步互斥逻辑失效。
+
+   ​	常见的两种关于Write的策略（Write-invalidate，Write-update）。前者要求当某CPU核更新共享的内存X时，其他CPU核若缓存了改内存区域X，就需要重新从内存X中读取值（旧值失效）；后者要求某CPU核泄内存X时，通知其他CPU核更新各自缓存中对应内存X的最新值。
+
+2. MESI
+
+   
+
+3. 内存屏障
+
+   
+
+----
+
+##### Cache coherence -- wiki
+
+> [Cache coherence--wiki](https://en.wikipedia.org/wiki/Cache_coherence#:~:text=In%20computer%20architecture%2C%20cache%20coherence,CPUs%20in%20a%20multiprocessing%20system.)
+
+​	In [computer architecture](https://en.wikipedia.org/wiki/Computer_architecture), **cache coherence** is the uniformity of shared resource data that ends up stored in multiple [local caches](https://en.wikipedia.org/wiki/Cache_(computing)). When clients in a system maintain [caches](https://en.wikipedia.org/wiki/CPU_cache) of a common memory resource, problems may arise with incoherent data, which is particularly the case with [CPUs](https://en.wikipedia.org/wiki/Central_processing_unit) in a [multiprocessing](https://en.wikipedia.org/wiki/Multiprocessing) system.
+
+​	In the illustration on the right, consider both the clients have a cached copy of a particular memory block from a previous read. Suppose the client on the bottom updates/changes that memory block, the client on the top could be left with an invalid cache of memory without any notification of the change. Cache coherence is intended to manage such conflicts by maintaining a coherent view of the data values in multiple caches.
+
+<small>(举例：就是CPU寄存器、缓存，多核之间互相不知道缓存的数据如何。一个CPU核-0如果将缓存的值x1写入内存空间addr，另一个CPU核-1无感知内存空间addr的值已被改成x1，以为还是之前缓存的值a1，于是不管三七二十一，直接再根据自己缓存中的值y1写入内存空间addr（条件判断原值为a1就改变）。CPU多核之间各自的缓存，彼此不通知对内存的修改和访问情况，很可能CPU-0之后需要根据内存空间addr的值x1进行后续操作，但是它不知道addr位置的数据已经被改成y1了，导致后续执行的代码出现异常。)</small>
+
+​	![img](https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Cache_Coherency_Generic.png/370px-Cache_Coherency_Generic.png)
+
+​	![File:Non Coherent.gif](https://upload.wikimedia.org/wikipedia/commons/thumb/e/ea/Non_Coherent.gif/800px-Non_Coherent.gif)
+
+​	Incoherent caches: The caches have different values of a single address location.（上图就是典型的缓存不一致的情况）
+
+![File:Coherent.gif](https://upload.wikimedia.org/wikipedia/commons/thumb/8/88/Coherent.gif/800px-Coherent.gif)
+
+​	Coherent caches: The value in all the caches' copies is the same.（缓存一致的情况）
+
+###### OverView
+
+​	In a [shared memory](https://en.wikipedia.org/wiki/Shared_memory_architecture) multiprocessor system with a separate cache memory for each processor, it is possible to have many copies of shared data: one copy in the main memory and one in the local cache of each processor that requested it. When one of the copies of data is changed, the other copies must reflect that change. **Cache coherence is the discipline which ensures that the changes in the values of shared operands (data) are propagated throughout the system in a timely fashion.**[[1\]](https://en.wikipedia.org/wiki/Cache_coherence#cite_note-:1-1)
+
+The following are the requirements for cache coherence:[[2\]](https://en.wikipedia.org/wiki/Cache_coherence#cite_note-:0-2)
+
+- **Write Propagation**
+
+  **Changes to the data in any cache must be propagated to other copies (of that cache line) in the peer caches.**
+
+- **Transaction Serialization**
+
+  **Reads/Writes to a single memory location must be seen by all processors in the same order.**
+
+Theoretically, coherence can be performed at the load/store [granularity](https://en.wikipedia.org/wiki/Granularity). However, in practice it is generally performed at the granularity of **cache blocks**.[[3\]](https://en.wikipedia.org/wiki/Cache_coherence#cite_note-:2-3)
+
+###### Coherence protocols
+
+​	**Coherence protocols apply cache coherence in multiprocessor systems. The intention is that two clients must never see different values for the same shared data.**
+
+​	The protocol must implement the basic requirements for coherence. It can be tailor-made for the target system or application.
+
+​	Protocols can also be classified as snoopy or directory-based. Typically, early systems used directory-based protocols where a directory would keep a track of the data being shared and the sharers. In snoopy protocols, the transaction requests (to read, write, or upgrade) are sent out to all processors. All processors snoop the request and respond appropriately.
+
+Write propagation in snoopy protocols can be implemented by either of the following methods:
+
+- **Write-invalidate**
+
+  When a write operation is observed to a location that a cache has a copy of, the cache controller invalidates its own copy of the snooped memory location, which forces a read from main memory of the new value on its next access.[[4\]](https://en.wikipedia.org/wiki/Cache_coherence#cite_note-:3-4)
+
+- **Write-update**
+
+  When a write operation is observed to a location that a cache has a copy of, the cache controller updates its own copy of the snooped memory location with the new data.
+
+​	If the protocol design states that whenever any copy of the shared data is changed, all the other copies must be "updated" to reflect the change, then it is a write-update protocol. If the design states that a write to a cached copy by any processor requires other processors to discard or invalidate their cached copies, then it is a write-invalidate protocol.
+
+​	However, scalability is one shortcoming of broadcast protocols.
+
+​	Various models and protocols have been devised for maintaining coherence, such as [MSI](https://en.wikipedia.org/wiki/MSI_protocol), [MESI](https://en.wikipedia.org/wiki/MESI_protocol) (aka Illinois), [MOSI](https://en.wikipedia.org/wiki/MOSI_protocol), [MOESI](https://en.wikipedia.org/wiki/MOESI_protocol), [MERSI](https://en.wikipedia.org/wiki/MERSI_protocol), [MESIF](https://en.wikipedia.org/wiki/MESIF_protocol), [write-once](https://en.wikipedia.org/wiki/Write-once_(cache_coherence)), Synapse, Berkeley, [Firefly](https://en.wikipedia.org/wiki/Firefly_(cache_coherence_protocol)) and [Dragon protocol](https://en.wikipedia.org/wiki/Dragon_protocol).[[1\]](https://en.wikipedia.org/wiki/Cache_coherence#cite_note-:1-1) In 2011, [ARM Ltd](https://en.wikipedia.org/wiki/ARM_Ltd) proposed the AMBA 4 ACE[[10\]](https://en.wikipedia.org/wiki/Cache_coherence#cite_note-10) for handling coherency in [SoCs](https://en.wikipedia.org/wiki/System_on_a_chip).
+
+---
+
+> [Shared memory--wiki](https://en.wikipedia.org/wiki/Shared_memory) <== 这个估计都懂吧，这里再提一下。（操作系统笔记里关于CPU和内存方面的应该已经提得够多了）
+
+大致就是CPU和GPU共用内存，CPU之间内存访问策略，IPC进程间通讯的现有实现方案的大致介绍。
+
+##### Shared memory--wiki
+
+​	In [computer science](https://en.wikipedia.org/wiki/Computer_science), **shared memory** is [memory](https://en.wikipedia.org/wiki/Random-access_memory) that may be simultaneously accessed by multiple programs with an intent to provide communication among them or avoid redundant copies. Shared memory is an efficient means of passing data between programs. Depending on context, programs may run on a single processor or on multiple separate processors.
+
+​	Using memory for communication inside a single program, e.g. among its multiple [threads](https://en.wikipedia.org/wiki/Thread_(computer_science)), is also referred to as shared memory.
+
+![File:Shared memory.svg](https://upload.wikimedia.org/wikipedia/commons/thumb/f/f2/Shared_memory.svg/655px-Shared_memory.svg.png)
+
+###### In hardware
+
+In computer hardware, *shared memory* refers to a (typically large) block of [random access memory](https://en.wikipedia.org/wiki/Random_access_memory) (RAM) that can be accessed by several different [central processing units](https://en.wikipedia.org/wiki/Central_processing_unit) (CPUs) in a [multiprocessor computer system](https://en.wikipedia.org/wiki/Multiprocessing).
+
+Shared memory systems may use:[[1\]](https://en.wikipedia.org/wiki/Shared_memory#cite_note-1)
+
+- [uniform memory access](https://en.wikipedia.org/wiki/Uniform_memory_access) (UMA): all the processors share the physical memory uniformly;
+- [non-uniform memory access](https://en.wikipedia.org/wiki/Non-uniform_memory_access) (NUMA): memory access time depends on the memory location relative to a processor;
+- [cache-only memory architecture](https://en.wikipedia.org/wiki/Cache-only_memory_architecture) (COMA): the local memories for the processors at each node is used as cache instead of as actual main memory.
+
+A shared memory system is relatively easy to program since all processors share a single view of data and the communication between processors can be as fast as memory accesses to a same location. **The issue with shared memory systems is that many CPUs need fast access to memory and will likely [cache memory](https://en.wikipedia.org/wiki/Cache_memory), which has two complications:**
+
+- **access time degradation: when several processors try to access the same memory location it causes contention. Trying to access nearby memory locations may cause [false sharing](https://en.wikipedia.org/wiki/False_sharing). Shared memory computers cannot scale very well. Most of them have ten or fewer processors;**
+- lack of data coherence: whenever one cache is updated with information that may be used by other processors, the change needs to be reflected to the other processors, otherwise the different processors will be working with incoherent data. **Such [cache coherence](https://en.wikipedia.org/wiki/Cache_coherence) protocols can, when they work well, provide extremely high-performance access to shared information between multiple processors. On the other hand, they can sometimes become overloaded and become a bottleneck to performance.**
+
+Technologies like [crossbar switches](https://en.wikipedia.org/wiki/Crossbar_switch), [Omega networks](https://en.wikipedia.org/wiki/Omega_network), [HyperTransport](https://en.wikipedia.org/wiki/HyperTransport) or [front-side bus](https://en.wikipedia.org/wiki/Front-side_bus) can be used to dampen the bottleneck-effects.
+
+In case of a [Heterogeneous System Architecture](https://en.wikipedia.org/wiki/Heterogeneous_System_Architecture) (processor architecture that integrates different types of processors, such as [CPUs](https://en.wikipedia.org/wiki/CPU) and [GPUs](https://en.wikipedia.org/wiki/GPU), with shared memory), the **[memory management unit](https://en.wikipedia.org/wiki/Memory_management_unit) (MMU)** of the CPU and the **[input–output memory management unit](https://en.wikipedia.org/wiki/Input–output_memory_management_unit) (IOMMU)** of the GPU have to <u>share certain characteristics, like a common address space.</u>
+
+The alternatives to shared memory are [distributed memory](https://en.wikipedia.org/wiki/Distributed_memory) and [distributed shared memory](https://en.wikipedia.org/wiki/Distributed_shared_memory), each having a similar set of issues.
+
+![File:MMU and IOMMU.svg](https://upload.wikimedia.org/wikipedia/commons/thumb/d/d6/MMU_and_IOMMU.svg/600px-MMU_and_IOMMU.svg.png)
+
+###### In software
+
+In computer software, *shared memory* is either
+
+- **a method of [inter-process communication](https://en.wikipedia.org/wiki/Inter-process_communication) (IPC), i.e. a way of exchanging data between programs running at the same time. One [process](https://en.wikipedia.org/wiki/Process_(computing)) will create an area in [RAM](https://en.wikipedia.org/wiki/Random-access_memory) which other processes can access;**
+- **a method of conserving memory space by directing accesses to what would ordinarily be copies of a piece of data to a single instance instead, by using [virtual memory](https://en.wikipedia.org/wiki/Virtual_memory) mappings or with explicit support of the program in question.** This is most often used for [shared libraries](https://en.wikipedia.org/wiki/Shared_library) and for [Execute in place](https://en.wikipedia.org/wiki/Execute_in_place) (XIP).
+
+Since both processes can access the shared memory area like regular working memory, this is a very fast way of communication (as opposed to other mechanisms of IPC such as [named pipes](https://en.wikipedia.org/wiki/Named_pipe), [Unix domain sockets](https://en.wikipedia.org/wiki/Unix_domain_socket) or [CORBA](https://en.wikipedia.org/wiki/CORBA)). On the other hand, it is less scalable, as for example the communicating processes must be running on the same machine (of other IPC methods, only Internet domain sockets—not Unix domain sockets—can use a [computer network](https://en.wikipedia.org/wiki/Computer_network)), and care must be taken to avoid issues if processes sharing memory are running on separate CPUs and the underlying architecture is not [cache coherent](https://en.wikipedia.org/wiki/Cache_coherence).
+
+IPC by shared memory is used for example to transfer images between the application and the [X server](https://en.wikipedia.org/wiki/X_Window_System) on Unix systems, or inside the IStream object returned by CoMarshalInterThreadInterfaceInStream in the COM libraries under [Windows](https://en.wikipedia.org/wiki/Microsoft_Windows).
+
+[Dynamic libraries](https://en.wikipedia.org/wiki/Library_(computing)#Dynamic_linking) are generally held in memory once and mapped to multiple processes, and only pages that had to be customized for the individual process (because a symbol resolved differently there) are duplicated, usually with a mechanism known as [copy-on-write](https://en.wikipedia.org/wiki/Copy-on-write) that transparently copies the page when a write is attempted, and then lets the write succeed on the private copy.
+
+###### Support on Unix-like systems
+
+[POSIX](https://en.wikipedia.org/wiki/POSIX) provides a standardized API for using shared memory, *POSIX Shared Memory*. This uses the function `shm_open` from sys/mman.h.[[2\]](https://en.wikipedia.org/wiki/Shared_memory#cite_note-2) POSIX interprocess communication (part of the POSIX:XSI Extension) includes the shared-memory functions `shmat`, `shmctl`, `shmdt` and `shmget`.[[3\]](https://en.wikipedia.org/wiki/Shared_memory#cite_note-3)[[4\]](https://en.wikipedia.org/wiki/Shared_memory#cite_note-4) Unix System V provides an API for shared memory as well. This uses shmget from sys/shm.h. BSD systems provide "anonymous mapped memory" which can be used by several processes.
+
+The shared memory created by `shm_open` is persistent. It stays in the system until explicitly removed by a process. This has a drawback that if the process crashes and fails to clean up shared memory it will stay until system shutdown.
+
+POSIX also provides the `mmap` API for mapping files into memory; a mapping can be shared, allowing the file's contents to be used as shared memory.
+
+Linux distributions based on the 2.6 kernel and later offer /dev/shm as shared memory in the form of a [RAM disk](https://en.wikipedia.org/wiki/RAM_disk), more specifically as a world-writable directory (a directory in which every user of the system can create files) that is stored in memory. Both the [RedHat](https://en.wikipedia.org/wiki/Red_Hat_Linux) and [Debian](https://en.wikipedia.org/wiki/Debian) based distributions include it by default. Support for this type of RAM disk is completely optional within the kernel [configuration file](https://en.wikipedia.org/wiki/Configuration_file).[[5\]](https://en.wikipedia.org/wiki/Shared_memory#cite_note-5)
+
+###### Support on Windows
+
+On Windows, one can use `CreateFileMapping` and `MapViewOfFile` functions to map a region of a file into memory in multiple processes.[[6\]](https://en.wikipedia.org/wiki/Shared_memory#cite_note-6)
+
+###### Cross-platform support
+
+Some C++ libraries provide a portable and object-oriented access to shared memory functionality. For example, [Boost](https://en.wikipedia.org/wiki/Boost_(C%2B%2B_libraries)) contains the Boost.Interprocess C++ Library[[7\]](https://en.wikipedia.org/wiki/Shared_memory#cite_note-7) and [Qt](https://en.wikipedia.org/wiki/Qt_(framework)) provides the QSharedMemory class.[[8\]](https://en.wikipedia.org/wiki/Shared_memory#cite_note-8)
+
+###### Programming language support
+
+There is native support for shared memory also in programming languages besides C/C++. For example, [PHP](https://en.wikipedia.org/wiki/PHP) provides an [API](https://en.wikipedia.org/wiki/API) to create shared memory, similar to [POSIX](https://en.wikipedia.org/wiki/POSIX) functions.
+
+---
+
+##### MESI protocol
+
+大意就是通过有限状态机来描述和记录缓存行的状态，进而实现缓存一致性。（监听缓存行状态，如果发生改变，其他CPU核就需要修改为新值or重新从内存读取）
+
+> [MESI protocol--wiki](https://en.wikipedia.org/wiki/MESI_protocol) <== 原文还有一些关于MESI状态转变的具体介绍，这里省略了
+
+​	The **MESI protocol** is an Invalidate-based [cache coherence protocol](https://en.wikipedia.org/wiki/Cache_coherence), and is one of the most common protocols which support [write-back caches](https://en.wikipedia.org/wiki/Write-back_cache). It is also known as the **Illinois protocol** (due to its development at the University of Illinois at Urbana-Champaign[[1\]](https://en.wikipedia.org/wiki/MESI_protocol#cite_note-1)). Write back caches can save a lot on bandwidth that is generally wasted on a [write through cache](https://en.wikipedia.org/wiki/Cache_(computing)#Writing_policies). There is always a dirty state present in write back caches which indicates that the data in the cache is different from that in main memory. Illinois Protocol requires cache to cache transfer on a miss if the block resides in another cache. This protocol reduces the number of Main memory transactions with respect to the [MSI protocol](https://en.wikipedia.org/wiki/MSI_protocol). This marks a significant improvement in the performance.[[2\]](https://en.wikipedia.org/wiki/MESI_protocol#cite_note-2)
+
+###### States
+
+The letters in the acronym MESI represent four exclusive states that a **cache line** can be marked with (encoded using two additional [bits](https://en.wikipedia.org/wiki/Bit)):
+
+（**MESI是根据缓存行来标记状态值的。常见的缓存行大小是64字节**）
+
+- **Modified (M)**
+
+  The cache line is present only in the current cache, and is *dirty* - it has been modified (M state) from the value in [main memory](https://en.wikipedia.org/wiki/Main_memory). The cache is required to write the data back to main memory at some time in the future, before permitting any other read of the (no longer valid) main memory state. <u>The write-back changes the line to the Shared state(S)</u>.
+
+- **Exclusive (E)**
+
+  The cache line is present only in the current cache, but is *clean* - it matches main memory. <u>It may be changed to the Shared state at any time, in response to a read request. Alternatively, it may be changed to the Modified state when writing to it.</u>
+
+- **Shared (S)**
+
+  Indicates that this cache line may be stored in other caches of the machine and is *clean* - it matches the main memory. The line may be discarded (changed to the Invalid state) at any time.
+
+- **Invalid (I)**
+
+  Indicates that this cache line is invalid (unused).
+
+For any given pair of caches, the permitted states of a given cache line are as follows:
+
+|       |  M   |  E   |  S   |  I   |
+| :---: | :--: | :--: | :--: | :--: |
+| **M** |  X   |  X   |  X   |  ☑️   |
+| **E** |  X   |  X   |  X   |  ☑️   |
+| **S** |  X   |  X   |  ☑️   |  ☑️   |
+| **I** |  ☑️   |  ☑️   |  ☑️   |  ☑️   |
+
+**When the block is marked M (modified) or E (exclusive), the copies of the block in other Caches are marked as I(Invalid).** 
+
+###### Operation
+
+The state of the FSM transitions from one state to another based on 2 stimuli. The first stimulus is the processor specific Read and Write request. For example: A processor P1 has a Block X in its Cache, and there is a request from the processor to read or write from that block. The second stimulus comes from another processor, which doesn't have the Cache block or the updated data in its Cache, through the bus connecting the processors. **The bus requests are monitored with the help of [Snoopers](https://en.wikipedia.org/wiki/Bus_snooping)[[4\]](https://en.wikipedia.org/wiki/MESI_protocol#cite_note-4) which snoops all the bus transactions.**
+
+Following are the different type of Processor requests and Bus side requests:
+
+Processor Requests to Cache includes the following operations:
+
+1. PrRd: The processor requests to **read** a Cache block.
+2. PrWr: The processor requests to **write** a Cache block
+
+Bus side requests are the following:
+
+1. BusRd: Snooped request that indicates there is a **read** request to a Cache block requested by another processor
+2. BusRdX: Snooped request that indicates there is a **write** request to a Cache block requested by another processor which **doesn't already have the block.**
+3. BusUpgr: Snooped request that indicates that there is a write request to a Cache block requested by another processor but that processor already has that **Cache block residing in its own Cache**.
+4. Flush: Snooped request that indicates that an entire cache block is written back to the main memory by another processor.
+5. **FlushOpt: Snooped request that indicates that an entire cache block is posted on the bus in order to supply it to another processor(Cache to Cache transfers).**
+
+(*Such Cache to Cache transfers can reduce the read miss [latency](https://en.wikipedia.org/wiki/CAS_latency) if the latency to bring the block from the main memory is more than from Cache to Cache transfers which is generally the case in bus based systems. But in multicore architectures, where the coherence is maintained at the level of L2 caches, there is on chip L3 cache, it may be faster to fetch the missed block from the L3 cache rather than from another L2*)
+
+**Snooping Operation**: In a snooping system, all caches on the bus monitor (or snoop) all the bus transactions. <u>Every cache has a copy of the sharing status of every block of physical memory it has stored</u>. The state of the block is changed according to the State Diagram of the protocol used. (Refer image above for MESI state diagram). The bus has snoopers on both sides:
+
+1. Snooper towards the Processor/Cache side.
+2. The snooping function on the memory side is done by the Memory controller.
+
+![File:Diagrama MESI.GIF](https://upload.wikimedia.org/wikipedia/commons/c/c1/Diagrama_MESI.GIF)
+
+---
+
+> [CPU缓存行](https://my.oschina.net/manmao/blog/804161) <== 特别推荐，图文并貌。以下内容摘自于该文章
+
+##### CPU缓存行
+
+###### CPU缓存
+
+![img](https://static.oschina.net/uploads/img/201612/12131103_oxuT.png)
+
+​	每个缓存里面都是由缓存行组成的，缓存系统中是以**缓存行（cache line）**为单位存储的。缓存行是2的整数幂个连续字节，一般为32-256个字节。**最常见的缓存行大小是64个字节**。**当多线程修改互相独立的变量时，如果这些变量共享同一个缓存行，就会无意中影响彼此的性能，这就是伪共享**。缓存行上的写竞争是运行在SMP系统中并行线程实现可伸缩性最重要的限制因素。有人将伪共享描述成无声的性能杀手，因为从代码中很难看清楚是否会出现伪共享。
+
+###### 伪共享问题
+
+![cache-line.png](https://static.oschina.net/uploads/img/201612/12131103_fjos.png)
+
+​	图中说明了伪共享的问题。在核心1上运行的线程想更新变量X，同时核心2上的线程想要更新变量Y。不幸的是，这两个变量在同一个缓存行中。每个线程都要去竞争缓存行的所有权来更新变量。如果核心1获得了所有权，缓存子系统将会使核心2中对应的缓存行失效。当核心2获得了所有权然后执行更新操作，核心1就要使自己对应的缓存行失效。这会来来回回的经过L3缓存，大大影响了性能。如果互相竞争的核心位于不同的插槽，就要额外横跨插槽连接，问题可能更加严重。
+
+###### **缓存行带来的锁竞争**
+
+   处理器为了提高处理速度，不直接和内存进行通讯，而是先将系统内存的数据读到内部缓存（L1,L2或其他）后再进行操作，但操作完之后不知道何时会写到内存；如果对声明了Volatile变量进行写操作，JVM就会向处理器发送一条Lock前缀的指令，将这个变量所在缓存行的数据写回到系统内存。但是就算写回到内存，如果其他处理器缓存的值还是旧的，再执行计算操作就会有问题，所以**在多处理器下，为了保证各个处理器的缓存是一致的，就会实现缓存一致性协议**，每个处理器通过嗅探在总线上传播的数据来检查自己缓存的值是不是过期了，当处理器发现自己缓存行对应的内存地址被修改，就会将当前处理器的缓存行设置成无效状态，当处理器要对这个数据进行修改操作的时候，会强制重新从系统内存里把数据读到处理器缓存里。
+
+  当多个线程对同一个缓存行访问时，其中一个线程会锁住缓存行，然后操作，这时候其他线程没办法操作缓存行。
+
+###### 缓存行
+
+​	需要注意，数据在缓存中不是以独立的项来存储的，如不是一个单独的变量，也不是一个单独的指针。缓存是由缓存行组成的，**通常是64字节**（译注：这篇文章发表时常用处理器的缓存行是64字节的，比较旧的处理器缓存行是32字节），并且它有效地引用主内存中的一块地址。<u>一个Java的long类型是8字节，因此在一个缓存行中可以存8个long类型的变量</u>。
+
+![img](https://static.oschina.net/uploads/img/201612/12131103_gGC4.png)
+
+​	如果你访问一个long数组，当数组中的一个值被加载到缓存中，它会额外加载另外7个。因此你能非常快地遍历这个数组。<u>事实上，你可以非常快速的遍历在连续的内存块中分配的任意数据结构。</u>我在第一篇[关于ring buffer的文章](http://mechanitis.blogspot.com/2011/06/dissecting-disruptor-whats-so-special.html)中顺便提到过这个，它解释了我们的ring buffer使用数组的原因。
+
+​	**因此如果你数据结构中的项在内存中不是彼此相邻的（链表，我正在关注你呢），你将得不到免费缓存加载所带来的优势。并且在这些数据结构中的每一个项都可能会出现缓存未命中**。
+
+​	不过，所有这种免费加载有一个弊端。设想你的long类型的数据不是数组的一部分。设想它只是一个单独的变量。让我们称它为`head`，这么称呼它其实没有什么原因。然后再设想在你的类中有另一个变量紧挨着它。让我们直接称它为`tail`。现在，当你加载`head`到缓存的时候，你也免费加载了`tail`。
+
+![img](https://static.oschina.net/uploads/img/201612/12131103_QKzm.png)
+
+​	直到你意识到`tail`正在被你的生产者写入，而`head`正在被你的消费者写入。这两个变量实际上并不是密切相关的，而事实上却要被两个不同内核中运行的线程所使用。
+
+![img](https://static.oschina.net/uploads/img/201612/12131103_DKGP.png)
+
+​	设想你的消费者更新了`head`的值。缓存中的值和内存中的值都被更新了，而其他所有存储`head`的缓存行都会都会失效，因为其它缓存中`head`不是最新值了。请记住我们**必须以整个缓存行作为单位来处理（译注：这是CPU的实现所规定的**，详细可参见[深入分析Volatile的实现原理](http://ifeve.com/volatile)），不能只把`head`标记为无效。
+
+​	现在如果一些正在其他内核中运行的进程只是想读`tail`的值，整个缓存行需要从主内存重新读取。那么一个和你的消费者无关的线程读一个和`head`无关的值，它被缓存未命中给拖慢了。
+
+​	**当然如果两个独立的线程同时写两个不同的值会更糟。因为每次线程对缓存行进行写操作时，每个内核都要把另一个内核上的缓存块无效掉并重新读取里面的数据。你基本上是遇到两个线程之间的写冲突了，尽管它们写入的是不同的变量。**
+
+​	这叫作“[伪共享](http://en.wikipedia.org/wiki/False_sharing)”（译注：可以理解为错误的共享），因为每次你访问`head`你也会得到`tail`，而且每次你访问`tail`，你也会得到`head`。这一切都在后台发生，并且没有任何编译警告会告诉你，你正在写一个并发访问效率很低的代码。
+
+###### **避免伪共享**
+
++ 在Java中
+
+  ​	你会看到Disruptor消除这个问题，至少对于缓存行大小是64字节或更少的处理器架构来说是这样的（译注：有可能处理器的缓存行是128字节，那么使用64字节填充还是会存在伪共享问题）,通过增加补全来确保ring buffer的序列号不会和其他东西同时存在于一个缓存行中。
+
+  ```java
+  public long p1, p2, p3, p4, p5, p6, p7; // cache line padding
+  private volatile long cursor = INITIAL_CURSOR_VALUE;
+  public long p8, p9, p10, p11, p12, p13, p14; // cache line padding
+  ```
+
+  ​	因此没有伪共享，就没有和其它任何变量的意外冲突，没有不必要的缓存未命中。
+
+   	Java8实现字节填充避免伪共享 
+
+   	JVM参数 -XX:-RestrictContended 
+
+   	@Contended 位于 sun.misc 用于注解java 属性字段，自动填充字节，防止伪共享
+
++ 在C语言中
+
+  ​	避免伪共享，编译器会自动将结构体，字节补全和对其，对其的大小最好是缓存行的长度。
+  ​	总的来说，结构体实例会和它的最宽成员一样对齐。编译器这样做因为这是保证所有成员自对齐以获得快速存取的最容易方法。
+  ​	从上面的情况可以看出，在设计[数据结构](http://lib.csdn.net/base/datastructure)的时候，应该尽量将只读数据与读写数据分开，并具尽量将同一时间访问的数据组合在一起。这样 CPU 能一次将需要的数据读入。如：
+
+  ```c
+  struct __a
+  {
+     int id; // 不易变
+     int factor;// 易变
+     char name[64];// 不易变
+     int value;// 易变
+  };
+  ```
+
+  这样的数据结构就很不利。
+
+   在 X86 下，可以试着修改和调整它
+
+  ```c
+  #define CACHE_LINE_SIZE 64  //缓存行长度
+  struct __a
+  {
+     int id; // 不易变
+     char name[64];// 不易变
+     char __align[CACHE_LINE_SIZE – sizeof(int)+sizeof(name)*sizeof(name[0])%CACHE_LINE_SIZE ]
+     int factor;// 易变
+     int value;// 易变
+     char __align2[CACHE_LINE_SIZE –2* sizeof(int)%CACHE_LINE_SIZE ]
+  };
+  ```
+
+  **CACHE_LINE_SIZE** – sizeof(int)+sizeof(name)*sizeof(name[0])%**CACHE_LINE_SIZE** 看起来很不和谐， **CACHE_LINE_SIZE**表示高速缓存行为 64Bytes 大小。 __align 用于显式对齐。这种方式是使得结构体字节对齐的大小为缓存行的大小
 
 #### 1.2.4.3
 
