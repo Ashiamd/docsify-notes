@@ -2049,9 +2049,7 @@ IRT_END
 
 下面先大致讲讲 线程可见性问题 和 指令重排序问题
 
-
-
-线程可见性问题：
+##### **线程可见性问题**
 
 ​	每个线程都有独自的调用栈的内存数据结构，对CPU的寄存器状态缓存不同，当多核CPU同时并行多个线程时，很可能线程之间打算互斥共享的数据在最后因为多核CPU之间的寄存器、缓存状态不同，导致数据不同步。
 
@@ -2065,7 +2063,7 @@ IRT_END
 
 
 
-指令重排序问题：
+##### **指令重排序问题**
 
 ​	CPU有一个规范是规定store-store和load-load不能乱序（即连续两个写不能乱序，连续两个读不能乱序），但是毕竟CPU开发厂家对CPU的实现闭源，你也没法百分之百保证他们怎么设计的CPU流水执行机械指令。
 
@@ -2100,15 +2098,27 @@ FENCE具体如何实现，CPU设计我们也不清楚（毕竟厂家也没公开
 
    ​	本质是CPU的寄存器、CPU缓存（L1-D、L1-I，L2）在多核之间数据不同步的问题。软件层面的同步互斥，往往通过同步互斥地访问同一个变量or同一块内存来实现。但是如果硬件层面（主要是CPU）没法做到多核之间互相同步同一个变量or统一块内存的修改，即缓存不一致，将导致程序的同步互斥逻辑失效。
 
-   ​	常见的两种关于Write的策略（Write-invalidate，Write-update）。前者要求当某CPU核更新共享的内存X时，其他CPU核若缓存了改内存区域X，就需要重新从内存X中读取值（旧值失效）；后者要求某CPU核泄内存X时，通知其他CPU核更新各自缓存中对应内存X的最新值。
+   ​	常见的两种关于Write的策略（Write-invalidate，Write-update）。前者要求当某CPU核更新共享的内存X时，其他CPU核若缓存了改内存区域X，就需要重新从内存X中读取值（旧值失效）；后者要求某CPU核写内存X时，通知其他CPU核更新各自缓存中对应内存X的最新值。
 
 2. MESI
 
-   
+   ​	MESI分别对应Mofied（修改）、Exclusive（独享）、Shared（共享）、Invalid（无效），表示CPU缓存行的状态（L1、L2、L3缓存）。*<small>（复杂的状态转换需要看下面推荐的wiki文章）</small>*
+
+   ​	当两个在不同CPU核上运行的线程/进程的不同变量在同一个缓存行时，如果其中线程1的变量x执行了写操作（缓存写回内存），线程2的变量2所在的CPU缓存行检测到总线orL3缓存上的该缓存行进行过写操作，就会标记自身Invalid，需要从内存中重新加载变量y的值。
+
+   ​	简言之，某一CPU核的缓存行的数据发生变化（写入内存），将导致其他CPU核需要重新对相同缓存行（从内存中）取值。
 
 3. 内存屏障
 
-   
+   ​	CPU流水线执行指令，所以往往会对一些机械指令进行重排序以达到最高的执行效率。但是程序中有些代码执行，我们需要其一定按照代码所示的顺序执行，那么就需要借助内存屏障了。
+
+   ​	一般而言，CPU厂商至少提供三种内存屏障（FENCE）指令：
+
+   * SFENCE（保证屏障前的Store行为先于屏障之后的Store）
+   * LFENCE（保证屏障前的Load行为先于屏障之后的Load）
+   * MLENCE（保证屏障前的Load、Store先于屏障后的Load、Store）
+
+   **屏障只保证FENCE前后的顺序，并不能保证FENCE前orFENCE后的指令能够严格服从某中顺序执行。**
 
 ----
 
@@ -2246,7 +2256,7 @@ There is native support for shared memory also in programming languages besides 
 
 ---
 
-##### MESI protocol
+##### MESI protocol--wiki
 
 大意就是通过有限状态机来描述和记录缓存行的状态，进而实现缓存一致性。（监听缓存行状态，如果发生改变，其他CPU核就需要修改为新值or重新从内存读取）
 
@@ -2420,9 +2430,108 @@ Bus side requests are the following:
 
   **CACHE_LINE_SIZE** – sizeof(int)+sizeof(name)*sizeof(name[0])%**CACHE_LINE_SIZE** 看起来很不和谐， **CACHE_LINE_SIZE**表示高速缓存行为 64Bytes 大小。 __align 用于显式对齐。这种方式是使得结构体字节对齐的大小为缓存行的大小
 
-#### 1.2.4.3
+---
 
-#### 1.2.4.4
+> [Memory barrier--wiki](https://en.wikipedia.org/wiki/Memory_barrier)
+
+##### Memory barrier--wiki
+
+​	A **memory barrier**, also known as a **membar**, **memory fence** or **fence instruction**, is a type of [barrier](https://en.wikipedia.org/wiki/Barrier_(computer_science)) [instruction](https://en.wikipedia.org/wiki/Instruction_(computer_science)) that causes a [central processing unit](https://en.wikipedia.org/wiki/Central_processing_unit) (CPU) or [compiler](https://en.wikipedia.org/wiki/Compiler) to enforce an [ordering](https://en.wikipedia.org/wiki/Memory_ordering) constraint on [memory](https://en.wikipedia.org/wiki/Random-access_memory) operations issued before and after the barrier instruction. This typically means that operations issued prior to the barrier are guaranteed to be performed before operations issued after the barrier.
+
+​	**Memory barriers are necessary because most modern CPUs employ performance optimizations that can result in [out-of-order execution](https://en.wikipedia.org/wiki/Out-of-order_execution).** This reordering of memory operations (loads and stores) normally goes unnoticed within a single [thread of execution](https://en.wikipedia.org/wiki/Thread_(computer_science)), but can cause unpredictable behaviour in [concurrent programs](https://en.wikipedia.org/wiki/Concurrent_computing) and [device drivers](https://en.wikipedia.org/wiki/Device_driver) unless carefully controlled. The exact nature of an ordering constraint is hardware dependent and defined by the architecture's [memory ordering model](https://en.wikipedia.org/wiki/Memory_model_(programming)). Some architectures provide multiple barriers for enforcing different ordering constraints.
+
+​	<u>Memory barriers are typically used when implementing low-level [machine code](https://en.wikipedia.org/wiki/Machine_code) that operates on memory shared by multiple devices. Such code includes **[synchronization](https://en.wikipedia.org/wiki/Synchronization_(computer_science)) primitives** and [lock-free](https://en.wikipedia.org/wiki/Non-blocking_synchronization) data structures on [multiprocessor](https://en.wikipedia.org/wiki/Multiprocessing) systems, and device drivers that communicate with [computer hardware](https://en.wikipedia.org/wiki/Personal_computer_hardware).</u>
+
+(这个前面操作系统笔记介绍过了，FENCE一般至少有3种：SFENCE、LFENCE、MFENCE)
+
+#### 1.2.4.3 volatile-防止指令重排序
+
+​	根据前面的文章介绍，我们很容易知道，volatile可以利用CPU提供的内存屏障指令来禁止/防止指令重排序。
+
+​	根据JVM标准要求，不管什么JVM实现（包括现在用最多的hotspot），在变量被volatile修饰时，必须禁止指令重排序。具体的实现方式就是利用内存屏障，对应CPU底层即fence指令。
+
+---
+
+##### JSR内存屏障
+
+*<small>*jsr*是Java Specification Requests的缩写，意思是Java 规范提案。</small>*
+
++ LoadLoad屏障
+
+  对于这样的语句Load<sub>1</sub>；LoadLoad；Load<sub>2</sub>
+
+  在Load<sub>2</sub>及后续的读取操作要读取的数据被访问前，保证Load<sub>1</sub>要读取的数据被读取完毕。
+
++ StoreStore屏障
+
+  对于这样的语句Store<sub>1</sub>；StoreStore；Store<sub>2</sub>
+
+  在Store<sub>2</sub>及后续的写入操作执行前，保证Store<sub>1</sub>的数据写入操作对其他处理器可见。
+
++ LoadStore屏障
+
+  对于这样的语句Load<sub>1</sub>；LoadStore；Store<sub>2</sub>
+
+  在Store<sub>2</sub>及后续的写入操作被执行前，保证Load<sub>1</sub>要读取的数据被读取完毕。
+
++ StoreLoad屏障
+
+  对于这样的语句Store<sub>1</sub>；StoreLoad；Load<sub>2</sub>
+
+  在Load<sub>2</sub>及后续的读取操作执行前，保证Store<sub>1</sub>的写入对所有处理器可见。
+
+这里的屏障，不是指CPU的LFENCE、SFENCE、MFENCE。
+
+**这4个屏障不过是JVM级别的要求，是逻辑概念，和CPU实现无关。**而底层到底怎么实现，需要根据CPU来看。像volatile底层汇编就一句 `lock addl`（l是64位的标识），后面跟着一些操作，表面上就是普通的加0操作，没别的了，所以CPU怎么处理这条指令，还是不一定的（CPU架构实现本身不唯一）。
+
+----
+
+##### JVM层面的volatile和内存屏障
+
+伪代码大致如下：
+
++ volatile写
+
+  ```java
+  StoreStoreBarrier
+    volatile Store
+  StoreLoadBarrier
+  ```
+
++ volatile读
+
+  ```java
+  LoadLoadBarrier
+    volatile
+  LoadStoreBarrier
+  ```
+
+> [**intel x86系列CPU既然是strong order的，不会出现loadload乱序，为什么还需要lfence指令？**](https://www.zhihu.com/question/29465982)
+>
+> 事实上Intel/AMD从来没在官方资料承认过多核x86要使用TSO模型（保证LL和SS一定是正确顺序）. 具体使用哪种模型本不在x86架构的规定之内, Intel SDM提到, 以后有可能性不再继承相同的Memory模型(就那么一说). 但如果x86某天更大范围的应用上Relaxed Memory Consistency, 软件L/SFENCE的使用将会更加普遍和深刻，而代价是部分程序将不再向前兼容。
+>
+> 所以LFENCE和SFENCE还是有必要的。而MFENCE虽然能兼顾L和S，但是影响性能。
+
+### 1.2.5 happens-before原则
+
+> [happens-before规则(JMM)](https://jingyan.baidu.com/article/86f4a73e42e50b76d65269ad.html)
+
+《JSR-133:Java Memory Model and Thread Specification》对happens-before关系的定义如下：
+
+1）如果一个操作happens-before另一个操作，那么第一个操作的执行结果将对第二个操作可见，而且第一个操作的执行顺序排在第二个操作之前。注意：这一点仅仅是JMM对程序员的保证
+
+2）两个操作之间存在happens-before关系，并不意味着Java平台的具体实现必须要按照happens-before关系指定的顺序来执行。如果重排序之后的执行结果，与按happens-before关系来执行的结果一致，那么这种重排序并不非法（也就是说，JMM允许这种重排序）。
+
+1. 程序次序规则（Program Order Rule）：在一个线程内，书写在前面的操作先行发生于后面的操作。准确的说，应该是控制流顺序而不是程序代码顺序，因为要考虑分支和循环等结构。
+2. volatile 变量规则（Volatile Lock Rule）：对于 volatile 修饰的变量的写的操作，一定 happen-before 后续对于volatile变量的读操作。
+3. 传递性规则（Transitivity Rule）：如果操作A先于操作B，操作B先于操作C，那么操作A先于操作C
+4. 线程启动规则（Thread Start Rule）：Thread对象的start()方法，先行发生行于此线程的每一个动作。
+5. 线程终止原则（Thread Termination Rule）：线程中所有操作happens-before于对此线程的终止检测，我们可以通过Thread.join()等手段检测到线程已经终止。
+6. 管程锁定规则（Monitor Lock Rule）：一个unlock操作先行发生于后面对同一个锁的lock操作。这里必须强调的是必须为同一个锁，而“后面”是指的时间上的先后顺序。
+7. 线程中断规则（Thread Interruption Rule）：对线程interrupt()方法的调用先行发生于被中断线程的代码检测到中断事件的发生，我们可以通过Thread.interrupted()方法检测到是否有中断发生。
+8. 对象终结规则（Finalizer Rule）：一个对象的初始化完成(构造函数执行结束)先行发生于它的finalize()方法。
+
+
 
 
 
