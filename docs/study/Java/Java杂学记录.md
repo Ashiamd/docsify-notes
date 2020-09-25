@@ -118,3 +118,9 @@ UserServiceImpl userService; // JDK报错，因为该类型不是接口，JDK是
 >
 > 有界通配符"\<? extends Object\>","\<? super Object\>"可以add对应Object或其子类/父类。（因为我们编译前给定了父类/子类）
 
+## 9. 编码问题
+
+> [几种常见的编码格式 ](https://www.cnblogs.com/mlan/p/7823375.html)
+>
+> [Java中char到底是多少字节？](https://www.iteye.com/topic/47740)
+

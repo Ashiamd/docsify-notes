@@ -13,27 +13,30 @@
 代码：（3 ms，82.69%）
 
 ```java
-class Solution { public int[][] findContinuousSequence(int target) { 
+class Solution { 
+  public int[][] findContinuousSequence(int target) { 
     List<int[]> resList = new LinkedList<>(); 
     // 滑动窗口
     for(int l = 1,r = 1,sum=0;r<=(target/2+1);++r){
-        sum+=r; while(sum>target){
-            sum-=l; 
-            ++l;
+      sum+=r; 
+      while(sum>target){
+        sum-=l; 
+        ++l;
+      }
+      if(sum==target)  {
+        int[] resTmp = new int[r-l+1];
+        for(int i =0;i<resTmp.length;++i){
+          resTmp[i] = l+i;
         }
-        if(sum==target)  {
-            int[] resTmp = new int[r-l+1];
-            for(int i =0;i<resTmp.length;++i){
-                resTmp[i] = l+i;
-            }
-            resList.add(resTmp);
-        }
-        int[][] res = new int[resList.size()][];
-        for(int i =0;i<res.length;++i){ 
-            res[i] = resList.get(i); 
-        }
-        return res; 
+        resList.add(resTmp);
+      }
+      int[][] res = new int[resList.size()][];
+      for(int i =0;i<res.length;++i){ 
+        res[i] = resList.get(i); 
+      }
+      return res; 
     }
+  }
 }
 ```
 
