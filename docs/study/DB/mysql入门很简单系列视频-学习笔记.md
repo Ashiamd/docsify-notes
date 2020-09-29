@@ -24,6 +24,97 @@
 >
 > [数据库设计及ER模型](https://www.cnblogs.com/dayle/p/9946714.html)
 >
+> [MySQL 连接查询](https://www.cnblogs.com/xiaozhaoboke/p/11077781.html)
+>
+> [mysql 内连接、左连接会出现笛卡尔积？](https://blog.csdn.net/zy_281870667/article/details/81046573)
+>
+> 首先说下结论：链接查询，如果on条件是非唯一字段，会出现笛卡尔积(局部笛卡尔积)；如果on条件是表的唯一字段，则不会出现笛卡尔积。
+>
+> 
+>
+> 索引
+>
+> [数据库中聚合索引（MySQL和SQL Server区别）](https://www.cnblogs.com/zhurong/p/9374238.html)
+>
+> mysql中每个表都有一个聚簇bai索引（clustered index ），du除此之外的表上的每个非聚簇索引都是二zhi级索引，又叫辅助索引（secondary indexes）。dao
+> 以InnoDB来说，每个InnoDB表具有一个特殊的索引称为聚集索引。如果您的表上定义有主键，该主键索引是聚集索引。如果你不定义为您的表的主键 时，MySQL取第一个唯一索引（unique）而且只含非空列（NOT NULL）作为主键，InnoDB使用它作为聚集索引。如果没有这样的列，InnoDB就自己产生一个这样的ID值，它有六个字节，而且是隐藏的，使其作 为聚簇索引。
+>
+> [MYSQL索引：对聚簇索引和非聚簇索引的认识](https://blog.csdn.net/alexdamiao/article/details/51934917) <= 推荐阅读
+>
+> InnoDB的的二级索引的叶子节点存放的是KEY字段加主键值。因此，通过二级索引查询首先查到是主键值，然后InnoDB再根据查到的主键值通过主键索引找到相应的数据块。而MyISAM的二级索引叶子节点存放的还是列值与行号的组合，叶子节点中保存的是数据的物理地址。所以可以看出MYISAM的主键索引和二级索引没有任何区别，主键索引仅仅只是一个叫做PRIMARY的唯一、非空的索引，且MYISAM引擎中可以不设主键。
+>
+> [MySQL 之全文索引](https://blog.csdn.net/mrzhouxiaofei/article/details/79940958)
+>
+> [什么叫做覆盖索引？](https://www.cnblogs.com/happyflyingpig/p/7662881.html) <== 建议阅读
+>
+>  来看看什么是覆盖索引，有下面三种理解：
+>
+> - 解释一： 就是select的数据列只用从索引中就能够取得，不必从数据表中读取，换句话说查询列要被所使用的索引覆盖。
+> - 解释二： 索引是高效找到行的一个方法，当能通过检索索引就可以读取想要的数据，那就不需要再到数据表中读取行了。如果一个索引包含了（或覆盖了）满足查询语句中字段与条件的数据就叫 做覆盖索引。
+> - 解释三：是非聚集组合索引的一种形式，它包括在查询里的Select、Join和Where子句用到的所有列（即建立索引的字段正好是覆盖查询语句[select子句]与查询条件[Where子句]中所涉及的字段，也即，索引包含了查询正在查找的所有数据）。
+>
+> 　　不是所有类型的索引都可以成为覆盖索引。覆盖索引必须要存储索引的列，而哈希索引、空间索引和全文索引等都不存储索引列的值，所以MySQL只能使用B-Tree索引做覆盖索引
+>
+> ### 总结：覆盖索引的优化及限制
+>
+>  覆盖索引是一种非常强大的工具，能大大提高查询性能，只需要读取索引而不需要读取数据，有以下优点：
+>
+>  1、索引项通常比记录要小，所以MySQL访问更少的数据。
+>
+>  2、索引都按值得大小存储，相对于随机访问记录，需要更少的I/O。
+>
+>  3、数据引擎能更好的缓存索引，比如MyISAM只缓存索引。
+>
+>  4、覆盖索引对InnoDB尤其有用，因为InnoDB使用聚集索引组织数据，如果二级索引包含查询所需的数据，就不再需要在聚集索引中查找了。
+>
+>  **限制：**
+>
+>  1、覆盖索引也并不适用于任意的索引类型，索引必须存储列的值。
+>
+>  2、Hash和full-text索引不存储值，因此MySQL只能使用BTree。
+>
+>  3、不同的存储引擎实现覆盖索引都是不同的，并不是所有的存储引擎都支持覆盖索引。
+>
+>  4、如果要使用覆盖索引，一定要注意SELECT列表值取出需要的列，不可以SELECT * ，因为如果将所有字段一起做索引会导致索引文件过大，查询性能下降。
+>
+> 
+>
+> 视图View
+>
+> [MySQL视图(view)](https://www.cnblogs.com/cshaptx4869/p/10481749.html)
+>
+> 
+>
+> 存储过程Procedure
+>
+> [mysql 存储过程权限相关](https://www.cnblogs.com/woxingwoxue/p/4974991.html)
+>
+> [MySQL 授予普通用户PROCESS权限](https://www.cnblogs.com/kerrycode/p/7421777.html)
+>
+> [MySQL之存储过程（PROCEDURE）](https://www.cnblogs.com/ccstu/p/12182933.html)
+>
+> 
+>
+> 游标Cursor
+>
+> [MySQL 游标的使用](https://www.cnblogs.com/oukele/p/10684639.html)
+>
+> 
+>
+> 触发器Trigger
+>
+> [mysql触发器trigger 实例详解](https://www.cnblogs.com/phpper/p/7587031.html)
+>
+> 触发器会有以下两种限制：
+>
+> 1.触发程序不能调用将数据返回客户端的存储程序，也不能使用采用CALL语句的动态SQL语句，但是允许存储程序通过参数将数据返回触发程序，也就是存储过程或者函数通过OUT或者INOUT类型的参数将数据返回触发器是可以的，但是不能调用直接返回数据的过程。
+>
+> 2.不能再触发器中使用以显示或隐式方式开始或结束事务的语句，如START TRANS-ACTION,COMMIT或ROLLBACK。
+>
+> 注意事项：MySQL的触发器是按照BEFORE触发器、行操作、AFTER触发器的顺序执行的，其中任何一步发生错误都不会继续执行剩下的操作，如果对事务表进行的操作，如果出现错误，那么将会被回滚，如果是对非事务表进行操作，那么就无法回滚了，数据可能会出错。
+>
+> 
+>
 > 事务，4种隔离级别和7种传播行为
 >
 > [mysql的表锁和行锁，排他锁和共享锁。](https://www.cnblogs.com/shamgod-lct/p/9318032.html)
@@ -64,6 +155,14 @@
 >
 > [频繁的访问数据库,sqlconnection可以一直open不close吗(2) ](https://bbs.csdn.net/topics/390843492)
 >
+> [事务及事务隔离级别](https://www.cnblogs.com/xrq730/p/5087378.html)
+>
+> [Mysql——通过例子理解事务的4种隔离级别](https://www.cnblogs.com/snsdzjlz320/p/5761387.html)
+>
+> Mysql默认的可重复读（事务中，哪时候select了，接下去是本地select结果的副本操作了，不会再从数据库读别人update的。）
+>
+> 
+>
 > 地理位置计算、处理：
 >
 > [使用MySQL的geometry类型处理经纬度距离问题的方法](https://www.jb51.net/article/155712.htm)
@@ -74,11 +173,17 @@
 >
 > [mysql距离函数st_distance](https://blog.csdn.net/u013628152/article/details/51560272)
 >
+> 
+>
 > 存储引擎：
 >
 > [InnoDB与Myisam的六大区别](https://www.cnblogs.com/vicenteforever/articles/1613119.html)
 >
 > [InnoDB和MyISAM的区别](https://www.cnblogs.com/amiezhang/p/10029585.html)
+>
+> [MyISAM与InnoDB 的区别（9个不同点）](https://blog.csdn.net/qq_35642036/article/details/82820178)
+>
+> 
 >
 > 主键：
 >
@@ -86,21 +191,99 @@
 >
 > [深入浅出mybatis之返回主键ID](https://www.cnblogs.com/nuccch/p/9067305.html)
 >
+> 
+>
 > 主从复制
 >
 > [Mysql 主从复制](https://www.jianshu.com/p/faf0127f1cb2)
+>
+> [MySQL主从分离实现](https://www.cnblogs.com/reminis/p/13335292.html)
+>
+> 
+>
+> 缓存
+>
+> [MySQL缓存机制](https://www.cnblogs.com/yueyun00/p/10898677.html)
+>
+> 
 >
 > 锁
 >
 > [求教 For Update 解锁](https://bbs.csdn.net/topics/330034068)
 >
+> [MySQL 共享锁 (lock in share mode)，排他锁 (for update)](https://learnku.com/articles/12800/lock-in-share-mode-mysql-shared-lock-exclusive-lock-for-update)
+>
+> [for update 与lock in share mode的区别](https://www.cnblogs.com/lint20/p/11384096.html)
+>
+> + lock in share mode意向共享锁（IS）
+>
+> + for update意向排它锁（IX）
+>
+> 有索引就锁行，没索引就锁表（InnoDB才支持事务，另一个MyISAM不支持且只有表级锁）
+>
+> [IS/IX/S/X等锁的区别](https://www.jianshu.com/p/94fc3c72f195)
+>
+> [MySql-两阶段加锁协议](https://my.oschina.net/alchemystar/blog/1438839)
+>
+> 在事务中只有提交(commit)或者回滚(rollback)时才是解锁阶段，其余时间为加锁阶段。
+>
+> **[mysql行锁+可重复读+读提交](https://www.cnblogs.com/jimmyhe/p/11013551.html) < ==== 强烈推荐， 强烈推荐， 强烈推荐(下面内容摘自于此)**
+>
+> **注意：begin/start transaction 命令并不是一个事务的起点，在执行到它们之后的第一个操作InnoDB表的语句（第一个快照读语句），事务才真正启动。如果你想要马上启动一个事务，可以使用start transaction with consistent snapshot 这个命令。**
+>
+> 可重复读的核心就是一致性读（consistent read）；而事务更新数据的时候，只能用当前读。如果当前的记录的行锁被其他事务占用的话，就需要进入锁等待。
+>
+> 而读提交的逻辑和可重复读的逻辑类似，它们最主要的区别是：在可重复读隔离级别下，只需要在事务开始的时候创建一致性视图，之后事务里的其他查询都共用这个一致性视图；在读提交隔离级别下，每一个语句执行前都会重新算出一个新的视图
+>
+> **innoDB的行数据有多个版本，每个数据版本有自己的row trx_id，每个事务或者语句有自己的一致性视图。普通查询语句是一致性读，一致性读会根据row trx_id和一致性视图确定数据版本的可见性。**
+>
+> - **对于可重复读，查询只承认在事务启动前就已经提交完成的数据；**
+> - **对于读提交，查询只承认在语句启动前就已经提交完成的数据；**
+> - **而当前读，总是读取已经提交完成的最新版本。**
+>
+> [Innodb锁机制：Next-Key Lock 浅谈](https://www.cnblogs.com/zhoujinyi/p/3435982.html) <= **推荐阅读！！推荐阅读！！推荐阅读！！**
+>
+>    数据库使用锁是为了支持更好的并发，提供数据的完整性和一致性。InnoDB是一个支持行锁的存储引擎，锁的类型有：共享锁（S）、排他锁（X）、意向共享（IS）、意向排他（IX）。为了提供更好的并发，InnoDB提供了非锁定读：不需要等待访问行上的锁释放，读取行的一个快照。该方法是通过InnoDB的一个特性：MVCC来实现的。
+>
+> **InnoDB有三种行锁的算法：**
+>
+> 1，Record Lock：单个行记录上的锁。
+>
+> 2，Gap Lock：间隙锁，锁定一个范围，但不包括记录本身。GAP锁的目的，是为了防止同一事务的两次当前读，出现幻读的情况。
+>
+> 3，Next-Key Lock：1+2，锁定一个范围，并且锁定记录本身。对于行的查询，都是采用该方法，主要目的是解决幻读的问题。
+>
+> **InnoDB对于行的查询都是采用了Next-Key Lock的算法，锁定的不是单个值，而是一个范围，按照这个方法是会和第一次测试结果一样。但是，当查询的索引含有唯一属性的时候，Next-Key Lock 会进行优化，将其降级为Record Lock，即仅锁住索引本身，不是范围。**
+>
+> 注意：通过主键或则唯一索引来锁定不存在的值，也会产生GAP锁定。
+>
+> [深入了解mysql--gap locks,Next-Key Locks](https://blog.csdn.net/qq_20597727/article/details/87308709) <== 推荐阅读
+>
+> 
+>
+> MVCC
+>
+> [mysql事务的实现方式——mvvc+锁](https://www.cnblogs.com/tongcc/p/13084368.html)
+>
+> 1.1只有在InnoDB引擎下存在的一种基于多版本的并发控制协议；
+>
+> 1.2MVCC只在 READ COMMITTED 和 REPEATABLE READ 两个隔离级别下工作。其他两个隔离级别够和MVCC不兼容，因为 READ UNCOMMITTED 总是读取最新的数据行，而不是符合当前事务版本的数据行。而 SERIALIZABLE 则会对所有读取的行都加锁
+>
+> 好处：读不加锁，读写不冲突
+>
+> 
+>
 > timeout变量
 >
 > [mysql timeout知多少](https://blog.csdn.net/weixin_33766805/article/details/93818673?utm_medium=distribute.pc_relevant.none-task-blog-BlogCommendFromMachineLearnPai2-3&depth_1-utm_source=distribute.pc_relevant.none-task-blog-BlogCommendFromMachineLearnPai2-3)
 >
+> 
+>
 > 元数据
 >
 > [MySQL的元数据解释说明](https://blog.csdn.net/qq_34672033/article/details/90145387)
+>
+> 
 >
 > 数据库查询流程（MySQL基本架构）
 >

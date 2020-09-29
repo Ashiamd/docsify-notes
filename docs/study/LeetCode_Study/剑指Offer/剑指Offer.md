@@ -1665,6 +1665,38 @@ class Solution {
 }
 ```
 
+参考代码3（12ms）：
+
+deque内存下标而不是数值，更方便判断（不需要用2个for循环）
+
+```java
+class Solution {
+  public int[] maxSlidingWindow(int[] nums, int k) {
+    if(nums == null || nums.length < 2) {
+      return nums;
+    }
+    LinkedList<Integer> queue = new LinkedList<>();
+    int [] result = new int[nums.length - k + 1];
+    for (int i = 0; i < nums.length ; i++ ){
+      while (!queue.isEmpty() && nums[queue.peekLast()] <= nums[i]){
+        queue.pollLast();
+      }
+      queue.addLast(i);
+      if(queue.peek() <= i-k){
+        //看一下队首还在不在滑动窗口里面，不在就扔了
+        queue.poll();
+      }
+      if (i+1 >= k){
+        result[i+1-k] = nums[queue.peek()];
+      }
+
+    }
+
+    return result;
+  }
+}
+```
+
 ### 面试题61. 扑克牌中的顺子
 
 > [面试题61. 扑克牌中的顺子](https://leetcode-cn.com/problems/bu-ke-pai-zhong-de-shun-zi-lcof/)
@@ -2247,29 +2279,29 @@ class Solution {
 
 ```java
 public TreeNode buildTree(int[] preorder, int[] inorder) {
-        if(( preorder.length & inorder.length )== 0)
-            return null;
-        TreeNode root = new TreeNode(preorder[0]);
-        int preLen = preorder.length;
-        LinkedList<TreeNode> stack = new LinkedList<>();
-        stack.addFirst(root);
-        for(int preIndex = 1,inIndex = 0;preIndex<preLen;++preIndex){
-            int curVal = preorder[preIndex];
-            TreeNode preNode = stack.peekFirst();
-            if(preNode.val!=inorder[inIndex]){
-                preNode.left = new TreeNode(curVal);
-                stack.addFirst(preNode.left);
-            }else{
-                while(!stack.isEmpty() && stack.peekFirst().val == inorder[inIndex]){
-                    preNode = stack.pop();
-                    ++inIndex;
-                }
-                preNode.right = new TreeNode(curVal);
-                stack.push(preNode.right);
-            }
-        }
-        return root;
+  if(( preorder.length & inorderÅ..length )== 0)
+    return null;
+  TreeNode root = new TreeNode(preorder[0]);
+  int preLen = preorder.length;
+  LinkedList<TreeNode> stack = new LinkedList<>();
+  stack.addFirst(root);
+  for(int preIndex = 1,inIndex = 0;preIndex<preLen;++preIndex){
+    int curVal = preorder[preIndex];
+    TreeNode preNode = stack.peekFirst();
+    if(preNode.val!=inorder[inIndex]){
+      preNode.left = new TreeNode(curVal);
+      stack.addFirst(preNode.left);
+    }else{
+      while(!stack.isEmpty() && stack.peekFirst().val == inorder[inIndex]){
+        preNode = stack.pop();
+        ++inIndex;
+      }
+      preNode.right = new TreeNode(curVal);
+      stack.push(preNode.right);
     }
+  }
+  return root;
+}
 ```
 
 代码（递归，3ms，81.20%）：
@@ -2285,33 +2317,33 @@ public TreeNode buildTree(int[] preorder, int[] inorder) {
  * }
  */
 class Solution {
-   
-   public TreeNode buildTree(int[] preorder, int[] inorder) {
-        if(( preorder.length & inorder.length )== 0)
-            return null;
-        HashMap<Integer,Integer> map = new HashMap<>();
-        int len = inorder.length;
-        for(int i = 0;i<len;++i){
-            map.put(inorder[i],i);
-        }
-        TreeNode root = buildTree(preorder, inorder, 0, len-1, 0, len-1, map);
-        return root;
+
+  public TreeNode buildTree(int[] preorder, int[] inorder) {
+    if(( preorder.length & inorder.length )== 0)
+      return null;
+    HashMap<Integer,Integer> map = new HashMap<>();
+    int len = inorder.length;
+    for(int i = 0;i<len;++i){
+      map.put(inorder[i],i);
+    }
+    TreeNode root = buildTree(preorder, inorder, 0, len-1, 0, len-1, map);
+    return root;
+  }
+
+  public TreeNode buildTree(int[] preorder, int[] inorder,int preL,int preR,int inL,int inR,HashMap<Integer,Integer> map) {
+    if(preL > preR)
+      return null;
+    int rootVal = preorder[preL];
+    TreeNode root = new TreeNode(rootVal);
+
+    if(preL != preR){
+      int inRootIndex = map.get(rootVal);
+      root.left = buildTree(preorder,inorder,preL+1, preL+inRootIndex-inL, inL,inRootIndex-1 , map);
+      root.right = buildTree(preorder,inorder,preR-inR+inRootIndex+1, preR, inRootIndex+1,inR , map);
     }
 
-    public TreeNode buildTree(int[] preorder, int[] inorder,int preL,int preR,int inL,int inR,HashMap<Integer,Integer> map) {
-        if(preL > preR)
-            return null;
-        int rootVal = preorder[preL];
-        TreeNode root = new TreeNode(rootVal);
-
-        if(preL != preR){
-            int inRootIndex = map.get(rootVal);
-            root.left = buildTree(preorder,inorder,preL+1, preL+inRootIndex-inL, inL,inRootIndex-1 , map);
-            root.right = buildTree(preorder,inorder,preR-inR+inRootIndex+1, preR, inRootIndex+1,inR , map);
-        }
-
-        return root;
-    }
+    return root;
+  }
 }
 ```
 
@@ -4096,7 +4128,7 @@ class Solution {
         if(n<4)
             return n-1;
         long res = 1;
-        while(n>3){
+        while(n>4){
             res = (res*3)%1000000007;
             n-=3;
         }

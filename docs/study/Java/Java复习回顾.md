@@ -329,6 +329,10 @@ First, it can be used instead of a `finalize` method, guaranteeing that the obje
 
 
 
+> [深入理解java内存模型系列文章](http://ifeve.com/java-memory-model-0/)
+
+
+
 
 
 
