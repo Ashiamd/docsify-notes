@@ -43,6 +43,52 @@
 > 缓存
 >
 > [redis缓存在项目中的使用](https://www.cnblogs.com/fengli9998/p/6755591.html)
+>
+> 持久化机制
+>
+> [redis的 rdb 和 aof 持久化的区别](https://www.cnblogs.com/shizhengwen/p/9283973.html)
+>
+> [Redis持久化介绍 ](https://www.sohu.com/a/359201984_100233510)
+>
+> Redis 有两种持久化方案,RDB (Redis DataBase)和 AOF (Append Only File)
+>
+> - appendonly 配置redis 默认关闭，开启需要手动把no改为yes（这个我docker中的官方redis6默认是开启的）
+> - appendfilename指定本地数据库文件名，默认值为 appendonly.aof
+> - appendfsync everysec指定更新日志条件为每秒更新，共三种策略（aways，everyse，no）
+> - auto-aof-rewrite-min-size配置重写触发机制，当AOF文件大小是上次rewrite后大小的一倍且文件大于64M时触发。
+>
+> **AOF触发与恢复**
+>
+> AOF主要根据配置文件策略触发，可以是每次执行触发，可以是每秒触发，可以不同步。
+>
+> AOF的恢复主要是将appendonly.aof 文件拷贝到redis的安装目录的bin目录下，重启redis服务即可。但在实际开发中，可能因为某些原因导致appendonly.aof 文件异常，从而导致数据还原失败，可以通过命令redis-check-aof --fix appendonly.aof 进行修复
+>
+> AOF的工作原理是将写操作追加到文件中，文件的冗余内容会越来越多。所以Redis 新增了重写机制，通过auto-aof-rewrite-min-size控制。当AOF文件的大小超过所设定的阈值时，Redis就会对AOF文件的内容压缩。
+>
+> 
+>
+> 消息队列/发布订阅模式
+>
+> [redis实现消息队列&发布/订阅模式使用](https://www.cnblogs.com/qlqwjy/p/9763754.html)
+>
+> 
+>
+> 事务
+>
+> [Redis事务,你真的了解吗](https://zhuanlan.zhihu.com/p/101902825?utm_source=wechat_session)
+>
+> Redis自身的事务不能够回滚，只不过事务异常or失败会清空原本将要继续往下执行的事务队列里的操作。
+>
+> Redis的事务执行时，其他client的操作会被阻塞。
+>
+> 非事务状态下的命令以单个命令为单位执行，前一个命令和后一个命令的客户端不一定是同一个；
+> 而事务状态则是以一个事务为单位，执行事务队列中的所有命令：除非当前事务执行完毕，否则服务器不会中断事务，也不会执行其他客户端的其他命令。（把Redis事务中的所有操作一次性发给Redis，减少网络带来的时间损耗）
+>
+> **通过事务+watch实现 CAS**
+>
+> Redis 提供了 WATCH 命令与事务搭配使用，实现 CAS 乐观锁的机制。
+> WATCH 的机制是：在事务 EXEC 命令执行时，Redis 会检查被 WATCH 的 Key，只有被 WATCH 的 Key 从 WATCH 起始时至今没有发生过变更，EXEC 才会被执行。
+> 如果 WATCH 的 Key 在 WATCH 命令到 EXEC 命令之间发生过变化，则 EXEC 命令会返回失败。
 
 
 

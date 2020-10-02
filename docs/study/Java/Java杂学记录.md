@@ -124,3 +124,27 @@ UserServiceImpl userService; // JDK报错，因为该类型不是接口，JDK是
 >
 > [Java中char到底是多少字节？](https://www.iteye.com/topic/47740)
 
+## 10. 容器
+
+> [Java HashMap 原理（位桶 + 链表）](https://blog.csdn.net/wilson1068/article/details/88142495) <= 推荐阅读
+>
+> JDK 1.6, JDK 1.7 HashMap 采用位桶 + 链表实现。
+>
+> JDK 1.8 HashMap 采用位桶 + 链表 + 红黑树实现。（当链表长度超过阈值 “8” 时，将链表转换为红黑树）。
+>
+> HashMap 容量 (capacity) 和负载因子 (loadFactor)。
+>
+> capacity初始值16，loadFactor为0.75。index = hash mod 2<sup>n</sup>,初始n=4。
+>
+> 当数组中的节点（**entry**）数目 &gt; capacity \* loadFactor \> capacity \* loadFactor \> capacity \* loadFactor时，就需要扩容，调整数组的大小为当前的 2 倍，以提高 HashMap 的 hash 效率。
+>
+> [Java中的Iterable与Iterator详解](https://www.cnblogs.com/litexy/p/9744241.html)
+
+## 11. 设计模式
+
+> [JAVA设计模式之观察者模式](https://www.cnblogs.com/luohanguo/p/7825656.html)
+
+## 12. Guava
+
+> [Guava Cache用法介绍](https://www.cnblogs.com/fnlingnzb-learner/p/11022152.html) <== 极力推荐，包括中间提及的[使用缓存的9大误区（上）](https://kb.cnblogs.com/page/138696/)和[使用缓存的9大误区（下）](https://kb.cnblogs.com/page/144396/)
+
