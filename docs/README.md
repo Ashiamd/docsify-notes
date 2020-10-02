@@ -1,24 +1,24 @@
 #  导读
 
-> Ashiamd的个人MD笔记(https://ashiamd.github.io/docsify-notes/)
+> [Ashiamd的个人MD笔记](https://ashiamd.github.io/docsify-notes/) ==> https://ashiamd.github.io/docsify-notes/
 
 ## 目录
 
-* [Android](/study/Android)
-* [LeetCode](/study/LeetCode_Study)
-* [React](/study/React)
-* [Vue](/study/Vue)
-* [Java](/study/Java)
-* [Python](/study/Python)
-* [SpringBoot](/study/SpringBoot)
-* [SpringCloud](/study/SpringCloud)
-* [MQ](/study/MQ)
-* [Netty](/study/Netty)
-* [Linux](/study/Linux)
-* [操作系统和硬件](/study/操作系统和硬件)
-* [计算机网络](/study/计算机网络)
-* [网络安全](/study/网络安全)
-* [DB](/study/DB)
+* [Android](https://ashiamd.github.io/docsify-notes/#/study/Android/README.md)
+* [LeetCode](https://ashiamd.github.io/docsify-notes/#/study/LeetCode_Study/README.md)
+* [React](https://ashiamd.github.io/docsify-notes/#/study/React/README.md)
+* [Vue](https://ashiamd.github.io/docsify-notes/#/study/Vue/README.md)
+* [Java](https://ashiamd.github.io/docsify-notes/#/study/Java/README.md)
+* [Python](https://ashiamd.github.io/docsify-notes/#/study/Python/README.md)
+* [SpringBoot](https://ashiamd.github.io/docsify-notes/#/study/SpringBoot/README.md)
+* [SpringCloud](https://ashiamd.github.io/docsify-notes/#/study/SpringCloud/README.md)
+* [MQ](https://ashiamd.github.io/docsify-notes/#/study/MQ/README.md)
+* [Netty](https://ashiamd.github.io/docsify-notes/#/study/Netty/README.md)
+* [Linux](https://ashiamd.github.io/docsify-notes/#/study/Linux/README.md)
+* [操作系统和硬件](https://ashiamd.github.io/docsify-notes/#/study/操作系统和硬件/README.md)
+* [计算机网络](https://ashiamd.github.io/docsify-notes/#/study/计算机网络/README.md)
+* [网络安全](https://ashiamd.github.io/docsify-notes/#/study/网络安全/README.md)
+* [DB](https://ashiamd.github.io/docsify-notes/#/study/DB/README.md)
 
-+ [Docker](/study/Docker)
-+ [kubernetes](/study/kubernetes)
++ [Docker](https://ashiamd.github.io/docsify-notes/#/study/Docker/README.md)
++ [kubernetes](https://ashiamd.github.io/docsify-notes/#/study/kubernetes/README.md)

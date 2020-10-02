@@ -1,8 +1,8 @@
 * 导读
-    * **Android**
-      * [Android开发基础教程（2019）学习笔记](/study/Android/Android开发基础教程（2019）学习笔记) 
+    * [**Android**](https://ashiamd.github.io/docsify-notes/#/study/Android/README.md)
+      * [Android开发基础教程（2019）学习笔记](/study/Android/Android开发基础教程（2019）学习笔记)
       * [W3c_Android基础入门教程](/study/Android/W3c_Android基础入门教程)
-    * **LeetCode**
+    * [**LeetCode**](https://ashiamd.github.io/docsify-notes/#/study/LeetCode_Study/README.md)
       * [探索-初级算法](/study/LeetCode_Study/初级算法/README.md)
       * [探索-中级算法](/study/LeetCode_Study/中级算法/README.md)
       * [探索-高级算法](/study/LeetCode_Study/高级算法/README.md)
