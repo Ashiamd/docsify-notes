@@ -15,7 +15,7 @@
 * [MQ](https://ashiamd.github.io/docsify-notes/#/study/MQ/README.md)
 * [Netty](https://ashiamd.github.io/docsify-notes/#/study/Netty/README.md)
 * [Linux](https://ashiamd.github.io/docsify-notes/#/study/Linux/README.md)
-* [操作系统和硬件](https://ashiamd.github.io/docsify-notes/#/study/操作系统和硬件/README.md)
+* [操作系统和硬件](https://ashiamd.github.io/docsify-notes/#/study/操作系统和硬件/README)
 * [计算机网络](https://ashiamd.github.io/docsify-notes/#/study/计算机网络/README.md)
 * [网络安全](https://ashiamd.github.io/docsify-notes/#/study/网络安全/README.md)
 * [DB](https://ashiamd.github.io/docsify-notes/#/study/DB/README.md)
