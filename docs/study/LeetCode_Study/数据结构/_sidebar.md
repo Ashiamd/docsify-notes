@@ -1,10 +1,4 @@
 * **目录**
+  * [根目录（/）](/README)
+  * [回到上一级（../）](/study/LeetCode_Study/README)
   * [队列&栈](/study/LeetCode_Study/数据结构/队列&栈)
-  * [数组和字符串](/study/LeetCode_Study/数据结构/数组和字符串)
-  * [链表](/study/LeetCode_Study/数据结构/链表)
-  * [哈希表](/study/LeetCode_Study/数据结构/哈希表)
-  * [二分查找](/study/LeetCode_Study/数据结构/二分查找)
-  * [二叉树](/study/LeetCode_Study/数据结构/二叉树)
-  * [二叉树搜索树](/study/LeetCode_Study/数据结构/二叉搜索树)
-  * [N叉树](/study/LeetCode_Study/数据结构/N叉树)
-  * [前缀树](/study/LeetCode_Study/数据结构/前缀树)

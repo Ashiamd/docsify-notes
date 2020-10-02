@@ -2,6 +2,10 @@
 
 > [Ashiamd的个人MD笔记](https://ashiamd.github.io/docsify-notes/) ==> https://ashiamd.github.io/docsify-notes/
 
+该项目用于记录个人学习笔记，有部分内容来自图书、博客、论坛等。
+
+如有**侵权**等问题，请联系ashiamd@foxmail.com，本人会第一时间删除相关内容。
+
 ## 目录
 
 * [Android](https://ashiamd.github.io/docsify-notes/#/study/Android/README.md)
@@ -18,7 +22,7 @@
 * [操作系统和硬件](https://ashiamd.github.io/docsify-notes/#/study/操作系统和硬件/README)
 * [计算机网络](https://ashiamd.github.io/docsify-notes/#/study/计算机网络/README.md)
 * [网络安全](https://ashiamd.github.io/docsify-notes/#/study/网络安全/README.md)
-* [DB](https://ashiamd.github.io/docsify-notes/#/study/DB/README.md)
+* [DataBase](https://ashiamd.github.io/docsify-notes/#/study/DataBase/README.md)
 
 + [Docker](https://ashiamd.github.io/docsify-notes/#/study/Docker/README.md)
 + [kubernetes](https://ashiamd.github.io/docsify-notes/#/study/kubernetes/README.md)
