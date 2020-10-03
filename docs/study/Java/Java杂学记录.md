@@ -88,6 +88,29 @@ UserServiceImpl userService; // JDK报错，因为该类型不是接口，JDK是
 >
 > [java并发编程：Executor、Executors、ExecutorService](https://blog.csdn.net/weixin_40304387/article/details/80508236)
 >
+> [线程池之ThreadPoolExecutor使用](https://www.jianshu.com/p/f030aa5d7a28)
+>
+> maxnumPoolSize大于corePoolSize的部分，仅在等待队列workQueue满时生效。
+>
+> （下述场景是使用上面文章中的代码，我自己经过测试的。我注释掉了“预启动所有核心线程”的代码。）
+>
+> 比如corePoolSize = 2，maxnumPoolSize = 4，workQueue容量2：
+>
+> + 同时提交3个Runnable，那么前两个会新建线程（这之后达到corePoolSize）；要是前两个线程执行慢，那么第三个线程会先在阻塞队列等待corePool空出来，而不会直接新建线程。
+> + 同时提交6个Runnable，那么前两个task马上新建两个对应的县城，而第三个和第四个正好填满workQueue，第五个和第六个来的时候workQueue满了，且maxnumPoolSize>corePoolSize，所以第五个第六个直接新建两个对应的线程并执行，最后才是第三个和第四个等有线程空闲了，才被执行。
+> + 同时提交7个Runnable，前两个还是马上新建线程，然后还是第五第六又新建线程执行，而中间的第三第四还在workQueue中，等待线程空闲时被执行，由于线程达到maxnumPoolSize，且workQueue满了，所以第七个Runnable直接被拒绝执行。
+>
+> [ThreadPoolExecutor使用详解](https://www.cnblogs.com/zedosu/p/6665306.html)
+>
+> 1.当线程池小于corePoolSize时，新提交任务将创建一个新线程执行任务，即使此时线程池中存在空闲线程。 
+> 2.当线程池达到corePoolSize时，新提交任务将被放入workQueue中，等待线程池中任务调度执行 
+> 3.当workQueue已满，且maximumPoolSize>corePoolSize时，新提交任务会创建新线程执行任务 
+> 4.当提交任务数超过maximumPoolSize时，新提交任务由RejectedExecutionHandler处理 
+> 5.当线程池中超过corePoolSize线程，空闲时间达到keepAliveTime时，关闭空闲线程 
+> 6.当设置allowCoreThreadTimeOut(true)时，线程池中corePoolSize线程空闲时间达到keepAliveTime也将关闭** 
+>
+> 
+>
 > 锁
 >
 > [使用synchronized同步对象却有多个线程能同时访问，使用lock锁却达到目的了，不知道为什么求大神回](https://bbs.csdn.net/topics/391087139?page=1)
