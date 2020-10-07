@@ -180,3 +180,100 @@ UserServiceImpl userService; // JDK报错，因为该类型不是接口，JDK是
 > windows采用GBK，Linux通常UTF-8（变长编码，Unicode的一种。现在Unicode通常指UTF-16，定长2字节）。
 >
 > 表示顺序（大端和小端=> java大端，c语言小端）
+
+## 14. Disruptor
+
+> [高性能队列——Disruptor](https://tech.meituan.com/2016/11/18/disruptor.html)
+>
+> [伪共享](https://zhuanlan.zhihu.com/p/124974025)
+>
+> [Java8的伪共享和缓存行填充--@Contended注释](https://www.cnblogs.com/Binhua-Liu/p/5623089.html)
+>
+> Java8中提供了官方的解决方案，Java8中新增了一个注解：@sun.misc.Contended。加上这个注解的类会自动补齐缓存行，需要注意的是此注解默认是无效的，需要在jvm启动时设置-XX:-RestrictContended才会生效
+>
+> 上面这篇文章中，我试了他代码，我是同组@Contended耗时大概是不同组的1/6。（不同组速度慢是因为线程t0和t1互相使对方的缓存行失效了。）
+
+@Contended的测试代码来自上述文章（jdk8，64位，CPU环境2.4GHz 8核i9，内存32G）
+
+```java
+package coding;
+
+import sun.misc.Contended;
+
+public final class FalseSharing implements Runnable {
+  public final static long ITERATIONS = 500L * 1000L * 1000L;
+  private static VolatileLong volatileLong;
+  private String groupId;
+
+  public FalseSharing(String groupId) {
+    this.groupId = groupId;
+
+  }
+
+  public static void main(final String[] args) throws Exception {
+    // Thread.sleep(10000);
+    System.out.println("starting....");
+
+    volatileLong = new VolatileLong();
+    final long start = System.nanoTime();
+    runTest();
+    System.out.println("duration = " + (System.nanoTime() - start));
+  }
+
+  private static void runTest() throws InterruptedException {
+    Thread t0 = new Thread(new FalseSharing("t0"));
+    Thread t1 = new Thread(new FalseSharing("t1"));
+    t0.start();
+    t1.start();
+    t0.join();
+    t1.join();
+  }
+
+  @Override
+  public void run() {
+    long i = ITERATIONS + 1;
+    if (groupId.equals("t0")) {
+      while (0 != --i) {
+        volatileLong.value1 = i+1;
+        volatileLong.value3 = i-1;
+      }
+    } else if (groupId.equals("t1")) {
+      while (0 != --i) {
+        volatileLong.value2 = i+1;
+        volatileLong.value4 = i-1;
+      }
+    }
+  }
+}
+
+class VolatileLong {
+  @Contended("group0")
+  public volatile long value1 = 0L;
+  @Contended("group0")
+  public volatile long value2 = 0L;
+
+  @Contended("group1")
+  public volatile long value3 = 0L;
+  @Contended("group1")
+  public volatile long value4 = 0L;
+}
+```
+
+输出如下：
+
+```none
+//run函数分别是 13、24 （即不同组）
+duration = 30464121663
+duration = 30863580223
+duration = 30235774560
+
+//run函数分别是 12、34 （即同组）
+duration = 5263218292
+duration = 5322789201
+duration = 5342706955
+```
+
+
+
+
+

@@ -19277,6 +19277,35 @@ public class Singleton {
 
 ### 1.2.6 常见的java锁
 
+#### 1.2.6.1 ReentrantLock
+
+> [一文彻底理解ReentrantLock可重入锁的使用](https://baijiahao.baidu.com/s?id=1648624077736116382&wfr=spider&for=pc)
+>
+> [Java多线程 -- 公平锁和非公平锁的一些思考](https://www.jianshu.com/p/eaea337c5e5b)
+>
+> [Lock.lock()为什么在try之前执行？](https://blog.csdn.net/E_N_T_J/article/details/105943325)
+>
+> [Java中的公平锁和非公平锁实现详解](https://www.cnblogs.com/little-fly/p/10365109.html#top)
+>
+> [关于volatile、MESI、内存屏障、#Lock](https://www.jianshu.com/p/6745203ae1fe)
+>
+> 1.volatile，是怎么可见性的问题（CPU缓存），那么他是怎么解决的--->MESI
+>
+> 2.CAS指令，确保了对同一个同一个内存地址操作的原子性，那么他应该也会遇到和上面可见性一样的问题，他是怎么解决的，是不是和volatile的底层原理类似？--->是的，也是利用了MESI
+>
+> 3.volatile还避免了指令重排，是通过内存屏障解决的？那么他和MESI有什么关系？还是说volatile关键字即用了MESI也用了内存屏障？--->是的，其实MESI底层也还是需要内存屏障
+>
+> [Write combining](https://en.wikipedia.org/wiki/Write_combining#:~:text=Write%20combining%20(WC)%20is%20a,single%20bits%20or%20small%20chunks.)
+>
+> [Intel 64 and IA32 WC buffers](https://blog.csdn.net/kickxxx/article/details/42707093)
+
+​	ReentranLock相对`synchronized`而言，要更加灵活，因为可以自己指定加锁和解锁的时机。（但手动的加锁解锁也意味着出现死锁等异常情况的可能性更高了）。
+​	ReentranLock支持公平锁。ReentranLock和synchronized底层都有维护双向队列来保存需要获取锁(但还没获取到)的线程。
++ 如果是公平锁，那么每次有线程释放锁时，优先考虑是否队列内有等待锁的线程，有则FIFO规则地取出第一个线程来占用锁；
++ 非公平锁，释放锁时，不会再优先考虑队列中的线程，也就是如果此时正好有新线程申请占用锁，那么新线程有很大概率直接占有锁。
+
+
+
 
 
 ---
