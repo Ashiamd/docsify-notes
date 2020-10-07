@@ -88,6 +88,8 @@ UserServiceImpl userService; // JDK报错，因为该类型不是接口，JDK是
 >
 > [java并发编程：Executor、Executors、ExecutorService](https://blog.csdn.net/weixin_40304387/article/details/80508236)
 >
+> [Java中的线程池——ThreadPoolExecutor的使用](https://blog.csdn.net/u010723709/article/details/50377543)
+>
 > [线程池之ThreadPoolExecutor使用](https://www.jianshu.com/p/f030aa5d7a28)
 >
 > maxnumPoolSize大于corePoolSize的部分，仅在等待队列workQueue满时生效。
@@ -171,3 +173,10 @@ UserServiceImpl userService; // JDK报错，因为该类型不是接口，JDK是
 
 > [Guava Cache用法介绍](https://www.cnblogs.com/fnlingnzb-learner/p/11022152.html) <== 极力推荐，包括中间提及的[使用缓存的9大误区（上）](https://kb.cnblogs.com/page/138696/)和[使用缓存的9大误区（下）](https://kb.cnblogs.com/page/144396/)
 
+## 13. 字符编码
+
+> [字符编码笔记：ASCII，Unicode 和 UTF-8](https://www.ruanyifeng.com/blog/2007/10/ascii_unicode_and_utf-8.html)
+>
+> windows采用GBK，Linux通常UTF-8（变长编码，Unicode的一种。现在Unicode通常指UTF-16，定长2字节）。
+>
+> 表示顺序（大端和小端=> java大端，c语言小端）
