@@ -508,5 +508,119 @@ class Solution {
 }
 ```
 
+### 最小的K个数
 
+> [面试题 17.14. 最小K个数](https://leetcode-cn.com/problems/smallest-k-lcci/)
+
+语言：java
+
+思路：最简单的就是堆排序（因为java有现成的PriorityQueue），其次就是需要手写的快速选择。
+
+代码1（38ms，11%）：堆排序
+
+```java
+class Solution {
+  public int[] smallestK(int[] arr, int k) {
+    PriorityQueue<Integer> maxStack = new PriorityQueue<>((x, y) -> y - x);
+    for (int num : arr) {
+      if (maxStack.size() < k) {
+        maxStack.add(num);
+      } else if (maxStack.size()>0&&maxStack.peek() > num) {
+        maxStack.poll();
+        maxStack.add(num);
+      }
+    }
+    int[] res = new int[k];
+    for (int i = 0; i < k; ++i) {
+      res[i] = maxStack.poll();
+    }
+    return res;
+  }
+}
+```
+
+代码2（2ms，99.277%）：快速选择
+
+```java
+class Solution {
+  public int[] smallestK(int[] arr, int k) {
+    int left = 0, right = arr.length - 1;
+    while (left<right) {
+      int pos = quickSelect(arr, left, right);
+      if (pos == k - 1) {
+        break;
+      } else if (pos > k - 1) {
+        right = pos - 1;
+      } else {
+        left = pos + 1;
+      }
+    }
+    int[] res =  new int[k];
+    System.arraycopy(arr, 0, res, 0, k);
+    return res;
+  }
+
+  public int quickSelect(int[] arr, int left, int right) {
+    int pivot = arr[left];
+    int start = left;
+    while (true) {
+      while (left < right && arr[right] >= pivot) {
+        --right;
+      }
+      while (left < right && arr[left] <= pivot) {
+        ++left;
+      }
+      if (left >= right) {
+        break;
+      }
+      exchange(arr, left, right);
+    }
+    exchange(arr, start, left);
+    return left;
+  }
+
+  public void exchange(int[] arr, int a, int b) {
+    int tmp = arr[a];
+    arr[a] = arr[b];
+    arr[b] = tmp;
+  }
+}
+```
+
+参考代码1（1ms，100%）：
+
+```java
+class Solution {
+  public int[] smallestK(int[] arr, int k) {
+    // 快排 分堆
+    int low=0,hi=arr.length-1;
+    while (low<hi){
+      int pos=partition(arr,low,hi);
+      if(pos==k-1) break;
+      else if(pos>k-1) hi=pos-1;
+      else low=pos+1;
+    }
+    int[] dest=new int[k];
+    System.arraycopy(arr,0,dest,0,k);
+    return dest;
+  }
+  private int partition(int[] arr,int low,int hi){
+    int v=arr[low];
+    int i=low,j=hi+1;
+    while (true){
+      while (arr[++i]<v) if(i==hi) break;
+      while (arr[--j]>v) if(j==low) break;
+      if(i>=j) break;
+      exchange(arr,i,j);
+    }
+    exchange(arr,low,j);
+    return j;
+  }
+  private void exchange(int[] arr,int i,int j){
+    int temp=arr[i];
+    arr[i]=arr[j];
+    arr[j]=temp;
+  }
+}
+```
 

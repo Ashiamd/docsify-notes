@@ -16880,6 +16880,8 @@ First, it can be used instead of a `finalize` method, guaranteeing that the obje
 ### 1.2.1 java对象锁本质
 
 > **[Java对象结构与锁实现原理及MarkWord详解](https://blog.csdn.net/scdn_cp/article/details/86491792)** <== **推荐,图文并茂,很详细**
+>
+> [Java中的锁](https://blog.csdn.net/u013256816/article/details/51204385)
 
 ​	*学过操作系统，你会知道，操作系统中的进程、CPU等对锁的实现，本质上就是对同一块区域进行数值判断（比如判断同一内存地址的当前值是0还是1，只有读取到值为1的CPU核、操作系统进程等实体才能继续工作。当然读取到值为1的实体会把值替换成0，使得其他实体无法继续工作。）*
 
@@ -19285,6 +19287,10 @@ public class Singleton {
 >
 > [Lock.lock()为什么在try之前执行？](https://blog.csdn.net/E_N_T_J/article/details/105943325)
 >
+> try之前要是lock()抛出异常，那么没有加锁；
+>
+> try中使用lock()，假如抛出异常，那么没有加锁，结果还执行finally的解锁操作，这会导致抛出一个新异常；
+>
 > [Java中的公平锁和非公平锁实现详解](https://www.cnblogs.com/little-fly/p/10365109.html#top)
 >
 > [关于volatile、MESI、内存屏障、#Lock](https://www.jianshu.com/p/6745203ae1fe)
@@ -19438,6 +19444,16 @@ Server Compiler和Client Compiler两个编译器的编译过程是不一样的�
 ###### 动静强弱语言
 
 ![img](https://images2018.cnblogs.com/blog/1165868/201808/1165868-20180828180924226-980200012.png)
+
+## 1.4 AQS
+
+### 1.4.1 AQS概述
+
+> [Java并发之AQS详解](https://www.cnblogs.com/waterystone/p/4920797.html)
+>
+> [AQS详解（面试）](https://blog.csdn.net/mulinsen77/article/details/84583716)
+>
+> [深入理解AbstractQueuedSynchronizer(AQS)](https://www.jianshu.com/p/cc308d82cc71)
 
 # 2. Java虚拟机(JVM)
 

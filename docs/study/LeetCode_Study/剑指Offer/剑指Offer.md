@@ -4888,6 +4888,91 @@ public Test{
 }
 ```
 
+参考代码1：
+
+> [最小K个数](https://leetcode-cn.com/problems/smallest-k-lcci/)
+
+```java
+class Solution{
+  public int[] smallestK(int[] arr, int k) {
+    if (k >= arr.length) {
+      return arr;
+    }
+
+    int low = 0;
+    int high = arr.length - 1;
+    while (low < high) {
+      int pos = partition(arr, low, high);
+      if (pos == k - 1) {
+        break;
+      } else if (pos < k - 1) {
+        low = pos + 1;
+      } else {
+        high = pos - 1;
+      }
+    }
+
+    int[] dest = new int[k];
+    System.arraycopy(arr, 0, dest, 0, k);
+    return dest;
+  }
+
+  private int partition(int[] arr, int low, int high) {
+    int pivot = arr[low];
+    while (low < high) {
+      while (low < high && arr[high] >= pivot) {
+        high--;
+      }
+
+      arr[low] = arr[high];
+      while (low < high && arr[low] <= pivot) {
+        low++;
+      }
+      arr[high] = arr[low];
+    }
+    arr[low] = pivot;
+    return low;
+  } 
+}
+```
+
+参考代码2：
+
+```java
+class Solution {
+  public int[] smallestK(int[] arr, int k) {
+    // 快排 分堆
+    int low=0,hi=arr.length-1;
+    while (low<hi){
+      int pos=partition(arr,low,hi);
+      if(pos==k-1) break;
+      else if(pos>k-1) hi=pos-1;
+      else low=pos+1;
+    }
+    int[] dest=new int[k];
+    System.arraycopy(arr,0,dest,0,k);
+    return dest;
+  }
+  private int partition(int[] arr,int low,int hi){
+    int v=arr[low];
+    int i=low,j=hi+1;
+    while (true){
+      while (arr[++i]<v) if(i==hi) break;
+      while (arr[--j]>v) if(j==low) break;
+      if(i>=j) break;
+      exchange(arr,i,j);
+    }
+    exchange(arr,low,j);
+    return j;
+  }
+  private void exchange(int[] arr,int i,int j){
+    int temp=arr[i];
+    arr[i]=arr[j];
+    arr[j]=temp;
+  }
+}
+```
+
 ### 2. 最小堆、最大堆
 
 #### 2.1 Java内置的PriorityQueue(二叉小顶堆)
