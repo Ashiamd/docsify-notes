@@ -624,3 +624,45 @@ class Solution {
 }
 ```
 
+###  518. 零钱兑换 II
+
+> [518. 零钱兑换 II](https://leetcode-cn.com/problems/coin-change-2/)
+
+语言：java
+
+思路：动态规划。大的零钱兑换拆分成小的零钱兑换。
+
+代码（3ms，82.22%）：
+
+```java
+class Solution {
+  public int change(int amount, int[] coins) {
+    int[] dp = new int[amount+1];
+    dp[0] = 1;
+    for(int coin:coins){
+      for(int i = coin;i<=amount;++i){
+        dp[i] += dp[i-coin];
+      }
+    }
+    return dp[amount];
+  }
+}
+```
+
+参考代码1（2ms，100%）：看着是一样的，但是莫名快1ms？
+
+```java
+class Solution {
+  public int change(int amount, int[] coins) {
+    int[] dp = new int[amount + 1];
+    dp[0] = 1;
+    for (int coin : coins) {
+      for (int i = coin; i <= amount; i++) {
+        dp[i] += dp[i - coin];
+      }
+    }
+    return dp[amount];
+  }
+}
+```
+

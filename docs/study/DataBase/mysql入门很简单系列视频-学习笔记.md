@@ -36,7 +36,7 @@
 >
 > [数据库中聚合索引（MySQL和SQL Server区别）](https://www.cnblogs.com/zhurong/p/9374238.html)
 >
-> mysql中每个表都有一个聚簇bai索引（clustered index ），du除此之外的表上的每个非聚簇索引都是二zhi级索引，又叫辅助索引（secondary indexes）。dao
+> mysql中每个表都有一个聚簇索引（clustered index ），除此之外的表上的每个非聚簇索引都是二级索引，又叫辅助索引（secondary indexes）。
 > 以InnoDB来说，每个InnoDB表具有一个特殊的索引称为聚集索引。如果您的表上定义有主键，该主键索引是聚集索引。如果你不定义为您的表的主键 时，MySQL取第一个唯一索引（unique）而且只含非空列（NOT NULL）作为主键，InnoDB使用它作为聚集索引。如果没有这样的列，InnoDB就自己产生一个这样的ID值，它有六个字节，而且是隐藏的，使其作 为聚簇索引。
 >
 > [MYSQL索引：对聚簇索引和非聚簇索引的认识](https://blog.csdn.net/alexdamiao/article/details/51934917) <= 推荐阅读
