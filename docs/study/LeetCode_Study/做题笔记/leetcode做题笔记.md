@@ -666,3 +666,522 @@ class Solution {
 }
 ```
 
+### 416. 分割等和子集
+
+> [416. 分割等和子集](https://leetcode-cn.com/problems/partition-equal-subset-sum/)
+>
+> [分割等和子集--官方题解](https://leetcode-cn.com/problems/partition-equal-subset-sum/solution/fen-ge-deng-he-zi-ji-by-leetcode-solution/)
+>
+> [动态规划（转换为 0-1 背包问题）](https://leetcode-cn.com/problems/partition-equal-subset-sum/solution/0-1-bei-bao-wen-ti-xiang-jie-zhen-dui-ben-ti-de-yo/)
+
+语言：java
+
+思路：这个动态规划不是很好想，建议直接看官方题解。
+
+代码（88ms，5.00%）：慢到极致
+
+```java
+class Solution {
+  public boolean canPartition(int[] nums) {
+
+    // (1) 数组长度<2，那么不可能拆分成两个非空数组
+    if (nums.length < 2) {
+      return false;
+    }
+
+    // (2) 计算数组和
+    int sum = 0, max = 0;
+    for (int num : nums) {
+      sum += num;
+      if (max < num) {
+        max = num;
+      }
+    }
+    // (3) 数组和为奇数，不可能拆分成两个等和数组
+    if (sum%2 == 1) {
+      return false;
+    }
+
+    // (4) 等下寻找数组和为一半的其中一个数组就好了 sum = sum / 2;
+    sum /= 2;
+
+    // (5) 如果 max大于 总和的一半，说明不可能拆分数组
+    if (max > sum) {
+      return false;
+    }
+
+    // (6) 动态规划， i 属于 [0 ～ length) , j 属于[0,sum]，dp[i][j]表示从[0，i]中拿任意个数字，且和为j
+    boolean[][] dp = new boolean[nums.length][sum + 1];
+    for (boolean[] bool : dp) {
+      bool[0] = true; // dp[i][0] = true
+    }
+    dp[0][nums[0]] = true;
+
+    // j >= num[i]时, dp[i][j] = dp[i-1][j] | dp[i][j-num[i]];
+    // j < num[i] 时, dp[i][j] = dp[i-1][j]
+    for (int i = 1; i < nums.length; ++i) {
+      for (int j = 1; j <= sum; ++j) {
+        if (j >= nums[i]) {
+          dp[i][j] = dp[i - 1][j] | dp[i-1][j - nums[i]];
+        } else {
+          dp[i][j] = dp[i - 1][j];
+        }
+      }
+    }
+    return dp[nums.length-1][sum];
+  }
+}
+```
+
+参考代码1（47ms，24.31%）：
+
+> [分割等和子集--官方题解](https://leetcode-cn.com/problems/partition-equal-subset-sum/solution/fen-ge-deng-he-zi-ji-by-leetcode-solution/)
+
+```java
+class Solution {
+  public boolean canPartition(int[] nums) {
+    int n = nums.length;
+    if (n < 2) {
+      return false;
+    }
+    int sum = 0, maxNum = 0;
+    for (int num : nums) {
+      sum += num;
+      maxNum = Math.max(maxNum, num);
+    }
+    if (sum % 2 != 0) {
+      return false;
+    }
+    int target = sum / 2;
+    if (maxNum > target) {
+      return false;
+    }
+    boolean[][] dp = new boolean[n][target + 1];
+    for (int i = 0; i < n; i++) {
+      dp[i][0] = true;
+    }
+    dp[0][nums[0]] = true;
+    for (int i = 1; i < n; i++) {
+      int num = nums[i];
+      for (int j = 1; j <= target; j++) {
+        if (j >= num) {
+          dp[i][j] = dp[i - 1][j] | dp[i - 1][j - num];
+        } else {
+          dp[i][j] = dp[i - 1][j];
+        }
+      }
+    }
+    return dp[n - 1][target];
+  }
+}
+```
+
+参考代码2（21ms，69.797%）：优化空间复杂度
+
+> [分割等和子集--官方题解](https://leetcode-cn.com/problems/partition-equal-subset-sum/solution/fen-ge-deng-he-zi-ji-by-leetcode-solution/)
+
+```java
+class Solution {
+  public boolean canPartition(int[] nums) {
+    int n = nums.length;
+    if (n < 2) {
+      return false;
+    }
+    int sum = 0, maxNum = 0;
+    for (int num : nums) {
+      sum += num;
+      maxNum = Math.max(maxNum, num);
+    }
+    if (sum % 2 != 0) {
+      return false;
+    }
+    int target = sum / 2;
+    if (maxNum > target) {
+      return false;
+    }
+    boolean[] dp = new boolean[target + 1];
+    dp[0] = true;
+    for (int i = 0; i < n; i++) {
+      int num = nums[i];
+      for (int j = target; j >= num; --j) {
+        dp[j] |= dp[j - num];
+      }
+    }
+    return dp[target];
+  }
+}
+```
+
+参考2后重写（23ms，65.83%）：
+
+```java
+public class Solution {
+
+  public boolean canPartition(int[] nums) {
+
+    // (1) 数组长度<2，那么不可能拆分成两个非空数组
+    if (nums.length < 2) {
+      return false;
+    }
+
+    // (2) 计算数组和
+    int sum = 0, max = 0;
+    for (int num : nums) {
+      sum += num;
+      if (max < num) {
+        max = num;
+      }
+    }
+    // (3) 数组和为奇数，不可能拆分成两个等和数组
+    if ((sum & 1) == 1) {
+      return false;
+    }
+
+    // (4) 等下寻找数组和为一半的其中一个数组就好了 sum = sum / 2;
+    sum /= 2;
+
+    // (5) 如果 max大于 总和的一半，说明不可能拆分数组
+    if (max > sum) {
+      return false;
+    }
+
+    // (6) 动态规划, j 属于[0,sum]，dp[j]表示从[0，i]中拿任意个数字，且和为j
+    boolean[] dp = new boolean[sum + 1];
+    dp[0] = true;
+
+    // j == sum , return true
+    // j < num[i] 时, dp[i][j] = dp[i-1][j]
+    for (int i = 0; i < nums.length; ++i) {
+      for (int j = sum; j >= nums[i]; --j) {
+        dp[j] |= dp[j - nums[i]];
+      }
+    }
+    return dp[sum];
+  }
+}
+```
+
+### 474. 一和零
+
+> [474. 一和零](https://leetcode-cn.com/problems/ones-and-zeroes/)
+
+语言：java
+
+思路：参考该文章[动态规划（转换为 0-1 背包问题）](https://leetcode-cn.com/problems/partition-equal-subset-sum/solution/0-1-bei-bao-wen-ti-xiang-jie-zhen-dui-ben-ti-de-yo/)后，没想到一次写成。
+
+类似0-1背包问题，这里把字符"0"和字符"1"当作消耗品，然后用来购买`strs`字符串。
+
+状态转移方程：
+
+`dp[j][k] = Math.max(dp[j][k],dp[j-strs[i].zeroCount][k-strs[i].oneCount]+1)`，其中j表示字符0的库存，k表示字符1的库存。这里逆序遍历j和k，因为j和k是消耗品，分别原库存是m和n。
+
+`dp[j][k]`表示字符0和1的库存分别为j和k的情况下最多能换取的字符串数量。
+
+代码（31ms，99.32%）：
+
+```java
+class Solution {
+  public int findMaxForm(String[] strs, int m, int n) {
+    int[][] dp = new int[m + 1][n + 1];
+    //        int max = 0;
+    //dp[i][j] = Math.max(dp[i-strs[i].zero][j-str[i].one]+1,dp[i][j]);
+    for (int i = 0; i < strs.length; ++i) {
+      int zeroCount = zeroCount(strs, i);
+      int oneCount = oneCount(strs, i);
+      for (int j = m; j >= zeroCount; --j) {
+        for (int k = n; k >= oneCount; --k) {
+          dp[j][k] = Math.max(dp[j][k], dp[j-zeroCount][k-oneCount]+1);
+        }
+      }
+    }
+    return dp[m][n];
+  }
+
+  public int zeroCount(String[] strs, int index) {
+    int count = 0;
+    for (int i = 0; i < strs[index].length(); ++i) {
+      if (strs[index].charAt(i) == '0') {
+        ++count;
+      }
+    }
+    return count;
+  }
+
+  public int oneCount(String[] strs, int index) {
+    int count = 0;
+    for (int i = 0; i < strs[index].length(); ++i) {
+      if (strs[index].charAt(i) == '1') {
+        ++count;
+      }
+    }
+    return count;
+  }
+}
+```
+
+参考代码1（31ms，99.32%）：思路一样，就是记录0和1的数量的逻辑简化了。
+
+```java
+class Solution {
+  public int findMaxForm(String[] strs, int m, int n) {
+    int[][] dp = new int[m + 1][n + 1];
+    int len = strs.length;
+    int[][] matrix = new int[len][2];
+    for(int i = 0; i < len; i++){
+      String str = strs[i];
+      for(int j = 0; j < str.length(); j++){
+        if(str.charAt(j) == '0') matrix[i][0]++; 
+        else matrix[i][1]++;
+      }
+      int zero = matrix[i][0];
+      int one = matrix[i][1];
+      for(int x = m; x >= zero; x--){
+        for(int y = n; y >= one; y--){
+          dp[x][y] = Math.max(dp[x][y], 1 + dp[x - zero][y - one]);
+        }
+      }
+    }
+    return dp[m][n];
+  }
+}
+```
+
+### 二叉搜索树的最小绝对差
+
+> [530. 二叉搜索树的最小绝对差](https://leetcode-cn.com/problems/minimum-absolute-difference-in-bst/)
+
+语言：java
+
+思路：先DFS前序遍历，用最小堆存储所有节点，然后再逐一计算差值。
+
+代码（7ms，6.71%）：慢到极致
+
+```java
+/**
+ * Definition for a binary tree node.
+ * public class TreeNode {
+ *     int val;
+ *     TreeNode left;
+ *     TreeNode right;
+ *     TreeNode(int x) { val = x; }
+ * }
+ */
+class Solution {
+
+  int res = Integer.MAX_VALUE;
+  PriorityQueue<Integer> queue = new PriorityQueue<>();
+
+  public int getMinimumDifference(TreeNode root) {
+    dfs(root);
+    int first = queue.poll(),second;
+    while(!queue.isEmpty()){
+      second = queue.poll();
+      res = Math.min(res,Math.abs(first-second));
+      first = second;
+    }
+    return res;
+  }
+
+
+  public void dfs(TreeNode cur) {
+    if (cur == null) {
+      return;
+    }
+    queue.add(cur.val);
+    dfs(cur.left);
+    dfs(cur.right);
+  }
+
+}
+```
+
+参考代码1（0ms）：直接中序遍历，边计算差值。（这里我才反应起来，原来这个题目是二叉搜索树，那么中序遍历保证数值从小到大排序，这样只要遍历过程中计算差值即可）
+
+```java
+class Solution {
+  int ans = Integer.MAX_VALUE, prev = -1;
+  public int getMinimumDifference(TreeNode root) {
+    getMinimumDifference0(root);
+    return ans;
+  }
+  private void getMinimumDifference0(TreeNode node) {
+    if (node != null) {
+      getMinimumDifference0(node.left);
+      if (prev != -1) ans = Math.min(ans, node.val - prev);
+      prev = node.val;
+      getMinimumDifference0(node.right);
+    }
+  }
+}
+```
+
+### 977. 有序数组的平方
+
+> [977. 有序数组的平方](https://leetcode-cn.com/problems/squares-of-a-sorted-array/)
+
+语言：java
+
+思路：偷懒的直接计算平方，然后调用库函数快排。
+
+代码（4ms，15.68%）：
+
+```java
+class Solution {
+  public int[] sortedSquares(int[] A) {
+    int len = A.length, head = 0, tail = len - 1, index = 0;
+    int[] res = new int[len];
+    for (int i = 0; i < len; ++i) {
+      res[i] = A[i] * A[i];
+    }
+    Arrays.sort(res);
+    return res;
+  }
+}
+```
+
+参考代码1（1ms，100%）：双指针，主要需要注意的是从尾部开始填充。因为题目保证非递减，所以从可能是最大值的两个边界同时向中间判断。比起所有遍历过的数字的最小值，最大值可以确定，所以从数组最后一个数字开始往前填充。
+
+```java
+class Solution {
+  public int[] sortedSquares(int[] A) {
+    int start = 0;
+    int end = A.length-1;
+    int i = end;
+    int[] B = new int[A.length];
+    while(i >= 0){
+      B[i--] = A[start]*A[start] >= A[end]*A[end]? A[start]*A[start++]:A[end]*A[end--];
+    }
+    return B;
+  }
+}
+```
+
+### 52. N皇后 II
+
+>[52. N皇后 II](https://leetcode-cn.com/problems/n-queens-ii/)
+
+语言：java
+
+思路：DFS。原本我写了一个，让count计数器为static的时候，后台会误判！！！！这个我踩坑了。
+
+代码（2ms，56.40%）：
+
+```java
+class Solution {
+  
+  int count = 0;
+
+  public int totalNQueens(int n) {
+    // (1) 地图 map[x] = y;
+    int[] map = new int[n];
+
+    // (2) 第一行每个位置都试一遍。
+    for(int col = 0;col<n;++col){
+      map[0] = col;
+      dfs(map,n,1);
+    }
+
+    return count;
+  }
+
+  public void dfs(int[] map, int n, int row) {
+    // 走到边界，return
+    if (row == n) {
+      ++count;
+      return;
+    }
+    for(int col = 0;col<n;++col){
+      map[row] = col;
+      if(canSet(map,row,col)){
+        dfs(map,n,row+1);
+      }
+    }
+  }
+
+  public boolean canSet(int[] map,int row,int col){
+
+    for(int i = 0;i<row;++i){
+      // 竖直方向 判断
+      if(map[i]==col){
+        return false;
+      }
+      // 撇方向 判断
+      if( i + map[i] ==row+col){
+        return false;
+      }
+      // 捺方向 判断
+      if(i - map[i] == row-col){
+        return false;
+      }
+    }
+    return true;
+  }
+}
+```
+
+参考代码1（0ms）：
+
+> [N皇后 II--官方题解](https://leetcode-cn.com/problems/n-queens-ii/solution/nhuang-hou-ii-by-leetcode-solution/)
+
+```java
+class Solution {
+  public int totalNQueens(int n) {
+    return solve(n, 0, 0, 0, 0);
+  }
+
+  public int solve(int n, int row, int columns, int diagonals1, int diagonals2) {
+    if (row == n) {
+      return 1;
+    } else {
+      int count = 0;
+      int availablePositions = ((1 << n) - 1) & (~(columns | diagonals1 | diagonals2));
+      while (availablePositions != 0) {
+        int position = availablePositions & (-availablePositions);
+        availablePositions = availablePositions & (availablePositions - 1);
+        count += solve(n, row + 1, columns | position, (diagonals1 | position) << 1, (diagonals2 | position) >> 1);
+      }
+      return count;
+    }
+  }
+}
+```
+
+参考代码2（2ms，56.40%）：我原本代码和这个差不多，就判断冲突的方法写的形式略不同
+
+```java
+class Solution {
+  int n;
+  int[] res; //记录每种方案的皇后放置索引
+  int count = 0; //总方案数
+  public int totalNQueens(int n) {
+    this.n = n;
+    this.res = new int[n];
+    check(0); // 第0行开始放置
+    return count;
+  }
+  //放置第k行
+  public void check(int k) {
+    if(k == n) {
+      count++;
+      return;
+    }
+    for(int i = 0; i < n; i++) {
+      res[k] = i;  // 将位置i 放入索引数组第k个位置
+      if(!judge(k)) {
+        check(k+1); //不冲突的话，回溯放置下一行
+      }
+      //冲突的话试下一个位置
+    }
+  }
+  //判断第k行的放置是否与之前位置冲突
+  public boolean judge(int k) {
+    for(int i = 0; i < k; i++) {
+      if(res[k] == res[i] || Math.abs(k-i) == Math.abs(res[k]-res[i])) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+```
+

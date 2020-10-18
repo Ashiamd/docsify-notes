@@ -52,7 +52,7 @@
 >
 > Redis 有两种持久化方案,RDB (Redis DataBase)和 AOF (Append Only File)
 >
-> - appendonly 配置redis 默认关闭，开启需要手动把no改为yes（这个我docker中的官方redis6默认是开启的）
+> - appendonly 配置redis 默认关闭，开启需要手动把no改为yes（这个我dockerhub中的官方redis6的docker-compose默认是开启的`redis-server /etc/redis/redis.conf --appendonly yes`）
 > - appendfilename指定本地数据库文件名，默认值为 appendonly.aof
 > - appendfsync everysec指定更新日志条件为每秒更新，共三种策略（aways，everyse，no）
 > - auto-aof-rewrite-min-size配置重写触发机制，当AOF文件大小是上次rewrite后大小的一倍且文件大于64M时触发。
