@@ -1185,3 +1185,334 @@ class Solution {
 }
 ```
 
+### 844. 比较含退格的字符串
+
+> [844. 比较含退格的字符串](https://leetcode-cn.com/problems/backspace-string-compare/)
+
+语言：java
+
+思路：双栈，先添加，后比较。
+
+代码（2ms，74.87%）：
+
+```java
+class Solution {
+  public boolean backspaceCompare(String S, String T) {
+    Deque<Character> sDeque = new LinkedList<>();
+    Deque<Character> tDeque = new LinkedList<>();
+
+    for(char c : S.toCharArray()){
+      if(c=='#'){
+        if(!sDeque.isEmpty()){
+          sDeque.pollFirst();
+        }
+      }else{
+        sDeque.addFirst(c);
+      }
+    } 
+
+    for(char c : T.toCharArray()){
+      if(c=='#'){
+        if(!tDeque.isEmpty()){
+          tDeque.pollFirst();
+        }
+      }else{
+        tDeque.addFirst(c);
+      }
+    }
+
+    while(!sDeque.isEmpty() && !tDeque.isEmpty()){
+      if(!sDeque.pollFirst().equals(tDeque.pollFirst())){
+        return false;
+      }
+    }
+    return sDeque.isEmpty()&&tDeque.isEmpty();
+  }
+}
+```
+
+参考代码1（0ms）：用双指针，模拟栈操作。
+
+```java
+class Solution {
+  public boolean backspaceCompare(String S, String T) {
+
+    int s = S.length() - 1;
+    int t = T.length() - 1;
+
+    int sBack = 0;
+    int tBack = 0;
+
+    while (s >= 0 && t >= 0) {
+      while (s >= 0) {
+        if (S.charAt(s) == '#') {
+          sBack++;
+          s--;
+        } else {
+          if (sBack == 0) {
+            break;
+          }
+          sBack--;
+          s--;
+        }
+      }
+      while (t >= 0) {
+        if (T.charAt(t) == '#') {
+          tBack++;
+          t--;
+        } else {
+          if (tBack == 0) {
+            break;
+          }
+          tBack--;
+          t--;
+        }
+      }
+
+      //都到了真实字符
+      if (s >= 0 && t >= 0 ) {
+        if (S.charAt(s) != T.charAt(t)) {
+          return false;
+        }
+        s--;
+        t--;
+      }
+
+    }
+    //对于剩余的字符串，因为全部退格后可能为空字符串，所以继续处理
+    while (s >= 0) {
+      if (S.charAt(s) == '#') {
+        sBack++;
+        s--;
+      } else {
+        if (sBack == 0) {
+          break;
+        }
+        sBack--;
+        s--;
+      }
+    }
+    while (t >= 0) {
+      if (T.charAt(t) == '#') {
+        tBack++;
+        t--;
+      } else {
+        if (tBack == 0) {
+          break;
+        }
+        tBack--;
+        t--;
+      }
+    }
+    //都到了末尾
+    if (s < 0 && t < 0) {
+      return true;
+    }
+    //只有一个到了末尾
+    return false;
+
+  }
+}
+```
+
+### 143. 重排链表
+
+> [143. 重排链表](https://leetcode-cn.com/problems/reorder-list/)
+
+语言：java
+
+思路：没想到比较巧的方法，根据官方题解二，说实际就是链表前半段和倒序后的链表后半段组合。这里尝试下。
+
+代码（2ms，79.06%）：
+
+```java
+class Solution {
+  public void reorderList(ListNode head) {
+    if(head==null){
+      return;
+    }
+    // (1) 获取链表中点
+    ListNode mid = mid(head);
+    // (2) 颠倒后半段链表
+    ListNode second = mid.next;
+    mid.next = null;
+    second = reverse(second);
+    // (3) 组合前半段和倒序的后半段
+    merge(head,second);
+  }
+
+  public ListNode mid(ListNode head) {
+    ListNode slow = head,fast = head;
+    while (fast.next != null && fast.next.next != null) {
+      slow = slow.next;
+      fast = fast.next.next;
+    }
+    return slow;
+  }
+
+  public ListNode reverse(ListNode head) {
+    ListNode pre = null,cur = head,next;
+    while (cur != null) {
+      next = cur.next;
+      cur.next = pre;
+      pre = cur;
+      cur = next;
+    }
+    return pre;
+  }
+
+  public void merge(ListNode first, ListNode second) {
+    ListNode first_next,second_next;
+    while (first != null && second != null) {
+      first_next = first.next;
+      second_next = second.next;
+
+      first.next = second;
+      first = first_next;
+
+      second.next = first;
+      second = second_next;
+    }
+  }
+}
+```
+
+参考代码1（1ms，100%）：思路一样，写法略有差别
+
+```java
+class Solution {
+  public void reorderList(ListNode head) {
+
+    //找中点
+    ListNode slow = head;
+    ListNode lastSlow = head;
+    ListNode quick = head;
+    //特殊情况
+    if(head == null || head.next == null)
+      return;
+    while(quick != null){
+      if(quick.next == null)
+        quick = quick.next;
+      else
+        quick = quick.next.next;
+
+      lastSlow = slow;
+      slow = slow.next;
+    }
+    //将链表分成两半，前斩断前段
+    lastSlow.next = null;
+    //将后半段链表反转
+    ListNode lastNode = null;
+    while(slow != null){
+      ListNode nexrTemp = slow.next;
+      slow.next = lastNode;
+      //移动
+      lastNode = slow;
+      slow = nexrTemp;
+    }
+
+    ListNode head2 = lastNode;
+    //将两分段链表拼接成一个
+    ListNode dummy = new ListNode(Integer.MAX_VALUE);//哑节点
+    ListNode cur = dummy;
+    int count = 0;//插入节点计数
+    while (head != null && head2 != null){
+      count++;
+      if(count % 2 == 1){ //奇数
+        cur.next = head;
+        head = head.next;
+        cur = cur.next;
+      }else { //偶数
+        cur.next = head2;
+        head2 = head2.next;
+        cur = cur.next;
+      }
+    }
+    //拼接剩余
+    while(head != null){
+      cur.next = head;
+      head = head.next;
+      cur = cur.next;
+    }
+    while(head2 != null){
+      cur.next = head2;
+      head2 = head2.next;
+      cur = cur.next;
+    }
+
+    head = dummy.next;
+  }
+}
+```
+
+### 925. 长按键入
+
+语言：java
+
+思路：两个字符串同时遍历，比较；党遍历到的位置字符不同时，考虑typed是否当前字符和之前的是重复的，是则认为是不小心重复输入了，跳过所有重复的字符。
+
+代码（1ms，86.83%）：
+
+```java
+class Solution {
+  public boolean isLongPressedName(String name, String typed) {
+    int i = 0, j = 0;
+    while (j < typed.length()) {
+      if (i < name.length() && name.charAt(i) == typed.charAt(j)) {
+        i++;
+        j++;
+      } else if (j > 0 && typed.charAt(j) == typed.charAt(j - 1)) {
+        j++;
+      } else {
+        return false;
+      }
+    }
+    return i == name.length();
+  }
+}
+```
+
+参考代码1（0ms）：和我原本的写法类似，思路是一样的。
+
+```java
+class Solution {
+  public boolean isLongPressedName(String name, String typed) {
+    char[] ch1 = name.toCharArray();
+    char[] ch2 = typed.toCharArray();
+    if(ch1.length > ch2.length) return false;
+    int i = 0, j = 0;
+    while(i < ch1.length && j < ch2.length){
+      if(ch1[i] == ch2[j]){
+        i++;
+        j++;
+      }else if(j > 0 && ch2[j - 1] == ch2[j]){
+        j++;
+      }else{
+        return false;
+      }
+    }
+    while(j < ch2.length){
+      if(ch2[j] != ch2[j - 1]){
+        return false;
+      }
+      j++;
+    }
+    return i == ch1.length;
+  }
+}
+```
+
+### 763. 划分字母区间
+
+> [763. 划分字母区间](https://leetcode-cn.com/problems/partition-labels/)
+
+语言：java
+
+思路：按照每个字母首次出现的位置进行排序，然后判断交集，有交集则取最靠后的；然后从下一个位置再继续往下划分。
+
+代码：
+
+```java
+
+```
+

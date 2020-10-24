@@ -318,6 +318,10 @@ Shell批量监控服务发送邮件报警
    + 这里举例后台运行springboot程序(后台运行，并指定日志输出位置)
 
      nohup java -jar SpringBoot的jar包文件.jar > /xxxx/yyy/logs.txt &
+     
+     nohup java -jar 自己的springboot项目.jar >日志文件名.log 2>&1 &
+     
+     nohup java -jar 自己的springboot项目.jar >/dev/null 2>&1 &
 
 ## 11. 查看、修改网络接口配置
 

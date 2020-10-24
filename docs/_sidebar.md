@@ -20,5 +20,6 @@
     * [**DataBase**](/study/DataBase/README)
     * [**Docker**](/study/Docker/README)
     * [**kubernetes**](/study/kubernetes/README)
+    * [**CICD**](/study/CICD/README)
 * 暂无更多...
 
