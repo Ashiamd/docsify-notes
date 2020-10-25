@@ -1508,11 +1508,138 @@ class Solution {
 
 语言：java
 
-思路：按照每个字母首次出现的位置进行排序，然后判断交集，有交集则取最靠后的；然后从下一个位置再继续往下划分。
+思路：滑动窗口类题目。按照每个字母首次出现的位置进行排序，然后判断交集；无交集直接添加上一个到结果集中，有交集则修改滑动窗口右边界，继续往下判断。
 
-代码：
+代码（8ms，34.35%）：就是效率比较低，但是这个写法还是比较好理解的。
 
 ```java
+class Solution {
+  public List<Integer> partitionLabels(String S) {
 
+    // 初始化数组，最多26字母
+    PartNode[] characters = new PartNode[26];
+    for (int i = 0; i < 26; ++i) {
+      characters[i] = new PartNode();
+    }
+    for (int i = 0, len = S.length(), pos; i < len; ++i) {
+      pos = S.charAt(i) - 'a';
+      if (characters[pos].start == Integer.MAX_VALUE) {
+        characters[pos].start = i;
+      }
+      characters[pos].end = i;
+    }
+
+    // 根据 第一次出现的位置 从小到大 递增排序
+    Arrays.sort(characters, (x, y) -> x.start - y.start);
+
+    List<Integer> res = new LinkedList<>();
+
+    //a b c d e f
+    int start = 0, end = 0;
+    for (int i = 0; i < 26; ++i) {
+
+      // (1) 当前字母所在字符串和前面的 无重叠
+      if (characters[i].start > end) {
+        // 最后的字母 ( 没出现过的字母，绝对排在最后 )
+        if (characters[i].start == Integer.MAX_VALUE) {
+          res.add(end - start + 1);
+          start = Integer.MAX_VALUE;
+          break;
+        }
+
+        // 添加上一个字母所在字符串的长度，并修改下次字符串的起点、终点
+        res.add(end - start + 1);
+        start = characters[i].start;
+        end = characters[i].end;
+      } else{
+        // (2) 重叠,继续向下判断是否重叠
+        end = Math.max(characters[i].end,end);
+      }
+
+    }
+    // 最后一个出现的字母的所在字符串没被加入到res中
+    if (start != Integer.MAX_VALUE) {
+      res.add(end - start + 1);
+    }
+
+    return res;
+  }
+
+
+  /**
+     * 存储字母 第一次出现 和 最后一次出现 的位置。
+     */
+  class PartNode {
+    public Integer start;
+    public Integer end;
+
+    public PartNode() {
+      start = Integer.MAX_VALUE;
+      end = Integer.MAX_VALUE;
+    }
+  }
+}
+```
+
+参考代码1（3ms，96.91%）：贪心算法 + 双指针。
+
+这个思路也很清晰，就是只要存储每个字母最后出现的位置，然后重新遍历字符串，维护两个位置变量（可理解为窗口）：`start`、`end`，`end = Math.max(Math.max(last, lasts[chs[right] - 'a'))`表示每次都让右边界尽量大（这样子就直接考虑了字符串重叠的情况），当走出重叠区时`i == end`，直接把窗口的长度加入结果集，然后又更新窗口的左边界`start = end+1`
+
+> [划分字母区间--官方题解](https://leetcode-cn.com/problems/partition-labels/solution/hua-fen-zi-mu-qu-jian-by-leetcode-solution/)
+>
+> 上述做法使用贪心的思想寻找每个片段可能的最小结束下标，因此可以保证每个片段的长度一定是符合要求的最短长度，如果取更短的片段，则一定会出现同一个字母出现在多个片段中的情况。由于每次取的片段都是符合要求的最短的片段，因此得到的片段数也是最多的。
+>
+
+```java
+class Solution {
+  public List<Integer> partitionLabels(String S) {
+    int[] last = new int[26];
+    int length = S.length();
+    for (int i = 0; i < length; i++) {
+      last[S.charAt(i) - 'a'] = i;
+    }
+    List<Integer> partition = new ArrayList<Integer>();
+    int start = 0, end = 0;
+    for (int i = 0; i < length; i++) {
+      end = Math.max(end, last[S.charAt(i) - 'a']);
+      if (i == end) {
+        partition.add(end - start + 1);
+        start = end + 1;
+      }
+    }
+    return partition;
+  }
+}
+```
+
+参考代码2（2ms，100%）：和官方题解大同小异，就是写法略不同而已。
+
+```java
+class Solution {
+  public List<Integer> partitionLabels(String S) {
+    List<Integer> ans = new ArrayList<>();
+
+    char[] chs = S.toCharArray();
+    int[] lasts = new int[26];
+    for (int i = 0; i < chs.length; i++) {
+      lasts[chs[i] - 'a'] = i;
+    }
+
+    int last = 0;
+    int right = 0;
+    do {
+      int left = right;
+
+      do {
+        last = Math.max(last, lasts[chs[right] - 'a']);
+        right++;
+      } while (right <= last);
+
+      ans.add(right - left);
+    } while (right < chs.length);
+
+    return ans;
+  }
+}
 ```
 

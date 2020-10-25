@@ -19154,7 +19154,7 @@ Bus side requests are the following:
 
 ##### JSR内存屏障
 
-*<small>*jsr*是Java Specification Requests的缩写，意思是Java 规范提案。</small>*
+*<small>jsr是Java Specification Requests的缩写，意思是Java 规范提案。</small>*
 
 + LoadLoad屏障
 
@@ -19201,8 +19201,8 @@ Bus side requests are the following:
 + volatile读
 
   ```java
+  volatile Load
   LoadLoadBarrier
-    volatile
   LoadStoreBarrier
   ```
 

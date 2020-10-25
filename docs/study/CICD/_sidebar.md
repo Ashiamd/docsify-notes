@@ -1,4 +1,4 @@
 * **目录**
   * [根目录（/）](/README)
   * [回到上一级（../）](/README)
-  * [Jenkins杂记](/study/CICD/jenkins杂记)
+  * [jenkins杂记](/study/CICD/jenkins杂记)

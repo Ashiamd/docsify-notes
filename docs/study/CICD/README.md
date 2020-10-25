@@ -2,4 +2,4 @@
 
 ## 目录
 
-* [Jenkins杂记](/study/CICD/jenkins杂记)
+* [jenkins杂记](/study/CICD/jenkins杂记)
