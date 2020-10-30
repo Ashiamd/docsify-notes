@@ -1510,29 +1510,803 @@ public E poll() {
 
 ## 6.3 Java中的阻塞队列
 
+​	本节将介绍什么是阻塞队列，以及Java中阻塞队列的4种处理方式，并介绍Java 7中提供的7种阻塞队列，最后分析阻塞队列的一种实现方式。
+
 ### 6.3.1 什么是阻塞队列
+
+​	阻塞队列（BlockingQueue）是一个支持两个附加操作的队列。这两个附加的操作支持阻塞的插入和移除方法。
+
+1. **支持阻塞的插入**方法：意思是当队列满时，队列会阻塞插入元素的线程，直到队列不满。
+
+2. **支持阻塞的移除**方法：意思是在队列为空时，获取元素的线程会等待队列变为非空。**阻塞队列常用于生产者和消费者的场景**，生产者是向队列里添加元素的线程，消费者是从队列里取元素的线程。阻塞队列就是生产者用来存放元素、消费者用来获取元素的容器。
+
+​	在阻塞队列不可用时，这两个附加操作提供了4种处理方式，如下表所示。
+
+| 方法/处理方式 | 抛出异常  | 返回特殊值 | 一直阻塞 | 超时退出             |
+| ------------- | --------- | ---------- | -------- | -------------------- |
+| 插入方法      | add(e)    | offer(e)   | put(e)   | Offer(e, time, unit) |
+| 移除方法      | remove()  | poll()     | take()   | poll(time, unit)     |
+| 检查方法      | element() | peek()     | 不可用   | 不可用               |
+
++ 抛出异常：当队列满时，如果再往队列里插入元素，会抛出IllegalStateException（"Queuefull"）异常。当队列空时，从队列里获取元素会抛出NoSuchElementException异常。
+
++ 返回特殊值：当往队列插入元素时，会返回元素是否插入成功，成功返回true。如果是移除方法，则是从队列里取出一个元素，如果没有则返回null。
+
++ **一直阻塞**：当阻塞队列满时，如果生产者线程往队列里put元素，队列会一直阻塞生产者线程，直到队列可用或者响应中断退出。当队列空时，如果消费者线程从队列里take元素，队列会阻塞住消费者线程，直到队列不为空。
+
++ **超时退出**：当阻塞队列满时，如果生产者线程往队列里插入元素，队列会阻塞生产者线程一段时间，如果超过了指定的时间，生产者线程就会退出。
+
+​	这两个附加操作的4种处理方式不方便记忆，所以我（书的作者）找了一下这几个方法的规律。put和take分别尾首含有字母t，offer和poll都含有字母o。
+
+​	***注意：如果是无界阻塞队列，队列不可能会出现满的情况，所以使用put或offer方法永远不会被阻塞，而且使用offer方法时，该方法永远返回true。***
 
 ### 6.3.2 Java里的阻塞队列
 
+JDK 7提供了7个阻塞队列，如下。
+
++ ArrayBlockingQueue：一个由数组结构组成的**有界**阻塞队列。
+
++ LinkedBlockingQueue：一个由链表结构组成的**有界**阻塞队列。
+
++ PriorityBlockingQueue：一个支持优先级排序的**无界**阻塞队列。
+
++ DelayQueue：一个使用优先级队列实现的**无界**阻塞队列。
+
++ SynchronousQueue：一个**不存储元素**的阻塞队列。
+
++ LinkedTransferQueue：一个由链表结构组成的**无界**阻塞队列。
+
++ LinkedBlockingDeque：一个由链表结构组成的**双向**阻塞队列。
+
+#### 1. ArrayBlockingQueue
+
+​	ArrayBlockingQueue是一个用数组实现的有界阻塞队列。此队列按照**先进先出（FIFO）**的原则对元素进行排序。
+
+​	**默认情况下不保证线程公平的访问队列**，所谓公平访问队列是指阻塞的线程，可以按照阻塞的先后顺序访问队列，即先阻塞线程先访问队列。非公平性是对先等待的线程是非公平的，当队列可用时，阻塞的线程都可以争夺访问队列的资格，有可能先阻塞的线程最后才访问队列。**为了保证公平性，通常会降低吞吐量**。我们可以使用以下代码创建一个公平的阻塞队列。
+
+```java
+ArrayBlockingQueue fairQueue = new ArrayBlockingQueue(1000,true);
+```
+
+​	访问者的公平性是使用**可重入锁**实现的，代码如下。
+
+```java
+public ArrayBlockingQueue(int capacity, boolean fair) {
+  if (capacity <= 0)
+    throw new IllegalArgumentException();
+  this.items = new Object[capacity];
+  lock = new ReentrantLock(fair);
+  notEmpty = lock.newCondition();
+  notFull = lock.newCondition();
+}
+```
+
+#### 2. LinkedBlockingQueue
+
+​	LinkedBlockingQueue是一个用链表实现的**有界**阻塞队列。此队列的**默认和最大长度为Integer.MAX_VALUE**。此队列按照**先进先出**的原则对元素进行排序。
+
+#### 3. PriorityBlockingQueue
+
+​	PriorityBlockingQueue是一个**支持优先级**的**无界**阻塞队列。**默认情况下元素采取自然顺序升序排列**。也可以自定义类实现compareTo()方法来指定元素排序规则，或者初始化PriorityBlockingQueue时，指定构造参数Comparator来对元素进行排序。需要注意的是不能保证同优先级元素的顺序。
+
+#### 4. DelayQueue
+
+​	DelayQueue是一个**支持延时获取元素**的无界阻塞队列。队列使用PriorityQueue来实现。**队列中的元素必须实现Delayed接口，在创建元素时可以指定多久才能从队列中获取当前元素。只有在延迟期满时才能从队列中提取元素**。
+
+​	DelayQueue非常有用，可以将DelayQueue运用在以下应用场景。
+
++ **缓存系统的设计**：可以用DelayQueue保存缓存元素的有效期，使用一个线程循环查询DelayQueue，一旦能从DelayQueue中获取元素时，表示缓存有效期到了。
+
++ **定时任务调度**：使用DelayQueue保存当天将会执行的任务和执行时间，一旦从DelayQueue中获取到任务就开始执行，比如**TimerQueue就是使用DelayQueue实现的**。
+
+##### 1. 如何实现Delayed接口
+
+​	DelayQueue队列的元素必须实现Delayed接口。我们可以参考ScheduledThreadPoolExecutor里ScheduledFutureTask类的实现，一共有三步。
+
+​	第一步：在对象创建的时候，初始化基本数据。使用time记录当前对象延迟到什么时候可以使用，使用sequenceNumber来标识元素在队列中的先后顺序。代码如下。
+
+```java
+private static final AtomicLong sequencer = new AtomicLong(0);
+ScheduledFutureTask(Runnable r, V result, long ns, long period) {
+  super(r, result);
+  this.time = ns;
+  this.period = period;
+  this.sequenceNumber = sequencer.getAndIncrement();
+}
+```
+
+​	第二步：实现getDelay方法，该方法返回当前元素还需要延时多长时间，单位是纳秒，代码如下。
+
+```java
+public long getDelay(TimeUnit unit) {
+  return unit.convert(time - now(), TimeUnit.NANOSECONDS);
+}
+```
+
+​	通过构造函数可以看出延迟时间参数ns的单位是纳秒，<u>自己设计的时候最好使用纳秒</u>，因为实现getDelay()方法时可以指定任意单位，一旦以秒或分作为单位，而延时时间又精确不到纳秒就麻烦了。使用时请注意当time小于当前时间时，getDelay会返回负数。
+
+​	第三步：实现compareTo方法来指定元素的顺序。例如，让延时时间最长的放在队列的末尾。实现代码如下。
+
+```java
+public int compareTo(Delayed other) {
+  if (other == this)　　// compare zero ONLY if same object
+    return 0;
+  if (other instanceof ScheduledFutureTask) {
+    ScheduledFutureTask<> x = (ScheduledFutureTask<>)other;
+    long diff = time - x.time;
+    if (diff < 0)
+      return -1;
+    else if (diff > 0)
+      return 1;
+    else if (sequenceNumber < x.sequenceNumber)
+      return -1;
+    else
+      return 1;
+  }
+  long d = (getDelay(TimeUnit.NANOSECONDS) -
+            other.getDelay(TimeUnit.NANOSECONDS));
+  return (d == 0) 0 : ((d < 0) -1 : 1);
+}
+```
+
+##### 2. 如何实现延时阻塞队列
+
+​	**延时阻塞队列的实现很简单，当消费者从队列里获取元素时，如果元素没有达到延时时间，就阻塞当前线程**。
+
+```java
+long delay = first.getDelay(TimeUnit.NANOSECONDS);
+if (delay <= 0)
+  return q.poll();
+else if (leader != null)
+  available.await();
+else {
+  Thread thisThread = Thread.currentThread();
+  leader = thisThread;
+  try {
+    available.awaitNanos(delay);
+  } finally {
+    if (leader == thisThread)
+      leader = null;
+  }
+}
+```
+
+​	代码中的变量leader是一个等待获取队列头部元素的线程。如果leader不等于空，表示已经有线程在等待获取队列的头元素。所以，使用await()方法让当前线程等待信号。如果leader等于空，则把当前线程设置成leader，并使用awaitNanos()方法让当前线程等待接收信号或等待delay时间。
+
+#### 5. SynchronousQueue
+
+​	SynchronousQueue是一个**不存储元素**的阻塞队列。<u>每一个put操作必须等待一个take操作，否则不能继续添加元素</u>。
+
+​	**它支持公平访问队列**。**默认情况下线程采用非公平性策略访问队列**。使用以下构造方法可以创建公平性访问的SynchronousQueue，如果设置为true，则等待的线程会采用先进先出的顺序访问队列。
+
+```java
+public SynchronousQueue(boolean fair) {
+  transferer = fair new TransferQueue() : new TransferStack();
+}
+```
+
+​	SynchronousQueue可以看成是一个传球手，负责把生产者线程处理的数据直接传递给消费者线程。队列本身并不存储任何元素，非常适合传递性场景。**SynchronousQueue的吞吐量高于LinkedBlockingQueue和ArrayBlockingQueue**。
+
+#### 6. LinkedTransferQueue
+
+​	LinkedTransferQueue是一个由链表结构组成的无界阻塞TransferQueue队列。相对于其他阻塞队列，LinkedTransferQueue多了tryTransfer和transfer方法。
+
+##### 1. transfer方法
+
+​	<u>如果当前有消费者正在等待接收元素（消费者使用take()方法或带时间限制的poll()方法时），transfer方法可以把生产者传入的元素立刻transfer（传输）给消费者。如果没有消费者在等待接收元素，transfer方法会将元素存放在队列的tail节点，并等到该元素被消费者消费了才返回</u>。transfer方法的关键代码如下。
+
+```java
+Node pred = tryAppend(s, haveData);
+return awaitMatch(s, pred, e, (how == TIMED), nanos);
+```
+
+​	第一行代码是试图把存放当前元素的s节点作为tail节点。第二行代码是让CPU自旋等待消费者消费元素。**因为自旋会消耗CPU，所以自旋一定的次数后使用Thread.yield()方法来暂停当前正在执行的线程，并执行其他线程**。
+
+##### 2. tryTransfer方法
+
+​	**tryTransfer方法是用来试探生产者传入的元素是否能直接传给消费者。如果没有消费者等待接收元素，则返回false。和transfer方法的区别是tryTransfer方法无论消费者是否接收，方法立即返回，而transfer方法是必须等到消费者消费了才返回**。
+
+​	对于带有时间限制的`tryTransfer（E e，long timeout，TimeUnit unit）`方法，试图把生产者传入的元素直接传给消费者，但是如果没有消费者消费该元素则等待指定的时间再返回，如果超时还没消费元素，则返回false，如果在超时时间内消费了元素，则返回true。
+
+#### 7. LinkedBlockingDeque
+
+​	LinkedBlockingDeque是一个由链表结构组成的双向阻塞队列。所谓双向队列指的是可以从队列的两端插入和移出元素。双向队列因为多了一个操作队列的入口，在多线程同时入队时，也就减少了一半的竞争。相比其他的阻塞队列，LinkedBlockingDeque多了addFirst、addLast、offerFirst、offerLast、peekFirst和peekLast等方法，以First单词结尾的方法，表示插入、获取（peek）或移除双端队列的第一个元素。以Last单词结尾的方法，表示插入、获取或移除双端队列的最后一个元素。另外，**插入方法add等同于addLast，移除方法remove等效于removeFirst**。**但是take方法却等同于takeFirst**，不知道是不是JDK的bug，使用时还是用带有First和Last后缀的方法更清楚。
+
+​	在初始化LinkedBlockingDeque时可以设置容量防止其过度膨胀。另外，**双向阻塞队列可以运用在“工作窃取”模式中**。
+
 ### 6.3.3 阻塞队列的实现原理
+
+​	如果队列是空的，消费者会一直等待，当生产者添加元素时，消费者是如何知道当前队列有元素的呢？如果让你来设计阻塞队列你会如何设计，如何让生产者和消费者进行高效率的通信呢？让我们先来看看JDK是如何实现的。
+
+​	**使用通知模式实现**。所谓通知模式，就是当生产者往满的队列里添加元素时会阻塞住生产者，当消费者消费了一个队列中的元素后，会通知生产者当前队列可用。通过查看JDK源码发现ArrayBlockingQueue使用了Condition来实现，代码如下。
+
+```java
+private final Condition notFull;
+private final Condition notEmpty;
+public ArrayBlockingQueue(int capacity, boolean fair) {
+  // 省略其他代码
+  notEmpty = lock.newCondition();
+  notFull = lock.newCondition();
+}
+public void put(E e) throws InterruptedException {
+  checkNotNull(e);
+  final ReentrantLock lock = this.lock;
+  lock.lockInterruptibly();
+  try {
+    while (count == items.length)
+      notFull.await();
+    insert(e);
+  } finally {
+    lock.unlock();
+  }
+} 
+public E take() throws InterruptedException {
+  final ReentrantLock lock = this.lock;
+  lock.lockInterruptibly();
+  try {
+    while (count == 0)
+      notEmpty.await();
+    return extract();
+  } finally {
+    lock.unlock();
+  }
+} 
+private void insert(E x) {
+  items[putIndex] = x;
+  putIndex = inc(putIndex);
+  ++count;
+  notEmpty.signal();
+}
+```
+
+​	当往队列里插入一个元素时，如果队列不可用，那么阻塞生产者主要通过`LockSupport.park（this）`来实现。
+
+```java
+public final void await() throws InterruptedException {
+  if (Thread.interrupted())
+    throw new InterruptedException();
+  Node node = addConditionWaiter();
+  int savedState = fullyRelease(node);
+  int interruptMode = 0;
+  while (!isOnSyncQueue(node)) {
+    LockSupport.park(this);
+    if ((interruptMode = checkInterruptWhileWaiting(node)) != 0)
+      break;
+  }
+  if (acquireQueued(node, savedState) && interruptMode != THROW_IE)
+    interruptMode = REINTERRUPT;
+  if (node.nextWaiter != null) // clean up if cancelled
+    unlinkCancelledWaiters();
+  if (interruptMode != 0)
+    reportInterruptAfterWait(interruptMode);
+}
+```
+
+​	继续进入源码，发现调用setBlocker先保存一下将要阻塞的线程，然后调用unsafe.park阻塞当前线程。
+
+```java
+public static void park(Object blocker) {
+  Thread t = Thread.currentThread();
+  setBlocker(t, blocker);
+  unsafe.park(false, 0L);
+  setBlocker(t, null);
+}
+```
+
+​	unsafe.park是个native方法，代码如下。
+
+```java
+public native void park(boolean isAbsolute, long time);
+```
+
+​	park这个方法会阻塞当前线程，只有以下4种情况中的一种发生时，该方法才会返回。
+
++ 与park对应的unpark执行或已经执行时。“已经执行”是指unpark先执行，然后再执行park的情况。
+
++ 线程被中断时。
+
++ 等待完time参数指定的毫秒数时。
+
++ 异常现象发生时，这个异常现象没有任何原因。
+
+​	继续看一下JVM是如何实现park方法：park在不同的操作系统中使用不同的方式实现，在Linux下使用的是系统方法`pthread_cond_wait`实现。实现代码在JVM源码路径src/os/linux/vm/os_linux.cpp里的`os::PlatformEvent::park`方法，代码如下。
+
+```cpp
+void os::PlatformEvent::park() {
+  int v ;
+  for (;;) {
+    v = _Event ;
+    if (Atomic::cmpxchg (v-1, &_Event, v) == v) break ;
+  }
+  guarantee (v >= 0, "invariant") ;
+  if (v == 0) {
+    // Do this the hard way by blocking ...
+    int status = pthread_mutex_lock(_mutex);
+    assert_status(status == 0, status, "mutex_lock");
+    guarantee (_nParked == 0, "invariant") ;
+    ++ _nParked ;
+    while (_Event < 0) {
+      status = pthread_cond_wait(_cond, _mutex);
+      // for some reason, under 2.7 lwp_cond_wait() may return ETIME ...
+      // Treat this the same as if the wait was interrupted
+      if (status == ETIME) { status = EINTR; }
+      assert_status(status == 0 || status == EINTR, status, "cond_wait");
+    }
+    -- _nParked ;
+    // In theory we could move the ST of 0 into _Event past the unlock(),
+    // but then we'd need a MEMBAR after the ST.
+    _Event = 0 ;
+    status = pthread_mutex_unlock(_mutex);
+    assert_status(status == 0, status, "mutex_unlock");
+  }
+  guarantee (_Event >= 0, "invariant") ;
+}
+```
+
+​	pthread_cond_wait是一个多线程的条件变量函数，cond是condition的缩写，字面意思可以理解为线程在等待一个条件发生，这个条件是一个全局变量。这个方法接收两个参数：一个共享变量_cond，一个互斥量_mutex。而unpark方法在Linux下是使用pthread_cond_signal实现的。park方法在Windows下则是使用WaitForSingleObject实现的。想知道pthread_cond_wait是如何实现的，可以参考glibc-2.5的nptl/sysdeps/pthread/pthread_cond_wait.c。
+
+​	当线程被阻塞队列阻塞时，线程会进入WAITING（parking）状态。我们可以使用jstack dump阻塞的生产者线程看到这点，如下。
+
+```none
+"main" prio=5 tid=0x00007fc83c000000 nid=0x10164e000 waiting on condition [0x000000010164d000]
+java.lang.Thread.State: WAITING (parking)
+at sun.misc.Unsafe.park(Native Method)
+- parking to wait for <0x0000000140559fe8> (a java.util.concurrent.locks.
+AbstractQueuedSynchronizer$ConditionObject)
+at java.util.concurrent.locks.LockSupport.park(LockSupport.java:186)
+at java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.
+await(AbstractQueuedSynchronizer.java:2043)
+at java.util.concurrent.ArrayBlockingQueue.put(ArrayBlockingQueue.java:324)
+at blockingqueue.ArrayBlockingQueueTest.main(ArrayBlockingQueueTest.java:
+```
 
 ## 6.4 Fork/Join框架
 
+​	本节将会介绍Fork/Join框架的基本原理、算法、设计方式、应用与实现等。
+
 ### 6.4.1 什么是Fork/Join框架
+
+> [Java中并行执行任务的框架Fork/Join](https://blog.csdn.net/apeopl/article/details/82591319)
+
+​	**Fork/Join框架是Java 7提供的一个用于并行执行任务的框架，是一个把大任务分割成若干个小任务，最终汇总每个小任务结果后得到大任务结果的框架**。
+
+​	我们再通过Fork和Join这两个单词来理解一下Fork/Join框架。Fork就是把一个大任务切分为若干子任务并行的执行，Join就是合并这些子任务的执行结果，最后得到这个大任务的结果。比如计算1+2+…+10000，可以分割成10个子任务，每个子任务分别对1000个数进行求和，最终汇总这10个子任务的结果。Fork/Join的运行流程如下图所示。
+
+![img](https://img-blog.csdn.net/20180910161235530?watermark/2/text/aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L0FwZW9wbA==/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70)
 
 ### 6.4.2 工作窃取算法
 
+> [工作窃取算法 work-stealing](https://blog.csdn.net/pange1991/article/details/80944797)
+
+​	**工作窃取（work-stealing）算法是指某个线程从其他队列里窃取任务来执行**。那么，为什么需要使用工作窃取算法呢？假如我们需要做一个比较大的任务，可以把这个任务分割为若干互不依赖的子任务，为了减少线程间的竞争，把这些子任务分别放到不同的队列里，并为每个队列创建一个单独的线程来执行队列里的任务，线程和队列一一对应。比如A线程负责处理A队列里的任务。但是，有的线程会先把自己队列里的任务干完，而其他线程对应的队列里还有任务等待处理。**干完活的线程与其等着，不如去帮其他线程干活，于是它就去其他线程的队列里窃取一个任务来执行。而在这时它们会访问同一个队列，所以为了减少窃取任务线程和被窃取任务线程之间的竞争，通常会使用双端队列，被窃取任务线程永远从双端队列的头部拿任务执行，而窃取任务的线程永远从双端队列的尾部拿任务执行**。
+
+​	工作窃取的运行流程如下图所示。
+
+![这里写图片描述](https://img-blog.csdn.net/20180707151815286?watermark/2/text/aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3BhbmdlMTk5MQ==/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70)
+
++ **工作窃取算法的优点：充分利用线程进行并行计算，减少了线程间的竞争**。
++ **工作窃取算法的缺点：在某些情况下还是存在竞争，比如双端队列里只有一个任务时。并且该算法会消耗了更多的系统资源，比如创建多个线程和多个双端队列**。
+
 ### 6.4.3 Fork/Join框架的设计
+
+​	我们已经很清楚Fork/Join框架的需求了，那么可以思考一下，如果让我们来设计一个Fork/Join框架，该如何设计？这个思考有助于你理解Fork/Join框架的设计。
+
+​	步骤1　**分割任务**。首先我们需要有一个fork类来把大任务分割成子任务，有可能子任务还是很大，所以还需要不停地分割，直到分割出的子任务足够小。
+
+​	步骤2　**执行任务并合并结果**。分割的子任务分别放在双端队列里，然后几个启动线程分别从双端队列里获取任务执行。子任务执行完的结果都统一放在一个队列里，启动一个线程从队列里拿数据，然后合并这些数据。
+
+​	Fork/Join使用两个类来完成以上两件事情。
+
+1. ForkJoinTask：我们要使用ForkJoin框架，必须首先创建一个ForkJoin任务。它提供在任务中执行fork()和join()操作的机制。通常情况下，我们不需要直接继承ForkJoinTask类，只需要继承它的子类，Fork/Join框架提供了以下两个子类。
+
+   + RecursiveAction：用于没有返回结果的任务。
+
+   + RecursiveTask：用于有返回结果的任务。
+
+2. ForkJoinPool：ForkJoinTask需要通过ForkJoinPool来执行。
+
+​	**任务分割出的子任务会添加到当前工作线程所维护的双端队列中，进入队列的头部。当一个工作线程的队列里暂时没有任务时，它会随机从其他工作线程的队列的尾部获取一个任务。**
 
 ### 6.4.4 使用Fork/Join框架
 
+​	让我们通过一个简单的需求来使用Fork/Join框架，需求是：计算1+2+3+4的结果。
+
+​	使用Fork/Join框架首先要考虑到的是如何分割任务，如果希望每个子任务最多执行两个数的相加，那么我们设置分割的阈值是2，由于是4个数字相加，所以Fork/Join框架会把这个任务fork成两个子任务，子任务一负责计算1+2，子任务二负责计算3+4，然后再join两个子任务的结果。因为是有结果的任务，所以必须继承RecursiveTask，实现代码如下。
+
+```java
+package fj;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Future;
+import java.util.concurrent.RecursiveTask;
+public class CountTask extends RecursiveTask<Integer> {
+  private static final int THRESHOLD = 2;　　// 阈值
+  private int start;
+  private int end;
+  public CountTask(int start, int end) {
+    this.start = start;
+    this.end = end;
+  }
+  @Override
+  protected Integer compute() {
+    int sum = 0;
+    // 如果任务足够小就计算任务
+    boolean canCompute = (end - start) <= THRESHOLD;
+    if (canCompute) {
+      for (int i = start; i <= end; i++) {
+        sum += i;
+      }
+    } else {
+      // 如果任务大于阈值，就分裂成两个子任务计算
+      int middle = (start + end) / 2;
+      CountTask leftTask = new CountTask(start, middle);
+      CountTask rightTask = new CountTask(middle + 1, end);
+      // 执行子任务
+      leftTask.fork();
+      rightTask.fork();
+      // 等待子任务执行完，并得到其结果
+      int leftResult=leftTask.join();
+      int rightResult=rightTask.join();
+      // 合并子任务
+      sum = leftResult + rightResult;
+    }
+    return sum;
+  }
+  public static void main(String[] args) {
+    ForkJoinPool forkJoinPool = new ForkJoinPool();
+    // 生成一个计算任务，负责计算1+2+3+4
+    CountTask task = new CountTask(1, 4);
+    // 执行一个任务
+    Future<Integer> result = forkJoinPool.submit(task);
+    try {
+      System.out.println(result.get());
+    } catch (InterruptedException e) {
+    } catch (ExecutionException e) {
+    }
+  }
+}
+```
+
+​	通过这个例子，我们进一步了解ForkJoinTask，**ForkJoinTask与一般任务的主要区别在于它需要实现compute方法，在这个方法里，首先需要判断任务是否足够小，如果足够小就直接执行任务。如果不足够小，就必须分割成两个子任务，每个子任务在调用fork方法时，又会进入compute方法，看看当前子任务是否需要继续分割成子任务，如果不需要继续分割，则执行当前子任务并返回结果。使用join方法会等待子任务执行完并得到其结果。**
+
 ### 6.4.5 Fork/Join框架的异常处理
+
+​	ForkJoinTask在执行的时候可能会抛出异常，但是我们没办法在主线程里直接捕获异常，所以ForkJoinTask提供了`isCompletedAbnormally()`方法来检查任务是否已经抛出异常或已经被取消了，并且可以通过ForkJoinTask的getException方法获取异常。使用如下代码。
+
+```java
+if(task.isCompletedAbnormally())
+{
+  System.out.println(task.getException());
+}
+```
+
+​	getException方法返回Throwable对象，如果任务被取消了则返回CancellationException。如果任务没有完成或者没有抛出异常则返回null。
 
 ### 6.4.6 Fork/Join框架的实现原理
 
+​	**ForkJoinPool由ForkJoinTask数组和ForkJoinWorkerThread数组组成，ForkJoinTask数组负责存放程序提交给ForkJoinPool的任务，而ForkJoinWorkerThread数组负责执行这些任务。**
+
+#### 1. ForkJoinTask的fork方法实现原理
+
+​	当我们调用ForkJoinTask的fork方法时，程序会调用ForkJoinWorkerThread的pushTask方法**异步地执行这个任务，然后立即返回结果**。代码如下。
+
+```java
+public final ForkJoinTask<V> fork() {
+  ((ForkJoinWorkerThread) Thread.currentThread())
+  .pushTask(this);
+  return this;
+}
+```
+
+​	pushTask方法把当前任务存放在ForkJoinTask数组队列里。然后再调用ForkJoinPool的signalWork()方法**唤醒或创建一个工作线程来执行任务**。代码如下。
+
+```java
+final void pushTask(ForkJoinTask<> t) {
+  ForkJoinTask<>[] q; 
+  int s, m;
+  if ((q = queue) != null) {　　　　// ignore if queue removed
+    long u = (((s = queueTop) & (m = q.length - 1)) << ASHIFT) + ABASE;
+    UNSAFE.putOrderedObject(q, u, t);
+    queueTop = s + 1;　　　　　　// or use putOrderedInt
+    if ((s -= queueBase) <= 2)
+      pool.signalWork();
+    else if (s == m)
+      growQueue();
+  }
+}
+```
+
+#### 2. ForkJoinTask的join方法实现原理
+
+​	Join方法的主要作用是**阻塞当前线程并等待获取结果**。让我们一起看看ForkJoinTask的join方法的实现，代码如下。
+
+```java
+public final V join() {
+  if (doJoin() != NORMAL)
+    return reportResult();
+  else
+    return getRawResult();
+} private V
+  reportResult() {
+  int s;
+  Throwable ex;
+  if ((s = status) == CANCELLED)
+    throw new CancellationException();
+  if (s == EXCEPTIONAL && (ex = getThrowableException()) != null)
+    UNSAFE.throwException(ex);
+  return getRawResult();
+}
+```
+
+​	首先，它调用了doJoin()方法，通过doJoin()方法得到当前任务的状态来判断返回什么结果，任**务状态有4种：已完成（NORMAL）、被取消（CANCELLED）、信号（SIGNAL）和出现异常（EXCEPTIONAL）**。
+
++ 如果任务状态是已完成，则直接返回任务结果。
++ 如果任务状态是被取消，则直接抛出CancellationException。
++ 如果任务状态是抛出异常，则直接抛出对应的异常。
+
+​	让我们再来分析一下doJoin()方法的实现代码。
+
+```java
+private int doJoin() {
+  Thread t; 
+  ForkJoinWorkerThread w;
+  int s;
+  boolean completed;
+  if ((t = Thread.currentThread()) instanceof ForkJoinWorkerThread) {
+    if ((s = status) < 0)
+      return s;
+    if ((w = (ForkJoinWorkerThread)t).unpushTask(this)) {
+      try {
+        completed = exec();
+      } catch (Throwable rex) {
+        return setExceptionalCompletion(rex);
+      }
+      if (completed)
+        return setCompletion(NORMAL);
+    }
+    return w.joinTask(this);
+  }
+  else
+    return externalAwaitDone();
+}
+```
+
+​	<u>在doJoin()方法里，首先通过查看任务的状态，看任务是否已经执行完成，如果执行完成，则直接返回任务状态；如果没有执行完，则从任务数组里取出任务并执行。如果任务顺利执行完成，则设置任务状态为NORMAL，如果出现异常，则记录异常，并将任务状态设置为EXCEPTIONAL</u>。
+
 ## 6.5 本章小结
 
+​	本章介绍了Java中提供的各种并发容器和框架，并分析了该容器和框架的实现原理，从中我们能够领略到大师级的设计思路，希望读者能够充分理解这种设计思想，并在以后开发的并发程序时，运用上这些并发编程的技巧。
+
 # 第7章 Java中的13个原子操作类
+
+​	当程序更新一个变量时，如果多线程同时更新这个变量，可能得到期望之外的值，比如变量i=1，A线程更新i+1，B线程也更新i+1，经过两个线程操作之后可能i不等于3，而是等于2。因为A和B线程在更新变量i的时候拿到的i都是1，这就是线程不安全的更新操作，通常我们会使用synchronized来解决这个问题，synchronized会保证多线程不会同时更新变量i。
+
+​	而Java从JDK 1.5开始提供了`java.util.concurrent.atomic`包（以下简称Atomic包），这个包中的原子操作类提供了一种用法简单、性能高效、线程安全地更新一个变量的方式。
+
+​	因为变量的类型有很多种，所以在Atomic包里一共提供了13个类，属于4种类型的原子更新方式，分别是：
+
++ 原子更新基本类型
++ 原子更新数组
++ 原子更新引用
++ 原子更新属性（字段）
+
+​	**Atomic包里的类基本都是使用Unsafe实现的包装类**。
+
+## 7.1 原子更新基本类型类
+
+​	使用原子的方式更新基本类型，Atomic包提供了以下3个类。
+
++ AtomicBoolean：原子更新布尔类型。
+
++ AtomicInteger：原子更新整型。
+
++ AtomicLong：原子更新长整型。
+
+​	以上3个类提供的方法几乎一模一样，所以本节仅以AtomicInteger为例进行讲解，AtomicInteger的常用方法如下。
+
++ int addAndGet（int delta）：以原子方式将输入的数值与实例中的值（AtomicInteger里的value）相加，并返回结果。
+
++ boolean compareAndSet（int expect，int update）：如果输入的数值等于预期值，则以原子方式将该值设置为输入的值。
+
++ int getAndIncrement()：以原子方式将当前值加1，注意，**这里返回的是自增前的值**。
+
++ void lazySet（int newValue）：最终会设置成newValue，使用lazySet设置值后，可能导致其他线程在之后的一小段时间内还是可以读到旧的值。关于该方法的更多信息可以参考并发编程网翻译的一篇文章《AtomicLong.lazySet是如何工作的？》，[~~文章地址-已失效~~](http://ifeve.com/howdoes-atomiclong-lazyset-work/)。
+
++ int getAndSet（int newValue）：以原子方式设置为newValue的值，并返回旧值。
+
+AtomicInteger示例代码如（代码清单7-1 AtomicIntegerTest.java）所示。
+
+```java
+import java.util.concurrent.atomic.AtomicInteger;
+public class AtomicIntegerTest {
+  static AtomicInteger ai = new AtomicInteger(1);
+  public static void main(String[] args) {
+    System.out.println(ai.getAndIncrement());
+    System.out.println(ai.get());
+  }
+}
+```
+
+输出结果如下。
+
+```none
+1
+2
+```
+
+​	那么getAndIncrement是如何实现原子操作的呢？让我们一起分析其实现原理，getAndIncrement的源码如（代码清单7-2 AtomicInteger.java）所示。
+
+```java
+public final int getAndIncrement() {
+  for (;;) {
+    int current = get();
+    int next = current + 1;
+    if (compareAndSet(current, next))
+      return current;
+  }
+}
+public final boolean compareAndSet(int expect, int update) {
+  return unsafe.compareAndSwapInt(this, valueOffset, expect, update);
+}
+```
+
+​	源码中for循环体的第一步先取得AtomicInteger里存储的数值，第二步对AtomicInteger的当前数值进行加1操作，关键的第三步调用compareAndSet方法来进行原子更新操作，该方法先检查当前数值是否等于current，等于意味着AtomicInteger的值没有被其他线程修改过，则将AtomicInteger的当前数值更新成next的值，如果不等compareAndSet方法会返回false，程序会进入for循环重新进行compareAndSet操作。
+
+​	Atomic包提供了3种基本类型的原子更新，但是Java的基本类型里还有char、float和double等。那么问题来了，如何原子的更新其他的基本类型呢？Atomic包里的类基本都是使用Unsafe实现的，让我们一起看一下Unsafe的源码，如（代码清单7-3 Unsafe.java）所示。
+
+```java
+/**
+* 如果当前数值是expected，则原子的将Java变量更新成x
+* @return 如果更新成功则返回true
+*/
+public final native boolean compareAndSwapObject(Object o,long offset,Object expected,Object x);
+public final native boolean compareAndSwapInt(Object o, long offset,int expected,int x);
+public final native boolean compareAndSwapLong(Object o, long offset,long expected,long x);
+```
+
+​	通过代码，我们发现**Unsafe只提供了3种CAS方法：compareAndSwapObject、compare-AndSwapInt和compareAndSwapLong，再看AtomicBoolean源码，发现它是先把Boolean转换成整型，再使用compareAndSwapInt进行CAS，所以原子更新char、float和double变量也可以用类似的思路来实现。**
+
+## 7.2 原子更新数组
+
+​	通过原子的方式更新数组里的某个元素，Atomic包提供了以下4个类。
+
++ AtomicIntegerArray：原子更新整型数组里的元素。
+
++ AtomicLongArray：原子更新长整型数组里的元素。
+
++ AtomicReferenceArray：原子更新引用类型数组里的元素。
+
++ AtomicIntegerArray类主要是提供原子的方式更新数组里的整型，其常用方法如下。
+  + int addAndGet（int i，int delta）：以原子方式将输入值与数组中索引i的元素相加。
+  + boolean compareAndSet（int i，int expect，int update）：如果当前值等于预期值，则以原子方式将数组位置i的元素设置成update值。
+
+​	以上几个类提供的方法几乎一样，所以本节仅以AtomicIntegerArray为例进行讲解，AtomicIntegerArray的使用实例代码如（代码清单7-4 AtomicIntegerArrayTest.java）所示。
+
+```java
+public class AtomicIntegerArrayTest {
+  static int[] value = new int[] { 1， 2 };
+  static AtomicIntegerArray ai = new AtomicIntegerArray(value);
+  public static void main(String[] args) {
+    ai.getAndSet(0， 3);
+    System.out.println(ai.get(0));
+    System.out.println(value[0]);
+  }
+}
+```
+
+以下是输出的结果。
+
+```none
+3
+1
+```
+
+​	**需要注意的是，数组value通过构造方法传递进去，然后AtomicIntegerArray会将当前数组复制一份，所以当AtomicIntegerArray对内部的数组元素进行修改时，不会影响传入的数组**。
+
+## 7.3 原子更新引用类型
+
+​	原子更新基本类型的AtomicInteger，只能更新一个变量，如果要原子更新多个变量，就需要使用这个原子更新引用类型提供的类。Atomic包提供了以下3个类。
+
++ AtomicReference：原子更新引用类型。
++ AtomicReferenceFieldUpdater：原子更新引用类型里的字段。
++ **AtomicMarkableReference：原子更新带有标记位的引用类型**。可以原子更新一个布尔类型的标记位和引用类型。构造方法是AtomicMarkableReference（V initialRef，boolean initialMark）。
+
+​	以上几个类提供的方法几乎一样，所以本节仅以AtomicReference为例进行讲解，AtomicReference的使用示例代码如（代码清单7-5 AtomicReferenceTest.java）所示。
+
+```java
+public class AtomicReferenceTest {
+  public static AtomicReference<user> atomicUserRef = new
+    AtomicReference<user>();
+  public static void main(String[] args) {
+    User user = new User("conan"， 15);
+    atomicUserRef.set(user);
+    User updateUser = new User("Shinichi"， 17);
+    atomicUserRef.compareAndSet(user， updateUser);
+    System.out.println(atomicUserRef.get().getName());
+    System.out.println(atomicUserRef.get().getOld());
+  }
+  static class User {
+    private String name;
+    private int old;
+    public User(String name， int old) {
+      this.name = name;
+      this.old = old;
+    }
+    public String getName() {
+      return name;
+    }
+    public int getOld() {
+      return old;
+    }
+  }
+}
+```
+
+​	代码中首先构建一个user对象，然后把user对象设置进AtomicReferenc中，最后调用compareAndSet方法进行原子更新操作，实现原理同AtomicInteger里的compareAndSet方法。代码执行后输出结果如下。
+
+```none
+Shinichi
+17
+```
+
+## 7.4 原子更新字段类
+
+​	如果需**原子地更新某个类里的某个字段时，就需要使用原子更新字段类**，Atomic包提供了以下3个类进行原子字段更新。
+
++ AtomicIntegerFieldUpdater：原子更新整型的字段的更新器。
+
++ AtomicLongFieldUpdater：原子更新长整型字段的更新器。
+
++ **AtomicStampedReference：原子更新带有版本号的引用类型**。该类将整数值与引用关联起来，可用于原子的更新数据和数据的版本号，**可以解决使用CAS进行原子更新时可能出现的ABA问题**。
+
+​	要想原子地更新字段类需要两步。
+
+1. 第一步，因为原子更新字段类都是抽象类，每次使用的时候必须使用静态方法newUpdater()创建一个**更新器**，并且需要设置想要更新的类和属性。
+
+2. 第二步，**更新类的字段（属性）必须使用public volatile修饰符**。
+
+​	以上3个类提供的方法几乎一样，所以本节仅以AstomicIntegerFieldUpdater为例进行讲解，AstomicIntegerFieldUpdater的示例代码如（代码清单7-6 AtomicIntegerFieldUpdaterTest.java）所示。
+
+```java
+public class AtomicIntegerFieldUpdaterTest {
+  // 创建原子更新器，并设置需要更新的对象类和对象的属性
+  private static AtomicIntegerFieldUpdater<User> a = AtomicIntegerFieldUpdater.
+    newUpdater(User.class， "old");
+  public static void main(String[] args) {
+    // 设置柯南的年龄是10岁
+    User conan = new User("conan"， 10);
+    // 柯南长了一岁，但是仍然会输出旧的年龄
+    System.out.println(a.getAndIncrement(conan));
+    // 输出柯南现在的年龄
+    System.out.println(a.get(conan));
+  }
+  public static class User {
+    private String name;
+    public volatile int old;
+    public User(String name， int old) {
+      this.name = name;
+      this.old = old;
+    }
+    public String getName() {
+      return name;
+    }
+    public int getOld() {
+      return old;
+    }
+  }
+}
+```
+
+代码执行后输出如下。
+
+```java
+10
+11
+```
+
+## 7.5 本章小结
+
+​	本章介绍了JDK中并发包里的13个原子操作类以及原子操作类的实现原理，读者需要熟悉这些类和使用场景，在适当的场合下使用它。
 
 # 第8章 Java中的并发工具类
 
