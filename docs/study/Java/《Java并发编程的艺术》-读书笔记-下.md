@@ -2310,9 +2310,598 @@ public class AtomicIntegerFieldUpdaterTest {
 
 # 第8章 Java中的并发工具类
 
+​	在JDK的并发包里提供了几个非常有用的并发工具类。<u>**CountDownLatch**、**CyclicBarrier**和**Semaphore**工具类提供了一种并发流程控制的手段</u>，<u>**Exchanger工具类**则提供了在线程间交换数据的一种手段</u>。本章会配合一些应用场景来介绍如何使用这些工具类。
+
+## 8.1 等待多线程完成的CountDownLatch
+
+​	假如有这样一个需求：我们需要解析一个Excel里多个sheet的数据，此时可以考虑使用多线程，每个线程解析一个sheet里的数据，等到所有的sheet都解析完之后，程序需要提示解析完成。在这个需求中，要实现主线程等待所有线程完成sheet的解析操作，最简单的做法是使用join()方法，如（代码清单8-1 JoinCountDownLatchTest.java）所示。
+
+```java
+public class JoinCountDownLatchTest {
+  public static void main(String[] args) throws InterruptedException {
+    Thread parser1 = new Thread(new Runnable() {
+      @Override
+      public void run() {
+      }
+    });
+    Thread parser2 = new Thread(new Runnable() {
+      @Override
+      public void run() {
+        System.out.println("parser2 finish");
+      }
+    });
+    parser1.start();
+    parser2.start();
+    parser1.join();
+    parser2.join();
+    System.out.println("all parser finish");
+  }
+}
+```
+
+​	join用于让当前执行线程等待join线程执行结束。**其实现原理是不停检查join线程是否存活，如果join线程存活则让当前线程永远等待**。其中，wait（0）表示永远等待下去，代码片段如下。
+
+```java
+while (isAlive()) {
+  wait(0);
+}
+```
+
+​	直到join线程中止后，线程的this.notifyAll()方法会被调用，调用notifyAll()方法是在JVM里实现的，所以在JDK里看不到，大家可以查看JVM源码。
+
+​	在JDK 1.5之后的并发包中提供的CountDownLatch也可以实现join的功能，并且比join的功能更多，如（代码清单8-2 CountDownLatchTest.java）所示。
+
+```java
+public class CountDownLatchTest {
+  staticCountDownLatch c = new CountDownLatch(2);
+  public static void main(String[] args) throws InterruptedException {
+    new Thread(new Runnable() {
+      @Override
+      public void run() {
+        System.out.println(1);
+        c.countDown();
+        System.out.println(2);
+        c.countDown();
+      }
+    }).start();
+    c.await();
+    System.out.println("3");
+  }
+}
+```
+
+​	CountDownLatch的构造函数接收一个int类型的参数作为计数器，如果你想等待N个点完成，这里就传入N。
+
+​	当我们调用CountDownLatch的countDown方法时，N就会减1，CountDownLatch的await方法会阻塞当前线程，直到N变成零。由于countDown方法可以用在任何地方，所以这里说的N个点，可以是N个线程，也可以是1个线程里的N个执行步骤。用在多个线程时，只需要把这个CountDownLatch的引用传递到线程里即可。
+
+​	如果有某个解析sheet的线程处理得比较慢，我们不可能让主线程一直等待，所以可以使用另外一个带指定时间的await方法——await（long time，TimeUnit unit），这个方法等待特定时间后，就会不再阻塞当前线程。join也有类似的方法。
+
+​	**注意：计数器必须大于等于0，只是等于0时候，计数器就是零，调用await方法时不会阻塞当前线程。CountDownLatch不可能重新初始化或者修改CountDownLatch对象的内部计数器的值。一个线程调用countDown方法happen-before，另外一个线程调用await方法。**
+
+## 8.2 同步屏障CyclicBarrier
+
+​	<u>CyclicBarrier的字面意思是可循环使用（Cyclic）的屏障（Barrier）。它要做的事情是，让一组线程到达一个屏障（也可以叫同步点）时被阻塞，直到最后一个线程到达屏障时，屏障才会开门，所有被屏障拦截的线程才会继续运行</u>。
+
+### 8.2.1 CyclicBarrier简介
+
+​	CyclicBarrier默认的构造方法是CyclicBarrier（int parties），其参数表示屏障拦截的线程数量，每个线程调用await方法告诉CyclicBarrier我已经到达了屏障，然后当前线程被阻塞。示例代码如（代码清单8-3 CyclicBarrierTest.java）所示。
+
+```java
+public class CyclicBarrierTest {
+  staticCyclicBarrier c = new CyclicBarrier(2);
+  public static void main(String[] args) {
+    new Thread(new Runnable() {
+      @Override
+      public void run() {
+        try {
+          c.await();
+        } catch (Exception e) {
+        }
+        System.out.println(1);
+      }
+    }).start();
+    try {
+      c.await();
+    } catch (Exception e) {
+    }
+    System.out.println(2);
+  }
+}
+```
+
+​	因为主线程和子线程的调度是由CPU决定的，两个线程都有可能先执行，所以会产生两种输出，第一种可能输出如下。
+
+```none
+1
+2
+```
+
+第二种可能输出如下。
+
+```none
+2
+1
+```
+
+​	如果把new CyclicBarrier(2)修改成new CyclicBarrier(3)，则主线程和子线程会永远等待，因为没有第三个线程执行await方法，即没有第三个线程到达屏障，所以之前到达屏障的两个线程都不会继续执行。
+
+​	<u>CyclicBarrier还提供一个更高级的构造函数CyclicBarrier（int parties，Runnable barrier-Action），用于**在线程到达屏障时，优先执行barrierAction**，方便处理更复杂的业务场景</u>，如（代码清单8-4 CyclicBarrierTest2.java）所示。
+
+```java
+import java.util.concurrent.CyclicBarrier;
+public class CyclicBarrierTest2 {
+  static CyclicBarrier c = new CyclicBarrier(2, new A());
+  public static void main(String[] args) {
+    new Thread(new Runnable() {
+      @Override
+      public void run() {
+        try {
+          c.await();
+        } catch (Exception e) {
+        }
+        System.out.println(1);
+      }
+    }).start();
+    try {
+      c.await();
+    } catch (Exception e) {
+    }
+    System.out.println(2);
+  }
+  static class A implements Runnable {
+    @Override
+    public void run() {
+      System.out.println(3);
+    }
+  }
+}
+```
+
+​	因为CyclicBarrier设置了拦截线程的数量是2，所以必须等代码中的第一个线程和线程A都执行完之后，才会继续执行主线程，然后输出2，所以代码执行后的输出如下。
+
+```none
+3
+1
+2
+```
+
+### 8.2.2 CyclicBarrier的应用场景
+
+​	CyclicBarrier可以用于多线程计算数据，最后合并计算结果的场景。例如，用一个Excel保存了用户所有银行流水，每个Sheet保存一个账户近一年的每笔银行流水，现在需要统计用户的日均银行流水，先用多线程处理每个sheet里的银行流水，都执行完之后，得到每个sheet的日均银行流水，最后，再用barrierAction用这些线程的计算结果，计算出整个Excel的日均银行流水，如（代码清单8-5 BankWaterService.java）所示。
+
+```java
+import java.util.Map.Entry;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+/**
+* 银行流水处理服务类
+*
+* @authorftf
+*
+*/
+publicclass BankWaterService implements Runnable {
+  /**
+* 创建4个屏障，处理完之后执行当前类的run方法
+*/
+  private CyclicBarrier c = new CyclicBarrier(4, this);
+  /**
+* 假设只有4个sheet，所以只启动4个线程
+*/
+  private Executor executor = Executors.newFixedThreadPool(4);
+  /**
+* 保存每个sheet计算出的银流结果
+*/
+  private ConcurrentHashMap<String, Integer>sheetBankWaterCount = new
+    ConcurrentHashMap<String, Integer>();
+  privatevoid count() {
+    for (inti = 0; i< 4; i++) {
+      executor.execute(new Runnable() {
+        @Override
+        publicvoid run() {
+          // 计算当前sheet的银流数据，计算代码省略
+          sheetBankWaterCount
+            .put(Thread.currentThread().getName(), 1);
+          // 银流计算完成，插入一个屏障
+          try {
+            c.await();
+          } catch (InterruptedException |
+                   BrokenBarrierException e) {
+            e.printStackTrace();
+          }
+        }
+      });
+    }
+  }
+  @Override
+  publicvoid run() {
+    intresult = 0;
+    // 汇总每个sheet计算出的结果
+    for (Entry<String, Integer>sheet : sheetBankWaterCount.entrySet()) {
+      result += sheet.getValue();
+    }
+    // 将结果输出
+    sheetBankWaterCount.put("result", result);
+    System.out.println(result);
+  }
+  public static void main(String[] args) {
+    BankWaterService bankWaterCount = new BankWaterService();
+    bankWaterCount.count();
+  }
+}
+```
+
+​	使用线程池创建4个线程，分别计算每个sheet里的数据，每个sheet计算结果是1，再由BankWaterService线程汇总4个sheet计算出的结果，输出结果如下。
+
+```none
+4
+```
+
+### 8.2.3 CyclicBarrier和CountDownLatch的区别
+
+​	**CountDownLatch的计数器只能使用一次，而CyclicBarrier的计数器可以使用reset()方法重置**。所以CyclicBarrier能处理更为复杂的业务场景。例如，如果计算发生错误，可以重置计数器，并让线程重新执行一次。
+
+​	CyclicBarrier还提供其他有用的方法，比如getNumberWaiting方法可以获得Cyclic-Barrier阻塞的线程数量。**isBroken()方法用来了解阻塞的线程是否被中断**。（代码清单8-5 BankWaterService.java）执行完之后会返回true，其中isBroken的使用代码如（代码清单8-6 CyclicBarrierTest3.java）所示。
+
+```java
+importjava.util.concurrent.BrokenBarrierException;
+importjava.util.concurrent.CyclicBarrier;
+public class CyclicBarrierTest3 {
+  staticCyclicBarrier c = new CyclicBarrier(2);
+  public static void main(String[] args) throws InterruptedException，
+    BrokenBarrierException {
+    Thread thread = new Thread(new Runnable() {
+      @Override
+      public void run() {
+        try {
+          c.await();
+        } catch (Exception e) {
+        }
+      }
+    });
+    thread.start();
+    thread.interrupt();
+    try {
+      c.await();
+    } catch (Exception e) {
+      System.out.println(c.isBroken());
+    }
+  }
+}
+```
+
+输出如下所示。
+
+```none
+true
+```
+
+## 8.3 控制并发线程数的Semaphore
+
+​	**Semaphore（信号量）是用来控制同时访问特定资源的线程数量，它通过协调各个线程，以保证合理的使用公共资源**。
+
+​	多年以来，我（书籍作者）都觉得从字面上很难理解Semaphore所表达的含义，只能把它比作是控制流量的红绿灯。比如××马路要限制流量，只允许同时有一百辆车在这条路上行使，其他的都必须在路口等待，所以前一百辆车会看到绿灯，可以开进这条马路，后面的车会看到红灯，不能驶入××马路，但是如果前一百辆中有5辆车已经离开了××马路，那么后面就允许有5辆车驶入马路，这个例子里说的车就是线程，驶入马路就表示线程在执行，离开马路就表示线程执行完成，看见红灯就表示线程被阻塞，不能执行。
+
+### 1. 应用场景
+
+​	**Semaphore可以用于做流量控制，特别是公用资源有限的应用场景，比如数据库连接**。假如有一个需求，要读取几万个文件的数据，因为都是IO密集型任务，我们可以启动几十个线程并发地读取，但是如果读到内存后，还需要存储到数据库中，而数据库的连接数只有10个，这时我们必须控制只有10个线程同时获取数据库连接保存数据，否则会报错无法获取数据库连接。这个时候，就可以使用Semaphore来做流量控制，如（代码清单8-7 SemaphoreTest.java）所示。
+
+```java
+public class SemaphoreTest {
+  private static final int THREAD_COUNT = 30;
+  private static ExecutorServicethreadPool = Executors
+    .newFixedThreadPool(THREAD_COUNT);
+  private static Semaphore s = new Semaphore(10);
+  public static void main(String[] args) {
+    for (inti = 0; i< THREAD_COUNT; i++) {
+      threadPool.execute(new Runnable() {
+        @Override
+        public void run() {
+          try {
+            s.acquire();
+            System.out.println("save data");
+            s.release();
+          } catch (InterruptedException e) {
+          }
+        }
+      });
+    }
+    threadPool.shutdown();
+  }
+}
+```
+
+​	在代码中，虽然有30个线程在执行，但是只允许10个并发执行。Semaphore的构造方法Semaphore（int permits）接受一个整型的数字，表示可用的许可证数量。Semaphore（10）表示允许10个线程获取许可证，也就是最大并发数是10。Semaphore的用法也很简单，首先线程使用Semaphore的`acquire()`方法获取一个许可证，使用完之后调用`release()`方法归还许可证。还可以用`tryAcquire()`方法尝试获取许可证。
+
+### 2. 其他方法
+
+Semaphore还提供一些其他方法，具体如下。
+
++ `int availablePermits()`：返回此信号量中当前可用的许可证数。
+
++ `int getQueueLength()`：返回正在等待获取许可证的线程数。
+
++ `boolean hasQueuedThreads()`：是否有线程正在等待获取许可证。
+
++ `void reducePermits（int reduction）`：减少reduction个许可证，是个protected方法。
+
++ `Collection getQueuedThreads()`：返回所有等待获取许可证的线程集合，是个protected方法。
+
+## 8.4 线程间交换数据的Exchanger
+
+​	**Exchanger（交换者）是一个用于线程间协作的工具类。Exchanger用于进行线程间的数据交换**。它提供一个同步点，在这个同步点，两个线程可以交换彼此的数据。这两个线程通过exchange方法交换数据，如果第一个线程先执行`exchange()`方法，它会一直等待第二个线程也执行exchange方法，当两个线程都到达同步点时，这两个线程就可以交换数据，将本线程生产出来的数据传递给对方。
+
+​	下面来看一下Exchanger的应用场景。
+
+​	**Exchanger可以用于遗传算法**，遗传算法里需要选出两个人作为交配对象，这时候会交换两人的数据，并使用交叉规则得出2个交配结果。**Exchanger也可以用于校对工作**，比如我们需要将纸制银行流水通过人工的方式录入成电子银行流水，为了避免错误，采用AB岗两人进行录入，录入到Excel之后，系统需要加载这两个Excel，并对两个Excel数据进行校对，看看是否录入一致，代码如（代码清单8-8 ExchangerTest.java）所示。
+
+```java
+public class ExchangerTest {
+  private static final Exchanger<String>exgr = new Exchanger<String>();
+  private static ExecutorServicethreadPool = Executors.newFixedThreadPool(2);
+  public static void main(String[] args) {
+    threadPool.execute(new Runnable() {
+      @Override
+      public void run() {
+        try {
+          String A = "银行流水A";　　　　// A录入银行流水数据
+          exgr.exchange(A);
+        } catch (InterruptedException e) {
+        }
+      }
+    });
+    threadPool.execute(new Runnable() {
+      @Override
+      public void run() {
+        try {
+          String B = "银行流水B";　　　　// B录入银行流水数据
+          String A = exgr.exchange("B");
+          System.out.println("A和B数据是否一致：" + A.equals(B) + "，A录入的是："
+                             + A + "，B录入是：" + B);
+        } catch (InterruptedException e) {
+        }
+      }
+    });
+    threadPool.shutdown();
+  }
+}
+```
+
+​	<u>如果两个线程有一个没有执行exchange()方法，则会一直等待，如果担心有特殊情况发生，避免一直等待，可以使用exchange（V x，longtimeout，TimeUnit unit）设置最大等待时长</u>。
+
+## 8.5 本章小结
+
+​	本章配合一些应用场景介绍JDK中提供的几个并发工具类，大家记住这个工具类的用途，一旦有对应的业务场景，不妨试试这些工具类。
+
 # 第9章 Java中的线程池
 
+​	Java中的线程池是运用场景最多的并发框架，几乎所有需要异步或并发执行任务的程序都可以使用线程池。在开发过程中，合理地使用线程池能够带来3个好处。
+
++ 第一：**降低资源消耗**。通过重复利用已创建的线程降低线程创建和销毁造成的消耗。
+
++ 第二：**提高响应速度**。当任务到达时，任务可以不需要等到线程创建就能立即执行。
+
++ 第三：**提高线程的可管理性**。线程是稀缺资源，如果无限制地创建，不仅会消耗系统资源，还会降低系统的稳定性，使用线程池可以进行统一分配、调优和监控。但是，要做到合理利用线程池，必须对其实现原理了如指掌。
+
+## 9.1 线程池的实现
+
+> [十二、Java中的线程池](https://www.jianshu.com/p/4df00eee82f6)
+
+​	当向线程池提交一个任务之后，线程池是如何处理这个任务的呢？本节来看一下线程池的主要处理流程，处理流程图如下图所示。
+
+​	从图中可以看出，当提交一个新任务到线程池时，线程池的处理流程如下。
+
+![](https://upload-images.jianshu.io/upload_images/7378149-4656084f521a0113.png)
+
+1. 线程池判断核心线程池里的线程是否都在执行任务。如果不是，则创建一个新的工作线程来执行任务。如果核心线程池里的线程都在执行任务，则进入下个流程。
+
+2. 线程池判断工作队列是否已经满。如果工作队列没有满，则将新提交的任务存储在这个工作队列里。如果工作队列满了，则进入下个流程。
+
+3. 线程池判断线程池的线程是否都处于工作状态。如果没有，则创建一个新的工作线程来执行任务。如果已经满了，则交给饱和策略来处理这个任务。
+
+​	ThreadPoolExecutor执行execute()方法的示意图，如下图所示。
+
+![](https://upload-images.jianshu.io/upload_images/7378149-c8b3a07b3e404414.png)
+
+​	ThreadPoolExecutor执行execute方法分下面4种情况。
+
+1. **如果当前运行的线程少于corePoolSize，则创建新线程来执行任务（注意，执行这一步骤需要获取全局锁）**。
+
+2. 如果运行的线程等于或多于corePoolSize，则将任务加入BlockingQueue。
+
+3. **如果无法将任务加入BlockingQueue（队列已满），则创建新的线程来处理任务（注意，执行这一步骤需要获取全局锁）**。
+
+4. 如果创建新线程将使当前运行的线程超出maximumPoolSize，任务将被拒绝，并调用`RejectedExecutionHandler.rejectedExecution()`方法。
+
+​	ThreadPoolExecutor采取上述步骤的总体设计思路，是为了在执行`execute()`方法时，尽可能地避免获取全局锁（那将会是一个严重的可伸缩瓶颈）。在ThreadPoolExecutor完成预热之后（当前运行的线程数大于等于corePoolSize），几乎所有的`execute()`方法调用都是执行步骤2，而步骤2不需要获取全局锁。
+
+​	源码分析：上面的流程分析让我们很直观地了解了线程池的工作原理，让我们再通过源代码来看看是如何实现的，线程池执行任务的方法如下。
+
+```java
+public void execute(Runnable command) {
+  if (command == null)
+    throw new NullPointerException();
+  // 如果线程数小于基本线程数，则创建线程并执行当前任务
+  if (poolSize >= corePoolSize || !addIfUnderCorePoolSize(command)) {
+    // 如线程数大于等于基本线程数或线程创建失败，则将当前任务放到工作队列中。
+    if (runState == RUNNING && workQueue.offer(command)) {
+      if (runState != RUNNING || poolSize == 0)
+        ensureQueuedTaskHandled(command);
+    } // 如果线程池不处于运行中或任务无法放入队列，并且当前线程数量小于最大允许的线程数量,
+    // 则创建一个线程执行任务。
+    else if (!addIfUnderMaximumPoolSize(command))
+      // 抛出RejectedExecutionException异常
+      reject(command); // is shutdown or saturated
+  }
+}
+```
+
+​	**工作线程：线程池创建线程时，会将线程封装成工作线程Worker，Worker在执行完任务后，还会循环获取工作队列里的任务来执行。我们可以从Worker类的run()方法里看到这点。**
+
+```java
+public void run() {
+  try {
+    Runnable task = firstTask;
+    firstTask = null;
+    while (task != null || (task = getTask()) != null) {
+      runTask(task);
+      task = null;
+    }
+  } finally {
+    workerDone(this);
+  }
+}
+```
+
+​	ThreadPoolExecutor中线程执行任务的示意图如下图所示。
+
+![](https://upload-images.jianshu.io/upload_images/7378149-845e5b2c4edbc279.png)
+
+​	线程池中的线程执行任务分两种情况，如下。
+
+1. 在execute()方法中创建一个线程时，会让这个线程执行当前任务。
+
+2. **这个线程执行完上图中1的任务后，会反复从BlockingQueue获取任务来执行**。
+
+## 9.2 线程池的使用
+
+### 9.2.1 线程池的创建
+
+​	我们可以通过ThreadPoolExecutor来创建一个线程池。
+
+```java
+new ThreadPoolExecutor(corePoolSize, maximumPoolSize, keepAliveTime,
+                       milliseconds,runnableTaskQueue, handler);
+```
+
+​	创建一个线程池时需要输入几个参数，如下。
+
+1. corePoolSize（线程池的基本大小）：当提交一个任务到线程池时，线程池会创建一个线程来执行任务，即使其他空闲的基本线程能够执行新任务也会创建线程，等到需要执行的任务数大于线程池基本大小时就不再创建。<u>如果调用了线程池的`prestartAllCoreThreads()`方法，线程池会提前创建并启动所有基本线程</u>。
+
+2. runnableTaskQueue（任务队列）：用于保存等待执行的任务的阻塞队列。可以选择以下几个阻塞队列。
+
+   + ArrayBlockingQueue：是一个基于数组结构的**有界**阻塞队列，此队列按FIFO（先进先出）原则对元素进行排序。
+   + LinkedBlockingQueue：一个基于链表结构的阻塞队列，此队列按FIFO排序元素，**吞吐量通常要高于ArrayBlockingQueue**。静态工厂方法`Executors.newFixedThreadPool()`使用了这个队列。
+   + SynchronousQueue：一个不存储元素的阻塞队列。**每个插入操作必须等到另一个线程调用移除操作，否则插入操作一直处于阻塞状态，吞吐量通常要高于LinkedBlockingQueue**，静态工厂方法`Executors.newCachedThreadPool`使用了这个队列。
+   + PriorityBlockingQueue：一个具有优先级的**无限**阻塞队列。
+
+3. maximumPoolSize（线程池最大数量）：线程池允许创建的最大线程数。如果队列满了，并且已创建的线程数小于最大线程数，则线程池会再创建新的线程执行任务。**值得注意的是，如果使用了无界的任务队列这个参数就没什么效果**。
+
+4. ThreadFactory：用于设置创建线程的工厂，可以通过线程工厂给每个创建出来的线程设置更有意义的名字。**使用开源框架guava提供的ThreadFactoryBuilder可以快速给线程池里的线程设置有意义的名字**，代码如下。
+
+   ```java
+   new ThreadFactoryBuilder().setNameFormat("XX-task-%d").build();
+   ```
+
+5. RejectedExecutionHandler（饱和策略）：当队列和线程池都满了，说明线程池处于饱和状态，那么必须采取一种策略处理提交的新任务。**这个策略默认情况下是AbortPolicy，表示无法处理新任务时抛出异常**。在JDK 1.5中Java线程池框架提供了以下4种策略。
+
+   + AbortPolicy：直接抛出异常。
+   + CallerRunsPolicy：只用调用者所在线程来运行任务。
+   + DiscardOldestPolicy：丢弃队列里最近的一个任务，并执行当前任务。
+   + DiscardPolicy：不处理，丢弃掉。
+
+   当然，也可以根据应用场景需要来实现RejectedExecutionHandler接口自定义策略。如记录日志或持久化存储不能处理的任务。
+
+   + **keepAliveTime（线程活动保持时间）：线程池的工作线程空闲后，保持存活的时间。所以，如果任务很多，并且每个任务执行的时间比较短，可以调大时间，提高线程的利用率**。
+   + TimeUnit（线程活动保持时间的单位）：可选的单位有天（DAYS）、小时（HOURS）、分钟（MINUTES）、毫秒（MILLISECONDS）、微秒（MICROSECONDS，千分之一毫秒）和纳秒（NANOSECONDS，千分之一微秒）。
+
+### 9.2.2 向线程池提交任务
+
+​	可以使用两个方法向线程池提交任务，分别为`execute()`和`submit()`方法。
+
+​	**`execute()`方法用于提交不需要返回值的任务，所以无法判断任务是否被线程池执行成功**。通过以下代码可知`execute()`方法输入的任务是一个Runnable类的实例。
+
+```java
+threadsPool.execute(new Runnable() {
+  @Override
+  public void run() {
+    // TODO Auto-generated method stub
+  }
+});
+```
+
+​	**submit()方法用于提交需要返回值的任务**。线程池会返回一个future类型的对象，通过这个future对象可以判断任务是否执行成功，并且可以通过future的get()方法来获取返回值，**get()方法会阻塞当前线程直到任务完成，而使用get（long timeout，TimeUnit unit）方法则会阻塞当前线程一段时间后立即返回，这时候有可能任务没有执行完**。
+
+```java
+Future<Object> future = executor.submit(harReturnValuetask);
+try {
+  Object s = future.get();
+} catch (InterruptedException e) {
+  // 处理中断异常
+} catch (ExecutionException e) {
+  // 处理无法执行任务异常
+} finally {
+  // 关闭线程池
+  executor.shutdown();
+}
+```
+
+### 9.2.3 关闭线程池
+
+​	**可以通过调用线程池的shutdown或shutdownNow方法来关闭线程池。它们的原理是遍历线程池中的工作线程，然后逐个调用线程的interrupt方法来中断线程，所以无法响应中断的任务可能永远无法终止**。但是它们存在一定的区别。
+
++ shutdownNow首先将线程池的状态设置成**STOP**，然后尝试停止所有的正在执行或暂停任务的线程，并返回等待执行任务的列表
++ shutdown只是将线程池的状态设置成**SHUTDOWN**状态，然后中断所有没有正在执行任务的线程。
+
+​	**只要调用了这两个关闭方法中的任意一个，isShutdown方法就会返回true。当所有的任务都已关闭后，才表示线程池关闭成功，这时调用isTerminated方法会返回true**。至于应该调用哪一种方法来关闭线程池，应该由提交到线程池的任务特性决定，通常调用shutdown方法来关闭线程池，如果任务不一定要执行完，则可以调用shutdownNow方法。
+
+### 9.2.4 合理地配置线程池
+
+​	要想合理地配置线程池，就必须首先分析任务特性，可以从以下几个角度来分析。
+
++ **任务的性质：CPU密集型任务、IO密集型任务和混合型任务**。
+
++ 任务的优先级：高、中和低。
+
++ 任务的执行时间：长、中和短。
+
++ **任务的依赖性：是否依赖其他系统资源，如数据库连接**。
+
+​	性质不同的任务可以用不同规模的线程池分开处理。
+
++ **CPU密集型任务应配置尽可能小的线程，如配置Ncpu+1个线程的线程池。**
++ **由于IO密集型任务线程并不是一直在执行任务，则应配置尽可能多的线程，如2\*Ncpu。**
++ 混合型的任务，如果可以拆分，将其拆分成一个CPU密集型任务和一个IO密集型任务，只要这两个任务执行的时间相差不是太大，那么分解后执行的吞吐量将高于串行执行的吞吐量。如果这两个任务执行时间相差太大，则没必要进行分解。
+
+​	**可以通过`Runtime.getRuntime().availableProcessors()`方法获得当前设备的CPU个数。**
+
+​	优先级不同的任务可以使用优先级队列PriorityBlockingQueue来处理。它可以让优先级高的任务先执行。
+
+​	**注意：如果一直有优先级高的任务提交到队列里，那么优先级低的任务可能永远不能执行**。
+
+​	执行时间不同的任务可以交给不同规模的线程池来处理，或者可以使用优先级队列，让执行时间短的任务先执行。
+
+​	**依赖数据库连接池的任务，因为线程提交SQL后需要等待数据库返回结果，等待的时间越长，则CPU空闲时间就越长，那么线程数应该设置得越大，这样才能更好地利用CPU**。
+
+​	**建议使用有界队列**。有界队列能增加系统的稳定性和预警能力，可以根据需要设大一点儿，比如几千。有一次，我们系统里后台任务线程池的队列和线程池全满了，不断抛出抛弃任务的异常，通过排查发现是数据库出现了问题，导致执行SQL变得非常缓慢，因为后台任务线程池里的任务全是需要向数据库查询和插入数据的，所以导致线程池里的工作线程全部阻塞，任务积压在线程池里。如果当时我们设置成无界队列，那么线程池的队列就会越来越多，有可能会撑满内存，导致整个系统不可用，而不只是后台任务出现问题。当然，我们的系统所有的任务是用单独的服务器部署的，我们使用不同规模的线程池完成不同类型的任务，但是出现这样问题时也会影响到其他任务。
+
+### 9.2.5 线程池的监控
+
+​	如果在系统中大量使用线程池，则有必要对线程池进行监控，方便在出现问题时，可以根据线程池的使用状况快速定位问题。可以通过线程池提供的参数进行监控，在监控线程池的时候可以使用以下属性。
+
++ taskCount：线程池需要执行的任务数量。
++ completedTaskCount：线程池在运行过程中已完成的任务数量，小于或等于taskCount。
++ **largestPoolSize：线程池里曾经创建过的最大线程数量。通过这个数据可以知道线程池是否曾经满过。如该数值等于线程池的最大大小，则表示线程池曾经满过。**
++ **getPoolSize：线程池的线程数量。如果线程池不销毁的话，线程池里的线程不会自动销毁，所以这个大小只增不减。**
++ getActiveCount：获取活动的线程数。
+
+​	<u>通过扩展线程池进行监控。可以通过继承线程池来自定义线程池，重写线程池的beforeExecute、afterExecute和terminated方法，也可以在任务执行前、执行后和线程池关闭前执行一些代码来进行监控。例如，监控任务的平均执行时间、最大执行时间和最小执行时间等。这几个方法在线程池里是空方法。</u>
+
+```java
+protected void beforeExecute(Thread t, Runnable r) { }
+```
+
+> [解决Java线程池任务执行完毕后线程回收问题](https://www.cnblogs.com/pengineer/p/5011965.html)
+
+## 9.3 本章小结
+
+​	在工作中我经常发现，很多人因为不了解线程池的实现原理，把线程池配置错误，从而导致了各种问题。本章介绍了为什么要使用线程池、如何使用线程池和线程池的使用原理，相信阅读完本章之后，读者能更准确、更有效地使用线程池。
+
 # 第10章 Executor框架
+
+​	在Java中，使用线程来异步执行任务。Java线程的创建与销毁需要一定的开销，如果我们为每一个任务创建一个新线程来执行，这些线程的创建与销毁将消耗大量的计算资源。同时，为每一个任务创建一个新线程来执行，这种策略可能会使处于高负荷状态的应用最终崩溃。Java的线程既是工作单元，也是执行机制。从JDK 5开始，把工作单元与执行机制分离开来。工作单元包括Runnable和Callable，而执行机制由Executor框架提供。
 
 # 第11章 Java并发编程实战
 
