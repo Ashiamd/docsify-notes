@@ -1298,3 +1298,12 @@ See [Plugin management](https://www.elastic.co/guide/en/elasticsearch/plugins/7.
 
 ## 6.1 Analysis
 
+The index analysis module acts as a configurable registry of *analyzers* that can be used in order to convert a string field into individual terms which are:
+
+- added to the inverted index in order to make the document searchable
+- used by high level queries such as the [`match` query](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-match-query.html) to generate search terms.
+
+See [Text analysis](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis.html) for configuration details.
+
+## 6.2 Index Shard Allocation
+
