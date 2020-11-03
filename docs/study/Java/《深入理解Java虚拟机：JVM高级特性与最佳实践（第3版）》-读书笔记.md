@@ -483,3 +483,840 @@ OpenJDK 64-Bit Server VM (build 12-internal+0-adhoc.icyfenix.jdk12, mixed mode)
 
 ### 2.3.1 对象的创建
 
+​	Java是一门面向对象的编程语言，Java程序运行过程中无时无刻都有对象被创建出来。在语言层面上，创建对象通常（例外：复制、反序列化）仅仅是一个new关键字而已，而在虚拟机中，对象（文中讨论的对象限于普通Java对象，不包括数组和Class对象等）的创建又是怎样一个过程呢？
+
+​	**当Java虚拟机遇到一条字节码new指令时，首先将去检查这个指令的参数是否能在常量池中定位到一个类的符号引用，并且检查这个符号引用代表的类是否已被加载、解析和初始化过**。如果没有，那必须先执行相应的类加载过程，本书第7章将探讨这部分细节。
+
+​	**在类加载检查通过后，接下来虚拟机将为新生对象分配内存。对象所需内存的大小在类加载完成后便可完全确定**（如何确定将在2.3.2节中介绍），为对象分配空间的任务实际上便等同于把一块确定大小的内存块从Java堆中划分出来。
+
++ <u>假设Java堆中内存是绝对规整的</u>，所有被使用过的内存都被放在一边，空闲的内存被放在另一边，中间放着一个指针作为分界点的指示器，那所分配内存就仅仅是把那个指针向空闲空间方向挪动一段与对象大小相等的距离，这种分配方式称为**“指针碰撞”（Bump ThePointer）**。
++ <u>但如果Java堆中的内存并不是规整的</u>，已被使用的内存和空闲的内存相互交错在一起，那就没有办法简单地进行指针碰撞了，虚拟机就必须维护一个列表，记录上哪些内存块是可用的，在分配的时候从列表中找到一块足够大的空间划分给对象实例，并更新列表上的记录，这种分配方式称为**“空闲列表”（Free List）**。
+
+​	**选择哪种分配方式由Java堆是否规整决定，而Java堆是否规整又由所采用的垃圾收集器是否带有空间压缩整理（Compact）的能力决定**。因此，<u>当使用Serial、ParNew等带压缩整理过程的收集器时，系统采用的分配算法是指针碰撞，既简单又高效；而当使用CMS这种基于清除（Sweep）算法的收集器时，理论上[^24]就只能采用较为复杂的空闲列表来分配内存</u>。
+
+​	除如何划分可用空间之外，还有另外一个需要考虑的问题：<u>对象创建在虚拟机中是非常频繁的行为，即使仅仅修改一个指针所指向的位置，在并发情况下也并不是线程安全的，可能出现正在给对象A分配内存，指针还没来得及修改，对象B又同时使用了原来的指针来分配内存的情况</u>。解决这个问题有两种可选方案：
+
++ 一种是对分配内存空间的动作进行同步处理——实际上虚拟机是采用CAS配上失败重试的方式保证更新操作的原子性；
++ **另外一种是把内存分配的动作按照线程划分在不同的空间之中进行，即每个线程在Java堆中预先分配一小块内存，称为本地线程分配缓冲（Thread Local AllocationBuffer，TLAB），哪个线程要分配内存，就在哪个线程的本地缓冲区中分配，只有本地缓冲区用完了，分配新的缓存区时才需要同步锁定。虚拟机是否使用TLAB，可以通过-XX：+/-UseTLAB参数来设定(jdk8和11都是默认是开启的)**。
+
+​	**内存分配完成之后，虚拟机必须将分配到的内存空间（但不包括对象头）都初始化为零值，如果使用了TLAB的话，这一项工作也可以提前至TLAB分配时顺便进行。这步操作保证了对象的实例字段在Java代码中可以不赋初始值就直接使用，使程序能访问到这些字段的数据类型所对应的零值**。
+
+​	<u>接下来，Java虚拟机还要对对象进行必要的设置，例如这个对象是哪个类的实例、如何才能找到类的元数据信息、对象的哈希码（**实际上对象的哈希码会延后到真正调用Object::hashCode()方法时才计算**）、对象的GC分代年龄等信息。**这些信息存放在对象的对象头（Object Header）之中**。根据虚拟机当前运行状态的不同，如是否启用偏向锁等，对象头会有不同的设置方式。关于对象头的具体内容，稍后会详细介绍。</u>
+
+​	在上面工作都完成之后，从虚拟机的视角来看，一个新的对象已经产生了。但是从Java程序的视角看来，对象创建才刚刚开始——构造函数，即Class文件中的\<init>()方法还没有执行，所有的字段都为默认的零值，对象需要的其他资源和状态信息也还没有按照预定的意图构造好。一般来说（由字节码流中new指令后面是否跟随**invokespecial指令**所决定，Java编译器会在遇到new关键字的地方同时生成这两条字节码指令，但如果直接通过其他方式产生的则不一定如此）**，new指令之后会接着执行\<init>()方法，按照程序员的意愿对对象进行初始化，这样一个真正可用的对象才算完全被构造出来**。
+
+​	下面代码清单2-1是HotSpot虚拟机字节码解释器（bytecodeInterpreter.cpp）中的代码片段。这个解释器实现很少有机会实际使用，大部分平台上都使用模板解释器；当代码通过即时编译器执行时差异就更大了。不过这段代码（以及笔者添加的注释）用于了解HotSpot的运作过程是没有什么问题的。
+
+​	代码清单2-1　HotSpot解释器代码片段
+
+```cpp
+// 确保常量池中存放的是已解释的类
+if (!constants->tag_at(index).is_unresolved_klass()) {
+  // 断言确保是klassOop和instanceKlassOop（这部分下一节介绍）
+  oop entry = (klassOop) *constants->obj_at_addr(index);
+  assert(entry->is_klass(), "Should be resolved klass");
+  klassOop k_entry = (klassOop) entry;
+  assert(k_entry->klass_part()->oop_is_instance(), "Should be instanceKlass");
+  instanceKlass* ik = (instanceKlass*) k_entry->klass_part();
+  // 确保对象所属类型已经经过初始化阶段
+  if ( ik->is_initialized() && ik->can_be_fastpath_allocated() ) {
+    // 取对象长度
+    size_t obj_size = ik->size_helper();
+    oop result = NULL;
+    // 记录是否需要将对象所有字段置零值
+    bool need_zero = !ZeroTLAB;
+    // 是否在TLAB中分配对象
+    if (UseTLAB) {
+      result = (oop) THREAD->tlab().allocate(obj_size);
+    }
+    if (result == NULL) {
+      need_zero = true;
+      // 直接在eden中分配对象
+      retry:
+      HeapWord* compare_to = *Universe::heap()->top_addr();
+      HeapWord* new_top = compare_to + obj_size;
+      // cmpxchg是x86中的CAS指令，这里是一个C++方法，通过CAS方式分配空间，并发失败的
+      // 话，转到retry中重试直至成功分配为止
+      if (new_top <= *Universe::heap()->end_addr()) {
+        if (Atomic::cmpxchg_ptr(new_top, Universe::heap()->top_addr(), compare_to) != compare_to) {
+          goto retry;
+        }
+        result = (oop) compare_to;
+      }
+    }
+    if (result != NULL) {
+      // 如果需要，为对象初始化零值
+      if (need_zero ) {
+        HeapWord* to_zero = (HeapWord*) result + sizeof(oopDesc) / oopSize;
+        obj_size -= sizeof(oopDesc) / oopSize;
+        if (obj_size > 0 ) {
+          memset(to_zero, 0, obj_size * HeapWordSize);
+        }
+      }
+      // 根据是否启用偏向锁，设置对象头信息
+      if (UseBiasedLocking) {
+        result->set_mark(ik->prototype_header());
+      } else {
+        result->set_mark(markOopDesc::prototype());
+      }
+      result->set_klass_gap(0);
+      result->set_klass(k_entry);
+      // 将对象引用入栈，继续执行下一条指令
+      SET_STACK_OBJECT(result, 0);
+      UPDATE_PC_AND_TOS_AND_CONTINUE(3, 1);
+    }
+  }
+}
+```
+
+[^24]:强调“理论上”是因为在CMS的实现里面，为了能在多数情况下分配得更快，设计了一个叫作Linear Allocation Buffer的分配缓冲区，通过空闲列表拿到一大块分配缓冲区之后，在它里面仍然可以使用指针碰撞方式来分配。
+
+### 2.3.2 对象的内存布局
+
+​	**在HotSpot虚拟机里，对象在堆内存中的存储布局可以划分为三个部分：对象头（Header）、实例数据（Instance Data）和对齐填充（Padding）**。
+
+​	HotSpot虚拟机对象的对象头部分包括两类信息。
+
+​	**第一类是用于存储对象自身的运行时数据，如哈希码（HashCode）、GC分代年龄、锁状态标志、线程持有的锁、偏向线程ID、偏向时间戳等，这部分数据的长度在32位和64位的虚拟机（未开启压缩指针）中分别为32个比特和64个比特，官方称它为“Mark Word”**。对象需要存储的运行时数据很多，其实已经超出了32、64位Bitmap结构所能记录的最大限度，但对象头里的信息是与对象自身定义的数据无关的额外存储成本，考虑到虚拟机的空间效率，Mark Word被设计成一个有着动态定义的数据结构，以便在极小的空间内存储尽量多的数据，根据对象的状态复用自己的存储空间。例如在32位的HotSpot虚拟机中，如对象未被同步锁锁定的状态下，Mark Word的32个比特存储空间中的25个比特用于存储对象哈希码，4个比特用于存储对象分代年龄，2个比特用于存储锁标志位，1个比特固定为0，在其他状态（轻量级锁定、重量级锁定、GC标记、可偏向）[^25]下对象的存储内容如下表所示。
+
+| 存储内容                             | 标识位 | 状态             |
+| ------------------------------------ | ------ | ---------------- |
+| 对象哈希码、对象分代年龄             | 01     | 未锁定           |
+| 指向锁记录的指针                     | 00     | 轻量级锁定       |
+| 指向重量级锁的指针                   | 10     | 膨胀(重量级锁定) |
+| 空，不需要记录信息                   | 11     | GC标记           |
+| 偏向线程ID、偏向时间戳、对象分代年龄 | 01     | 可偏向           |
+
+​	**对象头的另外一部分是类型指针，即对象指向它的类型元数据的指针，Java虚拟机通过这个指针来确定该对象是哪个类的实例**。<u>并不是所有的虚拟机实现都必须在对象数据上保留类型指针，换句话说，查找对象的元数据信息并不一定要经过对象本身</u>，这点我们会在下一节具体讨论。**此外，如果对象是一个Java数组，那在对象头中还必须有一块用于记录数组长度的数据，因为虚拟机可以通过普通Java对象的元数据信息确定Java对象的大小，但是如果数组的长度是不确定的，将无法通过元数据中的信息推断出数组的大小**。
+
+​	代码清单2-2为HotSpot虚拟机代表Mark Word中的代码（markOop.cpp）注释片段，它描述了32位虚拟机Mark Word的存储布局：
+
+​	代码清单2-2　markOop.cpp片段
+
+```cpp
+// Bit-format of an object header (most significant first, big endian layout below):
+//
+// 32 bits:
+// --------
+// hash:25 ------------>| age:4 biased_lock:1 lock:2 (normal object)
+// JavaThread*:23 epoch:2 age:4 biased_lock:1 lock:2 (biased object)
+// size:32 ------------------------------------------>| (CMS free block)
+// PromotedObject*:29 ---------->| promo_bits:3 ----->| (CMS promoted object)
+```
+
+​	接下来实例数据部分是对象真正存储的有效信息，即我们在程序代码里面所定义的各种类型的字段内容，**无论是从父类继承下来的，还是在子类中定义的字段都必须记录起来**。这部分的存储顺序会受到虚拟机分配策略参数（-XX：FieldsAllocationStyle参数）和字段在Java源码中定义顺序的影响。**HotSpot虚拟机默认的分配顺序为longs/doubles、ints、shorts/chars、bytes/booleans、oops（OrdinaryObject Pointers，OOPs），从以上默认的分配策略中可以看到，相同宽度的字段总是被分配到一起存放，在满足这个前提条件的情况下，在父类中定义的变量会出现在子类之前**。如果HotSpot虚拟机的+XX：CompactFields参数值为true（默认就为true），那子类之中较窄的变量也允许插入父类变量的空隙之中，以节省出一点点空间。
+
+​	**对象的第三部分是对齐填充，这并不是必然存在的，也没有特别的含义，它仅仅起着占位符的作用。由于HotSpot虚拟机的自动内存管理系统要求对象起始地址必须是8字节的整数倍，换句话说就是任何对象的大小都必须是8字节的整数倍。对象头部分已经被精心设计成正好是8字节的倍数（1倍或者2倍），因此，如果对象实例数据部分没有对齐的话，就需要通过对齐填充来补全。**
+
+[^25]:关于轻量级锁、重量级锁等信息，可参见本书第13章的相关内容。
+
+### 2.3.3 对象的访问定位
+
+> [《深入理解Java虚拟机》——Java内存区域与内存溢出异常学习总结](https://blog.csdn.net/android_jiangjun/article/details/78052858)
+
+​	创建对象自然是为了后续使用该对象，我们的Java程序会通过栈上的reference数据来操作堆上的具体对象。<u>由于reference类型在《Java虚拟机规范》里面只规定了它是一个指向对象的引用，并没有定义这个引用应该通过什么方式去定位、访问到堆中对象的具体位置，所以对象访问方式也是由虚拟机实现而定的</u>，**主流的访问方式主要有使用句柄和直接指针两种**：
+
++ 如果使用**句柄**访问的话，Java堆中将可能会划分出一块内存来作为句柄池，reference中存储的就是对象的句柄地址，而句柄中包含了对象实例数据与类型数据各自具体的地址信息，其结构如图2-2所示。
++ 如果使用**直接指针**访问的话，Java堆中对象的内存布局就必须考虑如何放置访问类型数据的相关信息，reference中存储的直接就是对象地址，如果只是访问对象本身的话，就不需要多一次间接访问的开销，如图2-3所示。
+
+![img](https://img-blog.csdn.net/20170922160201748?watermark/2/text/aHR0cDovL2Jsb2cuY3Nkbi5uZXQvYW5kcm9pZF9qaWFuZ2p1bg==/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70/gravity/Center)
+
+![img](https://img-blog.csdn.net/20170922160218514?watermark/2/text/aHR0cDovL2Jsb2cuY3Nkbi5uZXQvYW5kcm9pZF9qaWFuZ2p1bg==/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70/gravity/Center)
+
+​	这两种对象访问方式各有优势，**使用句柄来访问的最大好处就是reference中存储的是稳定句柄地址，在对象被移动（垃圾收集时移动对象是非常普遍的行为）时只会改变句柄中的实例数据指针，而reference本身不需要被修改**。
+
+​	**使用直接指针来访问最大的好处就是速度更快，它节省了一次指针定位的时间开销，由于对象访问在Java中非常频繁，因此这类开销积少成多也是一项极为可观的执行成本，就本书讨论的主要虚拟机HotSpot而言，它主要使用第二种方式进行对象访问**（有例外情况，如果使用了Shenandoah收集器的话也会有一次额外的转发，具体可参见第3章），**<u>但从整个软件开发的范围来看，在各种语言、框架中使用句柄来访问的情况也十分常见</u>**。
+
+## 2.4 实战：OutOfMemoryError异常
+
+​	**在《Java虚拟机规范》的规定里，除了程序计数器外，虚拟机内存的其他几个运行时区域都有发生OutOfMemoryError（下文称OOM）异常的可能**，本节将通过若干实例来验证异常实际发生的代码场景（代码清单2-3～2-9），并且将初步介绍若干最基本的与自动内存管理子系统相关的HotSpot虚拟机参数。
+
+​	本节实战的目的有两个：
+
++ 第一，通过代码验证《Java虚拟机规范》中描述的各个运行时区域储存的内容；
++ 第二，希望读者在工作中遇到实际的内存溢出异常时，能根据异常的提示信息迅速得知是哪个区域的内存溢出，知道怎样的代码可能会导致这些区域内存溢出，以及出现这些异常后该如何处理。
+
+​	本节代码清单开头都注释了执行时需要设置的虚拟机启动参数（注释中“VM Args”后面跟着的参数），这些参数对实验的结果有直接影响，请读者调试代码的时候不要忽略掉。如果读者使用控制台命令来执行程序，那直接跟在Java命令之后书写就可以。如果读者使用Eclipse，则可以在Debug/Run页签中的设置，其他IDE工具均有类似的设置。
+
+​	本节所列的代码均由笔者在基于OpenJDK 7中的HotSpot虚拟机上进行过实际测试，如无特殊说明，对其他OpenJDK版本也应当适用。不过读者需意识到**内存溢出异常与虚拟机本身的实现细节密切相关，并非全是Java语言中约定的公共行为**。因此，不同发行商、不同版本的Java虚拟机，其需要的参数和程序运行的结果都很可能会有所差别。
+
+### 2.4.1 Java堆溢出
+
+> [JVM优化之 -Xss -Xms -Xmx -Xmn 参数设置](https://www.cnblogs.com/leeego-123/p/11572786.html)
+>
+> [JVM参数-XX:+HeapDumpOnOutOfMemoryError使用方法](https://blog.csdn.net/lusa1314/article/details/84134458)
+>
+> - **-Xms**:初始堆大小
+> - **-Xmx**:最大堆大小
+> - **-XX:+HeapDumpOnOutOfMemoryError 当JVM发生OOM时，自动生成DUMP文件**
+
+​	Java堆用于储存对象实例，我们只要不断地创建对象，并且<u>保证GC Roots到对象之间有可达路径来避免垃圾回收机制清除这些对象</u>，那么随着对象数量的增加，总容量触及最大堆的容量限制后就会产生内存溢出异常。
+
+​	代码清单2-3中限制Java堆的大小为20MB，不可扩展（将堆的最小值-Xms参数与最大值-Xmx参数设置为一样即可避免堆自动扩展），通过参数-XX：+HeapDumpOnOutOf-MemoryError可以让虚拟机在出现内存溢出异常的时候Dump出当前的内存堆转储快照以便进行事后分析[^26]。
+
+​	代码清单2-3　Java堆内存溢出异常测试
+
+```java
+/**
+* VM Args：-Xms20m -Xmx20m -XX:+HeapDumpOnOutOfMemoryError
+* @author zzm
+*/
+public class HeapOOM {
+  static class OOMObject {
+  }
+  public static void main(String[] args) {
+    List<OOMObject> list = new ArrayList<OOMObject>();
+    while (true) {
+      list.add(new OOMObject());
+    }
+  }
+}
+```
+
+运行结果：
+
+```java
+Connected to the target VM, address: '127.0.0.1:49934', transport: 'socket'
+java.lang.OutOfMemoryError: Java heap space
+Dumping heap to java_pid66834.hprof ...
+Heap dump file created [12939652 bytes in 0.048 secs]
+Exception in thread "main" java.lang.OutOfMemoryError: Java heap space
+	at java.util.Arrays.copyOf(Arrays.java:3210)
+	at java.util.Arrays.copyOf(Arrays.java:3181)
+	at java.util.ArrayList.grow(ArrayList.java:267)
+	at java.util.ArrayList.ensureExplicitCapacity(ArrayList.java:241)
+	at java.util.ArrayList.ensureCapacityInternal(ArrayList.java:233)
+	at java.util.ArrayList.add(ArrayList.java:464)
+	at oom.HeapOOM.main(HeapOOM.java:16)
+Disconnected from the target VM, address: '127.0.0.1:49934', transport: 'socket'
+```
+
+​	**Java堆内存的OutOfMemoryError异常是实际应用中最常见的内存溢出异常情况**。出现Java堆内存溢出时，异常堆栈信息“java.lang.OutOfMemoryError”会跟随进一步提示“Java heap space”。
+
+​	要解决这个内存区域的异常，常规的处理方法是首先通过内存映像分析工具（如Eclipse MemoryAnalyzer）对Dump出来的堆转储快照进行分析。第一步首先应确认内存中导致OOM的对象是否是必要的，也就是要先分清楚到底是出现了**内存泄漏（Memory Leak）**还是**内存溢出（Memory Overflow）**。（可使用Eclipse Memory Analyzer打开的堆转储快照文件。)
+
+​	<u>如果是内存泄漏，可进一步通过工具查看泄漏对象到GC Roots的引用链，找到泄漏对象是通过怎样的引用路径、与哪些GC Roots相关联，才导致垃圾收集器无法回收它们，根据泄漏对象的类型信息以及它到GC Roots引用链的信息，一般可以比较准确地定位到这些对象创建的位置，进而找出产生内存泄漏的代码的具体位置</u>。
+
+​	**如果不是内存泄漏，换句话说就是内存中的对象确实都是必须存活的，那就应当检查Java虚拟机的堆参数（-Xmx与-Xms）设置，与机器的内存对比，看看是否还有向上调整的空间**。再从代码上**检查是否存在某些对象生命周期过长、持有状态时间过长、存储结构设计不合理等情况，尽量减少程序运行期的内存消耗**。
+
+​	以上是处理Java堆内存问题的简略思路，处理这些问题所需要的知识、工具与经验是后面三章的主题，后面我们将会针对具体的虚拟机实现、具体的垃圾收集器和具体的案例来进行分析，这里就先暂不展开。
+
+[^26]:关于堆转储快照文件分析方面的内容，可参见第4章。
+
+### 2.4.2 虚拟机栈和本地方法栈溢出
+
+> Java -X
+>
+> **-Xss<大小> 设置 Java 线程堆栈大小**
+>
+> (下面提到的 -Xoss参数，甚至java -X都没显示)
+
+​	**由于HotSpot虚拟机中并不区分虚拟机栈和本地方法栈，因此对于HotSpot来说，-Xoss参数（设置本地方法栈大小）虽然存在，但实际上是没有任何效果的，栈容量只能由-Xss参数来设定**。关于虚拟机栈和本地方法栈，在《Java虚拟机规范》中描述了两种异常：
+
++ **如果线程请求的栈深度大于虚拟机所允许的最大深度，将抛出StackOverflowError异常**。
++ **如果虚拟机的栈内存允许动态扩展，当扩展栈容量无法申请到足够的内存时，将抛出OutOfMemoryError异常**。
+
+​	<u>《Java虚拟机规范》明确允许Java虚拟机实现自行选择是否支持栈的动态扩展</u>，而**HotSpot虚拟机的选择是不支持扩展**，所以**除非在创建线程申请内存时就因无法获得足够内存而出现OutOfMemoryError异常，否则在线程运行时是不会因为扩展而导致内存溢出的，只会因为栈容量无法容纳新的栈帧而导致StackOverflowError异常**。
+
+​	为了验证这点，我们可以做两个实验，先将实验范围限制在单线程中操作，尝试下面两种行为是否能让HotSpot虚拟机产生OutOfMemoryError异常：
+
++ 使用-Xss参数减少栈内存容量。
+
+  结果：抛出StackOverflowError异常，异常出现时输出的堆栈深度相应缩小。
+
++ 定义了大量的本地变量，增大此方法帧中本地变量表的长度。
+
+  结果：抛出StackOverflowError异常，异常出现时输出的堆栈深度相应缩小。
+
+​	首先，对第一种情况进行测试，具体如代码清单2-4所示。
+
+​	代码清单2-4　虚拟机栈和本地方法栈测试（作为第1点测试程序）
+
+```java
+/**
+* VM Args：-Xss128k
+* @author zzm
+*/
+public class JavaVMStackSOF {
+  private int stackLength = 1;
+  public void stackLeak() {
+    stackLength++;
+    stackLeak();
+  }
+  public static void main(String[] args) throws Throwable {
+    JavaVMStackSOF oom = new JavaVMStackSOF();
+    try {
+      oom.stackLeak();
+    } catch (Throwable e) {
+      System.out.println("stack length:" + oom.stackLength);
+      throw e;
+    }
+  }
+}
+```
+
+运行结果如下：
+
+```none
+//使用的虚拟机参数(VM options)： -Xss5M
+Connected to the target VM, address: '127.0.0.1:51133', transport: 'socket'
+stack length:105799
+Exception in thread "main" java.lang.StackOverflowError
+	at oom.JavaVMStackSOF.stackLeak(JavaVMStackSOF.java:15)
+	at oom.JavaVMStackSOF.stackLeak(JavaVMStackSOF.java:15)
+	at oom.JavaVMStackSOF.stackLeak(JavaVMStackSOF.java:15)
+	at oom.JavaVMStackSOF.stackLeak(JavaVMStackSOF.java:15)
+	at oom.JavaVMStackSOF.stackLeak(JavaVMStackSOF.java:15)
+// .....
+```
+
+​	对于不同版本的Java虚拟机和不同的操作系统，栈容量最小值可能会有所限制，这主要取决于操作系统内存分页大小。譬如上述方法中的参数-Xss128k可以正常用于32位Windows系统下的JDK 6，但是如果用于64位Windows系统下的JDK 11，则会提示栈容量最小不能低于180K，而在Linux下这个值则可能是228K，如果低于这个最小限制，HotSpot虚拟器启动时会给出如下提示：
+
+```none
+The Java thread stack size specified is too small. Specify at least 228k
+
+// 64 macos （我自己的测试环境）
+The stack size specified is too small, Specify at least 160k
+Error: Could not create the Java Virtual Machine.
+Error: A fatal exception has occurred. Program will exit.
+```
+
+​	我们继续验证第二种情况，这次代码就显得有些“丑陋”了，为了多占局部变量表空间，笔者不得不定义一长串变量，具体如代码清单2-5所示。
+
+​	代码清单2-5　虚拟机栈和本地方法栈测试（作为第2点测试程序）
+
+```java
+/**
+* @author zzm
+*/
+public class JavaVMStackSOF {
+  private static int stackLength = 0;
+  public static void test() {
+    long unused1, unused2, unused3, unused4, unused5,
+    unused6, unused7, unused8, unused9, unused10,
+    unused11, unused12, unused13, unused14, unused15,
+    unused16, unused17, unused18, unused19, unused20,
+    unused21, unused22, unused23, unused24, unused25,
+    unused26, unused27, unused28, unused29, unused30,
+    unused31, unused32, unused33, unused34, unused35,
+    unused36, unused37, unused38, unused39, unused40,
+    unused41, unused42, unused43, unused44, unused45,
+    unused46, unused47, unused48, unused49, unused50,
+    unused51, unused52, unused53, unused54, unused55,
+    unused56, unused57, unused58, unused59, unused60,
+    unused61, unused62, unused63, unused64, unused65,
+    unused66, unused67, unused68, unused69, unused70,
+    unused71, unused72, unused73, unused74, unused75,
+    unused76, unused77, unused78, unused79, unused80,
+    unused81, unused82, unused83, unused84, unused85,
+    unused86, unused87, unused88, unused89, unused90,
+    unused91, unused92, unused93, unused94, unused95,
+    unused96, unused97, unused98, unused99, unused100;
+    stackLength ++;
+    test();
+    unused1 = unused2 = unused3 = unused4 = unused5 =
+      unused6 = unused7 = unused8 = unused9 = unused10 =
+      unused11 = unused12 = unused13 = unused14 = unused15 =
+      unused16 = unused17 = unused18 = unused19 = unused20 =
+      unused21 = unused22 = unused23 = unused24 = unused25 =
+      unused26 = unused27 = unused28 = unused29 = unused30 =
+      unused31 = unused32 = unused33 = unused34 = unused35 =
+      unused36 = unused37 = unused38 = unused39 = unused40 =
+      unused41 = unused42 = unused43 = unused44 = unused45 =
+      unused46 = unused47 = unused48 = unused49 = unused50 =
+      unused51 = unused52 = unused53 = unused54 = unused55 =
+      unused56 = unused57 = unused58 = unused59 = unused60 =
+      unused61 = unused62 = unused63 = unused64 = unused65 =
+      unused66 = unused67 = unused68 = unused69 = unused70 =
+      unused71 = unused72 = unused73 = unused74 = unused75 =
+      unused76 = unused77 = unused78 = unused79 = unused80 =
+      unused81 = unused82 = unused83 = unused84 = unused85 =
+      unused86 = unused87 = unused88 = unused89 = unused90 =
+      unused91 = unused92 = unused93 = unused94 = unused95 =
+      unused96 = unused97 = unused98 = unused99 = unused100 = 0;
+  }
+  public static void main(String[] args) {
+    try {
+      test();
+    }catch (Error e){
+      System.out.println("stack length:" + stackLength);
+      throw e;
+    }
+  }
+}
+```
+
+运行结果：
+
+```none
+// VM options: -Xss5M
+Connected to the target VM, address: '127.0.0.1:51317', transport: 'socket'
+stack length:206852
+Exception in thread "main" java.lang.StackOverflowError
+	at oom.JavaVMStackSOF.test(JavaVMStackSOF.java:60)
+	at oom.JavaVMStackSOF.test(JavaVMStackSOF.java:60)
+	at oom.JavaVMStackSOF.test(JavaVMStackSOF.java:60)
+//.... 
+```
+
+​	实验结果表明：**无论是由于栈帧太大还是虚拟机栈容量太小，当新的栈帧内存无法分配的时候，HotSpot虚拟机抛出的都是StackOverflowError异常**。可是如果在允许动态扩展栈容量大小的虚拟机上，相同代码则会导致不一样的情况。譬如远古时代的Classic虚拟机，这款虚拟机可以支持动态扩展栈内存的容量，在Windows上的JDK 1.0.2运行代码清单2-5的话（如果这时候要调整栈容量就应该改用-oss参数了），得到的结果是：
+
+```none
+stack length:3716
+java.lang.OutOfMemoryError
+at org.fenixsoft.oom. JavaVMStackSOF.leak(JavaVMStackSOF.java:27)
+at org.fenixsoft.oom. JavaVMStackSOF.leak(JavaVMStackSOF.java:28)
+at org.fenixsoft.oom. JavaVMStackSOF.leak(JavaVMStackSOF.java:28)
+……后续异常堆栈信息省略
+```
+
+​	可见相同的代码在Classic虚拟机中成功产生了OutOfMemoryError而不是StackOver-flowError异常。**如果测试时不限于单线程，通过不断建立线程的方式，在HotSpot上也是可以产生内存溢出异常的**，具体如代码清单2-6所示。但是这样产生的内存溢出异常和栈空间是否足够并不存在任何直接的关系，主要取决于操作系统本身的内存使用状态。甚至可以说，在这种情况下，**给每个线程的栈分配的内存越大，反而越容易产生内存溢出异常**。
+
+​	原因其实不难理解，操作系统分配给每个进程的内存是有限制的，譬如32位Windows的单个进程最大内存限制为2GB。HotSpot虚拟机提供了参数可以控制Java堆和方法区这两部分的内存的最大值，那剩余的内存即为2GB（操作系统限制）减去最大堆容量，再减去最大方法区容量，由于<u>程序计数器消耗内存很小，可以忽略掉</u>，如果把直接内存和虚拟机进程本身耗费的内存也去掉的话，剩下的内存就由虚拟机栈和本地方法栈来分配了。**因此为每个线程分配到的栈内存越大，可以建立的线程数量自然就越少，建立线程时就越容易把剩下的内存耗尽**，代码清单2-6演示了这种情况。
+
+​	代码清单2-6　创建线程导致内存溢出异常
+
+```java
+/**
+* VM Args：-Xss2M （这时候不妨设大些，请在32位系统下运行）
+* @author zzm
+*/
+public class JavaVMStackOOM {
+  private void dontStop() {
+    while (true) {
+    }
+  }
+  public void stackLeakByThread() {
+    while (true) {
+      Thread thread = new Thread(new Runnable() {
+        @Override
+        public void run() {
+          dontStop();
+        }
+      });
+      thread.start();
+    }
+  }
+  public static void main(String[] args) throws Throwable {
+    JavaVMStackOOM oom = new JavaVMStackOOM();
+    oom.stackLeakByThread();
+  }
+}
+```
+
+​	注意：重点提示一下，如果读者要尝试运行上面这段代码，记得要先保存当前的工作，由于在Windows平台的虚拟机中，Java的线程是映射到操作系统的内核线程上[^27]，无限制地创建线程会对操作系统带来很大压力，上述代码执行时有很高的风险，可能会由于创建线程数量过多而导致操作系统假死。
+
+​	在32位操作系统下的运行结果：(这个我本地电脑飙到90度了还没跑完，就干脆kill进程了。)
+
+```none
+Exception in thread "main" java.lang.OutOfMemoryError: unable to create native thread
+```
+
+​	出现StackOverflowError异常时，会有明确错误堆栈可供分析，相对而言比较容易定位到问题所在。如果使用HotSpot虚拟机默认参数，栈深度在大多数情况下（因为每个方法压入栈的帧大小并不是一样的，所以只能说大多数情况下）到达1000~2000是完全没有问题，对于正常的方法调用（包括不能做尾递归优化的递归调用），这个深度应该完全够用了。但是，**如果是建立过多线程导致的内存溢出，在不能减少线程数量或者更换64位虚拟机的情况下，就只能通过减少最大堆和减少栈容量来换取更多的线程**。<u>这种通过“减少内存”的手段来解决内存溢出的方式，如果没有这方面处理经验，一般比较难以想到，这一点读者需要在开发32位系统的多线程应用时注意</u>。也是由于这种问题较为隐蔽，从JDK 7起，以上提示信息中“unable to create native thread”后面，虚拟机会特别注明原因可能是“possibly out of memory or process/resource limits reached”。
+
+[^27]:关于虚拟机线程实现方面的内容可以参考本书第12章。
+
+### 2.4.3 方法区和运行时常量池溢出
+
+> [Gitee 极速下载 / cglib](https://gitee.com/mirrors/cglib?_from=gitee_search)
+>
+> [What is CGLIB in Spring Framework?](https://stackoverflow.com/questions/38089200/what-is-cglib-in-spring-framework)
+
+​	**由于运行时常量池是方法区的一部分，所以这两个区域的溢出测试可以放到一起进行**。前面曾经提到**HotSpot从JDK 7开始逐步“去永久代”的计划，并在JDK 8中完全使用元空间来代替永久代**的背景故事，在此我们就以测试代码来观察一下，使用“永久代”还是“元空间”来实现方法区，对程序有什么实际的影响。
+
+​	**`String::intern()`是一个本地方法，它的作用是如果字符串常量池中已经包含一个等于此String对象的字符串，则返回代表池中这个字符串的String对象的引用；否则，会将此String对象包含的字符串添加到常量池中，并且返回此String对象的引用**。
+
+​	在JDK 6或更早之前的HotSpot虚拟机中，常量池都是分配在永久代中，我们可以通过-XX：PermSize和-XX：MaxPermSize限制永久代的大小，即可间接限制其中常量池的容量，具体实现如代码清单2-7所示，请读者测试时首先以JDK 6来运行代码。
+
+​	代码清单2-7　运行时常量池导致的内存溢出异常
+
+```java
+/**
+* VM Args：-XX:PermSize=6M -XX:MaxPermSize=6M
+* @author zzm
+*/
+public class RuntimeConstantPoolOOM {
+  public static void main(String[] args) {
+    // 使用Set保持着常量池引用，避免Full GC回收常量池行为
+    Set<String> set = new HashSet<String>();
+    // 在short范围内足以让6MB的PermSize产生OOM了
+    short i = 0;
+    while (true) {
+      set.add(String.valueOf(i++).intern());
+    }
+  }
+}
+```
+
+​	运行结果：
+
+```none
+Exception in thread "main" java.lang.OutOfMemoryError: PermGen space
+at java.lang.String.intern(Native Method)
+at org.fenixsoft.oom.RuntimeConstantPoolOOM.main(RuntimeConstantPoolOOM.java: 18)
+```
+
+​	从运行结果中可以看到，运行时常量池溢出时，在OutOfMemoryError异常后面跟随的提示信息是“PermGen space”，说明运行时常量池的确是属于方法区（即JDK 6的HotSpot虚拟机中的永久代）的一部分。
+
+​	而使用JDK 7或更高版本的JDK来运行这段程序并不会得到相同的结果，无论是在JDK 7中继续使用`-XX：MaxPermSize`参数或者在JDK 8及以上版本使用`-XX：MaxMetaspaceSize`参数把方法区容量同样限制在6MB，也都不会重现JDK 6中的溢出异常，循环将一直进行下去，永不停歇[^28]。出现这种变化，是因为**自JDK 7起，原本存放在永久代的字符串常量池被移至Java堆之中，所以在JDK 7及以上版本，限制方法区的容量对该测试用例来说是毫无意义的**。这时候使用`-Xmx`参数限制最大堆到6MB就能够看到以下两种运行结果之一，具体取决于哪里的对象分配时产生了溢出：
+
+```none
+// OOM异常一：
+Exception in thread "main" java.lang.OutOfMemoryError: Java heap space
+at java.base/java.lang.Integer.toString(Integer.java:440)
+at java.base/java.lang.String.valueOf(String.java:3058)
+at RuntimeConstantPoolOOM.main(RuntimeConstantPoolOOM.java:12)
+// OOM异常二：
+Exception in thread "main" java.lang.OutOfMemoryError: Java heap space
+at java.base/java.util.HashMap.resize(HashMap.java:699)
+at java.base/java.util.HashMap.putVal(HashMap.java:658)
+at java.base/java.util.HashMap.put(HashMap.java:607)
+at java.base/java.util.HashSet.add(HashSet.java:220)
+at RuntimeConstantPoolOOM.main(RuntimeConstantPoolOOM.java from InputFile-Object:14)
+```
+
+​	关于这个字符串常量池的实现在哪里出现问题，还可以引申出一些更有意思的影响，具体见代码清单2-8所示。
+
+​	代码清单2-8　String.intern()返回引用的测试
+
+```java
+public class RuntimeConstantPoolOOM {
+  public static void main(String[] args) {
+    String str1 = new StringBuilder("计算机").append("软件").toString();
+    System.out.println(str1.intern() == str1);
+    String str2 = new StringBuilder("ja").append("va").toString();
+    System.out.println(str2.intern() == str2);
+  }
+}
+```
+
+​	这段代码在JDK 6中运行，会得到两个false，而在JDK 7中运行，会得到一个true和一个false。产生差异的原因是，**在JDK 6中，intern()方法会把首次遇到的字符串实例复制到永久代的字符串常量池中存储，返回的也是永久代里面这个字符串实例的引用，而由StringBuilder创建的字符串对象实例在Java堆上，所以必然不可能是同一个引用，结果将返回false**。
+
+​	**而JDK 7（以及部分其他虚拟机，例如JRockit）的`intern()`方法实现就不需要再拷贝字符串的实例到永久代了，既然字符串常量池已经移到Java堆中，那只需要在常量池里记录一下首次出现的实例引用即可，因此`intern()`返回的引用和由StringBuilder创建的那个字符串实例就是同一个**。而对str2比较返回false，这是因为“java”[^29]这个字符串在执行`StringBuilder.toString()`之前就已经出现过了，字符串常量池中已经有它的引用，不符合`intern()`方法要求“首次遇到”的原则，“计算机软件”这个字符串则是首次出现的，因此结果返回true。
+
+​	我们再来看看方法区的其他部分的内容**，方法区的主要职责是用于存放类型的相关信息，如类名、访问修饰符、常量池、字段描述、方法描述等**。对于这部分区域的测试，基本的思路是运行时产生大量的类去填满方法区，直到溢出为止。虽然直接使用Java SE API也可以动态产生类（如反射时的GeneratedConstructorAccessor和动态代理等），但在本次实验中操作起来比较麻烦。在代码清单2-8里笔者借助了CGLib[^30]直接操作字节码运行时生成了大量的动态类。
+
+​	值得特别注意的是，我们在这个例子中模拟的场景并非纯粹是一个实验，类似这样的代码确实可能会出现在实际应用中：**当前的很多主流框架，如Spring、Hibernate对类进行增强时，都会使用到CGLib这类字节码技术，当增强的类越多，就需要越大的方法区以保证动态生成的新类型可以载入内存**。另外，<u>很多运行于Java虚拟机上的动态语言（例如Groovy等）通常都会持续创建新类型来支撑语言的动态性</u>，随着这类动态语言的流行，与代码清单2-9相似的溢出场景也越来越容易遇到。
+
+​	代码清单2-9　借助CGLib使得方法区出现内存溢出异常
+
+```java
+/**
+* VM Args：-XX:PermSize=10M -XX:MaxPermSize=10M
+* @author zzm
+*/
+public class JavaMethodAreaOOM {
+  public static void main(String[] args) {
+    while (true) {
+      Enhancer enhancer = new Enhancer();
+      enhancer.setSuperclass(OOMObject.class);
+      enhancer.setUseCache(false);
+      enhancer.setCallback(new MethodInterceptor() {
+        @Override
+        public Object intercept(Object obj, Method method, Object[] args, MethodProxy proxy) throws Throwable {
+          return proxy.invokeSuper(obj, args);
+        }
+      });
+      enhancer.create();
+    }
+  }
+
+  static class OOMObject {
+  }
+}
+```
+
+​	在**JDK 7**中的运行结果：
+
+```none
+Caused by: java.lang.OutOfMemoryError: PermGen space
+at java.lang.ClassLoader.defineClass1(Native Method)
+at java.lang.ClassLoader.defineClassCond(ClassLoader.java:632)
+at java.lang.ClassLoader.defineClass(ClassLoader.java:616)
+... 8 more
+```
+
+​	<u>方法区溢出也是一种常见的内存溢出异常，一个类如果要被垃圾收集器回收，要达成的条件是比较苛刻的。在经常运行时生成大量动态类的应用场景里，就应该特别关注这些类的回收状况</u>。<u>这类场景除了之前提到的程序使用了**CGLib字节码增强**和**动态语言**外，常见的还有：大量JSP或动态产生JSP文件的应用（JSP第一次运行时需要编译为Java类）、基于OSGi的应用（即使是同一个类文件，被不同的加载器加载也会视为不同的类）等</u>。
+
+​	**在JDK 8以后，永久代便完全退出了历史舞台，元空间作为其替代者登场**。在默认设置下，前面列举的那些正常的动态创建新类型的测试用例已经很难再迫使虚拟机产生方法区的溢出异常了。不过为了让使用者有预防实际应用里出现类似于代码清单2-9那样的破坏性的操作，HotSpot还是提供了一些参数作为元空间的防御措施，主要包括：
+
++ `-XX：MaxMetaspaceSize`：设置元空间最大值，默认是-1，即不限制，或者说只受限于本地内存大小。
+
+  *（我本地jdk8或者jdk11显示的都是18446744073709547520）*
+
++ **`-XX：MetaspaceSize`：指定元空间的初始空间大小，以字节为单位，达到该值就会触发垃圾收集进行类型卸载**，<u>同时收集器会对该值进行调整：如果释放了大量的空间，就适当降低该值；如果释放了很少的空间，那么在不超过-XX：MaxMetaspaceSize（如果设置了的话）的情况下，适当提高该值</u>。
+
+  *（我本地jdk8和jdk11都显示21807104，折合约20.7MB）*
+
++ `-XX：MinMetaspaceFreeRatio`：作用是在垃圾收集之后控制最小的元空间剩余容量的百分比，**可减少因为元空间不足导致的垃圾收集的频率**。类似的还有`-XX：MaxMetaspaceFreeRatio`，用于控制最大的元空间剩余容量的百分比。
+
+  *（我本地jdk8/11的MinMetaspaceFreeRatio都显示40；MaxMetaspaceFreeRatio显示70）*
+
+[^28]:正常情况下是永不停歇的，如果机器内存紧张到连几MB的Java堆都挤不出来的这种极端情况就不讨论了。
+[^29]:它是在加载sun.misc.Version这个类的时候进入常量池的。本书第2版并未解释java这个字符串此前是哪里出现的，所以被批评“挖坑不填了”（无奈地摊手）。如读者感兴趣是如何找出来的，可参考RednaxelaFX的知乎回答（https://www.zhihu.com/question/51102308/answer/124441115）。
+[^30]:CGLib开源项目：http://cglib.sourceforge.net/。
+
+### 2.4.4 本机直接内存溢出
+
+​	**直接内存（Direct Memory）的容量大小可通过`-XX：MaxDirectMemorySize`参数来指定*（我本地jdk8/11都是0）*，如果不去指定，则默认与Java堆最大值（由`-Xmx`指定）一致**。
+
+​	代码清单2-10越过了DirectByteBuffer类直接通过**反射**获取Unsafe实例进行内存分配（Unsafe类的`getUnsafe()`方法指定只有引导类加载器才会返回实例，体现了**设计者希望只有虚拟机标准类库里面的类才能使用Unsafe的功能**，在JDK 10时才将Unsafe的部分功能通过VarHandle开放给外部使用），因为虽然使**用DirectByteBuffer分配内存也会抛出内存溢出异常，但它抛出异常时并没有真正向操作系统申请分配内存，而是通过计算得知内存无法分配就会在代码里手动抛出溢出异常，真正申请分配内存的方法是`Unsafe::allocateMemory()`**。
+
+​	代码清单2-10　使用unsafe分配本机内存
+
+*（下面这个代码，我本地没法在设置了`-Xmx20M -XX:MaxDirectMemorySize=10M`时报错，硬是跑了上G才报错。还是由于heap先不够用了，才导致OOM，而非`-XX:MaxDirectMemorySize=10M`的功劳）*
+
+```java
+/**
+* VM Args：-Xmx20M -XX:MaxDirectMemorySize=10M
+* -XX:+HeapDumpOnOutOfMemoryError
+* @author zzm
+*/
+public class DirectMemoryOOM {
+  private static final int _1MB = 1024 * 1024;
+  public static void main(String[] args) throws Exception {
+    Field unsafeField = Unsafe.class.getDeclaredFields()[0];
+    unsafeField.setAccessible(true);
+    Unsafe unsafe = (Unsafe) unsafeField.get(null);
+    while (true) {
+      unsafe.allocateMemory(_1MB);
+    }
+  }
+}
+```
+
+运行结果：
+
+```none
+// 这本书的
+Exception in thread "main" java.lang.OutOfMemoryError
+at sun.misc.Unsafe.allocateMemory(Native Method)
+at org.fenixsoft.oom.DMOOM.main(DMOOM.java:20)
+
+// 我的
+Connected to the target VM, address: '127.0.0.1:54655', transport: 'socket'
+Exception in thread "main" java.lang.OutOfMemoryError
+	at sun.misc.Unsafe.allocateMemory(Native Method)
+	at oom.DirectMemoryOOM.main(DirectMemoryOOM.java:24)
+Disconnected from the target VM, address: '127.0.0.1:54655', transport: 'socket'
+
+Process finished with exit code 1
+```
+
+​	**由直接内存导致的内存溢出，一个明显的特征是在Heap Dump文件中不会看见有什么明显的异常情况，如果读者发现内存溢出之后产生的Dump文件很小，而程序中又直接或间接使用了DirectMemory（典型的间接使用就是NIO），那就可以考虑重点检查一下直接内存方面的原因了**。
+
+> [Java堆外内存之四：直接使用Unsafe类操作堆外内存](https://www.cnblogs.com/duanxz/p/6090442.html)
+>
+> **使用Unsafe获取的堆外内存，必须由程序显示的释放，JVM不会帮助我们做这件事情**。由此可见，使用Unsafe是有风险的，很容易导致内存泄露。
+
+## 2.5 本章小结
+
+​	到此为止，我们明白了虚拟机里面的内存是如何划分的，哪部分区域、什么样的代码和操作可能导致内存溢出异常。虽然Java有垃圾收集机制，但内存溢出异常离我们并不遥远，本章只是讲解了各个区域出现内存溢出异常的原因，下一章将详细讲解Java垃圾收集机制为了避免出现内存溢出异常都做了哪些努力。
+
+# 3. 第三章 垃圾收集器与内存分配策略
+
+​	Java与C++之间有一堵由内存动态分配和垃圾收集技术所围成的高墙，墙外面的人想进去，墙里面的人却想出来。
+
+## 3.1 概述
+
+​	说起垃圾收集（Garbage Collection，下文简称GC），有不少人把这项技术当作Java语言的伴生产物。事实上，垃圾收集的历史远远比Java久远，在1960年诞生于麻省理工学院的Lisp是第一门开始使用内存动态分配和垃圾收集技术的语言。当Lisp还在胚胎时期时，其作者John McCarthy就思考过垃圾收集需要完成的三件事情：
+
++ 哪些内存需要回收？
++ 什么时候回收？
++ 如何回收？
+
+​	经过半个世纪的发展，今天的内存动态分配与内存回收技术已经相当成熟，一切看起来都进入了“自动化”时代，那为什么我们还要去了解垃圾收集和内存分配？答案很简单：当需要排查各种内存溢出、内存泄漏问题时，当垃圾收集成为系统达到更高并发量的瓶颈时，我们就必须对这些“自动化”的技术实施必要的监控和调节。
+
+​	把时间从大半个世纪以前拨回到现在，舞台也回到我们熟悉的Java语言。第2章介绍了Java内存运行时区域的各个部分，其中**程序计数器、虚拟机栈、本地方法栈3个区域随线程而生，随线程而灭**，**栈中的栈帧随着方法的进入和退出而有条不紊地执行着出栈和入栈操作**。<u>每一个栈帧中分配多少内存基本上是在类结构确定下来时就已知的（尽管在运行期会由即时编译器进行一些优化，但在基于概念模型的讨论里，大体上可以认为是编译期可知的），因此这几个区域的内存分配和回收都具备确定性，在这几个区域内就不需要过多考虑如何回收的问题，当方法结束或者线程结束时，内存自然就跟随着回收了</u>。
+
+​	而**Java堆和方法区这两个区域则有着很显著的不确定性**：一个接口的多个实现类需要的内存可能会不一样，一个方法所执行的不同条件分支所需要的内存也可能不一样，只有处于运行期间，我们才能知道程序究竟会创建哪些对象，创建多少个对象，这部分内存的分配和回收是动态的。垃圾收集器所关注的正是这部分内存该如何管理，本文后续讨论中的“内存”分配与回收也仅仅特指这一部分内存。
+
+## 3.2 对象已死？
+
+​	在堆里面存放着Java世界中几乎所有的对象实例，垃圾收集器在对堆进行回收前，第一件事情就是要确定这些对象之中哪些还“存活”着，哪些已经“死去”（“死去”即不可能再被任何途径使用的对象）了。
+
+### 3.2.1 引用计数算法
+
+​	很多教科书判断对象是否存活的算法是这样的：在对象中添加一个引用计数器，每当有一个地方引用它时，计数器值就加一；当引用失效时，计数器值就减一；任何时刻计数器为零的对象就是不可能再被使用的。笔者面试过很多应届生和一些有多年工作经验的开发人员，他们对于这个问题给予的都是这个答案。
+
+​	客观地说，引用计数算法（Reference Counting）虽然占用了一些额外的内存空间来进行计数，但它的原理简单，判定效率也很高，在大多数情况下它都是一个不错的算法。也有一些比较著名的应用案例，例如微软COM（Component Object Model）技术、使用ActionScript 3的FlashPlayer、Python语言以及在游戏脚本领域得到许多应用的Squirrel中都使用了引用计数算法进行内存管理。
+
+​	但是，**在Java领域，至少主流的Java虚拟机里面都没有选用引用计数算法来管理内存，主要原因是，这个看似简单的算法有很多例外情况要考虑，必须要配合大量额外处理才能保证正确地工作，譬如单纯的引用计数就很难解决对象之间相互循环引用的问题**。
+
+​	举个简单的例子，请看代码清单3-1中的`testGC()`方法：对象objA和objB都有字段instance，赋值令`objA.instance=objB`及`objB.instance=objA`，除此之外，这两个对象再无任何引用，实际上这两个对象已经不可能再被访问，但是它们因为互相引用着对方，导致它们的引用计数都不为零，引用计数算法也就无法回收它们。
+
+​	代码清单3-1　引用计数算法的缺陷
+
+```java
+/**
+* testGC()方法执行后，objA和objB会不会被GC呢？
+* @author zzm
+*/
+public class ReferenceCountingGC {
+  public Object instance = null;
+  private static final int _1MB = 1024 * 1024;
+  /**
+* 这个成员属性的唯一意义就是占点内存，以便能在GC日志中看清楚是否有回收过
+*/
+  private byte[] bigSize = new byte[2 * _1MB];
+  public static void testGC() {
+    ReferenceCountingGC objA = new ReferenceCountingGC();
+    ReferenceCountingGC objB = new ReferenceCountingGC();
+    objA.instance = objB;
+    objB.instance = objA;
+    objA = null;
+    objB = null;
+    // 假设在这行发生GC，objA和objB是否能被回收？
+    System.gc();
+  }
+}
+```
+
+运行结果：
+
+```none
+[Full GC (System) [Tenured: 0K->210K(10240K), 0.0149142 secs] 4603K->210K(19456K), [Perm : 2999K->2999K(21248K)], Heap
+def new generation total 9216K, used 82K [0x00000000055e0000, 0x0000000005fe0000, 0x0000000005fe0000)
+Eden space 8192K, 1% used [0x00000000055e0000, 0x00000000055f4850, 0x0000000005de0000)
+from space 1024K, 0% used [0x0000000005de0000, 0x0000000005de0000, 0x0000000005ee0000)
+to space 1024K, 0% used [0x0000000005ee0000, 0x0000000005ee0000, 0x0000000005fe0000)
+tenured generation total 10240K, used 210K [0x0000000005fe0000, 0x00000000069e0000, 0x00000000069e0000)
+the space 10240K, 2% used [0x0000000005fe0000, 0x0000000006014a18, 0x0000000006014c00, 0x00000000069e0000)
+compacting perm gen total 21248K, used 3016K [0x00000000069e0000, 0x0000000007ea0000, 0x000000000bde0000)
+the space 21248K, 14% used [0x00000000069e0000, 0x0000000006cd2398, 0x0000000006cd2400, 0x0000000007ea0000)
+No shared spaces configured.
+```
+
+​	从运行结果中可以清楚看到内存回收日志中包含“4603K->210K”，意味着虚拟机并没有因为这两个对象互相引用就放弃回收它们，这也从侧面说明了Java虚拟机并不是通过引用计数算法来判断对象是否存活的。
+
+### 3.2.2 可达性分析算法
+
+> [深入理解Java虚拟机（第三版）-- 判定对象存活算法、引用、回收方法区](https://blog.csdn.net/cold___play/article/details/105302996)
+
+​	**当前主流的商用程序语言（Java、C#，上溯至前面提到的古老的Lisp）的内存管理子系统，都是通过可达性分析（Reachability Analysis）算法来判定对象是否存活的**。这个算法的基本思路就是通过一系列称为“GC Roots”的根对象作为起始节点集，从这些节点开始，根据引用关系向下搜索，搜索过程所走过的路径称为“引用链”（Reference Chain），如果某个对象到GC Roots间没有任何引用链相连，或者用图论的话来说就是**从GC Roots到这个对象不可达时，则证明此对象是不可能再被使用的**。
+
+​	如图3-1所示，对象object 5、object 6、object 7虽然互有关联，但是它们到GC Roots是不可达的，因此它们将会被判定为可回收的对象。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200403231149687.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2NvbGRfX19wbGF5,size_16,color_FFFFFF,t_70)
+
+​	在Java技术体系里面，固定可作为GC Roots的对象包括以下几种：
+
++ **在虚拟机栈（栈帧中的本地变量表）中引用的对象，譬如各个线程被调用的方法堆栈中使用到的参数、局部变量、临时变量等。**
+
++ **在方法区中类静态属性引用的对象，譬如Java类的引用类型静态变量。**
+
++ **在方法区中常量引用的对象，譬如字符串常量池（String Table）里的引用。**
+
+  *(JDK7后字符串常量池移动到堆；JDK8后去除永久代，方法区实现改成元空间)*
+
++ **在本地方法栈中JNI（即通常所说的Native方法）引用的对象。**
+
++ **Java虚拟机内部的引用，如基本数据类型对应的Class对象，一些常驻的异常对象（比如NullPointExcepiton、OutOfMemoryError）等，还有系统类加载器。**
+
++ **所有被同步锁（synchronized关键字）持有的对象。**
+
++ **反映Java虚拟机内部情况的JMXBean、JVMTI中注册的回调、本地代码缓存等**。
+
+​	<u>除了这些固定的GC Roots集合以外，根据用户所选用的垃圾收集器以及当前回收的内存区域不同，还可以有其他对象“临时性”地加入，共同构成完整GC Roots集合</u>。譬如后文将会提到的**分代收集**和**局部回收（Partial GC）**。
+
+​	<u>如果只针对Java堆中某一块区域发起垃圾收集时（如最典型的只针对新生代的垃圾收集），必须考虑到内存区域是虚拟机自己的实现细节（在用户视角里任何内存区域都是不可见的），更不是孤立封闭的，所以某个区域里的对象完全有可能被位于堆中其他区域的对象所引用，这时候就需要将这些关联区域的对象也一并加入GC Roots集合中去，才能保证可达性分析的正确性</u>。
+
+​	<u>目前最新的几款垃圾收集器[^31]无一例外都具备了**局部回收**的特征</u>，为了避免GC Roots包含过多对象而过度膨胀，它们在实现上也做出了各种优化处理。关于这些概念、优化技巧以及各种不同收集器实现等内容，都将在本章后续内容中一一介绍。
+
+[^31]:如OpenJDK中的G1、Shenandoah、ZGC以及Azul的PGC、C4这些收集器。
+
+### 3.2.3 再谈引用
+
+​	无论是通过引用计数算法判断对象的引用数量，还是通过可达性分析算法判断对象是否引用链可达，判定对象是否存活都和“引用”离不开关系。在JDK 1.2版之前，Java里面的引用是很传统的定义：如果reference类型的数据中存储的数值代表的是另外一块内存的起始地址，就称该reference数据是代表某块内存、某个对象的引用。这种定义并没有什么不对，只是现在看来有些过于狭隘了，一个对象在这种定义下只有“被引用”或者“未被引用”两种状态，对于描述一些“食之无味，弃之可惜”的对象就显得无能为力。譬如我们希望能描述一类对象：当内存空间还足够时，能保留在内存之中，如果内存空间在进行垃圾收集后仍然非常紧张，那就可以抛弃这些对象——很多系统的缓存功能都符合这样的应用场景。
+
+​	**在JDK 1.2版之后，Java对引用的概念进行了扩充，将引用分为强引用（Strongly Re-ference）、软引用（Soft Reference）、弱引用（Weak Reference）和虚引用（Phantom Reference）4种，这4种引用强度依次逐渐减弱。**
+
++ 强引用是最传统的“引用”的定义，是指在程序代码之中普遍存在的引用赋值，即类似“`Objectobj=new Object()`”这种引用关系。**无论任何情况下，只要强引用关系还存在，垃圾收集器就永远不会回收掉被引用的对象。**
+
++ 软引用是用来描述一些还有用，但非必须的对象。只被软引用关联着的对象，**在系统将要发生内存溢出异常前，会把这些对象列进回收范围之中进行第二次回收**，如果这次回收还没有足够的内存，才会抛出内存溢出异常。在JDK 1.2版之后提供了SoftReference类来实现软引用。
+
++ 弱引用也是用来描述那些非必须对象，但是它的强度比软引用更弱一些，**被弱引用关联的对象只能生存到下一次垃圾收集发生为止**。当垃圾收集器开始工作，无论当前内存是否足够，都会回收掉只被弱引用关联的对象。在JDK 1.2版之后提供了WeakReference类来实现弱引用。
+
++ 虚引用也称为“幽灵引用”或者“幻影引用”，它是最弱的一种引用关系。一个对象是否有虚引用的存在，完全不会对其生存时间构成影响，也无法通过虚引用来取得一个对象实例。**为一个对象设置虚引用关联的唯一目的只是为了能在这个对象被收集器回收时收到一个系统通知**。在JDK 1.2版之后提供了PhantomReference类来实现虚引用。
+
+### 3.2.4 生存还是死亡？
+
+​	即使在可达性分析算法中判定为不可达的对象，也不是“非死不可”的，这时候它们暂时还处于“缓刑”阶段，要真正宣告一个对象死亡，至少**要经历两次标记过程**：**如果对象在进行可达性分析后发现没有与GC Roots相连接的引用链，那它将会被第一次标记，随后进行一次筛选，筛选的条件是此对象是否有必要执行`finalize()`方法**。假如对象没有覆盖`finalize()`方法，或者`finalize()`方法已经被虚拟机调用过，那么虚拟机将这两种情况都视为“没有必要执行”。
+
+​	**如果这个对象被判定为确有必要执行`finalize()`方法，那么该对象将会被放置在一个名为F-Queue的队列之中，并在稍后由一条由虚拟机自动建立的、低调度优先级的Finalizer线程去执行它们的`finalize()`方法**。
+
+​	<u>这里所说的“执行”是指虚拟机会触发这个方法开始运行，但并不承诺一定会等待它运行结束。这样做的原因是，如果某个对象的`finalize()`方法执行缓慢，或者更极端地发生了死循环，将很可能导致F-Queue队列中的其他对象永久处于等待，甚至导致整个内存回收子系统的崩溃</u>。
+
+​	**`finalize()`方法是对象逃脱死亡命运的最后一次机会**，稍后收集器将对F-Queue中的对象进行第二次小规模的标记，如果对象要在`finalize()`中成功拯救自己——只要重新与引用链上的任何一个对象建立关联即可，譬如把自己（this关键字）赋值给某个类变量或者对象的成员变量，那**在第二次标记时它将被移出“即将回收”的集合**；如果对象这时候还没有逃脱，那基本上它就真的要被回收了。从代码清单3-2中我们可以看到一个对象的`finalize()`被执行，但是它仍然可以存活。
+
+​	代码清单3-2　一次对象自我拯救的演示
+
+```java
+/**
+* 此代码演示了两点：
+* 1.对象可以在被GC时自我拯救。
+* 2.这种自救的机会只有一次，因为一个对象的finalize()方法最多只会被系统自动调用一次
+* @author zzm
+*/
+public class FinalizeEscapeGC {
+  public static FinalizeEscapeGC SAVE_HOOK = null;
+  public void isAlive() {
+    System.out.println("yes, i am still alive :)");
+  }
+  @Override
+  protected void finalize() throws Throwable {
+    super.finalize();
+    System.out.println("finalize method executed!");
+    FinalizeEscapeGC.SAVE_HOOK = this; // 注释这条则第一次gc就被回收
+  }
+  public static void main(String[] args) throws Throwable {
+    SAVE_HOOK = new FinalizeEscapeGC();
+    //对象第一次成功拯救自己
+    SAVE_HOOK = null;
+    System.gc();
+    // 因为Finalizer方法优先级很低，暂停0.5秒，以等待它
+    Thread.sleep(500);
+    if (SAVE_HOOK != null) {
+      SAVE_HOOK.isAlive();
+    } else {
+      System.out.println("no, i am dead :(");
+    }
+    // 下面这段代码与上面的完全相同，但是这次自救却失败了
+    SAVE_HOOK = null;
+    System.gc();
+    // 因为Finalizer方法优先级很低，暂停0.5秒，以等待它
+    Thread.sleep(500);
+    if (SAVE_HOOK != null) {
+      SAVE_HOOK.isAlive();
+    } else {
+      System.out.println("no, i am dead :(");
+    }
+  }
+}
+```
+
+运行结果如下：
+
+```none
+finalize method executed!
+yes, i am still alive :)
+no, i am dead :(
+```
+
+​	从代码清单3-2的运行结果可以看到，SAVE_HOOK对象的`finalize()`方法确实被垃圾收集器触发过，并且在被收集前成功逃脱了。
+
+​	另外一个值得注意的地方就是，代码中有两段完全一样的代码片段，执行结果却是一次逃脱成功，一次失败了。这是因为**任何一个对象的`finalize()`方法都只会被系统自动调用一次，如果对象面临下一次回收，它的`finalize()`方法不会被再次执行**，因此第二段代码的自救行动失败了。
+
+​	还有一点需要特别说明，上面关于对象死亡时`finalize()`方法的描述可能带点悲情的艺术加工，笔者并不鼓励大家使用这个方法来拯救对象。相反，笔者建议大家尽量避免使用它，因为它并不能等同于C和C++语言中的析构函数，而是Java刚诞生时为了使传统C、C++程序员更容易接受Java所做出的一项妥协。它的**运行代价高昂，不确定性大，无法保证各个对象的调用顺序，如今已被官方明确声明为不推荐使用的语法**。有些教材中描述它适合做“关闭外部资源”之类的清理性工作，这完全是对`finalize()`方法用途的一种自我安慰。**`finalize()`能做的所有工作，使用try-finally或者其他方式都可以做得更好、更及时，所以笔者建议大家完全可以忘掉Java语言里面的这个方法。**
+
+### 3.2.5 回收方法区
+
+
+
+
+
+
+
+
+
+[^32]:

@@ -1307,3 +1307,17 @@ See [Text analysis](https://www.elastic.co/guide/en/elasticsearch/reference/curr
 
 ## 6.2 Index Shard Allocation
 
+​	You can use shard allocation filters to control where Elasticsearch allocates shards of a particular index. These per-index filters are applied in conjunction with [cluster-wide allocation filtering](https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-cluster.html#cluster-shard-allocation-filtering) and [allocation awareness](https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-cluster.html#shard-allocation-awareness).
+
+​	分片分配过滤器可以基于自定义节点属性，也可以基于内置的“名称”、“主机”或“发布”ip、“ip”、“主机”和“id”属性。索引生命周期管理使用基于自定义节点属性的过滤器来确定在阶段之间移动时如何重新分配分片。
+
+​	<small>Shard allocation filters can be based on custom node attributes or the built-in `_name`, `_host_ip`, `_publish_ip`, `_ip`, `_host` and `_id` attributes. [Index lifecycle management](https://www.elastic.co/guide/en/elasticsearch/reference/current/index-lifecycle-management.html) uses filters based on custom node attributes to determine how to reallocate shards when moving between phases.</small>
+
+​	The `cluster.routing.allocation` settings are dynamic, enabling live indices to be moved from one set of nodes to another. Shards are only relocated if it is possible to do so without breaking another routing constraint, such as never allocating a primary and replica shard on the same node.
+
+​	例如，可以使用自定义节点属性指示节点的性能特征，并使用碎片分配过滤将特定索引的碎片路由到最合适的硬件类。
+
+​	<small>For example, you could use a custom node attribute to indicate a node’s performance characteristics and use shard allocation filtering to route shards for a particular index to the most appropriate class of hardware.</small>
+
+### 6.2.1 Enabling index-level shard allocation filtering
+
