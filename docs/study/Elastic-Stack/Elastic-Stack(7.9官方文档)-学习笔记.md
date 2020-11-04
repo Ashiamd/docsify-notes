@@ -1307,6 +1307,8 @@ See [Text analysis](https://www.elastic.co/guide/en/elasticsearch/reference/curr
 
 ## 6.2 Index Shard Allocation
 
+### 6.2.1  Index-level shard allocation filtering
+
 ​	You can use shard allocation filters to control where Elasticsearch allocates shards of a particular index. These per-index filters are applied in conjunction with [cluster-wide allocation filtering](https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-cluster.html#cluster-shard-allocation-filtering) and [allocation awareness](https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-cluster.html#shard-allocation-awareness).
 
 ​	分片分配过滤器可以基于自定义节点属性，也可以基于内置的“名称”、“主机”或“发布”ip、“ip”、“主机”和“id”属性。索引生命周期管理使用基于自定义节点属性的过滤器来确定在阶段之间移动时如何重新分配分片。
@@ -1319,5 +1321,804 @@ See [Text analysis](https://www.elastic.co/guide/en/elasticsearch/reference/curr
 
 ​	<small>For example, you could use a custom node attribute to indicate a node’s performance characteristics and use shard allocation filtering to route shards for a particular index to the most appropriate class of hardware.</small>
 
-### 6.2.1 Enabling index-level shard allocation filtering
+#### 6.2.1.1 Enabling index-level shard allocation filtering
+
+To filter based on a custom node attribute:
+
+1. Specify the filter characteristics with a custom node attribute in each node’s `elasticsearch.yml` configuration file. For example, if you have `small`, `medium`, and `big` nodes, you could add a `size` attribute to filter based on node size.
+
+   (在每个节点的elasticsearch.yml配置文件中使用自定义节点属性指定过滤器特征。例如，如果有小型、中型和大型节点，则可以添加一个size属性以根据节点大小进行筛选。)
+
+   ```yaml
+   node.attr.size: medium
+   ```
+
+   You can also set custom attributes when you start a node:
+
+   ```shell
+   `./bin/elasticsearch -Enode.attr.size=medium
+   ```
+
+2. Add a routing allocation filter to the index. The `index.routing.allocation` settings support three types of filters: `include`, `exclude`, and `require`. For example, to tell Elasticsearch to allocate shards from the `test` index to either `big` or `medium` nodes, use `index.routing.allocation.include`:
+
+   ```http
+   PUT test/_settings
+   {
+     "index.routing.allocation.include.size": "big,medium"
+   }
+   ```
+
+   If you specify multiple filters, all conditions must be satisfied for shards to be relocated. For example, to move the `test` index to `big` nodes in `rack1`, you could specify:
+
+   (如果指定多个过滤器，则必须满足所有条件才能重新定位碎片。例如，要将测试索引移动到rack1中的大节点，可以指定：)
+
+   ```http
+   PUT test/_settings
+   {
+     "index.routing.allocation.include.size": "big",
+     "index.routing.allocation.include.rack": "rack1"
+   }
+   ```
+
+#### 6.2.1.2 Index allocation filter settings
+
+- **`index.routing.allocation.include.{attribute}`**
+
+  Assign the index to a node whose `{attribute}` has **at least one** of the comma-separated values.
+
+  <small>(将索引分配给其{attribute}至少有一个逗号分隔值的节点。)</small>
+
+- **`index.routing.allocation.require.{attribute}`**
+
+  Assign the index to a node whose `{attribute}` has ***all*** of the comma-separated values.
+
+- **`index.routing.allocation.exclude.{attribute}`**
+
+  Assign the index to a node whose `{attribute}` has ***none*** of the comma-separated values.
+
+The index allocation settings support the following built-in attributes:
+
+| `_name`       | Match nodes by node name                                     |
+| ------------- | ------------------------------------------------------------ |
+| `_host_ip`    | Match nodes by host IP address (IP associated with hostname) |
+| `_publish_ip` | Match nodes by publish IP address                            |
+| `_ip`         | Match either `_host_ip` or `_publish_ip`                     |
+| `_host`       | Match nodes by hostname                                      |
+| `_id`         | Match nodes by node id                                       |
+
+You can use wildcards（通配符） when specifying attribute values, for example:
+
+```http
+PUT test/_settings
+{
+  "index.routing.allocation.include._ip": "192.168.2.*"
+}
+```
+
+### 6.2.2 Delaying allocation when a node leaves
+
+（节点离开时延迟分配）
+
+​	When a node leaves the cluster for whatever reason, intentional（故意的） or otherwise, the master reacts by:
+
+- Promoting a replica shard to primary to replace any primaries that were on the node.
+
+  <small>（将副本碎片升级为主碎片以替换节点上的所有主碎片）</small>
+
+- Allocating replica shards to replace the missing replicas (assuming there are enough nodes).
+
+  <small>(分配副本碎片来替换丢失的副本（假设有足够的节点）)</small>
+
+- Rebalancing shards evenly across the remaining nodes.
+
+  <small>(在剩余节点上均匀地重新平衡碎片。)</small>
+
+​	These actions are intended to protect the cluster against data loss by ensuring that every shard is fully replicated as soon as possible.
+
+​	(这些操作旨在通过确保尽快完全复制每个碎片来保护集群不受数据丢失的影响。)
+
+​	尽管我们在节点级别和集群级别都(节流)限制了并发恢复，但是这种“碎片洗牌”仍然会给集群带来很多额外的负载，特别是如果丢失的节点很快就重新返回，那么这些负载很明显是不必要的。想象一下这个场景：
+
+​	<small>Even though we throttle concurrent recoveries both at the [node level](https://www.elastic.co/guide/en/elasticsearch/reference/current/recovery.html) and at the [cluster level](https://www.elastic.co/guide/en/elasticsearch/reference/current/shards-allocation.html), this “shard-shuffle” can still put a lot of extra load on the cluster which may not be necessary if the missing node is likely to return soon. Imagine this scenario:</small>
+
+- Node 5 loses network connectivity.
+
+  节点5失去网络连接。
+
+- The master promotes a replica shard to primary for each primary that was on Node 5.
+
+  主节点将节点5上的每个主节点的副本碎片升级到主节点。
+
+- The master allocates new replicas to other nodes in the cluster.
+
+  主节点将新副本分配给群集中的其他节点。
+
+- Each new replica makes an entire copy of the primary shard across the network.
+
+  每个新的复制副本都会在网络上生成主碎片的完整副本。
+
+- More shards are moved to different nodes to rebalance the cluster.
+
+  更多的碎片被移动到不同的节点以重新平衡集群。
+
+- Node 5 returns after a few minutes.
+
+  5分钟后返回节点。
+
+- The master rebalances the cluster by allocating shards to Node 5.
+
+  主节点通过向节点5分配碎片来重新平衡集群。
+
+​	如果主机只是等了几分钟，那么丢失的碎片就可以以最小的网络流量重新分配给节点5。对于已自动同步刷新的空闲碎片（未接收索引请求的碎片），此过程将更快。
+
+​	<small>If the master had just waited for a few minutes, then the missing shards could have been re-allocated to Node 5 with the minimum of network traffic. This process would be even quicker for idle shards (shards not receiving indexing requests) which have been automatically [sync-flushed](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-synced-flush-api.html).</small>
+
+​	The allocation of replica shards which become unassigned because a node has left can be delayed with the `index.unassigned.node_left.delayed_timeout` dynamic setting, which defaults to `1m`.
+
+​	<small>由于节点已离开而未分配的副本碎片的分配可以使用index.unassigned.node_左.delayed_timeout动态设置，默认为1m。</small>
+
+​	This setting can be updated on a live index (or on all indices):
+
+```http
+PUT _all/_settings
+{
+  "settings": {
+    "index.unassigned.node_left.delayed_timeout": "5m"
+  }
+}
+```
+
+With delayed allocation enabled, the above scenario changes to look like this:
+
+- Node 5 loses network connectivity.
+
+- The master promotes a replica shard to primary for each primary that was on Node 5.
+
+- The master logs a message that allocation of unassigned shards has been delayed, and for how long.
+
+  主机会记录一条消息，说明未分配碎片的分配已被延迟，以及延迟了多长时间。
+
+- The cluster remains yellow because there are unassigned replica shards.
+
+- Node 5 returns after a few minutes, before the `timeout` expires.
+
+- The missing replicas are re-allocated to Node 5 (and sync-flushed shards recover almost immediately).
+
+  丢失的副本被重新分配到节点5（并且同步刷新的碎片几乎立即恢复）。
+
+*NOTE：This setting will not affect the promotion of replicas to primaries, nor will it affect the assignment of replicas that have not been assigned previously. In particular, delayed allocation does not come into effect after a full cluster restart. Also, in case of a master failover situation, elapsed delay time is forgotten (i.e. reset to the full initial delay).*
+
+*此设置不会影响将副本升级到主副本，也不会影响以前未分配的副本的分配。特别是，延迟分配在完全重启集群后不会生效。此外，在主故障转移情况下，已用延迟时间会被忽略（即重置为完全初始延迟）。*
+
+#### 6.2.2.1 Cancellation of shard relocation
+
+​	如果延迟分配超时，主机会将丢失的碎片分配给另一个将开始恢复的节点。如果丢失的节点重新加入集群，并且其碎片仍具有与主节点相同的同步id，则将取消碎片重新定位，而将使用同步的碎片进行恢复。
+
+​	<small>If delayed allocation times out, the master assigns the missing shards to another node which will start recovery. If the missing node rejoins the cluster, and its shards still have the same sync-id as the primary, shard relocation will be cancelled and the synced shard will be used for recovery instead.</small>
+
+​	因此，默认超时设置为一分钟：即使开始重新定位碎片，取消恢复以支持同步碎片的代价也很低。
+
+​	<small>For this reason, the default `timeout` is set to just one minute: even if shard relocation begins, cancelling recovery in favour of the synced shard is cheap.</small>
+
+#### 6.2.2.2  Monitoring delayed unassigned shards
+
+​	可以使用群集运行状况API查看由于此超时设置而延迟分配的碎片数：
+
+​	The number of shards whose allocation has been delayed by this timeout setting can be viewed with the [cluster health API](https://www.elastic.co/guide/en/elasticsearch/reference/current/cluster-health.html):
+
+```http
+GET _cluster/health
+```
+
+ This request will return a `delayed_unassigned_shards` value.
+
+#### 6.2.2.3  Removing a node permanently
+
+​	If a node is not going to return and you would like Elasticsearch to allocate the missing shards immediately, just update the timeout to zero:
+
+```http
+PUT _all/_settings
+{
+  "settings": {
+    "index.unassigned.node_left.delayed_timeout": "0"
+  }
+}
+```
+
+​	You can reset the timeout as soon as the missing shards have started to recover.
+
+​	(一旦丢失的碎片开始恢复，就可以重置超时。)
+
+### 6.2.3  Index recovery prioritization
+
+​	Unallocated shards are recovered in order of priority, whenever possible. Indices are sorted into priority order as follows:
+
+- the optional `index.priority` setting (higher before lower)
+- the index creation date (higher before lower)
+- the index name (higher before lower)
+
+​	**This means that, by default, newer indices will be recovered before older indices**.
+
+​	Use the per-index dynamically updatable `index.priority` setting to customise the index prioritization order. For instance:
+
+```http
+PUT index_1
+
+PUT index_2
+
+PUT index_3
+{
+  "settings": {
+    "index.priority": 10
+  }
+}
+
+PUT index_4
+{
+  "settings": {
+    "index.priority": 5
+  }
+}
+```
+
+In the above example:
+
+- `index_3` will be recovered first because it has the highest `index.priority`.
+- `index_4` will be recovered next because it has the next highest priority.
+- `index_2` will be recovered next because it was created more recently.
+- `index_1` will be recovered last.
+
+This setting accepts an integer, and can be updated on a live index with the [update index settings API](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-update-settings.html):
+
+```http
+PUT index_4/_settings
+{
+  "index.priority": 1
+}
+```
+
+### 6.2.4 Total shards per node
+
+​	集群级shard分配器尝试将单个索引的碎片分布到尽可能多的节点上。然而，根据你有多少碎片和索引，以及它们有多大，可能并不总是能够均匀地分布碎片。
+
+​	<small>The cluster-level shard allocator tries to spread the shards of a single index across as many nodes as possible. However, depending on how many shards and indices you have, and how big they are, it may not always be possible to spread shards evenly.</small>
+
+​	通过以下动态设置，可以为每个节点允许的单个索引中的碎片总数指定硬限制：
+
+​	<small>The following *dynamic* setting allows you to specify a hard limit on the total number of shards from a single index allowed per node:</small>
+
+- **`index.routing.allocation.total_shards_per_node`**
+
+  The maximum number of shards (replicas and primaries) that will be allocated to a single node. Defaults to unbounded.
+
+You can also limit the amount of shards a node can have regardless of the index:
+
+- **`cluster.routing.allocation.total_shards_per_node`**
+
+  The maximum number of shards (replicas and primaries) that will be allocated to a single node globally. Defaults to unbounded (-1).
+
+*WARNNING：These settings impose a hard limit which can result in some shards not being allocated.Use with caution.*
+
+## 6.3 Index blocks
+
+​	Index blocks limit the kind of operations that are available on a certain index. The blocks come in different flavours, allowing to block write, read, or metadata operations. The blocks can be set / removed using dynamic index settings, or can be added using a dedicated API, which also ensures for write blocks that, once successfully returning to the user, all shards of the index are properly accounting for the block, for example that all in-flight writes to an index have been completed after adding the write block.
+
+​	<small>索引块限制对某个索引可用的操作类型。块有不同的风格，允许块写、读或元数据操作。可以使用动态索引设置来设置/删除这些块，也可以使用专用的API来添加这些块，这也可以确保一旦成功地返回给用户，索引的所有碎片都会正确地说明该块，例如，在添加写块之后，对索引的所有动态写入都已完成。</small>
+
+### 6.3.1  Index block settings
+
+The following *dynamic* index settings determine the blocks present on an index：
+
+- **`index.blocks.read_only`**
+
+  Set to `true` to make the index and index metadata read only, `false` to allow writes and metadata changes.
+
+- **`index.blocks.read_only_allow_delete`**
+
+  Similar to `index.blocks.read_only`, but also allows deleting the index to make more resources available. The [disk-based shard allocator](https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-cluster.html#disk-based-shard-allocation) may add and remove this block automatically.
+
+  <small>类似`index.blocks.read_only`，但也允许删除索引以获得更多资源。基于磁盘的shard分配器可以自动添加和删除此块</small>
+
+  Deleting documents from an index to release resources - rather than deleting the index itself - can increase the index size over time. When `index.blocks.read_only_allow_delete` is set to `true`, deleting documents is not permitted. However, deleting the index itself releases the read-only index block and makes resources available almost immediately.
+
+*IMPORTANT：Elasticsearch adds and removes the read-only index block automatically when the disk utilization falls below the high watermark, controlled by [cluster.routing.allocation.disk.watermark.flood_stage](https://www.elastic.co/guide/en/elasticsearch/reference/current/modules-cluster.html#cluster-routing-flood-stage).*
+
+- **`index.blocks.read`**
+
+  Set to `true` to disable read operations against the index.
+
+- **`index.blocks.write`**
+
+  Set to `true` to disable data write operations against the index. **Unlike `read_only`, this setting does not affect metadata**. For instance, you can close an index with a `write` block, but you cannot close an index with a `read_only` block.
+
+- **`index.blocks.metadata`**
+
+  Set to `true` to disable index metadata reads and writes.
+
+### 6.3.2  Add index block API
+
+Adds an index block to an index.
+
+```http
+PUT /my-index-000001/_block/write
+```
+
+#### 6.3.2.1 Request
+
+```http
+PUT /<index>/_block/<block>
+```
+
+#### 6.3.2.2  Path parameters
+
++ **`<index>`**
+
+  (Optional, string) Comma-separated list or wildcard expression of index names used to limit the request.
+
+  To add blocks to all indices, use `_all` or `*`. To disallow the adding of blocks to indices with `_all` or wildcard expressions, change the `action.destructive_requires_name` cluster setting to `true`. You can update this setting in the `elasticsearch.yml` file or using the [cluster update settings](https://www.elastic.co/guide/en/elasticsearch/reference/current/cluster-update-settings.html) API.
+
++ **`<block>`**
+
+  (Required, string) Block type to add to the index.
+
+  Valid values for `<block>`：
+
+  + **`metadata`**
+
+    Disable metadata changes, such as closing the index.
+
+  + **`read`**
+
+    Disable read operations.
+
+  + **`read_only`**
+
+    Disable write operations and metadata changes.
+
+  + **`write`**
+
+    Disable write operations. However, metadata changes are still allowed.
+
+### 6.3.3  Query parameters
+
++ **`allow_no_indices`**
+
+  (Optional, Boolean) If `false`, the request returns an error when a wildcard expression, [index alias](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-aliases.html), or `_all` value targets only missing or closed indices.
+
+  Defaults to `true`.
+
++ **`expand_wildcards`**
+
+  (Optional, string) Controls what kind of indices that wildcard expressions can expand to. Multiple values are accepted when separated by a comma, as in `open,hidden`. Valid values are:
+
+  + **`all`**
+
+    Expand to open and closed indices, including [hidden indices](https://www.elastic.co/guide/en/elasticsearch/reference/current/index-modules.html#index-hidden).
+
+  + **`open`**
+
+    Expand only to open indices.
+
+  + **`closed`**
+
+    Expand only to closed indices.
+
+  + **`hidden`**
+
+    Expansion of wildcards will include [hidden indices](https://www.elastic.co/guide/en/elasticsearch/reference/current/index-modules.html#index-hidden). Must be combined with `open`, `closed`, or both.
+
+  + **`none`**
+
+    Wildcard expressions are not accepted.
+
+  Defaults to `open`.
+
++ **`ignore_unavailable`**
+
+  (Optional, Boolean) If `true`, missing or closed indices are not included in the response. Defaults to `false`.
+
++ **`master_timeout`**
+
+  (Optional, [time units](https://www.elastic.co/guide/en/elasticsearch/reference/current/common-options.html#time-units)) Specifies the period of time to wait for a connection to the master node. If no response is received before the timeout expires, the request fails and returns an error. Defaults to `30s`.
+
++ **`timeout`**
+
+  (Optional, [time units](https://www.elastic.co/guide/en/elasticsearch/reference/current/common-options.html#time-units)) Specifies the period of time to wait for a response. If no response is received before the timeout expires, the request fails and returns an error. Defaults to `30s`.
+
+### 6.3.4  Examples
+
+The following example shows how to add an index block:
+
+```http
+PUT /my-index-000001/_block/write
+```
+
+The API returns following response:
+
+```json
+{
+  "acknowledged" : true,
+  "shards_acknowledged" : true,
+  "indices" : [ {
+    "name" : "my-index-000001",
+    "blocked" : true
+  } ]
+}
+```
+
+## 6.4 Mapper
+
+​	mapper模块充当在创建索引或使用put mapping api时添加到索引的类型映射定义的注册表。它还处理对没有预定义显式映射的类型的动态映射支持。有关映射定义的更多信息，请查看映射部分。
+
+​	<small>The mapper module acts as a registry for the type mapping definitions added to an index either when creating it or by using the put mapping api. It also handles the dynamic mapping support for types that have no explicit mappings pre defined. For more information about mapping definitions, check out the [mapping section](https://www.elastic.co/guide/en/elasticsearch/reference/current/mapping.html).</small>
+
+## 6.5 Merge
+
+​	A shard in Elasticsearch is a Lucene index, and a Lucene index is broken down into segments. Segments are internal storage elements in the index where the index data is stored, and are immutable. Smaller segments are periodically merged into larger segments to keep the index size at bay and to expunge deletes.
+
+​	<small>Elasticsearch中的shard是Lucene索引，Lucene索引被分解成多个片段。段是索引中存储索引数据的内部存储元素，是不可变的。...</small>
+
+​	The merge process uses auto-throttling to balance the use of hardware resources between merging and other activities like search.
+​	<small>合并过程使用自动调节来平衡合并和其他活动（如搜索）之间硬件资源的使用。</small>
+
+### 6.5.1  Merge scheduling
+
+​	合并调度程序（ConcurrentMergeScheduler）在需要时控制合并操作的执行。合并在不同的线程中运行，当达到最大线程数时，进一步的合并将等待直到合并线程可用。
+
+​	<small>The merge scheduler (ConcurrentMergeScheduler) controls the execution of merge operations when they are needed. Merges run in separate threads, and when the maximum number of threads is reached, further merges will wait until a merge thread becomes available.</small>
+
+​	The merge scheduler supports the following *dynamic* setting:
+
+- **`index.merge.scheduler.max_thread_count`**
+
+  The maximum number of threads on a single shard that may be merging at once. Defaults to `Math.max(1, Math.min(4, <<node.processors, node.processors>> / 2))` which works well for a good solid-state-disk (SSD). If your index is on spinning platter drives instead, decrease this to 1.
+
+## 6.6 Similarity module
+
+​	相似性（评分/排名模型）定义了匹配文档的评分方式。相似性是每个字段的，这意味着通过映射可以定义每个字段的不同相似性。
+
+​	<small>A similarity (scoring / ranking model) defines how matching documents are scored. Similarity is per field, meaning that via the mapping one can define a different similarity per field.</small>
+
+​	配置自定义相似性被认为是一个专家特性，并且内部相似性很可能已经足够了，如相似性中所述。
+
+​	<small>Configuring a custom similarity is considered an expert feature and the builtin similarities are most likely sufficient as is described in [`similarity`](https://www.elastic.co/guide/en/elasticsearch/reference/current/similarity.html).</small>
+
+### 6.6.1  Configuring a similarity
+
+​	Most existing or custom Similarities have configuration options which can be configured via the index settings as shown below. The index options can be provided when creating an index or updating index settings.
+
+```http
+PUT /index
+{
+  "settings": {
+    "index": {
+      "similarity": {
+        "my_similarity": {
+          "type": "DFR",
+          "basic_model": "g",
+          "after_effect": "l",
+          "normalization": "h2",
+          "normalization.h2.c": "3.0"
+        }
+      }
+    }
+  }
+}
+```
+
+​	Here we configure the DFR similarity so it can be referenced as `my_similarity` in mappings as is illustrate in the below example:
+
+```http
+PUT /index/_mapping
+{
+  "properties" : {
+    "title" : { "type" : "text", "similarity" : "my_similarity" }
+  }
+}
+```
+
+### 6.6.2  Available similarities
+
+####  6.6.2.1 BM25 similarity (**default**)
+
+​	TF/IDF based similarity that has built-in tf normalization and is supposed to work better for short fields (like names). See [Okapi_BM25](https://en.wikipedia.org/wiki/Okapi_BM25) for more details. This similarity has the following options:
+
+| `k1`                | Controls non-linear term frequency normalization (saturation). The default value is `1.2`. |
+| ------------------- | ------------------------------------------------------------ |
+| `b`                 | Controls to what degree document length normalizes tf values. The default value is `0.75`. |
+| `discount_overlaps` | Determines whether overlap tokens (Tokens with 0 position increment) are ignored when computing norm. By default this is true, meaning overlap tokens do not count when computing norms. |
+
+Type name: `BM25`
+
+####  6.6.2.2 DFR similarity
+
+​	Similarity that implements the [divergence from randomness](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/DFRSimilarity.html) framework. This similarity has the following options:
+
+| `basic_model`   | Possible values: [`g`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/BasicModelG.html), [`if`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/BasicModelIF.html), [`in`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/BasicModelIn.html) and [`ine`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/BasicModelIne.html). |
+| --------------- | ------------------------------------------------------------ |
+| `after_effect`  | Possible values: [`b`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/AfterEffectB.html) and [`l`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/AfterEffectL.html). |
+| `normalization` | Possible values: [`no`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/Normalization.NoNormalization.html), [`h1`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/NormalizationH1.html), [`h2`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/NormalizationH2.html), [`h3`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/NormalizationH3.html) and [`z`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/NormalizationZ.html). |
+
+​	All options but the first option need a normalization value.
+
+​	Type name: `DFR`
+
+#### 6.6.2.3 DFI similarity
+
+​	Similarity that implements the [divergence from independence](https://trec.nist.gov/pubs/trec21/papers/irra.web.nb.pdf) model. This similarity has the following options:
+
+<table>
+  <tr>
+  	<td>independence_measure</td>
+    <td>Possible values standardized, saturated, chisquared.</td>
+  </tr>
+</table>
+
+​	When using this similarity, it is highly recommended **not** to remove stop words to get good relevance. Also beware that terms whose frequency is less than the expected frequency will get a score equal to 0.
+
+Type name: `DFI`
+
+#### 6.6.2.4  IB similarity
+
+​	[Information based model](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/IBSimilarity.html) . The algorithm is based on the concept that the information content in any symbolic *distribution* sequence is primarily determined by the repetitive usage of its basic elements. For written texts this challenge would correspond to comparing the writing styles of different authors. This similarity has the following options:
+
+| `distribution`  | Possible values: [`ll`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/DistributionLL.html) and [`spl`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/DistributionSPL.html). |
+| --------------- | ------------------------------------------------------------ |
+| `lambda`        | Possible values: [`df`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/LambdaDF.html) and [`ttf`](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/LambdaTTF.html). |
+| `normalization` | Same as in `DFR` similarity.                                 |
+
+Type name: `IB`
+
+#### 6.6.2.5  LM Dirichlet similarity
+
+​	[LM Dirichlet similarity](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/LMDirichletSimilarity.html) . This similarity has the following options:
+
+<table>
+  <tr>
+  	<td>mu</td>
+    <td>Default to 2000.</td>
+  </tr>
+</table>
+
+​	The scoring formula in the paper assigns negative scores to terms that have fewer occurrences than predicted by the language model, which is illegal to Lucene, so such terms get a score of 0.
+
+Type name: `LMDirichlet`
+
+#### 6.6.2.6  LM Jelinek Mercer similarity
+
+​	[LM Jelinek Mercer similarity](https://lucene.apache.org/core/8_6_2/core/org/apache/lucene/search/similarities/LMJelinekMercerSimilarity.html) . The algorithm attempts to capture important patterns in the text, while leaving out noise. This similarity has the following options:
+
+<table>
+  <tr>
+  	<td>lambda</td>
+    <td>The optimal value depends on both the collection and the query. The optimal value is around 0.1 for title queries and 0.7 for long queries. Default to 0.1. When value approaches 0, documents that match more query terms will be ranked higher than those that match fewer terms.</td>
+  </tr>
+</table>
+
+Type name: `LMJelinekMercer`
+
+#### 6.6.2.7  Scripted similarity
+
+​	A similarity that allows you to use a script in order to specify how scores should be computed. For instance, the below example shows how to reimplement TF-IDF:
+
+```http
+PUT /index
+{
+  "settings": {
+    "number_of_shards": 1,
+    "similarity": {
+      "scripted_tfidf": {
+        "type": "scripted",
+        "script": {
+          "source": "double tf = Math.sqrt(doc.freq); double idf = Math.log((field.docCount+1.0)/(term.docFreq+1.0)) + 1.0; double norm = 1/Math.sqrt(doc.length); return query.boost * tf * idf * norm;"
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "field": {
+        "type": "text",
+        "similarity": "scripted_tfidf"
+      }
+    }
+  }
+}
+
+PUT /index/_doc/1
+{
+  "field": "foo bar foo"
+}
+
+PUT /index/_doc/2
+{
+  "field": "bar baz"
+}
+
+POST /index/_refresh
+
+GET /index/_search?explain=true
+{
+  "query": {
+    "query_string": {
+      "query": "foo^1.7",
+      "default_field": "field"
+    }
+  }
+}
+```
+
+Which yields:
+
+```json
+{
+  "took": 12,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+        "value": 1,
+        "relation": "eq"
+    },
+    "max_score": 1.9508477,
+    "hits": [
+      {
+        "_shard": "[index][0]",
+        "_node": "OzrdjxNtQGaqs4DmioFw9A",
+        "_index": "index",
+        "_type": "_doc",
+        "_id": "1",
+        "_score": 1.9508477,
+        "_source": {
+          "field": "foo bar foo"
+        },
+        "_explanation": {
+          "value": 1.9508477,
+          "description": "weight(field:foo in 0) [PerFieldSimilarity], result of:",
+          "details": [
+            {
+              "value": 1.9508477,
+              "description": "score from ScriptedSimilarity(weightScript=[null], script=[Script{type=inline, lang='painless', idOrCode='double tf = Math.sqrt(doc.freq); double idf = Math.log((field.docCount+1.0)/(term.docFreq+1.0)) + 1.0; double norm = 1/Math.sqrt(doc.length); return query.boost * tf * idf * norm;', options={}, params={}}]) computed from:",
+              "details": [
+                {
+                  "value": 1.0,
+                  "description": "weight",
+                  "details": []
+                },
+                {
+                  "value": 1.7,
+                  "description": "query.boost",
+                  "details": []
+                },
+                {
+                  "value": 2,
+                  "description": "field.docCount",
+                  "details": []
+                },
+                {
+                  "value": 4,
+                  "description": "field.sumDocFreq",
+                  "details": []
+                },
+                {
+                  "value": 5,
+                  "description": "field.sumTotalTermFreq",
+                  "details": []
+                },
+                {
+                  "value": 1,
+                  "description": "term.docFreq",
+                  "details": []
+                },
+                {
+                  "value": 2,
+                  "description": "term.totalTermFreq",
+                  "details": []
+                },
+                {
+                  "value": 2.0,
+                  "description": "doc.freq",
+                  "details": []
+                },
+                {
+                  "value": 3,
+                  "description": "doc.length",
+                  "details": []
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+*WARNING：While scripted similarities provide a lot of flexibility, there is a set of rules that they need to satisfy. Failing to do so could make Elasticsearch silently return wrong top hits or fail with internal errors at search time:*
+
+- Returned scores must be positive.
+- All other variables remaining equal, scores must not decrease when `doc.freq` increases.
+- All other variables remaining equal, scores must not increase when `doc.length` increases.
+
+​	You might have noticed that a significant part of the above script depends on statistics that are the same for every document. It is possible to make the above slightly more efficient by providing an `weight_script` which will compute the document-independent part of the score and will be available under the `weight` variable. When no `weight_script` is provided, `weight` is equal to `1`. The `weight_script` has access to the same variables as the `script` except `doc` since it is supposed to compute a document-independent contribution to the score.
+
+​	The below configuration will give the same tf-idf scores but is slightly more efficient:
+
+```http
+PUT /index
+{
+  "settings": {
+    "number_of_shards": 1,
+    "similarity": {
+      "scripted_tfidf": {
+        "type": "scripted",
+        "weight_script": {
+          "source": "double idf = Math.log((field.docCount+1.0)/(term.docFreq+1.0)) + 1.0; return query.boost * idf;"
+        },
+        "script": {
+          "source": "double tf = Math.sqrt(doc.freq); double norm = 1/Math.sqrt(doc.length); return weight * tf * norm;"
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "field": {
+        "type": "text",
+        "similarity": "scripted_tfidf"
+      }
+    }
+  }
+}
+```
+
+Type name: `scripted`
+
+#### 6.6.2.8  Default Similarity
+
+​	By default, Elasticsearch will use whatever similarity is configured as `default`.
+
+​	You can change the default similarity for all fields in an index when it is [created](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-create-index.html):
+
+```http
+PUT /index
+{
+  "settings": {
+    "index": {
+      "similarity": {
+        "default": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
+```
+
+​	If you want to change the default similarity after creating the index you must [close](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-open-close.html) your index, send the following request and [open](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-open-close.html) it again afterwards:
+
+```http
+POST /index/_close
+
+PUT /index/_settings
+{
+  "index": {
+    "similarity": {
+      "default": {
+        "type": "boolean"
+      }
+    }
+  }
+}
+
+POST /index/_open
+```
+
+## 6.7 Show Log
 
