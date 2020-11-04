@@ -8,3 +8,5 @@
 >
 > 最近刚学习完，最后几个视频章节对Vue源码有一定的分析，打算自己实践一下，看看Vue的源码，学习下。（暂时未开工）
 
+![image-20201104173232496](/Users/ashiamd/mydocs/docs/study/ITstudy/MD_notes/MD_notes/docsify/docsify-notes/docs/study/Vue/Vue源码学习.assets/image-20201104173232496.png)
+
