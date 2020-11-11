@@ -26,6 +26,10 @@
 >
 > [MySQL 连接查询](https://www.cnblogs.com/xiaozhaoboke/p/11077781.html)
 >
+> [in 和 exist 区别](https://blog.csdn.net/lick4050312/article/details/4476333)
+>
+> [如何实现 MySQL 删除重复记录并且只保留一条](https://mp.weixin.qq.com/s/17F04xs7utTTHvPUzIjZHA)
+>
 > [mysql 内连接、左连接会出现笛卡尔积？](https://blog.csdn.net/zy_281870667/article/details/81046573)
 >
 > 首先说下结论：链接查询，如果on条件是非唯一字段，会出现笛卡尔积(局部笛卡尔积)；如果on条件是表的唯一字段，则不会出现笛卡尔积。
