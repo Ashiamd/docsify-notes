@@ -2115,9 +2115,7 @@ OpenJDK 64-Bit Server VM warning: Option UseConcMarkSweepGC was deprecated in ve
 [^58]:资料来源：https://docs.oracle.com/en/java/javase/11/gctuning/available-collectors.html。
 [^59]:代价就是当CMS发生Old GC时（所有收集器中只有CMS有针对老年代的Old GC），要把整个新生代作为GC Roots来进行扫描。
 
-> [ZGC有什么缺点?](https://www.zhihu.com/question/356585590)
->
-> 
+> [ZGC有什么缺点?](https://www.zhihu.com/question/356585590)\
 
 ## 3.6 低延迟垃圾收集器
 
