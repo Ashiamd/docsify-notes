@@ -2122,3 +2122,4 @@ POST /index/_open
 
 ## 6.7 Show Log
 
+后面自己搭建ELK了，以后有空继续啃官方文档。（官方文档前面章节的东西，其实就目前而言我还暂时没多少需要用到的。）。具体的搭建方案，在我的另一个Repository——[Ashiamd/ash-demos](https://github.com/Ashiamd/ash-demos)有代码+对应的文章链接（文章可能文字不是很多），主要就随笔记录下自己的搭建，方便以后自己查阅。
