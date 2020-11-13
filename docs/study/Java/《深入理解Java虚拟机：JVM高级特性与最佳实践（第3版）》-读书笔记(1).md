@@ -2115,10 +2115,144 @@ OpenJDK 64-Bit Server VM warning: Option UseConcMarkSweepGC was deprecated in ve
 [^58]:资料来源：https://docs.oracle.com/en/java/javase/11/gctuning/available-collectors.html。
 [^59]:代价就是当CMS发生Old GC时（所有收集器中只有CMS有针对老年代的Old GC），要把整个新生代作为GC Roots来进行扫描。
 
-> [ZGC有什么缺点?](https://www.zhihu.com/question/356585590)\
+> [ZGC有什么缺点?](https://www.zhihu.com/question/356585590)
+>
+> [深入理解JVM（③）经典的垃圾收集器](https://blog.csdn.net/qq_35165000/article/details/106732837)	=>	在该文章最下面总结表格的基础上修改G1的描述
+>
+> <table>
+>   <tr align="center">
+>   	<th>垃圾收集算法</th>
+>   	<th colspan="3">垃圾收集器</th>
+>   </tr>
+> 	<tr align="center">
+>   	<td>标记-清除</td>
+>   	<td colspan="3">CMS</td>
+> 	</tr>
+> 	<tr align="center">
+>   	<td>标记-复制</td>
+>   	<td>Serial</td>
+>     <td>ParNew</td>
+>     <td>Parallel Scavenge</td>
+> 	</tr>
+> 	<tr align="center">
+>  	 <td>标记-整理</td>
+>  	 <td>Serial Old</td>
+>    <td>Parallel Old</td>
+>    <td>G1(2个Region之间标记-复制)</td>
+> 	</tr>
+> </table>
 
 ## 3.6 低延迟垃圾收集器
 
+​	HotSpot的垃圾收集器从Serial发展到CMS再到G1，经历了逾二十年时间，经过了数百上千万台服务器上的应用实践，已经被淬炼得相当成熟了，不过它们距离“完美”还是很遥远。怎样的收集器才算是“完美”呢？这听起来像是一道主观题，其实不然，完美难以实现，但是我们确实可以把它客观描述出来。
+
+​	衡量垃圾收集器的三项最重要的指标是：
+
++ **内存占用（Footprint）**
++ **吞吐量（Throughput）**
++ **延迟（Latency）**
+
+​	内存占用（Footprint）、吞吐量（Throughput）和延迟（Latency），三者共同构成了一个“不可能三角[^60]”。三者总体的表现会随技术进步而越来越好，但是要在这三个方面同时具有卓越表现的“完美”收集器是极其困难甚至是不可能的，**一款优秀的收集器通常最多可以同时达成其中的两项**。
+
+​	**在内存占用、吞吐量和延迟这三项指标里，延迟的重要性日益凸显，越发备受关注**。其原因是随着计算机硬件的发展、性能的提升，我们越来越能容忍收集器多占用一点点内存；硬件性能增长，对软件系统的处理能力是有直接助益的，<u>硬件的规格和性能越高，也有助于降低收集器运行时对应用程序的影响，换句话说，吞吐量会更高</u>。但对延迟则不是这样，硬件规格提升，准确地说是**内存的扩大，对延迟反而会带来负面的效果**，这点也是很符合直观思维的：虚拟机要回收完整的1TB的堆内存，毫无疑问要比回收1GB的堆内存耗费更多时间。由此，我们就不难理解为何延迟会成为垃圾收集器最被重视的性能指标了。现在我们来观察一下现在已接触过的垃圾收集器的停顿状况，如图3-14所示。
+
+​	图3-14中浅色阶段表示必须挂起用户线程，深色表示收集器线程与用户线程是并发工作的。由图3-14可见，在CMS和G1之前的全部收集器，其工作的所有步骤都会产生“Stop The World”式的停顿；**CMS和G1分别使用增量更新和原始快照（见3.4.6节）技术**，<u>实现了标记阶段的并发，不会因管理的堆内存变大，要标记的对象变多而导致停顿时间随之增长</u>。但是对于标记阶段之后的处理，仍未得到妥善解决。<u>CMS使用标记-清除算法，虽然避免了整理阶段收集器带来的停顿，但是清除算法不论如何优化改进，在设计原理上避免不了空间碎片的产生，随着空间碎片不断淤积最终依然逃不过“Stop TheWorld”的命运。G1虽然可以按更小的粒度进行回收，从而抑制整理阶段出现时间过长的停顿，但毕竟也还是要暂停的</u>。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20201109141638638.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L25hbmh1YWliZWlhbg==,size_16,color_FFFFFF,t_70#pic_center)
+
+​	读者肯定也从图3-14中注意到了，最后的两款收集器，**Shenandoah和ZGC，几乎整个工作过程全部都是并发的**，<u>只有初始标记、最终标记这些阶段有短暂的停顿，**这部分停顿的时间基本上是固定的**，与堆的容量、堆中对象的数量没有正比例关系</u>。实际上，它们都可以在任意可管理的（譬如现在ZGC只能管理4TB以内的堆）堆容量下，**实现垃圾收集的停顿都不超过十毫秒**这种以前听起来是天方夜谭、匪夷所思的目标。这两款目前仍处于实验状态的收集器，被官方命名为“低延迟垃圾收集器”（Low-Latency Garbage Collector或者Low-Pause-Time Garbage Collector）。
+
+[^60]:不可能三角：https://zh.wikipedia.org/wiki/三元悖论。
+
+### 3.6.1 Shenandoah收集器
+
+> [深入理解JVM（③）低延迟的Shenandoah收集器](https://blog.csdn.net/qq_35165000/article/details/106773425)
+>
+> [两大新型Jvm低延迟收集器，你必须知道！](https://blog.csdn.net/weixin_38007185/article/details/108098342)
+
+​	在本书所出现的众多垃圾收集器里，Shenandoah大概是最“孤独”的一个。现代社会竞争激烈，连一个公司里不同团队之间都存在“部门墙”，那Shenandoah作为第一款不由Oracle（包括以前的Sun）公司的虚拟机团队所领导开发的HotSpot垃圾收集器，不可避免地会受到一些来自“官方”的排挤。在笔者撰写这部分内容时[^61]，Oracle仍明确拒绝在OracleJDK 12中支持Shenandoah收集器，并执意在打包OracleJDK时通过条件编译完全排除掉了Shenandoah的代码，换句话说，**Shenandoah是一款只有OpenJDK才会包含，而OracleJDK里反而不存在的收集器，“免费开源版”比“收费商业版”功能更多，这是相对罕见的状况**[^62]。如果读者的项目要求用到Oracle商业支持的话，就不得不把Shenandoah排除在选择范围之外了。
+
+​	最初Shenandoah是由RedHat公司独立发展的新型收集器项目，在2014年RedHat把Shenandoah贡献给了OpenJDK，并推动它成为OpenJDK 12的正式特性之一，也就是后来的JEP 189。<u>这个项目的目标是实现一种能在任何堆内存大小下都可以把垃圾收集的停顿时间限制在十毫秒以内的垃圾收集器</u>，该目标意味着相比CMS和G1，**Shenandoah不仅要进行并发的垃圾标记，还要并发地进行对象清理后的整理动作**。
+
+​	从代码历史渊源上讲，比起稍后要介绍的有着Oracle正朔血统的ZGC，Shenandoah反而更像是G1的下一代继承者，它们两者有着相似的堆内存布局，在初始标记、并发标记等许多阶段的处理思路上都高度一致，甚至还直接共享了一部分实现代码，这使得部分对G1的打磨改进和Bug修改会同时反映在Shenandoah之上，而由于Shenandoah加入所带来的一些新特性，也有部分会出现在G1收集器中，譬如**在并发失败后作为“逃生门”的Full GC[^63]，G1就是由于合并了Shenandoah的代码才获得多线程FullGC的支持**。
+
+​	那Shenandoah相比起G1又有什么改进呢？虽然**Shenandoah也是使用基于Region的堆内存布局，同样有着用于存放大对象的Humongous Region，默认的回收策略也同样是优先处理回收价值最大的Region**……但在管理堆内存方面，它与G1至少有三个明显的不同之处：
+
++ <u>最重要的当然是支持并发的整理算法</u>，**G1的回收阶段是可以多线程并行的，但却不能与用户线程并发**，这点作为Shenandoah最核心的功能稍后笔者会着重讲解。
++ 其次，**Shenandoah（目前）是默认不使用分代收集的，换言之，不会有专门的新生代Region或者老年代Region的存在**，没有实现分代，并不是说分代对Shenandoah没有价值，这更多是出于性价比的权衡，基于工作量上的考虑而将其放到优先级较低的位置上。
++ 最后，**Shenandoah摒弃了在G1中耗费大量内存和计算资源去维护的记忆集**，**改用名为“连接矩阵”（ConnectionMatrix）的全局数据结构来记录跨Region的引用关系，降低了处理跨代指针时的记忆集维护消耗，也降低了伪共享问题（见3.4.4节）的发生概率**。<u>连接矩阵可以简单理解为一张二维表格，如果Region N有对象指向Region M，就在表格的N行M列中打上一个标记</u>，如下图所示，如果Region 5中的对象Baz引用了Region 3的Foo，Foo又引用了Region 1的Bar，那连接矩阵中的5行3列、3行1列就应该被打上标记。在回收时通过这张表格就可以得出哪些Region之间产生了跨代引用。
+
+​	Shenandoah收集器的工作过程大致可以划分为以下九个阶段（此处以Shenandoah在2016年发表的原始论文[^64]进行介绍。在最新版本的Shenandoah 2.0中，进一步强化了“部分收集”的特性，<u>初始标记之前还有Initial Partial、Concurrent Partial和Final Partial阶段，它们可以不太严谨地理解为对应于以前分代收集中的Minor GC的工作）</u>：
+
+![Shenandoah收集器连接矩阵](https://img-blog.csdnimg.cn/20200615234851583.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_SmlNb2Vy,size_60,color_c8cae6,t_70)
+
++ 初始标记（Initial Marking）：**与G1一样，首先标记与GC Roots直接关联的对象**，这个阶段仍是“Stop The World”的，但停顿时间与堆大小无关，只与GC Roots的数量相关。
++ 并发标记（Concurrent Marking）：**与G1一样，遍历对象图，标记出全部可达的对象**，这个阶段是与用户线程一起并发的，<u>时间长短取决于堆中存活对象的数量以及对象图的结构复杂程度</u>。
++ 最终标记（Final Marking）：**与G1一样，处理剩余的SATB扫描，并在这个阶段统计出回收价值最高的Region，将这些Region构成一组回收集（Collection Set）**。最终标记阶段也会有一小段短暂的停顿。
++ 并发清理（Concurrent Cleanup）：**这个阶段用于清理那些整个区域内连一个存活对象都没有找到的Region**（这类Region被称为Immediate Garbage Region）。
++ 并发回收（Concurrent Evacuation）：**并发回收阶段是Shenandoah与之前HotSpot中其他收集器的核心差异**。<u>在这个阶段，Shenandoah要把回收集里面的存活对象先复制一份到其他未被使用的Region之中</u>。复制对象这件事情如果将用户线程冻结起来再做那是相当简单的，但如果两者必须要同时并发进行的话，就变得复杂起来了。其困难点是在移动对象的同时，用户线程仍然可能不停对被移动的对象进行读写访问，移动对象是一次性的行为，但移动之后整个内存中所有指向该对象的引用都还是旧对象的地址，这是很难一瞬间全部改变过来的。**对于并发回收阶段遇到的这些困难，Shenandoah将会通过读屏障和被称为“Brooks Pointers”的转发指针来解决**（讲解完Shenandoah整个工作过程之后笔者还要再回头介绍它）。**并发回收阶段运行的时间长短取决于回收集的大小。**
++ 初始引用更新（Initial Update Reference）：**并发回收阶段复制对象结束后，还需要把堆中所有指向旧对象的引用修正到复制后的新地址，这个操作称为引用更新**。引用更新的初始化阶段实际上并未做什么具体的处理，设立这个阶段只是为了建立一个线程集合点，确保所有并发回收阶段中进行的收集器线程都已完成分配给它们的对象移动任务而已。**初始引用更新时间很短，会产生一个非常短暂的停顿。**
++ 并发引用更新（Concurrent Update Reference）：**真正开始进行引用更新操作，这个阶段是与用户线程一起并发的，时间长短取决于内存中涉及的引用数量的多少**。**<u>并发引用更新与并发标记不同，它不再需要沿着对象图来搜索，只需要按照内存物理地址的顺序，线性地搜索出引用类型，把旧值改为新值即可</u>**。
++ 最终引用更新（Final Update Reference）：解决了堆中的引用更新后，还要**修正存在于GC Roots中的引用**。<u>这个阶段是Shenandoah的最后一次停顿，停顿时间只与GC Roots的数量相关</u>。
++ 并发清理（Concurrent Cleanup）：经过并发回收和引用更新之后，整个回收集中所有的Region已再无存活对象，这些Region都变成Immediate Garbage Regions了，最后再调用一次并发清理过程来回收这些Region的内存空间，供以后新对象分配使用。
+
+​	以上对Shenandoah收集器这九个阶段的工作过程的描述可能拆分得略为琐碎，读者只要抓住其中三个最重要的并发阶段（**并发标记、并发回收、并发引用更新**），就能比较容易理清Shenandoah是如何运作的了。图3-16[^65]中黄色的区域代表的是被选入回收集的Region，绿色部分就代表还存活的对象，蓝色就是用户线程可以用来分配对象的内存Region了。图3-16中不仅展示了Shenandoah三个并发阶段的工作过程，还能形象地表示出并发标记阶段如何找出回收对象确定回收集，并发回收阶段如何移动回收集中的存活对象，并发引用更新阶段如何将指向回收集中存活对象的所有引用全部修正，此后回收集便不存在任何引用可达的存活对象了。
+
+![img](https://img-blog.csdnimg.cn/20200530150030891.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2dhb2hhaWNoZW5nMTIz,size_16,color_FFFFFF,t_70)
+
+​	![img](https://img-blog.csdnimg.cn/20200530162726443.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2dhb2hhaWNoZW5nMTIz,size_16,color_FFFFFF,t_70)
+
+​	学习了Shenandoah收集器的工作过程，我们再来聊一下Shenandoah用以支持并行整理的核心概念——Brooks Pointer。“Brooks”是一个人的名字。<u>1984年，Rodney A.Brooks在论文《Trading Data Spacefor Reduced Time and Code Space in Real-Time Garbage Collection on Stock Hardware》中提出了使**用转发指针（Forwarding Pointer，也常被称为Indirection Pointer）来实现对象移动与用户程序并发的一种解决方案**</u>。<u>**此前，要做类似的并发操作，通常是在被移动对象原有的内存上设置保护陷阱（MemoryProtection Trap），一旦用户程序访问到归属于旧对象的内存空间就会产生自陷中段，进入预设好的异常处理器中，再由其中的代码逻辑把访问转发到复制后的新对象上**</u>。<u>虽然确实能够实现对象移动与用户线程并发，但是如果没有操作系统层面的直接支持，这种方案将**导致用户态频繁切换到核心态**[^66]，代价是非常大的，不能频繁使用</u>[^67]。
+
+![img](https://imgconvert.csdnimg.cn/aHR0cHM6Ly9taXAueWh0Ny5jb20vdXBsb2FkL2ltYWdlLzIwMjAwMTExL3VwLWUxNGNkNzM3MTgyZjNiNjE0YWQ5Zjc1N2E0NjE3MjdhZWM1LnBuZw?x-oss-process=image/format,png)
+
+​	**Brooks提出的新方案不需要用到内存保护陷阱，而是在原有对象布局结构的最前面统一增加一个新的引用字段，在正常不处于并发移动的情况下，该引用指向对象自己**，如图3-17所示。
+
+​	<u>从结构上来看，Brooks提出的转发指针与某些早期Java虚拟机使用过的句柄定位（关于对象定位详见第2章）有一些相似之处，两者都是一种间接性的对象访问方式，差别是**句柄通常会统一存储在专门的句柄池中，而转发指针是分散存放在每一个对象头前面**</u>。
+
+​	**有了转发指针之后，有何收益暂且不论，所有间接对象访问技术的缺点都是相同的，也是非常显著的——每次对象访问会带来一次额外的转向开销，尽管这个开销已经被优化到只有一行汇编指令的程度**，譬如以下所示：
+
+```assembly
+mov r13,QWORD PTR [r12+r14*8-0x8]
+```
+
+​	不过，毕竟对象定位会被频繁使用到，这仍是一笔不可忽视的执行成本，只是它比起内存保护陷阱的方案已经好了很多。**转发指针加入后带来的收益自然是当对象拥有了一份新的副本时，只需要修改一处指针的值，即旧对象上转发指针的引用位置，使其指向新对象，便可将所有对该对象的访问转发到新的副本上**。<u>这样只要旧对象的内存仍然存在，未被清理掉，虚拟机内存中所有通过旧引用地址访问的代码便仍然可用，都会被自动转发到新对象上继续工作</u>，如图3-18所示。
+
+![img](https://imgconvert.csdnimg.cn/aHR0cHM6Ly9taXAueWh0Ny5jb20vdXBsb2FkL2ltYWdlLzIwMjAwMTExL3VwLWQwNDMyNDg1NjVkOWFlMTBhMmQ2MmI0NGE2Mjc3MDQwYjdhLnBuZw?x-oss-process=image/format,png)
+
+​	**需要注意，Brooks形式的转发指针在设计上决定了它是必然会出现多线程竞争问题的，如果收集器线程与用户线程发生的只是并发读取，那无论读到旧对象还是新对象上的字段，返回的结果都应该是一样的，这个场景还可以有一些“偷懒”的处理余地；但如果发生的是并发写入，就一定必须保证写操作只能发生在新复制的对象上，而不是写入旧对象的内存中**。读者不妨设想以下三件事情并发进行时的场景：
+
+1. 收集器线程复制了新的对象副本；
+2. 用户线程更新对象的某个字段；
+3. 收集器线程更新转发指针的引用值为新副本地址。
+
+​	如果不做任何保护措施，让事件2在事件1、事件3之间发生的话，将导致的结果就是用户线程对对象的变更发生在旧对象上，所以这里**必须针对转发指针的访问操作采取同步措施，让收集器线程或者用户线程对转发指针的访问只有其中之一能够成功，另外一个必须等待，避免两者交替进行**。**<u>实际上Shenandoah收集器是通过比较并交换（Compare And Swap，CAS）操作[^68]来保证并发时对象的访问正确性的</u>**。
+
+​	**转发指针另一点必须注意的是执行频率的问题**，<u>尽管通过对象头上的Brooks Pointer来保证并发时原对象与复制对象的访问一致性，这件事情只从原理上看是不复杂的，但是“对象访问”这四个字的分量是非常重的，对于一门面向对象的编程语言来说，对象的读取、写入，对象的比较，为对象哈希值计算，用对象加锁等，这些操作都属于对象访问的范畴，它们在代码中比比皆是，要覆盖全部对象访问操作，**Shenandoah不得不同时设置读、写屏障去拦截**。</u>
+
+​	<u>之前介绍其他收集器时，或者是用于维护卡表，或者是用于实现并发标记，写屏障已被使用多次，累积了不少的处理任务了，这些写屏障有相当一部分在Shenandoah收集器中依然要被使用到</u>。**除此以外，为了实现Brooks Pointer，Shenandoah在读、写屏障中都加入了额外的转发处理，尤其是使用读屏障的代价，这是比写屏障更大的**。
+
+​	<u>代码里对象读取的出现频率要比对象写入的频率高出很多，读屏障数量自然也要比写屏障多得多，所以读屏障的使用必须更加谨慎，不允许任何的重量级操作</u>。**Shenandoah是本书中第一款使用到读屏障的收集器**，它的开发者也意识到数量庞大的读屏障带来的性能开销会是Shenandoah被诟病的关键点之一[^69]，所以<u>计划在JDK 13中将Shenandoah的内存屏障模型改进为基于引用访问屏障（Load Reference Barrier）</u>[^70]的实现，**所谓“引用访问屏障”是指内存屏障只拦截对象中数据类型为引用类型的读写操作，而不去管原生数据类型等其他非引用字段的读写，这能够省去大量对原生类型、对象比较、对象加锁等场景中设置内存屏障所带来的消耗**。
+
+​	最后来谈谈Shenandoah在实际应用中的性能表现，Shenandoah的开发团队或者其他第三方测试者在网上都公布了一系列测试，结果各有差异。笔者在此选择展示了一份RedHat官方在2016年所发表的Shenandoah实现论文中给出的应用实测数据，测试内容是使用ElasticSearch对200GB的维基百科数据进行索引[^71]，如下表所示。<u>从结果来看，应该说2016年做该测试时的Shenandoah并没有完全达成预定目标，停顿时间比其他几款收集器确实有了质的飞跃，但也并未实现最大停顿时间控制在十毫秒以内的目标，而吞吐量方面则出现了很明显的下降，其总运行时间是所有测试收集器中最长的</u>。读者可以从这个官方的测试结果来对**Shenandoah的弱项（高运行负担使得吞吐量下降）和强项（低延迟时间）**建立量化的概念，并对比一下稍后介绍的ZGC的测试结果。
+
+![img](https://img-blog.csdnimg.cn/20200530154417580.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2dhb2hhaWNoZW5nMTIz,size_16,color_FFFFFF,t_70)
+
+​	Shenandoah收集器作为第一款由非Oracle开发的垃圾收集器，一开始就预计到了缺乏Oracle公司那样富有经验的研发团队可能会遇到很多困难。所以Shenandoah采取了“小步快跑”的策略，将最终目标进行拆分，分别形成Shenandoah 1.0、2.0、3.0……这样的小版本计划，在每个版本中迭代改进，现在已经可以看到Shenandoah的性能在日益改善，逐步接近“Low-Pause”的目标。**此外，RedHat也积极拓展Shenandoah的使用范围，将其Backport到JDK 11甚至是JDK 8之上，让更多不方便升级JDK版本的应用也能够享受到垃圾收集器技术发展的最前沿成果。**
+
+[^61]:这部分内容的撰写时间是2019年5月，以后的版本中双方博弈可能存在变数。相关内容可参见：https://bugs.openjdk.java.net/browse/JDK-8215030。
+[^62]:这里主要是调侃，OpenJDK和OracleJDK之间的关系并不仅仅是收费和免费的问题，详情可参见本书第1章。
+[^63]:JEP 307：Parallel Full GC for G1。
+[^64]:论文地址：https://www.researchgate.net/publication/306112816_Shenandoah_An_opensource_concurrent_compacting_garbage_collector_for_OpenJDK。
+[^65]:此例子中的图片引用了Aleksey Shipilev在DEVOXX 2017上的主题演讲：《Shenandoah GC Part I：The Garbage Collector That Could》，地址为https://shipilev.net/talks/devoxx-Nov2017-shenandoah.pdf。因本书是黑白印刷，颜色可能难以分辨，读者可以下载原文查看。
+[^66]:用户态、核心态是一种操作系统内核模式，具体见：https://zh.wikipedia.org/wiki/核心态。
+[^67]:但如果能有来自操作系统内核的支持的话，就不是没有办法解决，业界公认最优秀的Azul C4收集器就使用了这种方案。
+[^68]:关于临界区、锁、CAS等概念，是计算机体系的基础知识，如果读者对此不了解的话，可以参考第13章中的相关介绍。
+[^69]:Roman Kennke（JEP 189的Owner）：It resolves one major point of criticism against Shenandoah，thatis their expensive primitive read-barriers。
+[^70]:资料来源：https://rkennke.wordpress.com/2019/05/15/shenandoah-gc-in-jdk13-part-i-load-referencebarriers/。
+[^71]:该论文是以2014～2015年间最初版本的Shenandoah为测试对象，在2017年，Christine Flood在Java-One的演讲中，进行了相同测试，Shenandoah的运行时间已经优化到335秒。相信在读者阅读到这段文字时，Shenandoah的实际表现在多数应用中均会优于结果中反映的水平。
+
+### 3.6.2 ZGC收集器
 
 
 
@@ -2136,9 +2270,4 @@ OpenJDK 64-Bit Server VM warning: Option UseConcMarkSweepGC was deprecated in ve
 
 
 
-
-[^55]:
-
-
-
-[^56 ]: 
+[^72]:
