@@ -36,9 +36,9 @@
 + Java EE（Enterprise Edition）：支持使用多层架构的企业应用（如ERP、MIS、CRM应用）的Java平台，除了提供Java SE API外，还对其做了大量有针对性的扩充[^4]，并提供了相关的部署支持，这条产品线在JDK 6以前被称为J2EE，在JDK 10以后被Oracle放弃，捐献给Eclipse基金会管理，此后被称为Jakarta EE。
 
 [^1]: JCP：Java Community Process，就是人们常说的“Java社区”，这是一个由业界多家技术巨头组成的社区组织，用于定义和发展Java的技术规范。
-[^2]:本书将以OpenJDK/OracleJDK中的HotSpot虚拟机为主脉络进行讲述，这是目前业界占统治地位的JDK和虚拟机，但它们并非唯一的选择，当本书中涉及其他厂商的JDK和其他Java虚拟机的内容时，笔者会指明上下文中JDK的全称。
+[^2]: 本书将以OpenJDK/OracleJDK中的HotSpot虚拟机为主脉络进行讲述，这是目前业界占统治地位的JDK和虚拟机，但它们并非唯一的选择，当本书中涉及其他厂商的JDK和其他Java虚拟机的内容时，笔者会指明上下文中JDK的全称。
 [^3]: Java SE API范围：https://docs.oracle.com/en/java/javase/12/docs/api/index.html
-[^4]:这些扩展一般以javax.*作为包名，而以java.*为包名的包都是Java SE API的核心包，但由于历史原因，一部分曾经是扩展包的API后来进入了核心包中，因此核心包中也包含了不少javax.*开头的包名
+[^4]: 这些扩展一般以javax.*作为包名，而以java.*为包名的包都是Java SE API的核心包，但由于历史原因，一部分曾经是扩展包的API后来进入了核心包中，因此核心包中也包含了不少javax.*开头的包名
 
 ## 1.3 Java发展史
 
@@ -68,7 +68,7 @@
 
 ​	面向更低端设备的CLDC-HI倒是在智能控制器、传感器等领域还算能维持自己的一片市场，现在也还在继续发展，但前途并不乐观。目前CLDC中活得最好的产品反而是原本早该被CLDC-HI淘汰的KVM，国内的老人手机和出口到经济欠发达国家的功能手机（Feature Phone）还在广泛使用这种更加简单、资源消耗也更小的上一代Java ME虚拟机。
 
-[^5]:严格来说这种提法并不十分准确，笔者写下这段文字时（2019年），在中国，传音手机的出货量超过小米、OPPO、VIVO等智能手机巨头，仅次于华为（含荣耀品牌）排行全国第二。传音手机做的是功能机，销售市场主要在非洲，上面仍然用着Java ME的KVM。
+[^5]: 严格来说这种提法并不十分准确，笔者写下这段文字时（2019年），在中国，传音手机的出货量超过小米、OPPO、VIVO等智能手机巨头，仅次于华为（含荣耀品牌）排行全国第二。传音手机做的是功能机，销售市场主要在非洲，上面仍然用着Java ME的KVM。
 
 ### 1.4.4 天下第二：BEA JRockit/IBM J9 VM
 
@@ -78,8 +78,8 @@
 
 ​	除BEA和IBM公司外，其他一些大公司也号称有自己的专属JDK和虚拟机，但是它们要么是通过从Sun/Oracle公司购买版权的方式获得的（如HP、SAP等），要么是基于OpenJDK项目改进而来的（如阿里巴巴、Twitter等），都并非自己独立开发。
 
-[^6]:严格来说，J9能够支持的市场定位比HotSpot更加广泛，J9最初是为嵌入式领域设计的，后来逐渐扩展为IBM所有平台共用的虚拟机，嵌入式、桌面、服务器端都用它，而HotSpot在嵌入式领域使用的是CDC/CLDC以及Java SE Embedded，这也从侧面体现了J9的模块化和通用性做得非常好。
-[^7]:尽管OpenJ9名称上看起来与OpenJDK类似，但它只是一个单独的Java虚拟机，不包括JDK中的其他内容，实际应该与HotSpot相对应。
+[^6]: 严格来说，J9能够支持的市场定位比HotSpot更加广泛，J9最初是为嵌入式领域设计的，后来逐渐扩展为IBM所有平台共用的虚拟机，嵌入式、桌面、服务器端都用它，而HotSpot在嵌入式领域使用的是CDC/CLDC以及Java SE Embedded，这也从侧面体现了J9的模块化和通用性做得非常好。
+[^7]: 尽管OpenJ9名称上看起来与OpenJDK类似，但它只是一个单独的Java虚拟机，不包括JDK中的其他内容，实际应该与HotSpot相对应。
 
 ### 1.4.5 软硬合璧：BEA Liquid VM/Azul VM
 
@@ -121,8 +121,8 @@
 
 ​	**从更严格的角度来看，Graal VM才是真正意义上与物理计算机相对应的高级语言虚拟机，理由是它与物理硬件的指令集一样，做到了只与机器特性相关而不与某种高级语言特性相关**。Oracle Labs的研究总监Thomas Wuerthinger在接受InfoQ采访时谈到：“随着GraalVM 1.0的发布，我们已经证明了拥有高性能的多语言虚拟机是可能的，并且实现这个目标的最佳方式不是通过类似Java虚拟机和微软CLR那样带有语言特性的字节码[2]。”对于一些本来就不以速度见长的语言运行环境，由于Graal VM本身能够对输入的中间表示进行自动优化，在运行时还能进行即时编译优化，因此使用Graal VM实现往往能够获得比原生编译器更优秀的执行效率，譬如Graal.js要优于Node.js[^8]，Graal.Python要优于CPtyhon[^9]，TruffleRuby要优于Ruby MRI，FastR要优于R语言等。
 
-[^8]:Graal.js能否比Node.js更快目前为止还存有很大争议，Node.js背靠Google的V8引擎、执行性能优异，要超越绝非易事。
-[^9]:Python的运行环境PyPy其实做了与Graal VM差不多的工作，只是仅针对Python而没有为其他高级语言提供解释器。
+[^8]: Graal.js能否比Node.js更快目前为止还存有很大争议，Node.js背靠Google的V8引擎、执行性能优异，要超越绝非易事。
+[^9]: Python的运行环境PyPy其实做了与Graal VM差不多的工作，只是仅针对Python而没有为其他高级语言提供解释器。
 
 ### 1.5.2 新一代即时编译器
 
@@ -136,7 +136,7 @@
 
 ​	Graal编译器未来的前途可期，作为Java虚拟机执行代码的最新引擎，它的持续改进，会同时为HotSpot与Graal VM注入更快更强的驱动力。
 
-[^10]:使用-XX：+UnlockExperimentalVMOptions-XX：+UseJVMCICompiler参数来启用Graal编译器。
+[^10]: 使用-XX：+UnlockExperimentalVMOptions-XX：+UseJVMCICompiler参数来启用Graal编译器。
 
 ### 1.5.3 向Native迈进
 
@@ -158,8 +158,8 @@
 
 ​	Substrate VM补全了Graal VM“Run Programs Faster Anywhere”愿景蓝图里的最后一块拼图，让Graal VM支持其他语言时不会有重量级的运行负担。譬如运行JavaScript代码，Node.js的V8引擎执行效率非常高，但即使是最简单的HelloWorld，它也要使用约20MB的内存，而运行在Substrate VM上的Graal.js，跑一个HelloWorld则只需要4.2MB内存，且运行速度与V8持平。Substrate VM的轻量特性，使得它十分适合嵌入其他系统，譬如<u>Oracle自家的数据库就已经开始使用这种方式支持用不同的语言代替PL/SQL来编写存储过程</u>[^12]。在本书第11章还会再详细讨论提前编译的相关内容。
 
-[^11]:由于AOT编译没有运行时的监控信息，很多由运行信息统计进行向导的优化措施不能使用，所以尽管没有编译时间的压力，效果也不一定就比JIT更好。	
-[^12]:Oracle Database MLE，从Oracle 12c开始支持，详见https://oracle.github.io/oracle-db-mle。
+[^11]: 由于AOT编译没有运行时的监控信息，很多由运行信息统计进行向导的优化措施不能使用，所以尽管没有编译时间的压力，效果也不一定就比JIT更好。	
+[^12]: Oracle Database MLE，从Oracle 12c开始支持，详见https://oracle.github.io/oracle-db-mle。
 
 ### 1.5.4 灵活的胖子
 
@@ -169,8 +169,8 @@
 
 ​	现在，HotSpot虚拟机也有了与J9类似的能力，能够在编译时指定一系列特性开关，让编译输出的HotSpot虚拟机可以裁剪成不同的功能，譬如支持哪些编译器，支持哪些收集器，是否支持JFR、AOT、CDS、NMT等都可以选择。能够实现这些功能特性的组合拆分，反映到源代码不仅仅是条件编译，更关键的是接口与实现的分离。
 
-[^13]:定位J9做到了，HotSpot实际上并未做到，譬如在Java ME中的虚拟机就不是HotSpot，而是CDCHI/CLDC-HI。
-[^14]:这里指虚拟机本身的模块化，与Jigsaw无关。
+[^13]: 定位J9做到了，HotSpot实际上并未做到，譬如在Java ME中的虚拟机就不是HotSpot，而是CDCHI/CLDC-HI。
+[^14]: 这里指虚拟机本身的模块化，与Jigsaw无关。
 
 ### 1.5.5 语言语法持续增强
 
@@ -220,7 +220,7 @@
 hg clone https://hg.openjdk.java.net/jdk/jdk12
 ```
 
-[^15]:严格来说，这里“实质上”可以理解为除去一些版权信息（如java-version的输出）、除去针对Oracle自身特殊硬件平台的适配、除去JDK 12中OracleJDK排除了Shenandoah这类特意设置的差异之外是一致的。
+[^15]: 严格来说，这里“实质上”可以理解为除去一些版权信息（如java-version的输出）、除去针对Oracle自身特殊硬件平台的适配、除去JDK 12中OracleJDK排除了Shenandoah这类特意设置的差异之外是一致的。
 
 ### 1.6.2 系统需求
 
@@ -365,7 +365,7 @@ OpenJDK 64-Bit Server VM (build 12-internal+0-adhoc.icyfenix.jdk12, mixed mode)
 
 ​	**如果线程正在执行的是一个Java方法，这个计数器记录的是正在执行的虚拟机字节码指令的地址；如果正在执行的是本地（Native）方法，这个计数器值则应为空（Undefined）。此内存区域是唯一一个在《Java虚拟机规范》中没有规定任何OutOfMemoryError情况的区域**。
 
-[^16]:“概念模型”这个词会经常被提及，它代表了所有虚拟机的统一外观，但各款具体的Java虚拟机并不一定要完全照着概念模型的定义来进行设计，可能会通过一些更高效率的等价方式去实现它。
+[^16]: “概念模型”这个词会经常被提及，它代表了所有虚拟机的统一外观，但各款具体的Java虚拟机并不一定要完全照着概念模型的定义来进行设计，可能会通过一些更高效率的等价方式去实现它。
 
 ### 2.2.2 Java虚拟机栈
 
@@ -382,8 +382,8 @@ OpenJDK 64-Bit Server VM (build 12-internal+0-adhoc.icyfenix.jdk12, mixed mode)
 + **如果线程请求的栈深度大于虚拟机所允许的深度，将抛出StackOverflowError异常**；
 + **如果Java虚拟机栈容量可以动态扩展[^18]，当栈扩展时无法申请到足够的内存会抛出OutOfMemoryError异常**。
 
-[^17]:栈帧是方法运行期很重要的基础数据结构，在本书的第8章中还会对帧进行详细讲解。
-[^18]:HotSpot虚拟机的栈容量是不可以动态扩展的，以前的Classic虚拟机倒是可以。所以在HotSpot虚拟机上是不会由于虚拟机栈无法扩展而导致OutOfMemoryError异常——只要线程申请栈空间成功了就不会有OOM，但是如果申请时就失败，仍然是会出现OOM异常的，后面的实战中笔者也演示了这种情况。本书第2版时这里的描述是有误的，请阅读过第2版的读者特别注意。
+[^17]: 栈帧是方法运行期很重要的基础数据结构，在本书的第8章中还会对帧进行详细讲解。
+[^18]: HotSpot虚拟机的栈容量是不可以动态扩展的，以前的Classic虚拟机倒是可以。所以在HotSpot虚拟机上是不会由于虚拟机栈无法扩展而导致OutOfMemoryError异常——只要线程申请栈空间成功了就不会有OOM，但是如果申请时就失败，仍然是会出现OOM异常的，后面的实战中笔者也演示了这种情况。本书第2版时这里的描述是有误的，请阅读过第2版的读者特别注意。
 
 ### 2.2.3 本地方法栈
 
@@ -403,9 +403,9 @@ OpenJDK 64-Bit Server VM (build 12-internal+0-adhoc.icyfenix.jdk12, mixed mode)
 
 ​	**Java堆既可以被实现成固定大小的，也可以是可扩展的，不过当前主流的Java虚拟机都是按照可扩展来实现的（通过参数-Xmx和-Xms设定）。如果在Java堆中没有内存完成实例分配，并且堆也无法再扩展时，Java虚拟机将会抛出OutOfMemoryError异常**。
 
-[^19]:《Java虚拟机规范》中的原文：The heap is the runtime data area from which memory for all classinstances and arrays is allocated。
-[^20]:逃逸分析与标量替换的相关内容，请参见第11章的相关内容
-[^21]:指新生代（其中又包含一个Eden和两个Survivor）、老年代这种划分，源自UC Berkeley在20世纪80年代中期开发的Berkeley Smalltalk。历史上有多款虚拟机采用了这种设计，包括HotSpot和它的前身Self和Strongtalk虚拟机（见第1章），原始论文是：https://dl.acm.org/citation.cfm?id=808261。
+[^19]: 《Java虚拟机规范》中的原文：The heap is the runtime data area from which memory for all classinstances and arrays is allocated。
+[^20]: 逃逸分析与标量替换的相关内容，请参见第11章的相关内容
+[^21]: 指新生代（其中又包含一个Eden和两个Survivor）、老年代这种划分，源自UC Berkeley在20世纪80年代中期开发的Berkeley Smalltalk。历史上有多款虚拟机采用了这种设计，包括HotSpot和它的前身Self和Strongtalk虚拟机（见第1章），原始论文是：https://dl.acm.org/citation.cfm?id=808261。
 
 ### 2.2.5 方法区
 
@@ -417,7 +417,7 @@ OpenJDK 64-Bit Server VM (build 12-internal+0-adhoc.icyfenix.jdk12, mixed mode)
 
 ​	**根据《Java虚拟机规范》的规定，如果方法区无法满足新的内存分配需求时，将抛出OutOfMemoryError异常**。
 
-[^22]:JEP 122-Remove the Permanent Generation：http://openjdk.java.net/jeps/122
+[^22]: JEP 122-Remove the Permanent Generation：http://openjdk.java.net/jeps/122
 
 ### 2.2.6 运行时常量池
 
@@ -429,7 +429,7 @@ OpenJDK 64-Bit Server VM (build 12-internal+0-adhoc.icyfenix.jdk12, mixed mode)
 
 ​	既然运行时常量池是方法区的一部分，自然受到方法区内存的限制，**当常量池无法再申请到内存时会抛出OutOfMemoryError异常。**
 
-[^23]:关于Class文件格式、符号引用等概念可参见第6章
+[^23]: 关于Class文件格式、符号引用等概念可参见第6章
 
 > [java -- JVM的符号引用和直接引用](https://www.cnblogs.com/shinubi/articles/6116993.html)
 >
@@ -569,7 +569,7 @@ if (!constants->tag_at(index).is_unresolved_klass()) {
 }
 ```
 
-[^24]:强调“理论上”是因为在CMS的实现里面，为了能在多数情况下分配得更快，设计了一个叫作Linear Allocation Buffer的分配缓冲区，通过空闲列表拿到一大块分配缓冲区之后，在它里面仍然可以使用指针碰撞方式来分配。
+[^24]: 强调“理论上”是因为在CMS的实现里面，为了能在多数情况下分配得更快，设计了一个叫作Linear Allocation Buffer的分配缓冲区，通过空闲列表拿到一大块分配缓冲区之后，在它里面仍然可以使用指针碰撞方式来分配。
 
 ### 2.3.2 对象的内存布局
 
@@ -608,7 +608,7 @@ if (!constants->tag_at(index).is_unresolved_klass()) {
 
 ​	**对象的第三部分是对齐填充，这并不是必然存在的，也没有特别的含义，它仅仅起着占位符的作用。由于HotSpot虚拟机的自动内存管理系统要求对象起始地址必须是8字节的整数倍，换句话说就是任何对象的大小都必须是8字节的整数倍。对象头部分已经被精心设计成正好是8字节的倍数（1倍或者2倍），因此，如果对象实例数据部分没有对齐的话，就需要通过对齐填充来补全。**
 
-[^25]:关于轻量级锁、重量级锁等信息，可参见本书第13章的相关内容。
+[^25]: 关于轻量级锁、重量级锁等信息，可参见本书第13章的相关内容。
 
 ### 2.3.3 对象的访问定位
 
@@ -701,7 +701,7 @@ Disconnected from the target VM, address: '127.0.0.1:49934', transport: 'socket'
 
 ​	以上是处理Java堆内存问题的简略思路，处理这些问题所需要的知识、工具与经验是后面三章的主题，后面我们将会针对具体的虚拟机实现、具体的垃圾收集器和具体的案例来进行分析，这里就先暂不展开。
 
-[^26]:关于堆转储快照文件分析方面的内容，可参见第4章。
+[^26]: 关于堆转储快照文件分析方面的内容，可参见第4章。
 
 ### 2.4.2 虚拟机栈和本地方法栈溢出
 
@@ -914,7 +914,7 @@ Exception in thread "main" java.lang.OutOfMemoryError: unable to create native t
 
 ​	出现StackOverflowError异常时，会有明确错误堆栈可供分析，相对而言比较容易定位到问题所在。如果使用HotSpot虚拟机默认参数，栈深度在大多数情况下（因为每个方法压入栈的帧大小并不是一样的，所以只能说大多数情况下）到达1000~2000是完全没有问题，对于正常的方法调用（包括不能做尾递归优化的递归调用），这个深度应该完全够用了。但是，**如果是建立过多线程导致的内存溢出，在不能减少线程数量或者更换64位虚拟机的情况下，就只能通过减少最大堆和减少栈容量来换取更多的线程**。<u>这种通过“减少内存”的手段来解决内存溢出的方式，如果没有这方面处理经验，一般比较难以想到，这一点读者需要在开发32位系统的多线程应用时注意</u>。也是由于这种问题较为隐蔽，从JDK 7起，以上提示信息中“unable to create native thread”后面，虚拟机会特别注明原因可能是“possibly out of memory or process/resource limits reached”。
 
-[^27]:关于虚拟机线程实现方面的内容可以参考本书第12章。
+[^27]: 关于虚拟机线程实现方面的内容可以参考本书第12章。
 
 ### 2.4.3 方法区和运行时常量池溢出
 
@@ -1052,9 +1052,9 @@ at java.lang.ClassLoader.defineClass(ClassLoader.java:616)
 
   *（我本地jdk8/11的MinMetaspaceFreeRatio都显示40；MaxMetaspaceFreeRatio显示70）*
 
-[^28]:正常情况下是永不停歇的，如果机器内存紧张到连几MB的Java堆都挤不出来的这种极端情况就不讨论了。
-[^29]:它是在加载sun.misc.Version这个类的时候进入常量池的。本书第2版并未解释java这个字符串此前是哪里出现的，所以被批评“挖坑不填了”（无奈地摊手）。如读者感兴趣是如何找出来的，可参考RednaxelaFX的知乎回答（https://www.zhihu.com/question/51102308/answer/124441115）。
-[^30]:CGLib开源项目：http://cglib.sourceforge.net/。
+[^28]: 正常情况下是永不停歇的，如果机器内存紧张到连几MB的Java堆都挤不出来的这种极端情况就不讨论了。
+[^29]: 它是在加载sun.misc.Version这个类的时候进入常量池的。本书第2版并未解释java这个字符串此前是哪里出现的，所以被批评“挖坑不填了”（无奈地摊手）。如读者感兴趣是如何找出来的，可参考RednaxelaFX的知乎回答（https://www.zhihu.com/question/51102308/answer/124441115）。
+[^30]: CGLib开源项目：http://cglib.sourceforge.net/。
 
 ### 2.4.4 本机直接内存溢出
 
@@ -1223,7 +1223,7 @@ No shared spaces configured.
 
 ​	<u>目前最新的几款垃圾收集器[^31]无一例外都具备了**局部回收**的特征</u>，为了避免GC Roots包含过多对象而过度膨胀，它们在实现上也做出了各种优化处理。关于这些概念、优化技巧以及各种不同收集器实现等内容，都将在本章后续内容中一一介绍。
 
-[^31]:如OpenJDK中的G1、Shenandoah、ZGC以及Azul的PGC、C4这些收集器。
+[^31]: 如OpenJDK中的G1、Shenandoah、ZGC以及Azul的PGC、C4这些收集器。
 
 ### 3.2.3 再谈引用
 
@@ -1331,7 +1331,7 @@ no, i am dead :(
 
 ​	**在大量使用反射、动态代理、CGLib等字节码框架，动态生成JSP以及OSGi这类频繁自定义类加载器的场景中，通常都需要Java虚拟机具备类型卸载的能力，以保证不会对方法区造成过大的内存压力**。
 
-[^32]:Product版、FastDebug版HotSpot虚拟机的差别可参见前文1.6节。
+[^32]: Product版、FastDebug版HotSpot虚拟机的差别可参见前文1.6节。
 
 > [类加载器与反射](https://blog.csdn.net/qq_36582604/article/details/81100501)
 
@@ -1346,7 +1346,7 @@ no, i am dead :(
 
 ​	这两大类也常被称作**“直接垃圾收集”和“间接垃圾收集”**。<u>由于引用计数式垃圾收集算法在本书讨论到的主流Java虚拟机中均未涉及，所以我们暂不把它作为正文主要内容来讲解，本节介绍的所有算法均属于追踪式垃圾收集的范畴。</u>
 
-[^33]:原著名为《The Garbage Collection Handbook》，2011年出版，中文版在2016年由机械工业出版社翻译引进国内。
+[^33]: 原著名为《The Garbage Collection Handbook》，2011年出版，中文版在2016年由机械工业出版社翻译引进国内。
 
 ### 3.3.1 分代收集理论
 
@@ -1381,9 +1381,9 @@ no, i am dead :(
 
 + **整堆收集（Full GC）：收集整个Java堆和方法区的垃圾收集**。
 
-[^34]:值得注意的是，分代收集理论也有其缺陷，最新出现（或在实验中）的几款垃圾收集器都展现出了面向全区域收集设计的思想，或者可以支持全区域不分代的收集的工作模式。
-[^35]:新生代（Young）、老年代（Old）是HotSpot虚拟机，也是现在业界主流的命名方式。在IBM J9虚拟机中对应称为婴儿区（Nursery）和长存区（Tenured），名字不同但其含义是一样的。
-[^36]:通常能单独发生收集行为的只是新生代，所以这里“反过来”的情况只是理论上允许，实际上除了CMS收集器，其他都不存在只针对老年代的收集。
+[^34]: 值得注意的是，分代收集理论也有其缺陷，最新出现（或在实验中）的几款垃圾收集器都展现出了面向全区域收集设计的思想，或者可以支持全区域不分代的收集的工作模式。
+[^35]: 新生代（Young）、老年代（Old）是HotSpot虚拟机，也是现在业界主流的命名方式。在IBM J9虚拟机中对应称为婴儿区（Nursery）和长存区（Tenured），名字不同但其含义是一样的。
+[^36]: 通常能单独发生收集行为的只是新生代，所以这里“反过来”的情况只是理论上允许，实际上除了CMS收集器，其他都不存在只针对老年代的收集。
 
 ### 3.3.2 标记-清除算法
 
@@ -1414,7 +1414,7 @@ no, i am dead :(
 
 ​	内存的分配担保好比我们去银行借款，如果我们信誉很好，在98%的情况下都能按时偿还，于是银行可能会默认我们下一次也能按时按量地偿还贷款，只需要有一个担保人能保证如果我不能还款时，可以从他的账户扣钱，那银行就认为没有什么风险了。内存的分配担保也一样，**如果另外一块Survivor空间没有足够空间存放上一次新生代收集下来的存活对象，这些对象便将通过分配担保机制直接进入老年代，这对虚拟机来说就是安全的**。关于对新生代进行分配担保的内容，在稍后的3.8.5节介绍垃圾收集器执行规则时还会再进行讲解。
 
-[^36]:这里需要说明一下，HotSpot中的这种分代方式从最初就是这种布局，和IBM的研究并没有什么实际关系。这里笔者列举IBM的研究只是为了说明这种分代布局的意义所在。
+[^36]: 这里需要说明一下，HotSpot中的这种分代方式从最初就是这种布局，和IBM的研究并没有什么实际关系。这里笔者列举IBM的研究只是为了说明这种分代布局的意义所在。
 
 ### 3.3.4 标记-整理算法
 
@@ -1434,8 +1434,8 @@ no, i am dead :(
 
 ​	另外，**还有一种“和稀泥式”解决方案可以不在内存分配和访问上增加太大额外负担，做法是让虚拟机平时多数时间都采用标记-清除算法，暂时容忍内存碎片的存在，直到内存空间的碎片化程度已经大到影响对象分配时，再采用标记-整理算法收集一次，以获得规整的内存空间。前面提到的基于标记-清除算法的CMS收集器面临空间碎片过多时采用的就是这种处理办法**。
 
-[^37]:最新的ZGC和Shenandoah收集器使用读屏障（Read Barrier）技术实现了整理过程与用户线程的并发执行，稍后将会介绍这种收集器的工作原理。
-[^38]:通常标记-清除算法也是需要停顿用户线程来标记、清理可回收对象的，只是停顿时间相对而言要来的短而已。
+[^37]: 最新的ZGC和Shenandoah收集器使用读屏障（Read Barrier）技术实现了整理过程与用户线程的并发执行，稍后将会介绍这种收集器的工作原理。
+[^38]: 通常标记-清除算法也是需要停顿用户线程来标记、清理可回收对象的，只是停顿时间相对而言要来的短而已。
 
 ## 3.4 HotSpot的算法细节实现
 
@@ -1559,10 +1559,10 @@ CARD_TABLE [this address >> 9] = 0;
 
 ​	**一个卡页的内存中通常包含不止一个对象，只要卡页内有一个（或更多）对象的字段存在着跨代指针，那就将对应卡表的数组元素的值标识为1，称为这个元素变脏（Dirty），没有则标识为0。在垃圾收集发生时，只要筛选出卡表中变脏的元素，就能轻易得出哪些卡页内存块中包含跨代指针，把它们加入GC Roots中一并扫描**。
 
-[^39]:由Antony Hosking在1993年发表的论文《Remembered sets can also play cards》中提出。
-[^40]:之所以使用byte数组而不是bit数组主要是速度上的考量，现代计算机硬件都是最小按字节寻址的，没有直接存储一个bit的指令，所以要用bit的话就不得不多消耗几条shift+mask指令。具体可见HotSpot应用写屏障实现记忆集的原始论文《A Fast Write Barrier for Generational Garbage Collectors》（http://www.hoelzle.org/publications/write-barrier.pdf）。
-[^41]:引用来源为http://psy-lob-saw.blogspot.com/2014/10/the-jvm-write-barrier-card-marking.html。
-[^42]:十六进制数200、400分别为十进制的512、1024，这3个内存块为从0开始、512字节容量的相邻区域。
+[^39]: 由Antony Hosking在1993年发表的论文《Remembered sets can also play cards》中提出。
+[^40]: 之所以使用byte数组而不是bit数组主要是速度上的考量，现代计算机硬件都是最小按字节寻址的，没有直接存储一个bit的指令，所以要用bit的话就不得不多消耗几条shift+mask指令。具体可见HotSpot应用写屏障实现记忆集的原始论文《A Fast Write Barrier for Generational Garbage Collectors》（http://www.hoelzle.org/publications/write-barrier.pdf）。
+[^41]: 引用来源为http://psy-lob-saw.blogspot.com/2014/10/the-jvm-write-barrier-card-marking.html。
+[^42]: 十六进制数200、400分别为十进制的512、1024，这3个内存块为从0开始、512字节容量的相邻区域。
 
 > [计算机系统内的字长到底指的是什么？](https://www.zhihu.com/question/20536161)
 >
@@ -1608,8 +1608,8 @@ if (CARD_TABLE [this address >> 9] != 0)
 
 *(JDK8和JDK11的`-XX：+UseCondCardMark`默认值都是false)*
 
-[^43]:这个语境上的内存屏障（Memory Barrier）的目的是为了指令不因编译优化、CPU执行优化等原因而导致乱序执行，它也是可以细分为仅确保读操作顺序正确性和仅确保写操作顺序正确性的内存屏障的。关于并发问题中内存屏障的介绍，可以参考本书第12章中关于volatile型变量的讲解。
-[^44]:AOP为Aspect Oriented Programming的缩写，意为面向切面编程，通过预编译方式和运行期动态代理实现程序功能的统一维护的一种技术。后面提到的“环形通知”也是AOP中的概念，使用过Spring的读者应该都了解这些基础概念。
+[^43]: 这个语境上的内存屏障（Memory Barrier）的目的是为了指令不因编译优化、CPU执行优化等原因而导致乱序执行，它也是可以细分为仅确保读操作顺序正确性和仅确保写操作顺序正确性的内存屏障的。关于并发问题中内存屏障的介绍，可以参考本书第12章中关于volatile型变量的讲解。
+[^44]: AOP为Aspect Oriented Programming的缩写，意为面向切面编程，通过预编译方式和运行期动态代理实现程序功能的统一维护的一种技术。后面提到的“环形通知”也是AOP中的概念，使用过Spring的读者应该都了解这些基础概念。
 
 ### 3.4.6 并发的可达性分析
 
@@ -1654,8 +1654,8 @@ if (CARD_TABLE [this address >> 9] != 0)
 
 ​	到这里，笔者简要介绍了HotSpot虚拟机如何发起内存回收、如何加速内存回收，以及如何保证回收正确性等问题，但是虚拟机如何具体地进行内存回收动作仍然未涉及。因为内存回收如何进行是由虚拟机所采用哪一款垃圾收集器所决定的，而通常虚拟机中往往有多种垃圾收集器，下面笔者将逐一介绍HotSpot虚拟机中出现过的垃圾收集器。
 
-[^45]:三色标记的介绍可参见https://en.wikipedia.org/wiki/Tracing_garbage_collection#Tri-color_marking。
-[^46]:此例子中的图片引用了Aleksey Shipilev在DEVOXX 2017上的主题演讲：《Shenandoah GC Part I：The Garbage Collector That Could》。
+[^45]: 三色标记的介绍可参见https://en.wikipedia.org/wiki/Tracing_garbage_collection#Tri-color_marking。
+[^46]: 此例子中的图片引用了Aleksey Shipilev在DEVOXX 2017上的主题演讲：《Shenandoah GC Part I：The Garbage Collector That Could》。
 
 > [三色标记（Tri-color marking）](https://blog.csdn.net/u013490280/article/details/107495053)
 
@@ -1907,9 +1907,9 @@ Garbage collection
 
 ​	这点不需要多加论述就能证明：如果有一种放之四海皆准、任何场景下都适用的完美收集器存在，HotSpot虚拟机完全没必要实现那么多种不同的收集器了。
 
-[^47]:这里专门强调了OracleJDK是因为要把OpenJDK，尤其是OpenJDK-Shenandoah-JDK8这种Backports项目排除在外，在本书故事的时间线里，Shenandoah要到OpenJDK 12才会登场，请读者耐心等待。
-[^48]:图片来源：https://blogs.oracle.com/jonthecollector/our_collectors。
-[^49]:这个关系不是一成不变的，由于维护和兼容性测试的成本，在JDK 8时将Serial+CMS、ParNew+Serial Old这两个组合声明为废弃（JEP 173），并在JDK 9中完全取消了这些组合的支持（JEP214）。
+[^47]: 这里专门强调了OracleJDK是因为要把OpenJDK，尤其是OpenJDK-Shenandoah-JDK8这种Backports项目排除在外，在本书故事的时间线里，Shenandoah要到OpenJDK 12才会登场，请读者耐心等待。
+[^48]: 图片来源：https://blogs.oracle.com/jonthecollector/our_collectors。
+[^49]: 这个关系不是一成不变的，由于维护和兼容性测试的成本，在JDK 8时将Serial+CMS、ParNew+Serial Old这两个组合声明为废弃（JEP 173），并在JDK 9中完全取消了这些组合的支持（JEP214）。
 
 ### 3.5.1 Serial收集器
 
@@ -1923,7 +1923,7 @@ Garbage collection
 
 ​	写到这里，笔者似乎已经把Serial收集器描述成一个最早出现，但目前已经老而无用，食之无味，弃之可惜的“鸡肋”了，但事实上，迄今为止，它依然是HotSpot虚拟机运行在客户端模式下的默认新生代收集器，有着优于其他收集器的地方，那就是简单而高效（与其他收集器的单线程相比）(然而我macos11.0.1本地JDK8的默认收集器是Parallel；而JDK11默认G1收集器)，<u>对于内存资源受限的环境，它是所有收集器里额外内存消耗（Memory Footprint）[^50]最小的</u>；**对于单核处理器或处理器核心数较少的环境来说，Serial收集器由于没有线程交互的开销，专心做垃圾收集自然可以获得最高的单线程收集效率**。在用户桌面的应用场景以及近年来流行的部分微服务应用中，分配给虚拟机管理的内存一般来说并不会特别大，收集几十兆甚至一两百兆的新生代（仅仅是指新生代使用的内存，桌面应用甚少超过这个容量），垃圾收集的停顿时间完全可以控制在十几、几十毫秒，最多一百多毫秒以内，只要不是频繁发生收集，这点停顿时间对许多用户来说是完全可以接受的。所以，Serial收集器对于运行在客户端模式下的虚拟机来说是一个很好的选择。
 
-[^50]:Memory Footprint：内存占用，此语境中指为保证垃圾收集能够顺利高效地进行而存储的额外信息。
+[^50]: Memory Footprint：内存占用，此语境中指为保证垃圾收集能够顺利高效地进行而存储的额外信息。
 
 ### 3.5.2 ParNew收集器
 
@@ -1946,7 +1946,7 @@ Garbage collection
 + **并行（Parallel）：并行描述的是多条垃圾收集器线程之间的关系，说明同一时间有多条这样的线程在协同工作，通常默认此时用户线程是处于等待状态。**
 + **并发（Concurrent）：并发描述的是垃圾收集器线程与用户线程之间的关系，说明同一时间垃圾收集器线程与用户线程都在运行。由于用户线程并未被冻结，所以程序仍然能响应服务请求，但由于垃圾收集器线程占用了一部分系统资源，此时应用程序的处理的吞吐量将受到一定影响。**
 
-[^51]:除了一个面向低延迟一个面向高吞吐量的目标不一致外，技术上的原因是Parallel Scavenge收集器及后面提到的G1收集器等都没有使用HotSpot中原本设计的垃圾收集器的分代框架，而选择另外独立实现。Serial、ParNew收集器则共用了这部分的框架代码，详细可参考：https://blogs.oracle.com/jonthecollector/our_collectors。
+[^51]: 除了一个面向低延迟一个面向高吞吐量的目标不一致外，技术上的原因是Parallel Scavenge收集器及后面提到的G1收集器等都没有使用HotSpot中原本设计的垃圾收集器的分代框架，而选择另外独立实现。Serial、ParNew收集器则共用了这部分的框架代码，详细可参考：https://blogs.oracle.com/jonthecollector/our_collectors。
 
 ### 3.5.3 Parallel Scavenge收集器
 
@@ -1965,7 +1965,7 @@ $$
 
 ​	由于与吞吐量关系密切，Parallel Scavenge收集器也经常被称作“吞吐量优先收集器”。<u>除上述两个参数之外，Parallel Scavenge收集器还有一个参数`-XX：+UseAdaptiveSizePolicy`值得我们关注。这是一个开关参数，当这个参数被激活之后，就不需要人工指定新生代的大小（`-Xmn`）、Eden与Survivor区的比例（`-XX：SurvivorRatio`）、晋升老年代对象大小（`-XX：PretenureSizeThreshold`）等细节参数了，虚拟机会根据当前系统的运行情况收集性能监控信息，动态调整这些参数以提供最合适的停顿时间或者最大的吞吐量</u>。这种调节方式称为垃圾收集的自适应的调节策略（GC Ergonomics）[^52]。如果读者对于收集器运作不太了解，手工优化存在困难的话，使用Parallel Scavenge收集器配合自适应调节策略，把内存管理的调优任务交给虚拟机去完成也许是一个很不错的选择。只需要把基本的内存数据设置好（如`-Xmx`设置最大堆），然后使用`-XX：MaxGCPauseMillis`参数（更关注最大停顿时间）或`-XX：GCTimeRatio`（更关注吞吐量）参数给虚拟机设立一个优化目标，那具体细节参数的调节工作就由虚拟机完成了。自适应调节策略也是Parallel Scavenge收集器区别于ParNew收集器的一个重要特性。
 
-[^52]:官方介绍：http://download.oracle.com/javase/1.5.0/docs/guide/vm/gc-ergonomics.html。
+[^52]: 官方介绍：http://download.oracle.com/javase/1.5.0/docs/guide/vm/gc-ergonomics.html。
 
 ### 3.5.4 Serial Old收集器
 
@@ -1973,7 +1973,7 @@ $$
 
 ![Serial Old运行示意图](https://img-blog.csdnimg.cn/20200613184623141.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_SmlNb2Vy,size_60,color_c8cae6,t_70)
 
-[^53]:需要说明一下，Parallel Scavenge收集器架构中本身有PS MarkSweep收集器来进行老年代收集，并非直接调用Serial Old收集器，但是这个PS MarkSweep收集器与Serial Old的实现几乎是一样的，所以在官方的许多资料中都是直接以Serial Old代替PS MarkSweep进行讲解，这里笔者也采用这种方式。
+[^53]: 需要说明一下，Parallel Scavenge收集器架构中本身有PS MarkSweep收集器来进行老年代收集，并非直接调用Serial Old收集器，但是这个PS MarkSweep收集器与Serial Old的实现几乎是一样的，所以在官方的许多资料中都是直接以Serial Old代替PS MarkSweep进行讲解，这里笔者也采用这种方式。
 
 ### 3.5.5 Parallel Old收集器
 
@@ -2108,37 +2108,37 @@ OpenJDK 64-Bit Server VM warning: Option UseConcMarkSweepGC was deprecated in ve
 
 ​	以上的优缺点对比仅仅是针对G1和CMS两款垃圾收集器单独某方面的实现细节的定性分析，通常我们说哪款收集器要更好、要好上多少，往往是针对具体场景才能做的定量比较。**按照笔者（图书作者）的实践经验，目前在小内存应用上CMS的表现大概率仍然要会优于G1，而在大内存应用上G1则大多能发挥其优势，这个优劣势的Java堆容量平衡点通常在6GB至8GB之间**，当然，以上这些也仅是经验之谈，不同应用需要量体裁衣地实际测试才能得出最合适的结论，随着HotSpot的开发者对G1的不断优化，也会让对比结果继续向G1倾斜。
 
-[^54]:JEP 291：Deprecate the Concurrent Mark Sweep(CMS)Garbage Collector。
-[^55]:JEP 304：Garbage Collector Interface。
-[^56]:图片来源：https://www.infoq.com/articles/G1-One-Garbage-Collector-To-Rule-Them-All。
-[^57]:原文是：It meets garbage collection pause time goals with a high probability，while achieving highthroughput。
-[^58]:资料来源：https://docs.oracle.com/en/java/javase/11/gctuning/available-collectors.html。
-[^59]:代价就是当CMS发生Old GC时（所有收集器中只有CMS有针对老年代的Old GC），要把整个新生代作为GC Roots来进行扫描。
+[^54]: JEP 291：Deprecate the Concurrent Mark Sweep(CMS)Garbage Collector。
+[^55]: JEP 304：Garbage Collector Interface。
+[^56]: 图片来源：https://www.infoq.com/articles/G1-One-Garbage-Collector-To-Rule-Them-All。
+[^57]: 原文是：It meets garbage collection pause time goals with a high probability，while achieving highthroughput。
+[^58]: 资料来源：https://docs.oracle.com/en/java/javase/11/gctuning/available-collectors.html。
+[^59]: 代价就是当CMS发生Old GC时（所有收集器中只有CMS有针对老年代的Old GC），要把整个新生代作为GC Roots来进行扫描。
 
 > [ZGC有什么缺点?](https://www.zhihu.com/question/356585590)
 >
 > [深入理解JVM（③）经典的垃圾收集器](https://blog.csdn.net/qq_35165000/article/details/106732837)	=>	在该文章最下面总结表格的基础上修改G1的描述
 >
 > <table>
->   <tr align="center">
->   	<th>垃圾收集算法</th>
->   	<th colspan="3">垃圾收集器</th>
->   </tr>
+> <tr align="center">
+> 	<th>垃圾收集算法</th>
+> 	<th colspan="3">垃圾收集器</th>
+> </tr>
 > 	<tr align="center">
->   	<td>标记-清除</td>
->   	<td colspan="3">CMS</td>
+> 	<td>标记-清除</td>
+> 	<td colspan="3">CMS</td>
 > 	</tr>
 > 	<tr align="center">
->   	<td>标记-复制</td>
->   	<td>Serial</td>
->     <td>ParNew</td>
->     <td>Parallel Scavenge</td>
+> 	<td>标记-复制</td>
+> 	<td>Serial</td>
+>  <td>ParNew</td>
+>  <td>Parallel Scavenge</td>
 > 	</tr>
 > 	<tr align="center">
->  	 <td>标记-整理</td>
->  	 <td>Serial Old</td>
->    <td>Parallel Old</td>
->    <td>G1(2个Region之间标记-复制)</td>
+> 	 <td>标记-整理</td>
+> 	 <td>Serial Old</td>
+> <td>Parallel Old</td>
+> <td>G1(2个Region之间标记-复制)</td>
 > 	</tr>
 > </table>
 
@@ -2162,7 +2162,7 @@ OpenJDK 64-Bit Server VM warning: Option UseConcMarkSweepGC was deprecated in ve
 
 ​	读者肯定也从图3-14中注意到了，最后的两款收集器，**Shenandoah和ZGC，几乎整个工作过程全部都是并发的**，<u>只有初始标记、最终标记这些阶段有短暂的停顿，**这部分停顿的时间基本上是固定的**，与堆的容量、堆中对象的数量没有正比例关系</u>。实际上，它们都可以在任意可管理的（譬如现在ZGC只能管理4TB以内的堆）堆容量下，**实现垃圾收集的停顿都不超过十毫秒**这种以前听起来是天方夜谭、匪夷所思的目标。这两款目前仍处于实验状态的收集器，被官方命名为“低延迟垃圾收集器”（Low-Latency Garbage Collector或者Low-Pause-Time Garbage Collector）。
 
-[^60]:不可能三角：https://zh.wikipedia.org/wiki/三元悖论。
+[^60]: 不可能三角：https://zh.wikipedia.org/wiki/三元悖论。
 
 ### 3.6.1 Shenandoah收集器
 
@@ -2240,17 +2240,17 @@ mov r13,QWORD PTR [r12+r14*8-0x8]
 
 ​	Shenandoah收集器作为第一款由非Oracle开发的垃圾收集器，一开始就预计到了缺乏Oracle公司那样富有经验的研发团队可能会遇到很多困难。所以Shenandoah采取了“小步快跑”的策略，将最终目标进行拆分，分别形成Shenandoah 1.0、2.0、3.0……这样的小版本计划，在每个版本中迭代改进，现在已经可以看到Shenandoah的性能在日益改善，逐步接近“Low-Pause”的目标。**此外，RedHat也积极拓展Shenandoah的使用范围，将其Backport到JDK 11甚至是JDK 8之上，让更多不方便升级JDK版本的应用也能够享受到垃圾收集器技术发展的最前沿成果。**
 
-[^61]:这部分内容的撰写时间是2019年5月，以后的版本中双方博弈可能存在变数。相关内容可参见：https://bugs.openjdk.java.net/browse/JDK-8215030。
-[^62]:这里主要是调侃，OpenJDK和OracleJDK之间的关系并不仅仅是收费和免费的问题，详情可参见本书第1章。
-[^63]:JEP 307：Parallel Full GC for G1。
-[^64]:论文地址：https://www.researchgate.net/publication/306112816_Shenandoah_An_opensource_concurrent_compacting_garbage_collector_for_OpenJDK。
-[^65]:此例子中的图片引用了Aleksey Shipilev在DEVOXX 2017上的主题演讲：《Shenandoah GC Part I：The Garbage Collector That Could》，地址为https://shipilev.net/talks/devoxx-Nov2017-shenandoah.pdf。因本书是黑白印刷，颜色可能难以分辨，读者可以下载原文查看。
-[^66]:用户态、核心态是一种操作系统内核模式，具体见：https://zh.wikipedia.org/wiki/核心态。
-[^67]:但如果能有来自操作系统内核的支持的话，就不是没有办法解决，业界公认最优秀的Azul C4收集器就使用了这种方案。
-[^68]:关于临界区、锁、CAS等概念，是计算机体系的基础知识，如果读者对此不了解的话，可以参考第13章中的相关介绍。
-[^69]:Roman Kennke（JEP 189的Owner）：It resolves one major point of criticism against Shenandoah，thatis their expensive primitive read-barriers。
-[^70]:资料来源：https://rkennke.wordpress.com/2019/05/15/shenandoah-gc-in-jdk13-part-i-load-referencebarriers/。
-[^71]:该论文是以2014～2015年间最初版本的Shenandoah为测试对象，在2017年，Christine Flood在Java-One的演讲中，进行了相同测试，Shenandoah的运行时间已经优化到335秒。相信在读者阅读到这段文字时，Shenandoah的实际表现在多数应用中均会优于结果中反映的水平。
+[^61]: 这部分内容的撰写时间是2019年5月，以后的版本中双方博弈可能存在变数。相关内容可参见：https://bugs.openjdk.java.net/browse/JDK-8215030。
+[^62]: 这里主要是调侃，OpenJDK和OracleJDK之间的关系并不仅仅是收费和免费的问题，详情可参见本书第1章。
+[^63]: JEP 307：Parallel Full GC for G1。
+[^64]: 论文地址：https://www.researchgate.net/publication/306112816_Shenandoah_An_opensource_concurrent_compacting_garbage_collector_for_OpenJDK。
+[^65]: 此例子中的图片引用了Aleksey Shipilev在DEVOXX 2017上的主题演讲：《Shenandoah GC Part I：The Garbage Collector That Could》，地址为https://shipilev.net/talks/devoxx-Nov2017-shenandoah.pdf。因本书是黑白印刷，颜色可能难以分辨，读者可以下载原文查看。
+[^66]: 用户态、核心态是一种操作系统内核模式，具体见：https://zh.wikipedia.org/wiki/核心态。
+[^67]: 但如果能有来自操作系统内核的支持的话，就不是没有办法解决，业界公认最优秀的Azul C4收集器就使用了这种方案。
+[^68]: 关于临界区、锁、CAS等概念，是计算机体系的基础知识，如果读者对此不了解的话，可以参考第13章中的相关介绍。
+[^69]: Roman Kennke（JEP 189的Owner）：It resolves one major point of criticism against Shenandoah，thatis their expensive primitive read-barriers。
+[^70]: 资料来源：https://rkennke.wordpress.com/2019/05/15/shenandoah-gc-in-jdk13-part-i-load-referencebarriers/。
+[^71]: 该论文是以2014～2015年间最初版本的Shenandoah为测试对象，在2017年，Christine Flood在Java-One的演讲中，进行了相同测试，Shenandoah的运行时间已经优化到335秒。相信在读者阅读到这段文字时，Shenandoah的实际表现在多数应用中均会优于结果中反映的水平。
 
 ### 3.6.2 ZGC收集器
 
@@ -2329,22 +2329,229 @@ mov r13,QWORD PTR [r12+r14*8-0x8]
 
 ​	**ZGC原本是Oracle作为一项商业特性（如同JFR、JMC这些功能）来设计和实现的，只不过在它横空出世的JDK 11时期，正好适逢Oracle调整许可证授权，把所有商业特性都开源给了OpenJDK（详情见第1章Java发展史），所以用户对其商业性并没有明显的感知**。ZGC有着令所有开发人员趋之若鹜的优秀性能，让以前大多数人只是听说，但从未用过的“Azul式的垃圾收集器”一下子飞入寻常百姓家，笔者相信它完全成熟之后，将会成为服务端、大内存、低延迟应用的首选收集器的有力竞争者。
 
-[^72]:这里的“实验性质”特指ZGC目前尚未具备全部商用收集器应有的特征，如暂不提供全平台的支持（目前仅支持Linux/x86-64），暂不支持类卸载（JDK 11时不支持，JDK 12的ZGC已经支持），暂不支持新的Graal编译器配合工作等，但这些局限主要是人力资源与工作量上的限制，可能读者在阅读到这部分内容的时候已经有了新的变化。
-[^73]:在JEP 333中把ZGC的“吞吐量下降不大”明确量化为相比起使用G1收集器，吞吐量下降不超过15%。不过根据Oracle公开的现阶段SPECjbb 2015测试结果来看，ZGC在这方面要比Shenandoah优秀得多，测得的吞吐量居然比G1还高，甚至已经接近了Parallel Scavenge的成绩。
-[^74]:1EB=1024PB，1PB=1024TB。
-[^75]:AMD64这个名字的意思不是指只有AMD的处理器使用，它就是现在主流的x86-64架构，由于IntelItanium的失败，现行的64位标准是由AMD公司率先制定的，Intel通过交叉授权获得该标准的授权，所以叫作AMD64。
-[^76]:JDK 13计划是要扩展到最大支持16TB的，本章撰写时JDK 13尚未正式发布，还没有明确可靠的信息，所以这里按照ZGC目前的状态来介绍。
-[^77]:此图片以及后续关于ZGC执行阶段的几张图片，均来自Per Liden在Jfokus VM 2018大会上的演讲：《The Z Garbage Collector：Low Latency GC for OpenJDK》。
-[^78]:页面地址：https://openjdk.java.net/jeps/333。
-[^79]:实际上现代的x86操作系统中的虚拟地址是操作系统加硬件两级翻译的，在进程中访问的逻辑地址要通过MMU中的分段单元翻译为线性地址，然后再通过分页单元翻译成物理地址。这部分并非本书所关注的话题，读者简单了解即可。
-[^80]:如果不是由于两个阶段合并考虑，其实做重映射不需要按照对象图的顺序去做，只需线性地扫描整个堆来清理旧引用即可。
-[^81]:笔者心中的词语其实是“一模一样”，只是这怎么听起来似乎像是对Oracle的嘲讽？Oracle公司也并未在任何公开资料中承认参考过Azul System的论文或者实现。
-[^82]:根据Per Liden的解释，目前ZGC不分代完全是从节省工作量角度所做出的选择，并非单纯技术上的权衡。来源：https://www.zhihu.com/question/287945354/answer/458761494。
-[^83]:裸晶这个名字用的较少，通常都直接称呼为DIE：https://en.wikipedia.org/wiki/Die_(integrated_circuit)。
-[^84]:当“JEP 345：NUMA-Aware Memory Allocation for G1”被纳入某个版本的JDK发布范围后，G1也会支持NUMA分配。
-[^85]:数据来自Jfokus VM 2018中Per liden的演讲《The Z Garbage Collector：Low Latency GC forOpenJDK》。
-[^86]:http://spec.org/jbb2015/。
-[^87]:Critical Throughput就是要求最大延迟不超过某个设置值（10毫秒到100毫秒）下测得的吞吐量。
+[^72]: 这里的“实验性质”特指ZGC目前尚未具备全部商用收集器应有的特征，如暂不提供全平台的支持（目前仅支持Linux/x86-64），暂不支持类卸载（JDK 11时不支持，JDK 12的ZGC已经支持），暂不支持新的Graal编译器配合工作等，但这些局限主要是人力资源与工作量上的限制，可能读者在阅读到这部分内容的时候已经有了新的变化。
+[^73]: 在JEP 333中把ZGC的“吞吐量下降不大”明确量化为相比起使用G1收集器，吞吐量下降不超过15%。不过根据Oracle公开的现阶段SPECjbb 2015测试结果来看，ZGC在这方面要比Shenandoah优秀得多，测得的吞吐量居然比G1还高，甚至已经接近了Parallel Scavenge的成绩。
+[^74]: 1EB=1024PB，1PB=1024TB。
+[^75]: AMD64这个名字的意思不是指只有AMD的处理器使用，它就是现在主流的x86-64架构，由于IntelItanium的失败，现行的64位标准是由AMD公司率先制定的，Intel通过交叉授权获得该标准的授权，所以叫作AMD64。
+[^76]: JDK 13计划是要扩展到最大支持16TB的，本章撰写时JDK 13尚未正式发布，还没有明确可靠的信息，所以这里按照ZGC目前的状态来介绍。
+[^77]: 此图片以及后续关于ZGC执行阶段的几张图片，均来自Per Liden在Jfokus VM 2018大会上的演讲：《The Z Garbage Collector：Low Latency GC for OpenJDK》。
+[^78]: 页面地址：https://openjdk.java.net/jeps/333。
+[^79]: 实际上现代的x86操作系统中的虚拟地址是操作系统加硬件两级翻译的，在进程中访问的逻辑地址要通过MMU中的分段单元翻译为线性地址，然后再通过分页单元翻译成物理地址。这部分并非本书所关注的话题，读者简单了解即可。
+[^80]: 如果不是由于两个阶段合并考虑，其实做重映射不需要按照对象图的顺序去做，只需线性地扫描整个堆来清理旧引用即可。
+[^81]: 笔者心中的词语其实是“一模一样”，只是这怎么听起来似乎像是对Oracle的嘲讽？Oracle公司也并未在任何公开资料中承认参考过Azul System的论文或者实现。
+[^82]: 根据Per Liden的解释，目前ZGC不分代完全是从节省工作量角度所做出的选择，并非单纯技术上的权衡。来源：https://www.zhihu.com/question/287945354/answer/458761494。
+[^83]: 裸晶这个名字用的较少，通常都直接称呼为DIE：https://en.wikipedia.org/wiki/Die_(integrated_circuit)。
+[^84]: 当“JEP 345：NUMA-Aware Memory Allocation for G1”被纳入某个版本的JDK发布范围后，G1也会支持NUMA分配。
+[^85]: 数据来自Jfokus VM 2018中Per liden的演讲《The Z Garbage Collector：Low Latency GC forOpenJDK》。
+[^86]: http://spec.org/jbb2015/。
+[^87]: Critical Throughput就是要求最大延迟不超过某个设置值（10毫秒到100毫秒）下测得的吞吐量。
+
+## 3.7 选择合适的垃圾收集器
+
+​	HotSpot虚拟机提供了种类繁多的垃圾收集器，选择太多反而令人踌躇难决，若只挑最先进的显然不可能满足全部应用场景，但只用一句“必须因地制宜，按需选用”又未免有敷衍的嫌疑，本节我们就来探讨一下如何选择合适的垃圾收集器。
+
+### 3.7.1 Epsilon收集器
+
+​	在G1、Shenandoah或者ZGC这些越来越复杂、越来越先进的垃圾收集器相继出现的同时，也有一个“反其道而行”的新垃圾收集器出现在JDK 11的特征清单中——**Epsilon，这是一款以不能够进行垃圾收集为“卖点”的垃圾收集器**，这种话听起来第一感觉就十分违反逻辑，这种“不干活”的收集器要它何用？
+
+​	Epsilon收集器由RedHat公司在JEP 318中提出，在此提案里Epsilon被形容成一个无操作的收集器（A No-Op Garbage Collector），而事实上只要Java虚拟机能够工作，垃圾收集器便不可能是真正“无操作”的。原因是**“垃圾收集器”这个名字并不能形容它全部的职责，更贴切的名字应该是本书为这一部分所取的标题——“自动内存管理子系统”**。
+
+​	<u>一个垃圾收集器除了垃圾收集这个本职工作之外，它还要负责堆的管理与布局、对象的分配、与解释器的协作、与编译器的协作、与监控子系统协作等职责，其中至少**堆的管理和对象的分配这部分功能是Java虚拟机能够正常运作的必要支持，是一个最小化功能的垃圾收集器也必须实现的内容**</u>。
+
+​	<u>**从JDK 10开始，为了隔离垃圾收集器与Java虚拟机解释、编译、监控等子系统的关系，RedHat提出了垃圾收集器的统一接口，即JEP 304提案**，Epsilon是这个接口的有效性验证和参考实现，同时也用于需要剥离垃圾收集器影响的性能测试和压力测试</u>。
+
+​	在实际生产环境中，不能进行垃圾收集的Epsilon也仍有用武之地。很长一段时间以来，Java技术体系的发展重心都在面向长时间、大规模的企业级应用和服务端应用，尽管也有移动平台（指JavaME而不是Android）和桌面平台的支持，但使用热度上与前者相比要逊色不少。可是**近年来大型系统从传统单体应用向微服务化、无服务化方向发展的趋势已越发明显，Java在这方面比起Golang等后起之秀来确实有一些先天不足，使用率正渐渐下降**。
+
+​	**传统Java有着内存占用较大，在容器中启动时间长，即时编译需要缓慢优化等特点，这对大型应用来说并不是什么太大的问题，但对短时间、小规模的服务形式就有诸多不适**。为<u>了应对新的技术潮流，最近几个版本的JDK逐渐加入了**提前编译、面向应用的类数据共享**等支持</u>。Epsilon也是有着类似的目标，**如果读者的应用只要运行数分钟甚至数秒，只要Java虚拟机能正确分配内存，在堆耗尽之前就会退出，那显然运行负载极小、没有任何回收行为的Epsilon便是很恰当的选择**。
+
+> [Go到底优势是在那里？](https://www.v2ex.com/t/610366)
+
+### 3.7.2 收集器的权衡
+
+​	如果算上Epsilon，本书中已经介绍过十款HotSpot虚拟机的垃圾收集器了，此外还涉及AzulSystem公司的PGC、C4等收集器，再加上本章中并没有出现，但其实也颇为常用的OpenJ9中的垃圾收集器，把这些收集器罗列出来就仿佛是一幅琳琅画卷、一部垃圾收集的技术演进史。现在可能有读者要犯选择困难症了，<u>我们应该如何选择一款适合自己应用的收集器呢？这个问题的答案主要受以下三个因素影响</u>：
+
++ **应用程序的主要关注点是什么？**
+  + 如果是数据分析、科学计算类的任务，目标是能尽快算出结果，那吞吐量就是主要关注点；
+  + 如果是SLA应用，那停顿时间直接影响服务质量，严重的甚至会导致事务超时，这样延迟就是主要关注点；
+  + 而如果是客户端应用或者嵌入式应用，那垃圾收集的内存占用则是不可忽视的。
++ **运行应用的基础设施如何？**
+  + 譬如硬件规格，要涉及的系统架构是x86-32/64、SPARC还是ARM/Aarch64；
+  + 处理器的数量多少，分配内存的大小；
+  + 选择的操作系统是Linux、Solaris还是Windows等。
++ **使用JDK的发行商是什么？版本号是多少？**
+  + 是ZingJDK/Zulu、OracleJDK、Open-JDK、OpenJ9抑或是其他公司的发行版？
+  + 该JDK对应了《Java虚拟机规范》的哪个版本？
+
+​	一般来说，收集器的选择就从以上这几点出发来考虑。举个例子，假设某个直接面向用户提供服务的B/S系统准备选择垃圾收集器，一般来说**延迟时间**是这类应用的主要关注点，那么：
+
++ 如果你有充足的预算但没有太多调优经验，那么一套带商业技术支持的专有硬件或者软件解决方案是不错的选择，Azul公司以前主推的Vega系统和现在主推的Zing VM是这方面的代表，这样你就可以使用传说中的C4收集器了。
+
++ <u>如果你虽然没有足够预算去使用商业解决方案，但能够掌控软硬件型号，使用较新的版本，同时又特别注重延迟，那ZGC很值得尝试。</u>
++ 如果你对还处于实验状态的收集器的稳定性有所顾虑，或者应用必须运行在Win-dows操作系统下，那ZGC就无缘了，试试Shenandoah吧。
++ **<u>如果你接手的是遗留系统，软硬件基础设施和JDK版本都比较落后，那就根据内存规模衡量一下，对于大概4GB到6GB以下的堆内存，CMS一般能处理得比较好，而对于更大的堆内存，可重点考察一下G1</u>**。
+
+​	当然，以上都是仅从理论出发的分析，实战中切不可纸上谈兵，根据系统实际情况去测试才是选择收集器的最终依据。
+
+### 3.7.3 虚拟机及垃圾收集器日志
+
+> [JVM 垃圾回收-5-选择合适的垃圾收集器（深入理解java虚拟机）](https://www.cnblogs.com/yanliang12138/p/12728516.html)
+
+​	阅读分析虚拟机和垃圾收集器的日志是处理Java虚拟机内存问题必备的基础技能，垃圾收集器日志是一系列人为设定的规则，多少有点随开发者编码时的心情而定，没有任何的“业界标准”可言，换句话说，每个收集器的日志格式都可能不一样。除此以外还有一个麻烦，在JDK 9以前，HotSpot并没有提供统一的日志处理框架，虚拟机各个功能模块的日志开关分布在不同的参数上，日志级别、循环日志大小、输出格式、重定向等设置在不同功能上都要单独解决。直到JDK 9，这种混乱不堪的局面才终于消失，HotSpot所有功能的日志都收归到了“-Xlog”参数上，这个参数的能力也相应被极大拓展了：
+
+```shell
+-Xlog[:[selector][:[output][:[decorators][:output-options]]]]
+```
+
+​	命令行中最关键的参数是选择器（Selector），它由标签（Tag）和日志级别（Level）共同组成。标签可理解为虚拟机中某个功能模块的名字，它告诉日志框架用户希望得到虚拟机哪些功能的日志输出。垃圾收集器的标签名称为“gc”，由此可见，垃圾收集器日志只是HotSpot众多功能日志的其中一项，全部支持的功能模块标签名如下所示：
+
+```shell
+add，age，alloc，annotation，aot，arguments，attach，barrier，biasedlocking，blocks，bot，breakpoint，bytecode，census,....
+```
+
+​	<u>日志级别从低到高，共有Trace，Debug，Info，Warning，Error，Off六种级别</u>，日志级别决定了输出信息的详细程度，默认级别为Info，HotSpot的日志规则与Log4j、SLF4j这类Java日志框架大体上是一致的。另外，还<u>可以使用修饰器（Decorator）来要求每行日志输出都附加上额外的内容</u>，支持附加在日志行上的信息包括：
+
++ time：当前日期和时间。
++ uptime：虚拟机启动到现在经过的时间，以秒为单位。
++ timemillis：当前时间的毫秒数，相当于System.currentTimeMillis()的输出。
++ uptimemillis：虚拟机启动到现在经过的毫秒数。
++ timenanos：当前时间的纳秒数，相当于System.nanoTime()的输出。
++ uptimenanos：虚拟机启动到现在经过的纳秒数。
++ pid：进程ID。
++ tid：线程ID。
++ level：日志级别。
++ tags：日志输出的标签集。
+
+​	如果不指定，默认值是uptime、level、tags这三个，此时日志输出类似于以下形式：
+
+```shell
+[3.080s][info][gc,cpu] GC(5) User=0.03s Sys=0.00s Real=0.01s
+```
+
+​	下面笔者举几个例子，展示在JDK 9统一日志框架前、后是如何获得垃圾收集器过程的相关信息，以下均以JDK 9的G1收集器（JDK 9下默认收集器就是G1，所以命令行中没有指定收集器）为例。
+
+1. 查看GC基本信息，在JDK 9之前使用`-XX：+PrintGC`，JDK 9后使用`-Xlog：gc`：
+
+   ```java
+   bash-3.2$ java -Xlog:gc GCTest
+   [0.222s][info][gc] Using G1
+   [2.825s][info][gc] GC(0) Pause Young (G1 Evacuation Pause) 26M->5M(256M) 355.623ms
+   [3.096s][info][gc] GC(1) Pause Young (G1 Evacuation Pause) 14M->7M(256M) 50.030ms
+   [3.385s][info][gc] GC(2) Pause Young (G1 Evacuation Pause) 17M->10M(256M) 40.576ms
+   ```
+
+2. 查看GC详细信息，在JDK 9之前使用`-XX：+PrintGCDetails`，在JDK 9之后使用`-X-log：gc*`，用通配符\*将GC标签下所有细分过程都打印出来，如果把日志级别调整到Debug或者Trace（基于版面篇幅考虑，例子中并没有），还将获得更多细节信息：
+
+   ```java
+   bash-3.2$ java -Xlog:gc* GCTest
+   [0.233s][info][gc,heap] Heap region size: 1M
+   [0.383s][info][gc ] Using G1
+   [0.383s][info][gc,heap,coops] Heap address: 0xfffffffe50400000, size: 4064 MB, Compressed Oops mode: Non-zero based:
+   0xfffffffe50000000, Oop shift amount: 3
+   [3.064s][info][gc,start ] GC(0) Pause Young (G1 Evacuation Pause)
+   gc,task ] GC(0) Using 23 workers of 23 for evacuation
+   [3.420s][info][gc,phases ] GC(0) Pre Evacuate Collection Set: 0.2ms
+   [3.421s][info][gc,phases ] GC(0) Evacuate Collection Set: 348.0ms
+   gc,phases ] GC(0) Post Evacuate Collection Set: 6.2ms
+   [3.421s][info][gc,phases ] GC(0) Other: 2.8ms
+   gc,heap ] GC(0) Eden regions: 24->0(9)
+   [3.421s][info][gc,heap ] GC(0) Survivor regions: 0->3(3)
+   [3.421s][info][gc,heap ] GC(0) Old regions: 0->2
+   [3.421s][info][gc,heap ] GC(0) Humongous regions: 2->1
+   [3.421s][info][gc,metaspace ] GC(0) Metaspace: 4719K->4719K(1056768K)
+   [3.421s][info][gc ] GC(0) Pause Young (G1 Evacuation Pause) 26M->5M(256M) 357.743ms
+   [3.422s][info][gc,cpu ] GC(0) User=0.70s Sys=5.13s Real=0.36s
+   [3.648s][info][gc,start ] GC(1) Pause Young (G1 Evacuation Pause)
+   [3.648s][info][gc,task ] GC(1) Using 23 workers of 23 for evacuation
+   [3.699s][info][gc,phases ] GC(1) Pre Evacuate Collection Set: 0.3ms
+   gc,phases ] GC(1) Evacuate Collection Set: 45.6ms
+   gc,phases ] GC(1) Post Evacuate Collection Set: 3.4ms
+   gc,phases ] GC(1) Other: 1.7ms
+   gc,heap ] GC(1) Eden regions: 9->0(10)
+   [3.699s][info][gc,heap ] GC(1) Survivor regions: 3->2(2)
+   [3.699s][info][gc,heap ] GC(1) Old regions: 2->5
+   [3.700s][info][gc,heap ] GC(1) Humongous regions: 1->1
+   [3.700s][info][gc,metaspace ] GC(1) Metaspace: 4726K->4726K(1056768K)
+   [3.700s][info][gc ] GC(1) Pause Young (G1 Evacuation Pause) 14M->7M(256M) 51.872ms
+   [3.700s][info][gc,cpu ] GC(1) User=0.56s Sys=0.46s Real=0.05s
+   ```
+
+3. 查看GC前后的堆、方法区可用容量变化，在JDK 9之前使用`-XX：+PrintHeapAtGC`，JDK 9之后使用`-Xlog：gc+heap=debug`：
+
+   ```java
+   bash-3.2$ java -Xlog:gc+heap=debug GCTest
+   [0.113s][info][gc,heap] Heap region size: 1M
+   [0.113s][debug][gc,heap] Minimum heap 8388608 Initial heap 268435456 Maximum heap 4261412864
+   [2.529s][debug][gc,heap] GC(0) Heap before GC invocations=0 (full 0):
+   [2.529s][debug][gc,heap] GC(0) garbage-first heap total 262144K, used 26624K [0xfffffffe50400000, 0xfffffffe50500800,
+   0xffffffff4e400000)
+   [2.529s][debug][gc,heap] GC(0) region size 1024K, 24 young (24576K), 0 survivors (0K)
+   [2.530s][debug][gc,heap] GC(0) Metaspace used 4719K, capacity 4844K, committed 5120K, reserved 1056768K
+   [2.530s][debug][gc,heap] GC(0) class space used 413K, capacity 464K, committed 512K, reserved 1048576K
+   [2.892s][info ][gc,heap] GC(0) Eden regions: 24->0(9)
+   [2.892s][info ][gc,heap] GC(0) Survivor regions: 0->3(3)
+   [2.892s][info ][gc,heap] GC(0) Old regions: 0->2
+   [2.892s][info ][gc,heap] GC(0) Humongous regions: 2->1
+   [2.893s][debug][gc,heap] GC(0) Heap after GC invocations=1 (full 0):
+   [2.893s][debug][gc,heap] GC(0) garbage-first heap total 262144K, used 5850K [0xfffffffe50400000, 0xfffffffe50500800, [2.893s][debug][gc,heap] GC(0) region size 1024K, 3 young (3072K), 3 survivors (3072K)
+   [2.893s][debug][gc,heap] GC(0) Metaspace used 4719K, capacity 4844K, committed 5120K, reserved 1056768K
+   [2.893s][debug][gc,heap] GC(0) class space used 413K, capacity 464K, committed 512K, reserved 1048576K
+   ```
+
+4. 查看GC过程中用户线程并发时间以及停顿的时间，在JDK 9之前使用`-XX：+Print-GCApplicationConcurrentTime`以及`-XX：+PrintGCApplicationStoppedTime`，JDK 9之后使用`-Xlog：safepoint`：
+
+   ```java
+   bash-3.2$ java -Xlog:safepoint GCTest
+   [1.376s][info][safepoint] Application time: 0.3091519 seconds
+   [1.377s][info][safepoint] Total time for which application threads were stopped: 0.0004600 seconds, Stopping threads 0.0002648 seconds
+   [2.386s][info][safepoint] Application time: 1.0091637 seconds
+   [2.387s][info][safepoint] Total time for which application threads were stopped: 0.0005217 seconds, Stopping threads 0.0002297 seconds
+   ```
+
+5. 查看收集器Ergonomics机制（自动设置堆空间各分代区域大小、收集目标等内容，从Parallel收集器开始支持）自动调节的相关信息。在JDK 9之前使用`-XX：+PrintAdaptive-SizePolicy`，JDK 9之后使用`-Xlog：gc+ergo*=trace`：
+
+   ```java
+   bash-3.2$ java -Xlog:gc+ergo*=trace GCTest 
+   [0.122s][debug][gc,ergo,refine] Initial Refinement Zones: green: 23, 69, red: 115, min yellow size: 46
+   [0.142s][debug][gc,ergo,heap ] Expand the heap. requested expansion amount:268435456B expansion amount:268435456B
+   [2.475s][trace][gc,ergo,cset ] GC(0) Start choosing CSet. pending cards: 0 predicted base time: 10.00ms remaining 190.00ms target pause time: 200.00ms
+   [2.476s][trace][gc,ergo,cset ] GC(0) Add young regions to CSet. eden: 24 regions, survivors: 0 regions, predicted region time: 367.19ms, target pause time: 200.00ms
+   [2.476s][debug][gc,ergo,cset ] GC(0) Finish choosing CSet. old: 0 regions, predicted old region time: 0.00ms, time
+   remaining: 0.00
+   [2.826s][debug][gc,ergo ] GC(0) Running G1 Clear Card Table Task using 1 workers for 1 units of work for 24 regions.
+   [2.827s][debug][gc,ergo ] GC(0) Running G1 Free Collection Set using 1 workers for collection set length 24
+   [2.828s][trace][gc,ergo,refine] GC(0) Updating Refinement Zones: update_rs time: 0.004ms, update_rs buffers: 0, goal time: 19.999ms
+   ```
+
+6. 查看熬过收集后剩余对象的年龄分布信息，在JDK 9前使用`-XX：+PrintTenuring-Distribution`，JDK 9之后使用`-Xlog：gc+age=trace`：
+
+   ```java
+   bash-3.2$ java -Xlog:gc+age=trace GCTest
+   [2.406s][debug][gc,age] GC(0) Desired survivor size 1572864 bytes, new threshold 15 (max threshold 15)
+   [2.745s][trace][gc,age] GC(0) Age table with threshold 15 (max threshold 15)
+   [2.745s][trace][gc,age] GC(0) - age 1: 3100640 bytes, 3100640 total
+   [4.700s][debug][gc,age] GC(5) Desired survivor size 2097152 bytes, new threshold 15 (max threshold 15)
+   [4.810s][trace][gc,age] GC(5) Age table with threshold 15 (max threshold 15)
+   [4.810s][trace][gc,age] GC(5) - age 1: 2658280 bytes, 2658280 total
+   [4.810s][trace][gc,age] GC(5) - age 2: 1527360 bytes, 4185640 total
+   ```
+
+​	囿于篇幅原因，不再一一列举，表3-3给出了全部在JDK 9中被废弃的日志相关参数及它们在JDK9后使用-Xlog的代替配置形式。
+
+![img](https://img2020.cnblogs.com/blog/712711/202004/712711-20200418220635689-1224736818.png)
+
+![img](https://img2020.cnblogs.com/blog/712711/202004/712711-20200418220651366-771644873.png)
+
+### 3.7.4 垃圾收集器参数总结
+
+​	HotSpot虚拟机中的各种垃圾收集器到此全部介绍完毕，在描述过程中提到了很多虚拟机非稳定的运行参数，下面表3-4中整理了这些参数，供读者实践时参考。
+
+![img](https://img2020.cnblogs.com/blog/712711/202004/712711-20200418220728564-1985671598.png)
+
+![img](https://img2020.cnblogs.com/blog/712711/202004/712711-20200418220757784-127695480.png)
+
+![img](https://img2020.cnblogs.com/blog/712711/202004/712711-20200418220810466-992895151.png)
+
+## 3.8 实战：内存分配与回收策略
 
 
 
@@ -2362,4 +2569,4 @@ mov r13,QWORD PTR [r12+r14*8-0x8]
 
 
 
-[^88]:
+[^88]: 
