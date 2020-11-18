@@ -803,3 +803,8 @@ spring:
 > [Docker的4种网络模式](https://www.cnblogs.com/gispathfinder/p/5871043.html)
 >
 > [docker 网络模式 和 端口映射](https://www.cnblogs.com/chenpython123/p/10823879.html)
+
+## 6. Podman
+
+> [Docker 大势已去，Podman 万岁](https://blog.csdn.net/alex_yangchuansheng/article/details/102618128)
+
