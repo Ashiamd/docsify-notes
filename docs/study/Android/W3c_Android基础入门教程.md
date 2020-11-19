@@ -2221,7 +2221,7 @@ public class MainActivity extends Activity {
 
 #### 3.7 AsyncTask异步任务
 
-> [Android的进程，线程模型](https://www.cnblogs.com/ghj1976/archive/2011/04/28/2031586.html)
+> [Android的进程，线程模型](https://www.cnblogs.com/ghj1976/archive/2011/04/28/2031586.html)	<=	特别优秀的文章！强烈建议阅读
 
 > 本节给大家带来的是Android给我们提供的一个轻量级的用于处理异步任务的类:AsyncTask，我们一般是 继承AsyncTask，然后在类中实现异步操作，然后将异步执行的进度，反馈给UI主线程~ 好吧，可能有些概念大家不懂，觉得还是有必要讲解下多线程的概念，那就先解释下一些概念性的东西 
 
