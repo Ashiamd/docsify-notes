@@ -548,7 +548,7 @@
   + drawable和mipmap目录的结论：
 
     >1. **App中，无论你将图片放在drawable还是mipmap目录，系统只会加载对应density中的图片。
-    >   而在Launcher中，如果使用mipmap，那么Launcher会自动加载更加合适的密度的资源。**
+    >     而在Launcher中，如果使用mipmap，那么Launcher会自动加载更加合适的密度的资源。**
     >2. **应用内使用到的图片资源，并不会因为你放在mipmap或者drawable目录而产生差异。单纯只是资源路径的差异R.drawable.xxx或者R.mipmap.xxx。（也可能在低版本系统中有差异）**
     >3. **一句话来说就是，自动跨设备密度展示的能力是launcher的，而不是mipmap的。**
     >
@@ -2220,6 +2220,8 @@ public class MainActivity extends Activity {
 >  *权限:* **< uses-permission android:name="android.permission.CHANGE_CONFIGURATION" />** *在< activity标签中添加:***android:configChanges="orientation"** *将targetSdkVersion改为12以上的,12也可以* 
 
 #### 3.7 AsyncTask异步任务
+
+> [Android的进程，线程模型](https://www.cnblogs.com/ghj1976/archive/2011/04/28/2031586.html)
 
 > 本节给大家带来的是Android给我们提供的一个轻量级的用于处理异步任务的类:AsyncTask，我们一般是 继承AsyncTask，然后在类中实现异步操作，然后将异步执行的进度，反馈给UI主线程~ 好吧，可能有些概念大家不懂，觉得还是有必要讲解下多线程的概念，那就先解释下一些概念性的东西 
 
