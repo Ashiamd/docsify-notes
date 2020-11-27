@@ -1027,13 +1027,9 @@ class VolatileFeaturesExample {
 
 ​	简而言之，volatile变量自身具有下列特性。
 
-+ **可见性**：对一个volatile变量的读，总是能看到（任意线程）对这个volatile变量最后的写
++ **可见性**：对一个volatile变量的读，总是能看到（任意线程）对这个volatile变量最后的写入。
 
-  入。
-
-+ **原子性**：对任意单个volatile变量的读/写具有原子性，但类似于volatile++这种复合操作不
-
-具有原子性。
++ **原子性**：对任意单个volatile变量的读/写具有原子性，但类似于volatile++这种复合操作不具有原子性。
 
 ### 3.4.2 volatile写-读建立的happens-before关系
 
@@ -1116,7 +1112,7 @@ class VolatileExample {
 
 + 线程A写一个volatile变量，随后线程B读这个volatile变量，这个过程实质上是线程A通过
 
-主内存向线程B发送消息。（p85）
+主内存向线程B发送消息。
 
 ### 3.4.4 volatile内存语义的实现
 
