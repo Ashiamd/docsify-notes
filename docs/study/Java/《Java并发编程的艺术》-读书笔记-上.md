@@ -1342,7 +1342,7 @@ class ReentrantLockExample {
 
 ​	在ReentrantLock中，调用lock()方法获取锁；调用unlock()方法释放锁。
 
-​	ReentrantLock的实现依赖于Java同步器框架AbstractQueuedSynchronizer（本文简称之为AQS）。AQS使用一个整型的volatile变量（命名为state）来维护同步状态，马上我们会看到，这个volatile变量是ReentrantLock内存语义实现的关键。
+​	ReentrantLock的实现依赖于Java同步器框架AbstractQueuedSynchronizer（本文简称之为AQS）。**AQS使用一个整型的volatile变量（命名为state）来维护同步状态**，马上我们会看到，这个volatile变量是ReentrantLock内存语义实现的关键。
 
 ​	图3-27是ReentrantLock的类图（仅画出与本文相关的部分）。
 

@@ -118,6 +118,18 @@ UserServiceImpl userService; // JDK报错，因为该类型不是接口，JDK是
 > 锁
 >
 > [使用synchronized同步对象却有多个线程能同时访问，使用lock锁却达到目的了，不知道为什么求大神回](https://bbs.csdn.net/topics/391087139?page=1)
+>
+> 
+>
+> 并发异常
+>
+> [Java并发--ConcurrentModificationException（并发修改异常）异常原因和解决方法](https://www.cnblogs.com/bsjl/p/7676209.html)	<=	
+>
+> 
+>
+> 并发容器
+>
+> [Java并发--同步容器](https://www.cnblogs.com/bsjl/p/7660333.html)
 
 ## 5. 布隆过滤器
 
