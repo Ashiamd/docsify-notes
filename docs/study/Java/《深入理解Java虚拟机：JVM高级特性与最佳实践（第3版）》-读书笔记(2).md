@@ -785,7 +785,217 @@ hsdb>
 [^11]:效果与在Windows->Console中输入universe命令是等价的，JHSDB的图形界面中所有操作都可以通过命令行完成，读者感兴趣的话，可以在控制台中输入help命令查看更多信息。
 [^12]:在JDK 7以前，即还没有开始“去永久代”行动时，这些静态变量是存放在永久代上的，JDK 7起把静态变量、字符常量这些从永久代移除出去。
 
-### 4.3.2 
+> [JDK1.8之前和之后的方法区](https://blog.csdn.net/qq_41872909/article/details/87903370)
+>
+> jdk1.7之前：方法区位于永久代(PermGen)，永久代和堆相互隔离，永久代的大小在启动JVM时可以设置一个固定值，不可变；
+> jdk.7：存储在永久代的部分数据就已经转移到Java Heap或者Native memory。但永久代仍存在于JDK 1.7中，并没有完全移除，譬如符号引用(Symbols)转移到了native memory；字符串常量池(interned strings)转移到了Java heap；类的静态变量(class statics variables )转移到了Java heap；
+> jdk1.8：仍然保留方法区的概念，只不过实现方式不同。取消永久代，方法存放于元空间(Metaspace)，元空间仍然与堆不相连，但与堆共享物理内存，逻辑上可认为在堆中。
+>
+> 1）移除了永久代（PermGen），替换为元空间（Metaspace）；
+> 2）永久代中的 class metadata 转移到了 native memory（本地内存，而不是虚拟机）；
+> 3）永久代中的 interned Strings 和 class static variables 转移到了 Java heap；
+> 4）永久代参数 （PermSize MaxPermSize） -> 元空间参数（MetaspaceSize MaxMetaspaceSize）。
+
+### 4.3.2 JConsole：Java监视与管理控制台
+
+​	JConsole（Java Monitoring and Management Console）是一款基于JMX（Java Management Extensions）的可视化监视、管理工具。它的主要功能是通过JMX的MBean（Managed Bean）对系统进行信息收集和参数动态调整。<u>JMX是一种开放性的技术，不仅可以用在虚拟机本身的管理上，还可以运行于虚拟机之上的软件中，典型的如中间件大多也基于JMX来实现管理与监控</u>。虚拟机对JMXMBean的访问也是完全开放的，可以使用代码调用API、支持JMX协议的管理控制台，或者其他符合JMX规范的软件进行访问。
+
+![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201129221748002-1178032282.png)
+
+1.  启动JConsole
+
+   主要菜单选项有：OverView、Memory、Threads、Classes、VM Summary、MBeans
+
+   ![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201129230532524-42259536.png)
+
+2. 内存监控
+
+   ​	“内存”页签的作用相当于可视化的jstat命令，用于监视被收集器管理的虚拟机内存（被收集器直接管理的Java堆和被间接管理的方法区）的变化趋势。我们通过运行代码清单4-7中的代码来体验一下它的监视功能。运行时设置的虚拟机参数为：`-Xms100m -Xmx100m -XX:+UseSerialGC`
+
+   ​	代码清单4-7　JConsole监视代码
+
+   ```java
+   import java.util.ArrayList;
+   import java.util.List;
+   
+   public class JConsoleTestCase {
+   
+     /**
+        * 内存占位符对象，一个OOMObject大约占64K
+        */
+     static class OOMObject {
+       public byte[] placeholder = new byte[64 * 1024];
+     }
+   
+     public static void fillHeap(int num) throws InterruptedException {
+       List<OOMObject> list = new ArrayList<OOMObject>();
+       for (int i = 0; i < num; i++) {
+         // 稍作延时，令监视曲线的变化更加明显
+         Thread.sleep(50);
+         list.add(new OOMObject());
+       }
+       System.gc();
+     }
+   
+     public static void main(String[] args) throws Exception {
+       fillHeap(1000);
+     }
+   
+   }
+   ```
+
+   ​	这段代码的作用是以64KB/50ms的速度向Java堆中填充数据，一共填充1000次，使用JConsole的“内存”页签进行监视，观察曲线和柱状指示图的变化。
+
+   ​	程序运行后，在“内存”页签中可以看到内存池Eden区的运行趋势呈现折线状，如下图所示。监视范围扩大至整个堆后，会发现曲线是一直平滑向上增长的。从柱状图可以看到，在1000次循环执行结束，运行了`System.gc()`后，虽然整个新生代Eden和Survivor区都基本被清空了，但是代表老年代的柱状图仍然保持峰值状态，说明被填充进堆中的数据在`System.gc()`方法执行之后仍然存活。
+
+   ![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201129234320251-1596587974.png)
+
+   ![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201129231139276-474635835.png)
+
+   1. 虚拟机启动参数只限制了Java堆为100MB，但没有明确使用-Xmn参数指定新生代大小，能否从监控图中估算出新生代的容量？
+
+      答：上图显示Eden空间为27328KB，因为没有设置`-XX：SurvivorRadio`参数，所以Eden与Survivor空间比例的默认值为8∶1，因此整个新生代空间大约为27328KB×125%=34160KB。
+
+   2. 为何执行了`System.gc()`之后，图中代表老年代的柱状图仍然显示峰值状态，代码需要如何调整才能让`System.gc()`回收掉填充到堆中的对象？
+
+      答：执行`System.gc()`之后，空间未能回收是因为List\<OOMObject\>list对象仍然存活，`fillHeap()`方法仍然没有退出，因此list对象在`System.gc()`执行时仍然处于作用域之内[^13]。**如果把`System.gc()`移动到`fillHeap()`方法外调用就可以回收掉全部内存。**
+
+3. 线程监控
+
+   ​	**如果说JConsole的“内存”页签相当于可视化的jstat命令的话，那“线程”页签的功能就相当于可视化的jstack命令了，遇到线程停顿的时候可以使用这个页签的功能进行分析**。前面讲解jstack命令时提到<u>线程长时间停顿的主要原因有等待外部资源（数据库连接、网络资源、设备资源等）、死循环、锁等待等</u>，代码清单4-8将分别演示这几种情况。
+
+   ​	代码清单4-8　线程等待演示代码
+
+   ```java
+   import java.io.BufferedReader;
+   import java.io.InputStreamReader;
+   
+   /**
+    * @author zzm
+    */
+   public class ThreadDeadLockTestCase_1 {
+       /**
+        * 线程死循环演示
+        */
+       public static void createBusyThread() {
+           Thread thread = new Thread(new Runnable() {
+               @Override
+               public void run() {
+                   while (true)   // 第41行
+                       ;
+               }
+           }, "testBusyThread");
+           thread.start();
+       }
+   
+       /**
+        * 线程锁等待演示
+        */
+       public static void createLockThread(final Object lock) {
+           Thread thread = new Thread(new Runnable() {
+               @Override
+               public void run() {
+                   synchronized (lock) {
+                       try {
+                           lock.wait();
+                       } catch (InterruptedException e) {
+                           e.printStackTrace();
+                       }
+                   }
+               }
+           }, "testLockThread");
+           thread.start();
+       }
+   
+       public static void main(String[] args) throws Exception {
+           BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
+           br.readLine();
+           createBusyThread();
+           br.readLine();
+           Object obj = new Object();
+           createLockThread(obj);
+       }
+   
+   }
+   ```
+
+   ​	程序运行后，首先在“线程”页签中选择main线程，如图4-13所示。堆栈追踪显示BufferedReader的`readBytes()`方法正在等待System.in的键盘输入，这时候线程为Runnable状态，Runnable状态的线程仍会被分配运行时间，但readBytes()方法检查到流没有更新就会立刻归还执行令牌给操作系统，这种等待只消耗很小的处理器资源。
+
+   ​	接着监控testBusyThread线程，如图4-14所示。testBusyThread线程一直在执行空循环，从堆栈追踪中看到一直在MonitoringTest.java代码的41行停留，41行的代码为`while(true)`。这时候线程为Runnable状态，而且没有归还线程执行令牌的动作，所以会在空循环耗尽操作系统分配给它的执行时间，直到线程切换为止，这种等待会消耗大量的处理器资源。
+
+   ​	<small>ps：(这个我根据上面代码，本地跑jconsole，不显示"testBusyThread"和"testLockThread"这两线程，所以直接用书籍的插图了)</small>
+
+   图4-13　main线程
+
+   ![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130001724858-878962935.png)
+
+   图4-14　testBusyThread线程
+
+   ![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130001854427-824654847.png)
+
+   图4-15显示testLockThread线程在等待lock对象的notify()或notifyAll()方法的出现，线程这时候处于WAITING状态，在重新唤醒前不会被分配执行时间。
+
+   图4-15　testLockThread线程
+
+   ![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130001937741-922713234.png)
+
+   testLockThread线程正处于正常的活锁等待中，只要lock对象的notify()或notifyAll()方法被调用，这个线程便能激活继续执行。
+
+   ---
+
+   代码清单4-9　死锁代码样例
+
+   ```java
+   /**
+    * @author zzm
+    */
+   public class ThreadDeadLockTestCase_2 {
+   
+     /**
+        * 线程死锁等待演示
+        */
+     static class SynAddRunnalbe implements Runnable {
+       int a, b;
+       public SynAddRunnalbe(int a, int b) {
+         this.a = a;
+         this.b = b;
+       }
+   
+       @Override
+       public void run() {
+         synchronized (Integer.valueOf(a)) {
+           synchronized (Integer.valueOf(b)) {
+             System.out.println(a + b);
+           }
+         }
+       }
+     }
+   
+     public static void main(String[] args) {
+       for (int i = 0; i < 100; i++) {
+         new Thread(new SynAddRunnalbe(1, 2)).start();
+         new Thread(new SynAddRunnalbe(2, 1)).start();
+       }
+     }
+   
+   
+   }
+   ```
+
+   ​	这段代码开了200个线程去分别计算1+2以及2+1的值，理论上for循环都是可省略的，两个线程也可能会导致死锁，不过那样概率太小，需要尝试运行很多次才能看到死锁的效果。如果运气不是特别差的话，上面带for循环的版本最多运行两三次就会遇到线程死锁，程序无法结束。
+
+   ​	造成死锁的根本原因是`Integer.valueOf()`方法出于减少对象创建次数和节省内存的考虑，会对数值为-128～127之间的Integer对象进行缓存[^14]，如果`valueOf()`方法传入的参数在这个范围之内，就直接返回缓存中的对象。也就是说代码中尽管调用了200次`Integer.valueOf()`方法，但一共只返回了两个不同的Integer对象。**假如某个线程的两个synchronized块之间发生了一次线程切换，那就会出现线程A在等待被线程B持有的`Integer.valueOf(1)`，线程B又在等待被线程A持有的`Integer.valueOf(2)`，结果大家都跑不下去的情况。**
+
+   ​	出现线程死锁之后，点击JConsole线程面板的“检测到死锁”按钮，将出现一个新的“死锁”页签，如图4-16所示。
+
+   图4-16　线程死锁
+
+   ![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130002454011-627698124.png)
+
+   ​	图4-16中很清晰地显示，线程Thread-43在等待一个被线程Thread-12持有的Integer对象，而点击线程Thread-12则显示它也在等待一个被线程Thread-43持有的Integer对象，这样两个线程就互相卡住，除非牺牲其中一个，否则死锁无法释放。
+
+[^13]:准确地说，只有虚拟机使用解释器执行的时候，“在作用域之内”才能保证它不会被回收，因为**这里的回收还涉及局部变量表变量槽的复用、即时编译器介入时机等问题**，具体可参考第8章的代码清单8-1。
+[^14]:这是《Java虚拟机规范》中明确要求缓存的默认值，实际值可以调整，具体取决于java.lang.Integer.Integer-Cache.high参数的设置。
 
 
 
@@ -793,4 +1003,4 @@ hsdb>
 
 
 
-[^13]:
+[^15]:
