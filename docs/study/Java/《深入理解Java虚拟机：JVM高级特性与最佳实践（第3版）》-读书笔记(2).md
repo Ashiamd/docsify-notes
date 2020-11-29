@@ -617,7 +617,7 @@ for (Map.Entry<Thread, StackTraceElement[]> stackTrace : Thread.getAllStackTrace
 
 [^6]: 详细信息见http://openjdk.java.net/jeps/320。
 
-# 4.3 可视化故障处理工具
+## 4.3 可视化故障处理工具
 
 ​	JDK中除了附带大量的命令行工具外，还提供了几个功能集成度更高的可视化工具，用户可以使用这些可视化工具以更加便捷的方式进行进程故障诊断和调试工作。这类工具主要包括<u>JConsole、JHSDB、VisualVM和JMC</u>四个。其中，JConsole是最古老，早在JDK 5时期就已经存在的虚拟机监控工具，而JHSDB虽然名义上是JDK 9中才正式提供，但之前已经以sa-jdi.jar包里面的HSDB（可视化工具）和CLHSDB（命令行工具）的形式存在了很长一段时间[^7]。它们两个都是JDK的正式成员，随着JDK一同发布，无须独立下载，使用也是完全免费的。
 
