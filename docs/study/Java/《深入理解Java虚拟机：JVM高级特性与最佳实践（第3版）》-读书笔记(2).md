@@ -997,10 +997,394 @@ hsdb>
 [^13]:准确地说，只有虚拟机使用解释器执行的时候，“在作用域之内”才能保证它不会被回收，因为**这里的回收还涉及局部变量表变量槽的复用、即时编译器介入时机等问题**，具体可参考第8章的代码清单8-1。
 [^14]:这是《Java虚拟机规范》中明确要求缓存的默认值，实际值可以调整，具体取决于java.lang.Integer.Integer-Cache.high参数的设置。
 
+### 4.3.3 VisualVM：多合-故障处理工具
 
+​	<u>VisualVM（All-in-One Java Troubleshooting Tool）是功能最强大的运行监视和故障处理程序之一，曾经在很长一段时间内是Oracle官方主力发展的虚拟机故障处理工具</u>。Oracle曾在VisualVM的软件说明中写上了“All-in-One”的字样，预示着它除了常规的运行监视、故障处理外，还将提供其他方面的能力，譬如性能分析（Profiling）。VisualVM的性能分析功能比起JProfiler、YourKit等专业且收费的Profiling工具都不遑多让。而且相比这些第三方工具，<u>**VisualVM还有一个很大的优点：不需要被监视的程序基于特殊Agent去运行，因此它的通用性很强，对应用程序实际性能的影响也较小，使得它可以直接应用在生产环境中**</u>。这个优点是JProfiler、YourKit等工具无法与之媲美的。
 
+1. VisualVM兼容范围与插件安装
 
+   ​	VisualVM基于NetBeans平台开发工具，所以一开始它就具备了通过插件扩展功能的能力，有了插件扩展支持，VisualVM可以做到：
 
+   + 显示虚拟机进程以及进程的配置、环境信息（jps、jinfo）。
 
+   + 监视应用程序的处理器、垃圾收集、堆、方法区以及线程的信息（jstat、jstack）。
 
-[^15]:
+   + dump以及分析堆转储快照（jmap、jhat）。
+
+   + 方法级的程序运行性能分析，找出被调用最多、运行时间最长的方法。
+
+   + 离线程序快照：收集程序的运行时配置、线程dump、内存dump等信息建立一个快照，可以将快照发送开发者处进行Bug反馈。
+
+   + 其他插件带来的无限可能性。
+
+   ​	VisualVM在JDK 6 Update 7中首次发布，但并不意味着它只能监控运行于JDK 6上的程序，它具备很优秀的向下兼容性，甚至能向下兼容至2003年发布的JDK 1.4.2版本[^15]，这对无数处于已经完成实施、正在维护的遗留项目很有意义。当然，也并非所有功能都能完美地向下兼容，主要功能的兼容性见下表所示。
+
+   | 特性         | JDK 1.4.2 | JDK 5 | JDK 6 local | JDK 6 remote |
+   | ------------ | --------- | ----- | ----------- | ------------ |
+   | 运行环境     | yes       | yes   | yes         | yes          |
+   | 系统属性     |           |       | yes         |              |
+   | 监视面板     | yes       | yes   | yes         | yes          |
+   | 线程面板     |           | yes   | yes         | yes          |
+   | 性能监控     |           |       | yes         |              |
+   | 堆、线程Dump |           |       | yes         |              |
+   | MBean管理    |           | yes   | yes         | yes          |
+   | JConsole插件 |           | yes   | yes         | yes          |
+
+   ​	首次启动VisualVM后，读者先不必着急找应用程序进行监测，初始状态下的VisualVM并没有加载任何插件，虽然基本的监视、线程面板的功能主程序都以默认插件的形式提供，但是如果不在VisualVM上装任何扩展插件，就相当于放弃它最精华的功能，和没有安装任何应用软件的操作系统差不多。
+
+   ​	VisualVM的插件可以手工进行安装，在网站[^16]上下载nbm包后，点击“工具->插件->已下载”菜单，然后在弹出对话框中指定nbm包路径便可完成安装。独立安装的插件存储在VisualVM的根目录，譬如JDK 9之前自带的VisulalVM，插件安装后是放在JDK_HOME/lib/visualvm中的。手工安装插件并不常用，VisualVM的自动安装功能已可找到大多数所需的插件，在有网络连接的环境下，点击“工具->插件菜单”，弹出如下图所示的插件页签，在页签的“可用插件”及“已安装”中列举了当前版本VisualVM可以使用的全部插件，选中插件后在右边窗口会显示这个插件的基本信息，如开发者、版本、功能描述等。
+
+   ![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130204322532-201842452.png)
+
+   ​	选择一个需要监视的程序就可以进入程序的主界面了，如下图所示。VisualVM的版本以及选择安装插件数量的不同，显示的界面可能不同。
+
+   ![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130213257397-790980954.png)
+
+   ​	VisualVM中“概述”、“监视”、“线程”、“MBeans”的功能与前面介绍的JConsole差别不大，可根据上一节内容类比使用，这里笔者（书籍作者）挑选几个有特色的功能和插件进行简要介绍。
+
+2. 生成、浏览堆转储快照
+
+   ​	在VisualVM中生成堆转储快照文件有两种方式，可以执行下列任一操作：
+
+   + 在“应用程序”窗口中右键单击应用程序节点，然后选择“堆Dump”。
+   + 在“应用程序”窗口中双击应用程序节点以打开应用程序标签，然后在“监视”标签中单击“堆Dump”。
+
+   ​	生成堆转储快照文件之后，应用程序页签会在该堆的应用程序下增加一个以[heap-dump]开头的子节点，并且在主页签中打开该转储快照，如下图所示。如果需要把堆转储快照保存或发送出去，就应在heapdump节点上右键选择“另存为”菜单，否则当VisualVM关闭时，生成的堆转储快照文件会被当作临时文件自动清理掉。要打开一个由已经存在的堆转储快照文件，通过文件菜单中的“装入”功能，选择硬盘上的文件即可。
+
+   ![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130213617806-448068708.png)
+
+   ​	堆页签中的“摘要”面板可以看到应用程序dump时的运行时参数、System.getProperties()的内容、线程堆栈等信息；“类”面板则是以类为统计口径统计类的实例数量、容量信息；“实例”面板不能直接使用，因为VisualVM在此时还无法确定用户想查看哪个类的实例，所以需要通过“类”面板进入，在“类”中选择一个需要查看的类，然后双击即可在“实例”里面看到此类的其中500个实例的具体属性信息；“OQL控制台”面板则是运行OQL查询语句的，同jhat中介绍的OQL功能一样。如果读者想要了解具体OQL的语法和使用方法，可参见本书附录D的内容。
+
+3. 分析程序性能
+
+   ​	在Profiler页签中，VisualVM提供了程序运行期间方法级的处理器执行时间分析以及内存分析。做Profiling分析肯定会对程序运行性能有比较大的影响，所以一般不在生产环境使用这项功能，或者改用JMC来完成，JMC的Profiling能力更强，对应用的影响非常轻微。
+
+   ​	要开始性能分析，先选择“CPU”和“内存”按钮中的一个，然后切换到应用程序中对程序进行操作，VisualVM会记录这段时间中应用程序执行过的所有方法。如果是进行处理器执行时间分析，将会统计每个方法的执行次数、执行耗时；如果是内存分析，则会统计每个方法关联的对象数以及这些对象所占的空间。等要分析的操作执行结束后，点击“停止”按钮结束监控过程，如下图所示（自己本地执行莫名没画面，就干脆用书上的图片了）。
+
+   ![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130214611769-995339643.png)
+
+   *注意：　在JDK 5之后，在客户端模式下的虚拟机加入并且自动开启了类共享——这是一个在多虚拟机进程共享rt.jar中类数据以提高加载速度和节省内存的优化，而根据相关Bug报告的反映，VisualVM的Profiler功能会因为类共享而导致被监视的应用程序崩溃，所以读者进行Profiling前，最好在被监视程序中使用-Xshare：off参数来关闭类共享优化。*
+
+   分析自己的应用程序时，可根据实际业务复杂程度与方法的时间、调用次数做比较，找到最优化价值方法。
+
+4. BTrace动态日志跟踪
+
+   ​	BTrace[^18]是一个很神奇的VisualVM插件，它本身也是一个可运行的独立程序。BTrace的作用是在不中断目标程序运行的前提下，通过HotSpot虚拟机的Instrument功能[^19]动态加入原本并不存在的调试代码。这项功能对实际生产中的程序很有意义：如当程序出现问题时，排查错误的一些必要信息时（譬如方法参数、返回值等），在开发时并没有打印到日志之中以至于不得不停掉服务时，都可以通过调试增量来加入日志代码以解决问题。
+
+   ​	在VisualVM中安装了BTrace插件后，在应用程序面板中右击要调试的程序，会出现“Trace Application…”菜单，点击将进入BTrace面板。这个面板看起来就像一个简单的Java程序开发环境，里面甚至已经有了一小段Java代码，如下图所示。
+
+   ![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130220322620-645730181.png)
+
+   ​	笔者（书籍作者）准备了一段简单的Java代码来演示BTrace的功能：产生两个1000以内的随机整数，输出这两个数字相加的结果，如代码清单4-10所示。
+
+   ​	代码清单4-10　BTrace跟踪演示
+
+   ```java
+   import java.io.BufferedReader;
+   import java.io.IOException;
+   import java.io.InputStreamReader;
+   
+   /**
+    * @author zzm
+    */
+   public class BTraceTest {
+   
+     public int add(int a, int b) {
+       return a + b;
+     }
+   
+     public static void main(String[] args) throws IOException {
+       BTraceTest test = new BTraceTest();
+       BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+       for (int i = 0; i < 10; i++) {
+         reader.readLine();
+         int a = (int) Math.round(Math.random() * 1000);
+         int b = (int) Math.round(Math.random() * 1000);
+         System.out.println(test.add(a, b));
+       }
+     }
+   }
+   ```
+
+   ​	假设这段程序已经上线运行，而我们现在又有了新的需求，想要知道程序中生成的两个随机数是什么，但程序并没有在执行过程中输出这一点。此时，在VisualVM中打开该程序的监视，在BTrace页签填充TracingScript的内容，输入调试代码，如代码清单4-11所示，即可在不中断程序运行的情况下做到这一点。
+
+   ​	代码清单4-11　BTrace调试代码
+
+   ```java
+   /* BTrace Script Template */
+   import com.sun.btrace.annotations.*;
+   import static com.sun.btrace.BTraceUtils.*;
+   
+   @BTrace
+   public class TracingScript {
+     @OnMethod(
+       clazz="org.fenixsoft.monitoring.BTraceTest",
+       method="add",
+       location=@Location(Kind.RETURN)
+     )
+   
+     public static void func(@Self org.fenixsoft.monitoring.BTraceTest instance,int a,int b,@Return int result) {
+       println("调用堆栈:");
+       jstack();
+       println(strcat("方法参数A:",str(a)));
+       println(strcat("方法参数B:",str(b)));
+       println(strcat("方法结果:",str(result)));
+     }
+   }
+   ```
+
+   ​	点击Start按钮后稍等片刻，编译完成后，Output面板中会出现“BTrace code successfuly deployed”的字样。当程序运行时将会在Output面板输出如图4-23所示的调试信息。
+
+   <small>(本地尝试了下，但是报错了，试改了一些代码，无果。就先用书籍的插图了)</small>
+
+   ![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130224455515-263986918.png)
+
+   ​	BTrace的用途很广泛，打印调用堆栈、参数、返回值只是它最基础的使用形式，在它的网站上有使用BTrace进行性能监视、定位连接泄漏、内存泄漏、解决多线程竞争问题等的使用案例，有兴趣的读者可以去网上了解相关信息。
+
+   ​	<u>BTrace能够实现动态修改程序行为，是因为它是基于Java虚拟机的Instrument开发的。Instrument是Java虚拟机工具接口（Java Virtual Machine Tool Interface，JVMTI）的重要组件，提供了一套代理（Agent）机制，使得第三方工具程序可以以代理的方式访问和修改Java虚拟机内部的数据</u>。阿里巴巴开源的诊断工具Arthas也通过Instrument实现了与BTrace类似的功能。
+
+[^15]:早于JDK 6的平台，需要打开-Dcom.sun.management.jmxremote参数才能被VisualVM管理。
+[^16]:插件中心地址：https://visualvm.github.io/pluginscenters.html。
+[^17]:官方主页：https://github.com/btraceio/btrace。
+[^18]:是JVMTI中的主要组成部分，**HotSpot虚拟机允许在不停止运行的情况下，更新已经加载的类的代码**。
+
+> [java debug 体系-JVMTI](https://www.jianshu.com/p/e59c4eed44a2)
+
+### 4.3.4 Java Mission Control：可持续在线的监控工具
+
+​	除了大家熟知的面向通用计算（General Purpose Computing）可免费使用的Java SE外，Oracle公司还开辟过带商业技术支持的Oracle Java SE Support和面向独立软件供应商（ISV）的Oracle Java SEAdvanced & Suite产品线。
+
+​	除去带有7×24小时的技术支持以及可以为企业专门定制安装包这些非技术类的增强服务外，Oracle Java SE Advanced & Suite[^19]与普通Oracle Java SE在功能上的主要差别是前者包含了一系列的监控、管理工具，譬如用于企业JRE定制管理的AMC（Java Advanced Management Console）控制台、JUT（Java Usage Tracker）跟踪系统，用于持续收集数据的JFR（Java Flight Recorder）飞行记录仪和用于监控Java虚拟机的JMC（Java Mission Control）。这些功能全部都是需要商业授权才能在生产环境中使用，但根据Oracle Binary Code协议，在个人开发环境中，允许免费使用JMC和JFR，本节笔者将简要介绍它们的原理和使用。
+
+​	<u>JFR是一套**内建在HotSpot虚拟机**里面的监控和基于事件的信息搜集框架，与其他的监控工具（如JProfiling）相比，Oracle特别强调它“可持续在线”（Always-On）的特性。JFR在生产环境中对吞吐量的影响一般不会高于1%（甚至号称是Zero Performance Overhead），而且JFR监控过程的开始、停止都是完全可动态的，即不需要重启应用。JFR的监控对应用也是完全透明的，即不需要对应用程序的源码做任何修改，或者基于特定的代理来运行。</u>
+
+​	JMC最初是BEA公司的产品，因此并没有像VisualVM那样一开始就基于自家的Net-Beans平台来开发，而是选择了由IBM捐赠的Eclipse RCP作为基础框架，现在的JMC不仅可以下载到独立程序，更常见的是作为Eclipse的插件来使用。JMC与虚拟机之间同样采取JMX协议进行通信，JMC一方面作为JMX控制台，显示来自虚拟机MBean提供的数据；另一方面作为JFR的分析工具，展示来自JFR的数据。启动后JMC的主界面如下图所示<small>（mac打开JMC-7会出问题，暂时没找到解决方法，就直接用书上插图了）</small>。
+
+![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130230920692-935637162.png)
+
+​	在左侧的“JVM浏览器”面板中自动显示了通过JDP协议（Java Discovery Protocol）找到的本机正在运行的HotSpot虚拟机进程，如果需要监控其他服务器上的虚拟机，可在“文件->连接”菜单中创建远程连接，如下图所示。
+
+![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130231151989-1957328248.png)
+
+​	这里要填写的信息应该在被监控虚拟机进程启动的时候以虚拟机参数的形式指定，以下是一份被监控端的启动参数样例：
+
+```java
+-Dcom.sun.management.jmxremote.port=9999
+-Dcom.sun.management.jmxremote.ssl=false
+-Dcom.sun.management.jmxremote.authenticate=false
+-Djava.rmi.server.hostname=192.168.31.4
+-XX:+UnlockCommercialFeatures -XX:+FlightRecorder
+```
+
+​	本地虚拟机与远程虚拟机进程的差别只限于创建连接这个步骤，连接成功创建以后的操作就是完全一样的了。把“JVM浏览器”面板中的进程展开后，可以看到每个进程的数据都有MBean和JFR两个数据来源。关于MBean这部分数据，与JConsole和VisualVM上取到的内容是一样的，只是展示形式上有些差别，笔者（书籍作者）就不再重复了，后面着重介绍JFR的数据记录。
+
+​	双击“飞行记录器”，将会出现“启动飞行记录”窗口（如果第一次使用，还会收到解锁商业功能的警告窗），如下图所示。
+
+![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130231330756-927167290.png)
+
+​	在启动飞行记录时，可以进行记录时间、垃圾收集器、编译器、方法采样、线程记录、异常记录、网络和文件I/O、事件记录等选项和频率设定，这部分比较琐碎，不一一截图讲解了。点击“完成”按钮后马上就会开始记录，记录时间结束以后会生成飞行记录报告，如下图所示。
+
+![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130231449782-1581141260.png)
+
+飞行记录报告里包含以下几类信息：
+
++ 一般信息：关于虚拟机、操作系统和记录的一般信息。
+
++ 内存：关于内存管理和垃圾收集的信息。
+
++ 代码：关于方法、异常错误、编译和类加载的信息。
+
++ 线程：关于应用程序中线程和锁的信息。
+
++ I/O：关于文件和套接字输入、输出的信息。
+
++ 系统：关于正在运行Java虚拟机的系统、进程和环境变量的信息。
+
++ 事件：关于记录中的事件类型的信息，可以根据线程或堆栈跟踪，按照日志或图形的格式查看。
+
+​	JFR的基本工作逻辑是开启一系列事件的录制动作，当某个事件发生时，这个事件的所有上下文数据将会以循环日志的形式被保存至内存或者指定的某个文件当中，循环日志相当于数据流被保留在一个环形缓存中，所以只有最近发生的事件的数据才是可用的。JMC从虚拟机内存或者文件中读取并展示这些事件数据，并通过这些数据进行性能分析。
+
+​	即使不考虑对被测试程序性能影响方面的优势，JFR提供的数据质量通常也要比其他工具通过代理形式采样获得或者从MBean中取得的数据高得多。<u>以垃圾搜集为例，HotSpot的MBean中一般有各个分代大小、收集次数、时间、占用率等数据（根据收集器不同有所差别），这些都属于“结果”类的信息，而JFR中还可以看到内存中这段时间分配了哪些对象、哪些在TLAB中（或外部）分配、分配速率和压力大小如何、分配归属的线程、收集时对象分代晋升的情况等，这些就是属于“过程”类的信息，对排查问题的价值是难以估量的</u>。
+
+[^19]:Advanced是“Advanced Monitoring & Management of Java in the Enterprise”的缩写。
+
+## 4.4 HotSpot虚拟机插件及工具
+
+​	HotSpot虚拟机发展了二十余年，现在已经是一套很复杂的软件系统，如果深入挖掘HotSpot的源码，可以发现在HotSpot的研发过程中，开发团队曾经编写（或者收集）过不少虚拟机的插件和辅助工具，它们存放在HotSpot源码hotspot/src/share/tools目录下，包括（含曾经有过但新版本中已被移除的）：
+
++ Ideal Graph Visualizer：用于可视化展示C2即时编译器是如何将字节码转化为理想图，然后转化为机器码的。
+
++ Client Compiler Visualizer[^20]：用于查看C1即时编译器生成高级中间表示（HIR），转换成低级中间表示（LIR）和做物理寄存器分配的过程。
+
++ MakeDeps：帮助处理HotSpot的编译依赖的工具。
+
++ Project Creator：帮忙生成Visual Studio的.project文件的工具。
+
++ LogCompilation：将`-XX：+LogCompilation`输出的日志整理成更容易阅读的格式的工具。
+
++ HSDIS：即时编译器的反汇编插件。
+
+​	关于Client Compiler Visualizer和Ideal Graph Visualizer，在本书第11章会有专门的使用介绍，而Project Creator、LogCompilation、MakeDeps这三个工具对本书的讲解和实验帮助有限，最后一个HSDIS是学习、实践本书第四部分“程序编译与代码优化”的有力辅助工具，借本章讲解虚拟机工具的机会，简要介绍其使用方法。
+
+---
+
+**HSDIS：JIT生成代码反汇编**
+
+​	在《Java虚拟机规范》里详细定义了虚拟机指令集中每条指令的语义，尤其是执行过程前后对操作数栈、局部变量表的影响。这些细节描述与早期Java虚拟机（Sun Classic虚拟机）高度吻合，但随着技术的发展，高性能虚拟机真正的细节实现方式已经渐渐与《Java虚拟机规范》所描述的内容产生越来越大的偏差，《Java虚拟机规范》中的规定逐渐成为Java虚拟机实现的“概念模型”，即实现只保证与规范描述等效，而不一定是按照规范描述去执行。由于这个原因，我们在讨论程序的执行语义问题（虚拟机做了什么）时，在字节码层面上分析完全可行，但讨论程序的执行行为问题（虚拟机是怎样做的、性能如何）时，在字节码层面上分析就没有什么意义了，必须通过其他途径解决。
+
+​	至于分析程序如何执行，使用软件调试工具（GDB、Windbg等）来进行断点调试是一种常见的方式，但是这样的调试方式在Java虚拟机中也遇到了很大麻烦，因为大量执行代码是通过即时编译器动态生成到代码缓存中的，并没有特别简单的手段来处理这种混合模式的调试，不得不通过一些曲线的间接方法来解决问题。在这样的背景下，本节的主角——HSDIS插件就正式登场了。
+
+​	**HSDIS是一个被官方推荐的HotSpot虚拟机即时编译代码的反汇编插件**，它包含在HotSpot虚拟机的源码当中[^21]，在OpenJDK的网站[^22]也可以找到单独的源码下载，但并没有提供编译后的程序。
+
+​	HSDIS插件的作用是让HotSpot的-XX：+PrintAssembly指令调用它来把即时编译器动态生成的本地代码还原为汇编代码输出，同时还会自动产生大量非常有价值的注释，这样我们就可以通过输出的汇编代码来从最本质的角度分析问题。读者可以根据自己的操作系统和处理器型号，从网上直接搜索、下载编译好的插件，直接放到JDK_HOME/jre/bin/server目录（JDK 9以下）或JDK_HOME/lib/amd64/server（JDK 9或以上）中即可使用。如果读者确实没有找到所采用操作系统的对应编译成品[^23]，那就自己用源码编译一遍（网上能找到各种操作系统下的编译教程）。
+
+​	另外还有一点需要注意，如果读者使用的是SlowDebug或者FastDebug版的HotSpot，那可以直接通过-XX：+PrintAssembly指令使用的插件；如果读者使用的是Product版的HotSpot，则还要额外加入一个-XX：+UnlockDiagnosticVMOptions参数才可以工作。笔者以代码清单4-12中的测试代码为例简单演示一下如何使用这个插件。
+
+​	代码清单4-12　测试代码
+
+```java
+public class Bar {
+  int a = 1;
+  static int b = 2;
+  public int sum(int c) {
+    return a + b + c;
+  }
+  public static void main(String[] args) {
+    new Bar().sum(3);
+  }
+}
+```
+
+​	编译这段代码，并使用以下命令执行：
+
+```java
+java -XX:+PrintAssembly -Xcomp -XX:CompileCommand=dontinline,*Bar.sum -XX:Compile-Command=compileonly,*Bar.sum test.
+```
+
+​	其中，参数-Xcomp是让虚拟机以编译模式执行代码，这样不需要执行足够次数来预热就能触发即时编译。两个-XX：CompileCommand的意思是让编译器不要内联sum()并且只编译sum()，-XX：+PrintAssembly就是输出反汇编内容。如果一切顺利的话，屏幕上会出现类似代码清单4-13所示的内容。
+
+​	代码清单4-13　测试代码
+
+```assembly
+[Disassembling for mach='i386']
+[Entry Point]
+[Constants]
+# {method} 'sum' '(I)I' in 'test/Bar'
+# this: ecx = 'test/Bar'
+# parm0: edx = int
+# [sp+0x20] (sp of caller)
+……
+0x01cac407: cmp 0x4(%ecx),%eax
+0x01cac40a: jne 0x01c6b050 ; {runtime_call}
+[Verified Entry Point]
+0x01cac410: mov %eax,-0x8000(%esp)
+0x01cac417: push %ebp
+0x01cac418: sub $0x18,%esp ; *aload_0
+; - test.Bar::sum@0 (line 8)
+;; block B0 [0, 10]
+0x01cac41b: mov 0x8(%ecx),%eax ; *getfield a
+; - test.Bar::sum@1 (line 8)
+0x01cac41e: mov $0x3d2fad8,%esi ; {oop(a
+'java/lang/Class' = 'test/Bar')}
+0x01cac423: mov 0x68(%esi),%esi ; *getstatic b
+; - test.Bar::sum@4 (line 8)
+0x01cac426: add %esi,%eax
+0x01cac428: add %edx,%eax
+0x01cac42a: add $0x18,%esp
+0x01cac42d: pop %ebp
+0x01cac42e: test %eax,0x2b0100 ; {poll_return}
+0x01cac434: ret
+```
+
+虽然是汇编，但代码并不多，我们一句一句来阅读：
+
+1）mov%eax，-0x8000(%esp)：检查栈溢。
+
+2）push%ebp：保存上一栈帧基址。
+
+3）sub$0x18，%esp：给新帧分配空间。
+
+4）mov 0x8(%ecx)，%eax：取实例变量a，这里0x8(%ecx)就是ecx+0x8的意思，前面代码片段“[Constants]”中提示了“this：ecx='test/Bar'”，即ecx寄存器中放的就是this对象的地址。偏移0x8是越过this对象的对象头，之后就是实例变量a的内存位置。这次是访问Java堆中的数据。
+
+5）mov$0x3d2fad8，%esi：取test.Bar在方法区的指针。
+
+6）mov 0x68(%esi)，%esi：取类变量b，这次是访问方法区中的数据。
+
+7）add%esi，%eax、add%edx，%eax：做2次加法，求a+b+c的值，前面的代码把a放在eax中，把b放在esi中，而c在[Constants]中提示了，“parm0：edx=int”，说明c在edx中。
+
+8）add$0x18，%esp：撤销栈帧。
+
+9）pop%ebp：恢复上一栈帧。
+
+10）test%eax，0x2b0100：轮询方法返回处的SafePoint。
+
+11）ret：方法返回。
+
+​	在这个例子中测试代码比较简单，肉眼直接看日志中的汇编输出是可行的，但在正式环境中-XX：+PrintAssembly的日志输出量巨大，且难以和代码对应起来，这就必须使用工具来辅助了。
+
+​	JITWatch[^24]是HSDIS经常搭配使用的可视化的编译日志分析工具，为便于在JITWatch中读取，读者可使用以下参数把日志输出到logfile文件：
+
+```java
+-XX:+UnlockDiagnosticVMOptions
+-XX:+TraceClassLoading
+-XX:+LogCompilation
+-XX:LogFile=/tmp/logfile.log
+-XX:+PrintAssembly
+-XX:+TraceClassLoading
+```
+
+​	在JITWatch中加载日志后，就可以看到执行期间使用过的各种对象类型和对应调用过的方法了，界面如下图所示。
+
+![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130234103186-1963839743.png)
+
+​	选择想要查看的类和方法，即可查看对应的Java源代码、字节码和即时编译器生成的汇编代码，如下图所示。
+
+![](https://img2020.cnblogs.com/blog/1244059/202011/1244059-20201130234557986-46124353.png)
+
+[^20]:不同于Ideal Graph Visualizer，Client Compiler Visualizer的源码其实从未进入过HotSpot的代码仓库，不过为了C1、C2配对，还是把它列在这里。
+[^21]:OpenJDK中的源码位置：hotspot/src/share/tools/hsdis/。
+[^22]:地址：http://hg.openjdk.java.net/jdk7u/jdk7u/hotspot/file/tip/src/share/tools/hsdis/。也可以在GitHub上搜索HSDIS得到。
+[^23]:HLLVM圈子中有已编译好的，地址：http://hllvm.group.iteye.com/。
+[^24]:下载地址：https://github.com/AdoptOpenJDK/jitwatch。
+
+## 4.5 本章小结
+
+​	本章介绍了随JDK发布的6个命令行工具与4个可视化的故障处理工具，灵活使用这些工具，可以为处理问题带来很大的便利。除了本章涉及的OpenJDK中自带的工具之外，还有很多其他监控和故障处理工具，如何进行监控和故障诊断，这并不是《Java虚拟机规范》中定义的内容，而是取决于虚拟机实现自身的设计，因此每种处理工具都有针对的目标范围，如果读者使用的是非HotSpot系的虚拟机，就更需要使用对应的工具进行分析，如：
+
++ IBM的Support Assistant[^25]、Heap Analyzer[^26]、Javacore Analyzer[^27]、Garbage CollectorAnalyzer[^28]适用于IBM J9/OpenJ9 VM。
+
++ HP的HPjmeter、HPjtune适用于HP-UX、SAP、HotSpot VM。
+
++ Eclipse的Memory Analyzer Tool[^29]（MAT）适用于HP-UX、SAP、HotSpot VM，安装IBMDTFJ[^30]插件后可支持IBM J9虚拟机。
+
+[^25]:http://www-01.ibm.com/software/support/isa/。
+[^26]:http://www.alphaworks.ibm.com/tech/heapanalyzer/download。
+[^27]:http://www.alphaworks.ibm.com/tech/jca/download。
+[^28]:http://www.alphaworks.ibm.com/tech/pmat/download。
+[^29]:http://www.eclipse.org/mat/。
+[^30]:http://www.ibm.com/developerworks/java/jdk/tools/dtfj.html。
+
+# 5. 第5章　调优案例分析与实战
+
+​	Java与C++之间有一堵由内存动态分配和垃圾收集技术所围成的高墙，墙外面的人想进去，墙里面的人却想出来。
+
+## 5.1 概述
+
+​	在前面3章笔者系统性地介绍了处理Java虚拟机内存问题的知识与工具，在处理应用中的实际问题时，除了知识与工具外，经验同样是一个很重要的因素。在本章，将会与读者分享若干较有代表性的实际案例。
+
+​	考虑到虚拟机的故障处理与调优主要面向各类服务端应用，而大多数Java程序员较少有机会直接接触生产环境的服务器，因此本章还准备了一个所有开发人员都能够进行“亲身实战”的练习，希望大家通过实践能获得故障处理、调优的经验。
+
+*（吐槽：服务器倒是经常接触，倒是这些JVM工具什么的，确实用得不熟）*
+
+## 5.2 案例分析
+
+​	本章中的案例一部分来源于笔者处理过的实际问题，还有另一部分来源于网上有特色和代表性的案例总结。出于对客户商业信息保护的原因，在不影响前后逻辑的前提下，笔者对实际环境和用户业务做了一些屏蔽和精简。
+
+​	本章内容将着重考虑如何在应用部署层面去解决问题，有不少案例中的问题的确可以在设计和开发阶段就先行避免，但这并不是本书要讨论的话题。也有一些问题可以直接通过升级硬件或者使用最新JDK版本里的新技术去解决，但我们同时也会探讨如何在不改变已有软硬件版本和规格的前提下，调整部署和配置策略去解决或者缓解问题。
+
+### 5.2.1　大内存硬件上的程序部署策略
+
+​	
+
+[^31]:
+
