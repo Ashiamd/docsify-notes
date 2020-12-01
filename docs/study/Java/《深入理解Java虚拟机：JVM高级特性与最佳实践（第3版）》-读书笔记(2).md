@@ -1380,6 +1380,9 @@ java -XX:+PrintAssembly -Xcomp -XX:CompileCommand=dontinline,*Bar.sum -XX:Compil
 
 ### 5.2.1　大内存硬件上的程序部署策略
 
++ 一个Java进程分配超大内存	=>	GC虽然初期不频繁，但后期FullGC时，由于内存大，GC时间长
++ 多个Java进程负载均衡（每个内存较少）=>	内存利用率高，GC相对频繁，但是GC时间相对短
+
 > [JVM老年代和新生代的比例](https://www.cnblogs.com/shoshana-kong/p/11314677.html)
 >
 > [常用基础参数NewRatio讲解](https://www.jianshu.com/p/c4f00b61b423)
