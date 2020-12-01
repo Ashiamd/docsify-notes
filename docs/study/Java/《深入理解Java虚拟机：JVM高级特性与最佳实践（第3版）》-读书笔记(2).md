@@ -1532,11 +1532,32 @@ at org.eclipse.jetty.io.nio.DirectNIOBuffer.<init>
 
 ### 5.2.5 服务器虚拟机进程崩溃
 
+**个人小结**：
 
++ 注意通信节点之间的资源不对等问题（网络资源、IO资源）
++ **资源不对等的场景，考虑使用生产者/消费者模式代替异步调用**
 
+---
 
+​	一个基于B/S的MIS系统，硬件为两台双路处理器、8GB内存的HP系统，服务器是WebLogic9.2（与第二个案例中那套是同一个系统）。正常运行一段时间后，最近发现在运行期间频繁出现集群节点的虚拟机进程自动关闭的现象，留下了一个hs_err_pid###.log文件后，虚拟机进程就消失了，两台物理机器里的每个节点都出现过进程崩溃的现象。从系统日志中注意到，每个节点的虚拟机进程在崩溃之前，都发生过大量相同的异常，见代码清单5-2。
 
+​	代码清单5-2　异常堆栈2
 
+```java
+java.net.SocketException: Connection reset
+at java.net.SocketInputStream.read(SocketInputStream.java:168)
+at java.io.BufferedInputStream.fill(BufferedInputStream.java:218)
+at java.io.BufferedInputStream.read(BufferedInputStream.java:235)
+at org.apache.axis.transport.http.HTTPSender.readHeadersFromSocket(HTTPSender.java:583)
+at org.apache.axis.transport.http.HTTPSender.invoke(HTTPSender.java:143)
+... 99 more
+```
+
+​	这是一个远端断开连接的异常，通过系统管理员了解到系统最近与一个OA门户做了集成，在MIS系统工作流的待办事项变化时，要通过Web服务通知OA门户系统，把待办事项的变化同步到OA门户之中。通过SoapUI测试了一下同步待办事项的几个Web服务，发现调用后竟然需要长达3分钟才能返回，并且返回结果都是超时导致的连接中断。
+
+​	由于MIS系统的用户多，待办事项变化很快，为了不被OA系统速度拖累，<u>使用了异步的方式调用Web服务，但由于两边服务速度的完全不对等，时间越长就累积了越多Web服务没有调用完成，导致在等待的线程和Socket连接越来越多，最终超过虚拟机的承受能力后导致虚拟机进程崩溃</u>。通知OA门户方修复无法使用的集成接口，并将**异步调用改为生产者/消费者模式的消息队列**实现后，系统恢复正常。
+
+### 5.2.6 不恰当数据结构导致内存占用过大
 
 
 
