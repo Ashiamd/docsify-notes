@@ -1470,6 +1470,83 @@ java -XX:+PrintAssembly -Xcomp -XX:CompileCommand=dontinline,*Bar.sum -XX:Compil
 
 ### 5.2.3 堆外内存导致的溢出错误
 
+**个人小结**：
+
++ **Direct Memory不属于堆，只有在Full GC发生时，才会进行Direct Memory的垃圾回收**。
++ 而堆内存的Young、Old在内存不足时就会自动触发垃圾回收
+
+所以可能出现明明堆内存稳定，进程却不断抛出OOM异常的情况=>堆外内存不足（Direct Memory等）
+
+---
+
+> [JVM参数-XX:+HeapDumpOnOutOfMemoryError使用方法](https://blog.csdn.net/lusa1314/article/details/84134458)
+>
+> `-XX:+HeapDumpOnOutOfMemoryError`参数表示当JVM发生OOM时，自动生成DUMP文件
+
+​	这是一个学校的小型项目：基于B/S的电子考试系统，为了实现客户端能实时地从服务器端接收考试数据，系统使用了逆向AJAX技术（也称为Comet或者Server Side Push），选用CometD 1.1.1作为服务端推送框架，服务器是Jetty 7.1.4，硬件为一台很普通PC机，Core i5 CPU，4GB内存，运行32位Windows操作系统。
+
+​	测试期间发现服务端不定时抛出内存溢出异常，服务不一定每次都出现异常，但假如正式考试时崩溃一次，那估计整场电子考试都会乱套。网站管理员尝试过把堆内存调到最大，32位系统最多到1.6GB基本无法再加大了，而且<u>开大了基本没效果，抛出内存溢出异常好像还更加频繁</u>。加入`-XX：+HeapDumpOnOutOfMemoryError`参数，居然也没有任何反应，抛出内存溢出异常时什么文件都没有产生。无奈之下只好挂着jstat紧盯屏幕，发现垃圾收集并不频繁，Eden区、Survivor区、老年代以及方法区的内存全部都很稳定，压力并不大，但就是照样不停抛出内存溢出异常。最后，在内存溢出后从系统日志中找到异常堆栈如代码清单5-1所示。
+
+​	代码清单5-1　异常堆栈
+
+```java
+[org.eclipse.jetty.util.log] handle failed java.lang.OutOfMemoryError: null
+at sun.misc.Unsafe.allocateMemory(Native Method)
+at java.nio.DirectByteBuffer.<init>(DirectByteBuffer.java:99)
+at java.nio.ByteBuffer.allocateDirect(ByteBuffer.java:288)
+at org.eclipse.jetty.io.nio.DirectNIOBuffer.<init>
+……
+```
+
+​	如果认真阅读过本书第2章，看到异常堆栈应该就清楚这个抛出内存溢出异常是怎么回事了。我们知道操作系统对每个进程能管理的内存是有限制的，这台服务器使用的32位Windows平台的限制是2GB，其中划了1.6GB给Java堆，而Direct Memory耗用的内存并不算入这1.6GB的堆之内，因此它最大也只能在剩余的0.4GB空间中再分出一部分而已。在此应用中导致溢出的关键是**<u>垃圾收集进行时，虚拟机虽然会对直接内存进行回收，但是直接内存却不能像新生代、老年代那样，发现空间不足了就主动通知收集器进行垃圾回收，它只能等待老年代满后Full GC出现后，“顺便”帮它清理掉内存的废弃对象</u>**。否则就不得不一直等到抛出内存溢出异常时，先捕获到异常，再在Catch块里面通过`System.gc()`命令来触发垃圾收集。但<u>如果Java虚拟机再打开了`-XX：+DisableExplicitGC`开关，禁止了人工触发垃圾收集的话，那就只能眼睁睁看着堆中还有许多空闲内存，自己却不得不抛出内存溢出异常了</u>。而本案例中使用的CometD 1.1.1框架，正好有大量的NIO操作需要使用到直接内存。
+
+​	从实践经验的角度出发，在处理小内存或者32位的应用问题时，除了Java堆和方法区之外，我们注意到下面这些区域还会占用较多的内存，这里所有的内存总和受到操作系统进程最大内存的限制：
+
++ **直接内存**：可通过`-XX：MaxDirectMemorySize`调整大小，内存不足时抛出OutOfMemoryError或者OutOfMemoryError：Direct buffer memory。
+
+  <small>*ps我本地jdk8和11都有`uintx MaxDirectMemorySize            = 0`*</small>
+
++ <u>**线程堆栈**：可通过`-Xss`调整大小，内存不足时抛出StackOverflowError（如果线程请求的栈深度大于虚拟机所允许的深度）或者OutOfMemoryError（如果Java虚拟机栈容量可以动态扩展，当栈扩展时无法申请到足够的内存）</u>。
+
++ **<u>Socket缓存区</u>**：**<u>每个Socket连接都Receive和Send两个缓存区，分别占大约37KB和25KB内存，连接多的话这块内存占用也比较可观。如果无法分配，可能会抛出IOException：Too many open files异常。</u>**
+
++ **JNI代码**：<u>如果代码中使用了JNI调用本地库，那本地库使用的内存也不在堆中，而是占用Java虚拟机的**本地方法栈**和**本地内存**的</u>。
++ 虚拟机和垃圾收集器：虚拟机、垃圾收集器的工作也是要消耗一定数量的内存的。
+
+### 5.2.4 外部命令导致系统缓慢
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
