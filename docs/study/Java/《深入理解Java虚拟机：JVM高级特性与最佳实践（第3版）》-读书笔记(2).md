@@ -1593,7 +1593,98 @@ Total time for which application threads were stopped: 0.6070570 seconds
 
 ​	<u>**我们具体分析一下HashMap空间效率，在HashMap<Long，Long>结构中，只有Key和Value所存放的两个长整型数据是有效数据，共16字节（2×8字节）。这两个长整型数据包装成java.lang.Long对象之后，就分别具有8字节的Mark Word、8字节的Klass指针，再加8字节存储数据的long值。然后这2个Long对象组成Map.Entry之后，又多了16字节的对象头，然后一个8字节的next字段和4字节的int型的hash字段，为了对齐，还必须添加4字节的空白填充，最后还有HashMap中对这个Entry的8字节的引用，这样增加两个长整型数字，实际耗费的内存为(Long(24byte)×2)+Entry(32byte)+HashMapRef(8byte)=88byte，空间效率为有效数据除以全部内存空间，即16字节/88字节=18%，这确实太低了**</u>。
 
-### 5.2.7 由Windows虚拟内存导致的长时间停顿
+### 5.2.7 由Windows虚拟内存导致的长时间停顿[^31]
+
+> [《深入理解Java虚拟机》-----第5章 jvm调优案例分析与实战](https://www.cnblogs.com/java-chen-hao/p/10579570.html)
+
+​	有一个带心跳检测功能的GUI桌面程序，每15秒会发送一次心跳检测信号，如果对方30秒以内都没有信号返回，那就认为和对方程序的连接已经断开。程序上线后发现心跳检测有误报的可能，查询日志发现误报的原因是程序会偶尔出现间隔约一分钟的时间完全无日志输出，处于停顿状态。
+
+​	因为是桌面程序，所需的内存并不大（`-Xmx256m`），所以开始并没有想到是垃圾收集导致的程序停顿，但是加入参数`-XX：+PrintGCApplicationStoppedTime`，`-XX：+PrintGCDateStamps`，`-Xloggc：gclog.log`后，从收集器日志文件中确认了停顿确实是由垃圾收集导致的，大部分收集时间都控制在100毫秒以内，但偶尔就出现一次接近1分钟的长时间收集过程。
+
+```java
+Total time for which application threads were stopped: 0.0112389 seconds
+Total time for which application threads were stopped: 0.0001335 seconds
+Total time for which application threads were stopped: 0.0003246 seconds
+Total time for which application threads were stopped: 41.4731411 seconds
+Total time for which application threads were stopped: 0.0489481 seconds
+Total time for which application threads were stopped: 0.1110761 seconds
+Total time for which application threads were stopped: 0.0007286 seconds
+Total time for which application threads were stopped: 0.0001268 seconds
+```
+
+​	从收集器日志中找到长时间停顿的具体日志信息（再添加了`-XX：+PrintReferenceGC`参数），找到的日志片段如下所示。从日志中看到，真正执行垃圾收集动作的时间不是很长，但从准备开始收集，到真正开始收集之间所消耗的时间却占了绝大部分。
+
+![img](https://img-blog.csdn.net/20151008223224850)
+
+​	**<u>除收集器日志之外，还观察到这个GUI程序内存变化的一个特点，当它最小化的时候，资源管理中显示的占用内存大幅度减小，但是虚拟内存则没有变化，因此怀疑程序在最小化时它的工作内存被自动交换到磁盘的页面文件之中了，这样发生垃圾收集时就有可能因为恢复页面文件的操作导致不正常的垃圾收集停顿</u>**。
+
+​	在MSDN上查证[^32]确认了这种猜想，在Java的GUI程序中要避免这种现象，可以加入参数“`-Dsun.awt.keepWorkingSetOnMinimize=true`”来解决。这个参数在许多AWT的程序上都有应用，例如JDK（曾经）自带的VisualVM，启动配置文件中就有这个参数，保证程序在恢复最小化时能够立即响应。在这个案例中加入该参数，问题马上得到解决。
+
+[^31]:本案例来源于ITEye HLLVM群组的讨论：http://hllvm.group.iteye.com/group/topic/28745。
+[^32]:http://support.microsoft.com/default.aspx?scid=kb；en-us；293215。
+
+### 5.2.8 由安全点导致长时间停顿[^33]
+
+个人小结：
+
++ **处理器时间代表的是线程占用处理器一个核心的耗时计数，而时钟时间就是现实世界中的时间计数**
+
+  <small>（<u>单核单线程的场景下，这两者可以认为是等价的，但如果是多核环境下，同一个时钟时间内有多少处理器核心正在工作，就会有多少倍的处理器时间被消耗和记录下来</u>）</small>
+
++ **安全点是以“是否具有让程序长时间执行的特征”为原则进行选定的**，所以方法调用、循环跳转、异常跳转这些位置都可能会设置有安全点，但是HotSpot虚拟机为了避免安全点过多带来过重的负担，对循环还有一项优化措施，认为循环次数较少的话，执行时间应该也不会太长，**<u>所以使用int类型或范围更小的数据类型作为索引值的循环默认是不会被放置安全点的</u>**。<u>这种循环被称为**可数循环（CountedLoop）**，相对应地，使用long或者范围更大的数据类型作为索引值的循环就被称为**不可数循环（Uncounted Loop）**，将会被放置安全点</u>。
+
+  + 可数循环（CountedLoop）：使用int类型或范围更小的数据类型作为索引值的循环
+  + 不可数循环（UncountedLoop）：使用long或者范围更大的数据类型作为索引值的循环
+
+---
+
+> [调优案例分析与实战-1- （深入理解java虚拟机）](https://www.cnblogs.com/yanliang12138/p/12732191.html)
+
+​	有一个比较大的承担公共计算任务的离线HBase集群，运行在JDK 8上，使用G1收集器。每天都有大量的MapReduce或Spark离线分析任务对其进行访问，同时有很多其他在线集群Replication过来的数据写入，因为集群读写压力较大，而离线分析任务对延迟又不会特别敏感，所以将`-XX：MaxGCPauseMillis`参数设置到了500毫秒。不过运行一段时间后发现垃圾收集的停顿经常达到3秒以上，而且实际垃圾收集器进行回收的动作就只占其中的几百毫秒，现象如以下日志所示。
+
+![img](https://img2020.cnblogs.com/blog/712711/202004/712711-20200419163451362-414429794.png)
+
+​	考虑到不是所有读者都了解计算机体系和操作系统原理，笔者先解释一下user、sys、real这三个时间的概念：
+
++ **user：进程执行用户态代码所耗费的处理器时间。**
+
++ **sys：进程执行核心态代码所耗费的处理器时间。**
+
++ **real：执行动作从开始到结束耗费的时钟时间。**
+
+​	请注意，前面两个是处理器时间，而最后一个是时钟时间，它们的区别是**<u>处理器时间代表的是线程占用处理器一个核心的耗时计数，而时钟时间就是现实世界中的时间计数</u>**。如果是<u>单核单线程的场景下，这两者可以认为是等价的，但如果是多核环境下，同一个时钟时间内有多少处理器核心正在工作，就会有多少倍的处理器时间被消耗和记录下来</u>。
+
+​	**<u>在垃圾收集调优时，我们主要依据real时间为目标来优化程序，因为最终用户只关心发出请求到得到响应所花费的时间，也就是响应速度，而不太关心程序到底使用了多少个线程或者处理器来完成任务</u>**。日志显示这次垃圾收集一共花费了0.14秒，但其中用户线程却足足停顿了有2.26秒，两者差距已经远远超出了正常的TTSP（Time To Safepoint）耗时的范畴。所以先加入参数`-XX：+PrintSafepointStatistics`和`-XX:PrintSafepointStatisticsCount=1`去查看安全点日志，具体如下所示：
+
+```java
+vmop [threads: total initially_running wait_to_block]
+65968.203: ForceAsyncSafepoint [931 1 2]
+[time: spin block sync cleanup vmop] page_trap_count
+[2255 0 2255 11 0] 1
+```
+
+​	日志显示当前虚拟机的操作（VM Operation，VMOP）是等待所有用户线程进入到安全点，但是有两个线程特别慢，导致发生了很长时间的自旋等待。<u>日志中的2255毫秒自旋（Spin）时间就是指由于部分线程已经走到了安全点，但还有一些特别慢的线程并没有到，所以垃圾收集线程无法开始工作，只能空转（自旋）等待</u>。
+
+​	解决问题的第一步是把这两个特别慢的线程给找出来，这个倒不困难，添加`-XX：+SafepointTimeout`和`-XX：SafepointTimeoutDelay=2000`两个参数，让虚拟机在等到线程进入安全点的时间超过2000毫秒时就认定为超时，这样就会输出导致问题的线程名称，得到的日志如下所示：
+
+```java
+# SafepointSynchronize::begin: Timeout detected:
+# SafepointSynchronize::begin: Timed out while spinning to reach a safepoint.
+# SafepointSynchronize::begin: Threads which did not reach the safepoint:
+# "RpcServer.listener,port=24600" #32 daemon prio=5 os_prio=0 tid=0x00007f4c14b22840
+nid=0xa621 runnable [0x0000000000000000]
+java.lang.Thread.State: RUNNABLE
+# SafepointSynchronize::begin: (End of list)
+```
+
+​	从错误日志中顺利得到了导致问题的线程名称为“RpcServer.listener，port=24600”。但是为什么它们会出问题呢？有什么因素可以阻止线程进入安全点？在第3章关于安全点的介绍中，我们已经知道**<u>安全点是以“是否具有让程序长时间执行的特征”为原则进行选定的，所以方法调用、循环跳转、异常跳转这些位置都可能会设置有安全点，但是HotSpot虚拟机为了避免安全点过多带来过重的负担，对循环还有一项优化措施，认为循环次数较少的话，执行时间应该也不会太长，所以使用int类型或范围更小的数据类型作为索引值的循环默认是不会被放置安全点的</u>**。<u>这种循环被称为**可数循环（CountedLoop）**，相对应地，使用long或者范围更大的数据类型作为索引值的循环就被称为**不可数循环（Uncounted Loop）**，将会被放置安全点</u>。**通常情况下这个优化措施是可行的，但循环执行的时间不单单是由其次数决定，如果循环体单次执行就特别慢，那即使是可数循环也可能会耗费很多的时间**。
+
+​	**HotSpot原本提供了`-XX：+UseCountedLoopSafepoints`参数去强制在可数循环中也放置安全点，不过这个参数在JDK 8下有Bug[^34]，有导致虚拟机崩溃的风险**，所以就不得不找到RpcServer线程里面的缓慢代码来进行修改。最终查明导致这个问题是HBase中一个连接超时清理的函数，由于集群会有多个MapReduce或Spark任务进行访问，而每个任务又会同时起多个Mapper/Reducer/Executer，其每一个都会作为一个HBase的客户端，这就导致了同时连接的数量会非常多。**<u>更为关键的是，清理连接的索引值就是int类型，所以这是一个可数循环，HotSpot不会在循环中插入安全点</u>**。当垃圾收集发生时，如果RpcServer的Listener线程刚好执行到该函数里的可数循环时，则必须等待循环全部跑完才能进入安全点，此时其他线程也必须一起等着，所以从现象上看就是长时间的停顿。找到了问题，解决起来就非常简单了，<u>把循环索引的数据类型从int改为long即可，但如果不具备安全点和垃圾收集的知识，这种问题是很难处理的</u>。
+
+[^33]:原始案例来自“小米云技术”公众号，原文地址为https://juejin.im/post/5d1b1fc46fb9a07ef7108d82，笔者做了一些改动。
+[^34]:https://bugs.openjdk.java.net/browse/JDK-8161147。
+
+## 5.3 实战：Eclipse运行速度调优
 
 
 
@@ -1609,5 +1700,10 @@ Total time for which application threads were stopped: 0.6070570 seconds
 
 
 
-[^32]:
 
+
+
+
+
+
+[^35]:
