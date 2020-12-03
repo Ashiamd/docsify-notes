@@ -1472,10 +1472,10 @@ java -XX:+PrintAssembly -Xcomp -XX:CompileCommand=dontinline,*Bar.sum -XX:Compil
 
 **个人小结**：
 
-+ **Direct Memory不属于堆，只有在Full GC发生时，才会进行Direct Memory的垃圾回收**。
++ <big>**Direct Memory不属于堆，只有在Full GC发生时，才会进行Direct Memory的垃圾回收**</big>。
 + 而堆内存的Young、Old在内存不足时就会自动触发垃圾回收
 
-所以可能出现明明堆内存稳定，进程却不断抛出OOM异常的情况=>堆外内存不足（Direct Memory等）
+所以**<u>可能出现明明堆内存稳定，进程却不断抛出OOM异常的情况=>堆外内存不足（Direct Memory等）</u>**
 
 ---
 
@@ -1809,6 +1809,8 @@ Loaded Bytes Unloaded Bytes Time
 
 + **需要说明一点，虚拟机启动的时候就会把参数中所设定的内存全部划为私有，即使扩容前有一部分内存不会被用户代码用到，这部分内存也不会交给其他进程使用。这部分内存在虚拟机中被标识为“Virtual”内存**。
 
++ 在老年代空间充足时，却出现Full GC，可观察是否程序中主动执行了`System.gc()`
+
 ---
 
 > [[深入理解Java虚拟机]第五章 调优案例分析与实战](https://blog.csdn.net/coslay/article/details/48950677?utm_source=blogxgwz6)
@@ -1908,7 +1910,7 @@ LGCC GCC
 System.gc() No GC
 ```
 
-​	从LGCC（Last GC Cause）中看到原来是代码调用`System.gc()`显式触发的垃圾收集，在内存设置调整后，这种显式垃圾收集不符合我们的期望，因此在eclipse.ini中加入参数`-XX：+DisableExplicitGC`屏蔽掉`System.gc()`。再次测试发现启动期间的Full GC已经完全没有了，只发生了6次Minor GC，总共耗时417毫秒，与调优前4.149秒的测试结果相比，正好是十分之一。进行GC调优后Eclipse的启动时间下降非常明显，比整个垃圾收集时间降低的绝对值还大，现在启动只需要7秒多。
+​	<u>从LGCC（Last GC Cause）中看到原来是代码调用`System.gc()`显式触发的垃圾收集，在内存设置调整后，这种显式垃圾收集不符合我们的期望，因此在eclipse.ini中加入参数`-XX：+DisableExplicitGC`屏蔽掉`System.gc()`</u>。再次测试发现启动期间的Full GC已经完全没有了，只发生了6次Minor GC，总共耗时417毫秒，与调优前4.149秒的测试结果相比，正好是十分之一。进行GC调优后Eclipse的启动时间下降非常明显，比整个垃圾收集时间降低的绝对值还大，现在启动只需要7秒多。
 
 [^40]:严格来说，不包括正在执行native代码的用户线程，因为native代码一般不会改变Java对象的引用关系，所以没有必要挂起它们来等待垃圾回收。
 [^41]:可以通过以下几个参数要求虚拟机生成GC日志：-XX：+PrintGCTimeStamps（打印GC停顿时间）、-XX：+PrintGCDetails（打印GC详细信息）、-verbose：gc（打印GC信息，输出内容已被前一个参数包括，可以不写）、-Xloggc：gc.log。
@@ -1917,13 +1919,61 @@ System.gc() No GC
 
 ### 5.3.5 选择收集器降低延迟
 
+个人小结：
 
++ ParNew是使用CMS收集器后的默认新生代收集器
++ 
 
+> [[深入理解Java虚拟机]第五章 调优案例分析与实战](https://blog.csdn.net/coslay/article/details/48950677?utm_source=blogxgwz6)
 
+​	现在Eclipse启动已经比较迅速了，但我们的调优实战还没有结束，毕竟Eclipse是拿来写程序用的，不是拿来测试启动速度的。我们不妨再在Eclipse中进行一个非常常用但又比较耗时的操作：代码编译。图5-11是当前配置下，Eclipse进行代码编译时的运行数据，从图中可以看到，新生代每次回收耗时约65毫秒，老年代每次回收耗时约725毫秒。对于用户来说，新生代垃圾收集的耗时也还好，65毫秒的停顿在使用中基本无法察觉到，而老年代每次垃圾收集要停顿接近1秒钟，虽然较长时间才会出现一次，但这样的停顿已经是可以被人感知了，会影响到体验。
 
+![img](https://img-blog.csdn.net/20151009003705592)
 
+​	再注意看一下编译期间的处理器资源使用状况，整个编译过程中平均只使用了不到30%的处理器资源，垃圾收集的处理器使用率曲线更是几乎与坐标横轴紧贴在一起，这说明处理器资源还有很多可利用的余地。
 
+​	列举垃圾收集的停顿时间、处理器资源富余的目的，都是为了给接下来替换掉客户端模式的虚拟机中默认的新生代、老年代串行收集器做个铺垫。
 
+​	Eclipse应当算是与使用者交互非常频繁的应用程序，由于代码太多，笔者习惯在做全量编译或者清理动作的时候，使用“Run in Background”功能一边编译一边继续工作。回顾一下在第3章提到的几种收集器，很容易想到在JDK 6版本下提供的收集器里，CMS是最符合这类场景的选择。我们在eclipse.ini中再加入这两个参数，`-XX：+UseConc-MarkSweepGC`和`-XX：+UseParNewGC`（**ParNew是使用CMS收集器后的默认新生代收集器**，写上仅是为了配置更加清晰），要求虚拟机在新生代和老年代分别使用ParNew和CMS收集器进行垃圾回收。指定收集器之后，再次测试的结果如图5-13所示，与原来使用串行收集器对比，新生代停顿从每次65毫秒下降到了每次53毫秒，而<u>老年代的**停顿时间**更是从725毫秒大幅下降到了36毫秒</u>。
+
+​	当然，由于CMS的停顿时间只是整个收集过程中的一小部分，大部分收集行为是与用户程序并发进行的，所以并不是真的把垃圾收集时间从725毫秒直接缩短到36毫秒了。在收集器日志中可以看到CMS与程序并发的时间约为400毫秒，这样收集器的运行结果就比较令人满意了。
+
+​	到这里为止，对于虚拟机内存的调优基本就结束了，这次实战可以看作一次简化的服务端调优过程，**<u>服务端调优有可能还会在更多方面，如数据库、资源池、磁盘I/O等</u>**，但对于虚拟机内存部分的优化，与这次实战中的思路没有什么太大差别。即使读者实际工作中不接触到服务器，根据自己工作环境做一些试验，总结几个参数让自己日常工作环境速度有较大幅度提升也是很能提升工作幸福感的。最终eclipse.ini的配置如代码清单5-12所示。
+
+​	代码清单5-12　修改收集器配置后的Eclipse配置
+
+```java
+-vm
+D:/_DevSpace/jdk1.6.0_21/bin/javaw.exe
+-startup
+plugins/org.eclipse.equinox.launcher_1.0.201.R35x_v20090715.jar
+--launcher.library
+plugins/org.eclipse.equinox.launcher.win32.win32.x86_1.0.200.v20090519
+-product
+org.eclipse.epp.package.jee.product
+-showsplash
+org.eclipse.platform
+-vmargs
+-Dcom.sun.management.jmxremote
+-Dosgi.requiredJavaVersion=1.5
+-Xverify:none
+-Xmx512m
+-Xms512m
+-Xmn128m
+-XX:PermSize=96m
+-XX:MaxPermSize=96m
+-XX:+DisableExplicitGC
+-Xnoclassgc
+-XX:+UseParNewGC
+-XX:+UseConcMarkSweepGC
+-XX:CMSInitiatingOccupancyFraction=85
+```
+
+## 5.4 本章小结
+
+​	Java虚拟机的内存管理与垃圾收集是虚拟机结构体系中最重要的组成部分，对程序的性能和稳定有着非常大的影响。在本书的第2～5章里，笔者（书籍作者）从理论知识、异常现象、代码、工具、案例、实战等几个方面对其进行讲解，希望读者能有所收获。
+
+​	本书关于虚拟机内存管理部分到此就结束了，下一章我们将开始学习Class文件与虚拟机执行子系统方面的知识。
 
 
 
