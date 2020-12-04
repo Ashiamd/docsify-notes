@@ -529,4 +529,75 @@ const #21 = Asciz TestClass.java;
 
 ### 6.3.3 访问标志
 
-[^6]:
+> [《深入理解Java虚拟机》第6章 类文件结构](https://blog.csdn.net/huaxun66/article/details/76541493?utm_source=blogxgwz0)
+
+​	在常量池结束之后，紧接着的2个字节代表访问标志（access_flags），这个标志用于识别一些类或者接口层次的访问信息，包括：这个Class是类还是接口；是否定义为public类型；是否定义为abstract类型；如果是类的话，是否被声明为final；等等。具体的标志位以及标志的含义见表6-7。
+
+​	表6-7　访问标志
+
+| 标志名称       | 标志值 | 含义                                                         |
+| -------------- | ------ | ------------------------------------------------------------ |
+| ACC_PUBLIC     | 0x0001 | 是否为public类型                                             |
+| ACC_FINAL      | 0x0010 | 是否被声明为final，只有类可设置                              |
+| ACC_SUPER      | 0x0020 | 是否允许使用invokespecial字节码指令的新语义，invokespecial指令的语义在JDK1.0.2发生过改变，为了区别这条指令使用哪种语义，JDK1.0.2之后编译出来的类的这个标志都必须为真 |
+| ACC_INTERFACE  | 0x0200 | 标识这是一个接口                                             |
+| ACC_ABSTRACT   | 0x0400 | 是否为abstarct类型，对于接口或者抽象类来说，此标志值为真，其他类型值为假 |
+| ACC_SYNTHETIC  | 0x1000 | 标识这个类并非由用户代码产生的                               |
+| ACC_ANNOTATION | 0x2000 | 标识这是一个注解                                             |
+| ACC_ENUM       | 0x4000 | 标识这是一个枚举                                             |
+| ACC_MODULE     | 0x8000 | 标识这是一个模块                                             |
+
+​	access_flags中一共有16个标志位可以使用，当前只定义了其中9个[^6]，没有使用到的标志位要求一律为零。以代码清单6-1中的代码为例，TestClass是一个普通Java类，不是接口、枚举、注解或者模块，被public关键字修饰但没有被声明为final和abstract，并且它使用了JDK 1.2之后的编译器进行编译，因此它的ACC_PUBLIC、ACC_SUPER标志应当为真，而ACC_FINAL、ACC_INTERFACE、ACC_ABSTRACT、ACC_SYNTHETIC、ACC_ANNOTATION、ACC_ENUM、ACC_MODULE这七个标志应当为假，因此它的access_flags的值应为：0x0001|0x0020=0x0021。从图6-5中看到，access_flags标志（偏移地址：0x000000EF）的确为0x0021。
+
+![这里写图片描述](https://img-blog.csdn.net/20170801171638177?watermark/2/text/aHR0cDovL2Jsb2cuY3Nkbi5uZXQvaHVheHVuNjY=/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70/gravity/SouthEast)
+
+[^6]:在原始的《Java虚拟机规范》初版中，只定义了开头5种标志。JDK 5中增加了后续3种。这些标志为在JSR-202规范之中声明，是对《Java虚拟机规范》第2版的补充。JDK 9发布之后，增加了第9种。
+
+### 6.3.4 类索引、父类索引与接口索引集合
+
+> [《深入理解Java虚拟机》第6章 类文件结构](https://blog.csdn.net/huaxun66/article/details/76541493?utm_source=blogxgwz0)
+
+​	**类索引（this_class）和父类索引（super_class）都是一个u2类型的数据，而接口索引集合（interfaces）是一组u2类型的数据的集合，Class文件中由这三项数据来确定该类型的继承关系**。
+
+​	**类索引用于确定这个类的全限定名，父类索引用于确定这个类的父类的全限定名**。由于Java语言不允许多重继承，所以父类索引只有一个，<u>除了java.lang.Object之外，所有的Java类都有父类，因此除了java.lang.Object外，所有Java类的父类索引都不为0</u>。接口索引集合就用来描述这个类实现了哪些接口，这些被实现的接口将按implements关键字（如果这个Class文件表示的是一个接口，则应当是extends关键字）后的接口顺序从左到右排列在接口索引集合中。
+
+​	类索引、父类索引和接口索引集合都按顺序排列在访问标志之后，类索引和父类索引用两个u2类型的索引值表示，它们各自指向一个类型为CONSTANT_Class_info的类描述符常量，通过CONSTANT_Class_info类型的常量中的索引值可以找到定义在CONSTANT_Utf8_info类型的常量中的全限定名字符串。图6-6演示了代码清单6-1中代码的类索引查找过程。
+
+![这里写图片描述](https://img-blog.csdn.net/20170801172046574?watermark/2/text/aHR0cDovL2Jsb2cuY3Nkbi5uZXQvaHVheHVuNjY=/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70/gravity/SouthEast)
+
+​	对于接口索引集合，入口的第一项u2类型的数据为接口计数器（interfaces_count），表示索引表的容量。如果该类没有实现任何接口，则该计数器值为0，后面接口的索引表不再占用任何字节。代码清单6-1中的代码的类索引、父类索引与接口表索引的内容如图6-7所示。
+
+​	从偏移地址0x000000F1开始的3个u2类型的值分别为0x0001、0x0003、0x0000，也就是类索引为1，父类索引为3，接口索引集合大小为0。查询前面代码清单6-2中javap命令计算出来的常量池，找出对应的类和父类的常量，结果如代码清单6-3所示。
+
+​	代码清单6-3　部分常量池内容
+
+```java
+const #1 = class #2; // org/fenixsoft/clazz/TestClass
+const #2 = Asciz org/fenixsoft/clazz/TestClass;
+const #3 = class #4; // java/lang/Object
+const #4 = Asciz java/lang/Object;
+```
+
+### 6.3.5 字段表集合
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[^7]:
