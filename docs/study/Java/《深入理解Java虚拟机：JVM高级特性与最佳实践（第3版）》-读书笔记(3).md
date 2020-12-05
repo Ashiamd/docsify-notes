@@ -580,19 +580,71 @@ const #4 = Asciz java/lang/Object;
 
 ### 6.3.5 字段表集合
 
+个人小结：
 
++ <u>在Java语言中字段是无法重载的，两个字段的数据类型、修饰符不管是否相同，都必须使用不一样的名称，但是对于Class文件格式来讲，只要两个字段的描述符不是完全相同，那字段重名就是合法的</u>
 
+---
 
+> [《深入理解Java虚拟机》第6章 类文件结构](https://blog.csdn.net/huaxun66/article/details/76541493?utm_source=blogxgwz0)
 
+​	**字段表（field_info）用于描述接口或者类中声明的变量**。<u>Java语言中的“字段”（Field）包括类级变量以及实例级变量，但不包括在方法内部声明的局部变量</u>。读者可以回忆一下在Java语言中描述一个字段可以包含哪些信息。字段可以包括的修饰符有字段的作用域（public、private、protected修饰符）、是实例变量还是类变量（static修饰符）、可变性（final）、并发可见性（volatile修饰符，是否强制从主内存读写）、可否被序列化（transient修饰符）、字段数据类型（基本类型、对象、数组）、字段名称。上述这些信息中，<u>各个修饰符都是布尔值，要么有某个修饰符，要么没有，很适合使用标志位来表示。而字段叫做什么名字、字段被定义为什么数据类型，这些都是无法固定的，只能引用常量池中的常量来描述</u>。表6-8中列出了字段表的最终格式。
 
+​	表6-8　字段表结构
 
+| 类型 | 名称             | 数量 | 类型           | 名称       | 数量             |
+| ---- | ---------------- | ---- | -------------- | ---------- | ---------------- |
+| u2   | access_flags     | 1    | u2             | attributes | 1                |
+| u2   | name_index       | 1    | Attribute_info | attributes | Attributes_count |
+| u2   | Descriptor_index | 1    |                |            |                  |
 
+​	字段修饰符放在access_flags项目中，它与类中的access_flags项目是非常类似的，都是一个u2的数据类型，其中可以设置的标志位和含义，如表6-9所示。
 
+​	表6-9　字段访问标志
 
+| 标志名称      | 标志值 | 含义              | 标志名称   | 标志值 | 含义                     |
+| ------------- | ------ | ----------------- | ---------- | ------ | ------------------------ |
+| ACC_PUBLIC    | 0x0001 | 字段是否public    | ACC_PUBLIC | 0x0040 | 字段是否volatile         |
+| ACC_PRIVATE   | 0x0002 | 字段是否private   | ACC_PUBLIC | 0x0080 | 字段是否transient        |
+| ACC_PROTECTED | 0x0004 | 字段是否protected | ACC_PUBLIC | 0x1000 | 字段是否由编译器自动产生 |
+| ACC_STATIC    | 0x0008 | 字段是否static    | ACC_PUBLIC | 0x4000 | 字段是否enum             |
+| ACC_FINAL     | 0x0010 | 字段是否final     |            |        |                          |
 
+​	很明显，由于语法规则的约束，ACC_PUBLIC、ACC_PRIVATE、ACC_PROTECTED三个标志最多只能选择其一，ACC_FINAL、ACC_VOLATILE不能同时选择。接口之中的字段必须有ACC_PUBLIC、ACC_STATIC、ACC_FINAL标志，这些都是由Java本身的语言规则所导致的。
 
+​	跟随access_flags标志的是两项索引值：name_index和descriptor_index。它们都是对常量池项的引用，分别代表着字段的简单名称以及字段和方法的描述符。现在需要解释一下“简单名称”“描述符”以及前面出现过多次的“全限定名”这三种特殊字符串的概念。
 
+​	全限定名和简单名称很好理解，以代码清单6-1中的代码为例，“org/fenixsoft/clazz/TestClass”是这个类的全限定名，仅仅是把类全名中的“.”替换成了“/”而已，为了使连续的多个全限定名之间不产生混淆，在使用时最后一般会加入一个“；”号表示全限定名结束。<u>简单名称则就是指没有类型和参数修饰的方法或者字段名称</u>，这个类中的inc()方法和m字段的简单名称分别就是“inc”和“m”。
 
+​	相比于全限定名和简单名称，方法和字段的描述符就要复杂一些。<u>描述符的作用是用来描述字段的数据类型、方法的参数列表（包括数量、类型以及顺序）和返回值</u>。**根据描述符规则，基本数据类型（byte、char、double、float、int、long、short、boolean）以及代表无返回值的void类型都用一个大写字符来表示，而对象类型则用字符L加对象的全限定名来表示**，详见表6-10。
+
+​	表6-10　描述符标识字符含义
+
+| 标识字符 | 含义           | 标识字符       | 含义                            |
+| -------- | -------------- | -------------- | ------------------------------- |
+| B        | 基本类型byte   | J              | 基本类型long                    |
+| C        | 基本类型char   | S              | 基本类型short                   |
+| D        | 基本类型double | Z              | 基本类型boolean                 |
+| F        | 基本类型float  | V<sup>㊀</sup> | 特殊类型void                    |
+| I        | 基本类型int    | L              | 对象类型，如Ljava/lang/Object； |
+
+​	*注：void类型在《Java虚拟机规范》之中单独列出为“VoidDescriptor”，笔者为了结构统一，将其列在基本数据类型中一起描述。*
+
+​	对于数组类型，每一维度将使用一个前置的“[”字符来描述，如一个定义为“java.lang.String[][]”类型的二维数组将被记录成“[[Ljava/lang/String；”，一个整型数组“int[]”将被记录成“[I”。
+
+​	**用描述符来描述方法时，按照先参数列表、后返回值的顺序描述**，参数列表按照参数的严格顺序放在一组小括号“()”之内。如方法void inc()的描述符为“()V”，方法java.lang.String toString()的描述符为“()Ljava/lang/String；”，方法int indexOf(char[]source，int sourceOffset，int sourceCount，char[]target，int targetOffset，int targetCount，int fromIndex)的描述符为“([CII[CIII)I”。
+
+​	对于代码清单6-1所编译的TestClass.class文件来说，字段表集合从地址0x000000F8开始，第一个u2类型的数据为容量计数器fields_count，如图6-8所示，其值为0x0001，说明这个类只有一个字段表数据。接下来紧跟着容量计数器的是access_flags标志，值为0x0002，代表private修饰符的ACC_PRIVATE标志位为真（ACC_PRIVATE标志的值为0x0002），其他修饰符为假。代表字段名称的name_index的值为0x0005，从代码清单6-2列出的常量表中可查得第五项常量是一个CONSTANT_Utf8_info类型的字符串，其值为“m”，代表字段描述符的descriptor_index的值为0x0006，指向常量池的字符串“I”。根据这些信息，我们可以推断出原代码定义的字段为“private int m；”。
+
+![这里写图片描述](https://img-blog.csdn.net/20170802091413576?watermark/2/text/aHR0cDovL2Jsb2cuY3Nkbi5uZXQvaHVheHVuNjY=/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70/gravity/SouthEast)
+
+​	字段表所包含的固定数据项目到descriptor_index为止就全部结束了，不过在descrip-tor_index之后跟随着一个属性表集合，用于存储一些额外的信息，字段表可以在属性表中附加描述零至多项的额外信息。对于本例中的字段m，它的属性表计数器为0，也就是没有需要额外描述的信息，但是，如果将字段m的声明改为“final static int m=123；”，那就可能会存在一项名称为ConstantValue的属性，其值指向常量123。关于attribute_info的其他内容，将在6.3.7节介绍属性表的数据项目时再做进一步讲解。
+
+​	**字段表集合中不会列出从父类或者父接口中继承而来的字段**，<u>但有可能出现原本Java代码之中不存在的字段，譬如在内部类中为了保持对外部类的访问性，编译器就会自动添加指向外部类实例的字段</u>。另外，<u>在Java语言中字段是无法重载的，两个字段的数据类型、修饰符不管是否相同，都必须使用不一样的名称，但是对于Class文件格式来讲，只要两个字段的描述符不是完全相同，那字段重名就是合法的</u>。
+
+### 6.3.6 方法表集合
+
+> [《深入理解Java虚拟机》第6章 类文件结构](https://blog.csdn.net/huaxun66/article/details/76541493?utm_source=blogxgwz0)
 
 
 
