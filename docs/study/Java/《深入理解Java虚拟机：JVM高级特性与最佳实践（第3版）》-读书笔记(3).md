@@ -1331,6 +1331,62 @@ do {
 
 ### 6.4.1 字节码与数据类型
 
+个人小结：
+
++ 对于大部分与数据类型相关的字节码指令，它们的操作码助记符中都有特殊的字符来表明专门为哪种数据类型服务：i代表对int类型的数据操作，l代表long，s代表short，b代表byte，c代表char，f代表float，d代表double，a代表reference。
++ **Java虚拟机的操作码长度只有一字节**，非每种数据类型和每一种操作都有对应的指令
++ **大部分指令都没有支持整数类型byte、char和short，甚至没有任何指令支持boolean类型**。<u>编译器会在**编译期**或**运行期**将byte和short类型的数据**带符号扩展（Sign-Extend）**为相应的int类型数据，将boolean和char类型数据**零位扩展（Zero-Extend）**为相应的int类型数据。</u>与之类似，在处理boolean、byte、short和char类型的**数组**时，也会转换为使用对应的int类型的字节码指令来处理
++ **大多数对于boolean、byte、short和char类型数据的操作，实际上都是使用相应的对int类型作为运算类型（Computational Type）来进行的。**
+
+---
+
+​	<u>在Java虚拟机的指令集中，大多数指令都包含其操作所对应的数据类型信息</u>。举个例子，iload指令用于从局部变量表中加载int型的数据到操作数栈中，而fload指令加载的则是float类型的数据。<u>这两条指令的操作在虚拟机内部可能会是由同一段代码来实现的，但在Class文件中它们必须拥有各自独立的操作码</u>。
+
+​	**对于大部分与数据类型相关的字节码指令，它们的操作码助记符中都有特殊的字符来表明专门为哪种数据类型服务：i代表对int类型的数据操作，l代表long，s代表short，b代表byte，c代表char，f代表float，d代表double，a代表reference**。也有一些指令的助记符中没有明确指明操作类型的字母，例如arraylength指令，它没有代表数据类型的特殊字符，但操作数永远只能是一个数组类型的对象。还有另外一些指令，例如<u>无条件跳转指令goto则是与数据类型无关的指令</u>。
+
+​	**因为Java虚拟机的操作码长度只有一字节，所以包含了数据类型的操作码就为指令集的设计带来了很大的压力**：如果每一种与数据类型相关的指令都支持Java虚拟机所有运行时数据类型的话，那么指令的数量恐怕就会超出一字节所能表示的数量范围了。因此，Java虚拟机的指令集对于特定的操作只提供了有限的类型相关指令去支持它，换句话说，指令集将会被故意设计成非完全独立的。（《Java虚拟机规范》中把这种特性称为“Not Orthogonal”，**即并非每种数据类型和每一种操作都有对应的指令**。）<u>有一些单独的指令可以在必要的时候用来将一些不支持的类型转换为可被支持的类型</u>。
+
+​	表6-40列举了Java虚拟机所支持的与数据类型相关的字节码指令，通过使用数据类型列所代表的特殊字符替换opcode列的指令模板中的T，就可以得到一个具体的字节码指令。如果在表中指令模板与数据类型两列共同确定的格为空，则说明虚拟机不支持对这种数据类型执行这项操作。例如load指令有操作int类型的iload，但是没有操作byte类型的同类指令。
+
+​	表6-40　Java虚拟机指令集所支持的数据类型
+
+| opcode    | byte    | short   | int       | long    | float   | double  | char    | reference |
+| --------- | ------- | ------- | --------- | ------- | ------- | ------- | ------- | --------- |
+| Tipush    | bipush  | sipush  |           |         |         |         |         |           |
+| Tconst    |         |         | iconst    | lconst  | fconst  | dconst  |         | aconst    |
+| Tload     |         |         | iload     | lload   | fload   | dload   |         | aload     |
+| Tstore    |         |         | istore    | lstore  | fstore  | dstroe  |         | astore    |
+| Tinc      |         |         | iinc      |         |         |         |         |           |
+| Taload    | baload  | saload  | iaload    | laload  | faload  | dload   | caload  | aaload    |
+| Tastroe   | bastroe | sastroe | iastroe   | lastroe | fastroe | dastroe | castroe | aastroe   |
+| Tadd      |         |         | iadd      | ladd    | fadd    | dadd    |         |           |
+| Tsub      |         |         | isub      | lsub    | fsub    | dsub    |         |           |
+| Tmul      |         |         | imul      | lmul    | fmul    | dmul    |         |           |
+| Tdiv      |         |         | idiv      | ldiv    | fdiv    | ddiv    |         |           |
+| Trem      |         |         | irem      | lrem    | frem    | drem    |         |           |
+| Tneg      |         |         | ineg      | lneg    | fneg    | dneg    |         |           |
+| Tshl      |         |         | ishl      | shll    |         |         |         |           |
+| Tshr      |         |         | ishr      | lshr    |         |         |         |           |
+| Tushr     |         |         | iushr     | lushr   |         |         |         |           |
+| Tand      |         |         | iand      | Land    |         |         |         |           |
+| Tor       |         |         | ior       | lor     |         |         |         |           |
+| Txor      |         |         | ixor      | lxor    |         |         |         |           |
+| i2T       | i2b     | i2s     |           | i2l     | i2f     | I2d     |         |           |
+| l2T       |         |         | l2i       |         | l2f     | l2d     |         |           |
+| f2T       |         |         | f2i       | f2l     |         | f2d     |         |           |
+| d2T       |         |         | d2i       | d2l     | D2f     |         |         |           |
+| Tcmp      |         |         |           | Lamp    |         |         |         |           |
+| Tcmpl     |         |         |           |         | fcmpl   | dcmpl   |         |           |
+| Tcmpg     |         |         |           |         | fcmpg   | dcmpg   |         |           |
+| if_TcmpOP |         |         | if_TcmpOP |         |         |         |         | if_TcmpOP |
+| Treturn   |         |         | ireturn   | lreturn | freturn | dreturn |         | areturn   |
+
+​	请注意，从表6-40中看来，**大部分指令都没有支持整数类型byte、char和short，甚至没有任何指令支持boolean类型**。<u>编译器会在**编译期**或**运行期**将byte和short类型的数据**带符号扩展**（Sign-Extend）为相应的int类型数据，将boolean和char类型数据**零位扩展（Zero-Extend）**为相应的int类型数据</u>。<u>与之类似，在处理boolean、byte、short和char类型的数组时，也会转换为使用对应的int类型的字节码指令来处理</u>。因此，大多数对于boolean、byte、short和char类型数据的操作，实际上都是使用相应的对int类型作为运算类型（Computational Type）来进行的。
+
+​	<small>在本书里，受篇幅所限，无法对字节码指令集中每条指令逐一讲解，但阅读字节码作为了解Java虚拟机的基础技能，是一项应当熟练掌握的能力。笔者(书籍作者)将字节码操作按用途大致分为9类，下面按照分类来为读者概略介绍这些指令的用法。如果读者希望了解更详细的信息，可以阅读由Oracle官方授权、由笔者翻译的《Java虚拟机规范（Java SE 7）》中文版（字节码的介绍可见此书第6章）。</small>
+
+### 6.4.2 加载和存储指令
+
 
 
 
