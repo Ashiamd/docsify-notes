@@ -5,6 +5,8 @@
 > 官方文档加载极慢(无FQ软件情况下)，建议mac使用Dash离线api软件下载ElasticSearch文档；
 >
 > Windows和Linux用户可以用Zeal离线api软件做同样操作。
+>
+> [gavin5033的博客 -- ELK专栏](https://blog.csdn.net/gavin5033/category_8070372.html)	<=	**下面很多内容参考该博客。下面不再反复强调了**。
 
 # 1. RESTful API回顾
 
@@ -299,6 +301,8 @@ GET /kibana_sample_data_ecommerce/_mapping
 
 ### 1.2.4  document - 文档
 
+> [实时搜索引擎Elasticsearch（3）——查询API的使用](https://blog.csdn.net/gavin5033/article/details/82786435)
+
 #### 1. 查询单个document
 
 ```shell
@@ -441,13 +445,215 @@ DELETE /my-index-000001/_doc/1?pretty
 }
 ```
 
+# 2. CRUD - R
 
+> [实时搜索引擎Elasticsearch（3）——查询API的使用](https://blog.csdn.net/gavin5033/article/details/82786435)
+>
+> **Query和Filter**
+>
+> ES为用户提供两类查询API，一类是在查询阶段就进行条件过滤的query查询，另一类是在query查询出来的数据基础上再进行过滤的filter查询。这两类查询的区别是：
+>
+> - **query方法会计算查询条件与待查询数据之间的相关性，计算结果写入一个score字段，类似于搜索引擎。filter仅仅做字符串匹配，不会计算相关性，类似于一般的数据查询，所以filter得查询速度比query快。**
+> - **filter查询出来的数据会自动被缓存，而query不能。**
+>
+> query和filter可以单独使用，也可以相互嵌套使用，非常灵活。
+>
+> **Query查询**
+>
+> 下面的情况下适合使用query查询：
+>
+> - 需要进行全文搜索。
+> - 查询结果依赖于相关性，即需要计算查询串和数据的相关性。
 
+​	最常用的一般就是查询操作。而document文档作为实际存储时的实体，对document的查询操作是我们最需要关注的。ElasticSearch的核心也是查询操作。
 
+## 2.0 Search API
 
+> [Search API](http://www.elastic.co/guide/en/elasticsearch/reference/current/search-search.html)
 
+```http
+GET /<target>/_search
 
+GET /_search
 
+POST /<target>/_search
 
+POST /_search
+```
 
+## 2.1 match all query
+
+### 1. `GET /<target>/_search`
+
+​	查询时，ES服务端默认对查询结果做了分页处理，每页默认的大小为10。如果想自己指定查询的数据，可使用from和size字段，并且按指定的字段排序。
+
+```shell
+curl -X GET "localhost:9200/kibana_sample_data_logs/_search?pretty"
+```
+
+```http
+GET /kibana_sample_data_logs/_search
+```
+
+```json
+{
+  "took" : 0,										// 查询耗时(毫秒)
+  "timed_out" : false,					// 是否超时
+  "_shards" : {									
+    "total" : 1,								// 总共查询的分片数
+    "successful" : 1,						// 查询成功的分片数
+    "skipped" : 0,							// 查询时跳过的分片数(往往是由于查询带有范围，而分片的数据都在范围外)
+    "failed" : 0								// 查询失败的分片数
+  },
+  "hits" : {
+    "total" : {
+      "value" : 10000,					// 本次查询的记录数
+      "relation" : "gte"
+    },
+    "max_score" : 1.0,					// 查询所有数据中的最大score
+    "hits" : [
+      {
+        "_index" : "kibana_sample_data_logs",		// 数据所属的索引名
+        "_type" : "_doc",												// 数据所属的type
+        "_id" : "IWMeO3YB8B3Eg53mS9_J",					// 数据的id值
+        "_score" : 1.0,													// 该记录的score
+        "_source" : {														// ES将原始数据保存到_source字段中
+          "agent" : "Mozilla/5.0 (X11; Linux x86_64; rv:6.0a1) Gecko/20110421 Firefox/6.0a1",
+          "bytes" : 6219,
+          "clientip" : "223.87.60.27",
+          "extension" : "deb",
+          // ...
+          "timestamp" : "2020-11-29T00:39:02.912Z",
+          "url" : "https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-6.3.2.deb_1",
+          "utc_time" : "2020-11-29T00:39:02.912Z",
+          "event" : {
+            "dataset" : "sample_web_logs"
+          }
+        }
+      },
+      // ... 
+    ]
+  }
+}
+```
+
+### 2. `POST /<target>/_search`
+
+​	这里就演示分页查询+结果排序。
+
+```shell
+curl -X POST "localhost:9200/kibana_sample_data_logs/_search" -d'
+{
+  "query": {
+    "match_all": {}
+  },
+  "from": 2,        // 从下标2开始取(0，1，2，也就是第三条)
+  "size": 4,        // 取4条数据(即2,3,4,5这4条=>如果指数组中的下标的话)
+  "sort": {
+    "clientip": {  // 按clientip字段升序
+      "order": "asc"// 降序为desc
+    }
+  } 
+}
+'
+```
+
+```http
+POST /kibana_sample_data_logs/_search
+{
+  "query": {
+    "match_all": {}
+  },
+  "from": 2,    
+  "size": 4,     
+  "sort": {
+    "clientip": { 
+      "order": "asc"
+    }
+  } 
+}
+```
+
+```json
+{
+  "took" : 22,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 1,
+    "successful" : 1,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : {
+      "value" : 10000,
+      "relation" : "gte"
+    },
+    "max_score" : null,
+    "hits" : [
+      {
+        "_index" : "kibana_sample_data_logs",
+        "_type" : "_doc",
+        "_id" : "iWMeO3YB8B3Eg53mVeuE",
+        "_score" : null,
+        "_source" : {
+          "agent" : "Mozilla/5.0 (X11; Linux i686) AppleWebKit/534.24 (KHTML, like Gecko) Chrome/11.0.696.50 Safari/534.24",
+          "bytes" : 9145,
+          "clientip" : "0.72.176.46",
+          "extension" : "deb",
+          "geo" : {
+            "srcdest" : "ES:AR",
+            "src" : "ES",
+            "dest" : "AR",
+            "coordinates" : {
+              "lat" : 31.68932389,
+              "lon" : -87.7613875
+            }
+          },
+          "host" : "artifacts.elastic.co",
+          "index" : "kibana_sample_data_logs",
+          "ip" : "0.72.176.46",
+          "machine" : {
+            "ram" : 12884901888,
+            "os" : "ios"
+          },
+          "memory" : null,
+          "message" : "0.72.176.46 - - [2018-08-04T19:01:47.849Z] \"GET /beats/metricbeat/metricbeat-6.3.2-amd64.deb HTTP/1.1\" 200 9145 \"-\" \"Mozilla/5.0 (X11; Linux i686) AppleWebKit/534.24 (KHTML, like Gecko) Chrome/11.0.696.50 Safari/534.24\"",
+          "phpmemory" : null,
+          "referer" : "http://nytimes.com/error/james-mcdivitt",
+          "request" : "/beats/metricbeat/metricbeat-6.3.2-amd64.deb",
+          "response" : 200,
+          "tags" : [
+            "success",
+            "security"
+          ],
+          "timestamp" : "2020-12-12T19:01:47.849Z",
+          "url" : "https://artifacts.elastic.co/downloads/beats/metricbeat/metricbeat-6.3.2-amd64.deb",
+          "utc_time" : "2020-12-12T19:01:47.849Z",
+          "event" : {
+            "dataset" : "sample_web_logs"
+          }
+        },
+        "sort" : [
+          "0.72.176.46"
+        ]
+      },
+      // ... 另外三项
+    ]
+  }
+}
+```
+
+> 注意：不要把from设得过大（超过10000），否则会导致ES服务端因频繁GC而无法正常提供服务。其实实际项目中也没有谁会翻那么多页，但是为了ES的可用性，务必要对分页查询的页码做一定的限制。
+
+## 2.2 term query
+
+> [Term query](https://kapeli.com/dash_share?docset_file=ElasticSearch&docset_name=Elasticsearch&path=www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-term-query.html&platform=elasticsearch&repo=Main&source=www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-term-query.html&version=7.10.0)	<=	下面是官方强调的WARNING
+> Avoid using the `term` query for [`text`](dfile:///Users/ashiamd/Library/Application Support/Dash/DocSets/ElasticSearch/ElasticSearch.docset/Contents/Resources/Documents/www.elastic.co/guide/en/elasticsearch/reference/current/text.html) fields.
+>
+> By default, Elasticsearch changes the values of `text` fields as part of [analysis](dfile:///Users/ashiamd/Library/Application Support/Dash/DocSets/ElasticSearch/ElasticSearch.docset/Contents/Resources/Documents/www.elastic.co/guide/en/elasticsearch/reference/current/analysis.html). This can make finding exact matches for `text` field values difficult.
+>
+> To search `text` field values, use the [`match`](dfile:///Users/ashiamd/Library/Application Support/Dash/DocSets/ElasticSearch/ElasticSearch.docset/Contents/Resources/Documents/www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-match-query.html) query instead.
+
+​	词语查询，如果是对未分词的字段进行查询，则表示精确查询。
 
