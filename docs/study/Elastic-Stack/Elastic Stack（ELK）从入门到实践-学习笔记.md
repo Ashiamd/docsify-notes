@@ -1,6 +1,10 @@
 # Elastic Stack（ELK）从入门到实践 - 学习笔记
 
 > [Elastic Stack（ELK）从入门到实践](https://www.bilibili.com/video/BV1iJ411c7Az) <== 视频链接
+>
+> [Elasticsearch 的使用Demo](https://blog.csdn.net/u011580290/article/details/88226164)	<=	推荐文章
+>
+> [gavin5033的博客--ELK专栏](https://blog.csdn.net/gavin5033/category_8070372.html)	<=	推荐ELK学习文章
 
 # 1. Elastic Stack简介
 
@@ -86,3 +90,4 @@
 ​	在Lucene中，创建索引是需要定义字段名称以及字段的类型的，在Elasticsearch中提供了非结构化的索引，就是不需要创建索引结构，即可写入数据到索引中，实际上在Elasticsearch底层会进行结构化操作，此操作对用户是透明的。
 
 ​	创建空索引：
+
