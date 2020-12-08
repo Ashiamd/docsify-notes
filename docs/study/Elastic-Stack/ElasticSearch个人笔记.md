@@ -649,11 +649,127 @@ POST /kibana_sample_data_logs/_search
 ## 2.2 term query
 
 > [Term query](https://kapeli.com/dash_share?docset_file=ElasticSearch&docset_name=Elasticsearch&path=www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-term-query.html&platform=elasticsearch&repo=Main&source=www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-term-query.html&version=7.10.0)	<=	下面是官方强调的WARNING
+>
+> 总之：
+>
+> **term直接对输入的条件做精准匹配（逻辑上是and）；而match把输入的内容进行分词，再做匹配（逻辑上是or）**
+>
+> **而text字段，在ES里会被默认拆分成多个分词，所以term大多数情况下无法直接根据整个text字段字匹配到结果。（如果text字段正好无法被分词就可以被匹配。）**
+>
+>
 > Avoid using the `term` query for [`text`](dfile:///Users/ashiamd/Library/Application Support/Dash/DocSets/ElasticSearch/ElasticSearch.docset/Contents/Resources/Documents/www.elastic.co/guide/en/elasticsearch/reference/current/text.html) fields.
 >
 > By default, Elasticsearch changes the values of `text` fields as part of [analysis](dfile:///Users/ashiamd/Library/Application Support/Dash/DocSets/ElasticSearch/ElasticSearch.docset/Contents/Resources/Documents/www.elastic.co/guide/en/elasticsearch/reference/current/analysis.html). This can make finding exact matches for `text` field values difficult.
 >
 > To search `text` field values, use the [`match`](dfile:///Users/ashiamd/Library/Application Support/Dash/DocSets/ElasticSearch/ElasticSearch.docset/Contents/Resources/Documents/www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-match-query.html) query instead.
+>
+> ---
+>
+> #### Avoid using the `term` query for `text` fields
+>
+> By default, Elasticsearch changes the values of `text` fields during analysis. For example, the default [standard analyzer](dfile:///Users/ashiamd/Library/Application Support/Dash/DocSets/ElasticSearch/ElasticSearch.docset/Contents/Resources/Documents/www.elastic.co/guide/en/elasticsearch/reference/current/analysis-standard-analyzer.html)changes `text` field values as follows:
+>
+> - Removes most punctuation
+> - Divides the remaining content into individual words, called [tokens](dfile:///Users/ashiamd/Library/Application Support/Dash/DocSets/ElasticSearch/ElasticSearch.docset/Contents/Resources/Documents/www.elastic.co/guide/en/elasticsearch/reference/current/analysis-tokenizers.html)
+> - Lowercases the tokens
+>
+> To better search `text` fields, the `match` query also analyzes your provided search term before performing a search. This means the `match` query can search `text` fields for analyzed tokens rather than an exact term.
+>
+> The `term` query does **not** analyze the search term. The `term` query only searches for the **exact** term you provide. This means the `term` query may return poor or no results when searching `text` fields.
+>
+> [ES中match和term差别对比](https://blog.csdn.net/tclzsn7456/article/details/79956625)
+>
+> [es的多种term查询](https://www.cnblogs.com/juncaoit/p/12664109.html)
 
 ​	词语查询，如果是对未分词的字段进行查询，则表示精确查询。
+
+下面从"kibana_sample_data_flights"这个kibana样本数据index索引中查询"FlightNum"为"EAYQW69"的数据
+
+```shell
+curl -X POST "127.0.0.1:9200/kibana_sample_data_flights/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+  "query": {
+    "term": {
+      "FlightNum": "EAYQW69"
+    }
+  }
+}
+'
+```
+
+```http
+POST /kibana_sample_data_flights/_search?pretty
+{
+  "query": {
+    "term": {
+      "FlightNum": "EAYQW69"
+    }
+  }
+}
+```
+
+```json
+{
+  "took" : 0,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 1,
+    "successful" : 1,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : {
+      "value" : 1,
+      "relation" : "eq"
+    },
+    "max_score" : 9.071844,
+    "hits" : [
+      {
+        "_index" : "kibana_sample_data_flights",
+        "_type" : "_doc",
+        "_id" : "vmQiO3YB8B3Eg53mBRZs",
+        "_score" : 9.071844,
+        "_source" : {
+          "FlightNum" : "EAYQW69",
+          "DestCountry" : "IT",
+          "OriginWeather" : "Thunder & Lightning",
+          "OriginCityName" : "Naples",
+          "AvgTicketPrice" : 181.69421554118,
+          "DistanceMiles" : 345.31943877289535,
+          "FlightDelay" : true,
+          "DestWeather" : "Clear",
+          "Dest" : "Treviso-Sant'Angelo Airport",
+          "FlightDelayType" : "Weather Delay",
+          "OriginCountry" : "IT",
+          "dayOfWeek" : 0,
+          "DistanceKilometers" : 555.7377668725265,
+          "timestamp" : "2020-11-30T10:33:28",
+          "DestLocation" : {
+            "lat" : "45.648399",
+            "lon" : "12.1944"
+          },
+          "DestAirportID" : "TV01",
+          "Carrier" : "Kibana Airlines",
+          "Cancelled" : true,
+          "FlightTimeMin" : 222.74905899019436,
+          "Origin" : "Naples International Airport",
+          "OriginLocation" : {
+            "lat" : "40.886002",
+            "lon" : "14.2908"
+          },
+          "DestRegion" : "IT-34",
+          "OriginAirportID" : "NA01",
+          "OriginRegion" : "IT-72",
+          "DestCityName" : "Treviso",
+          "FlightTimeHour" : 3.712484316503239,
+          "FlightDelayMin" : 180
+        }
+      }
+    ]
+  }
+}
+```
+
+## 2.3 bool query
 
