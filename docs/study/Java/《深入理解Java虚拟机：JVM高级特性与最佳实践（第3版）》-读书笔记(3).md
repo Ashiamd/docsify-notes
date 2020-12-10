@@ -1856,7 +1856,6 @@ public class NotInitialization {
 个人小结：
 
 + 从整体上看，验证阶段大致上会完成下面四个阶段的检验动作：**文件格式验证、元数据验证、字节码验证和符号引用验证**
-+ 
 
 ---
 
@@ -2091,7 +2090,7 @@ public static final int value = 123;
 + \<clinit\>()方法与类的构造函数（即在虚拟机视角中的实例构造器\<init\>()方法）不同，它不需要显式地调用父类构造器，**Java虚拟机会保证在子类的\<clinit\>()方法执行前，父类的\<clinit\>()方法已经执行完毕**。因此在Java虚拟机中第一个被执行的\<clinit\>()方法的类型肯定是java.lang.Object
 + **`<clinit>()`方法对于类或接口来说并不是必需的，如果一个类中没有静态语句块，也没有对变量的赋值操作，那么编译器可以不为这个类生成`<clinit>()`方法。 **
 + **接口中不能使用静态语句块，但仍然有变量初始化的赋值操作，因此接口与类一样都会生成\<clinit\>()方法**。<u>但接口与类不同的是，执行接口的\<clinit>()方法不需要先执行父接口的\<clinit\>()方法，因为只有当父接口中定义的变量被使用时，父接口才会被初始化。此外，接口的实现类在初始化时也一样不会执行接口的\<clinit\>()方法</u>。
-+ Java虚拟机必须保证一个类的\<clinit\>()方法在多线程环境中被正确地加锁同步，如果多个线程同时去初始化一个类，那么只会有其中一个线程去执行这个类的\<clinit\>()方法，其他线程都需要阻塞等待，直到活动线程执行完毕\<clinit\>()方法。**如果在一个类的\<clinit\>()方法中有耗时很长的操作，那就可能造成多个进程阻塞**[^26]，在实际应用中这种阻塞往往是很隐蔽的
++ <u>**Java虚拟机必须保证一个类的\<clinit\>()方法在多线程环境中被正确地加锁同步，如果多个线程同时去初始化一个类，那么只会有其中一个线程去执行这个类的\<clinit\>()方法，其他线程都需要阻塞等待，直到活动线程执行完毕\<clinit\>()方法**</u>。**如果在一个类的\<clinit\>()方法中有耗时很长的操作，那就可能造成多个进程阻塞**[^26]，在实际应用中这种阻塞往往是很隐蔽的
 
 ---
 
@@ -2145,8 +2144,7 @@ public static final int value = 123;
   ```java
   static class DeadLoopClass {
     static {
-      // 如果不加上这个if语句，编译器将提示“Initializer does not complete normally”
-      并拒绝编译
+      // 如果不加上这个if语句，编译器将提示“Initializer does not complete normally”,并拒绝编译
         if (true) {
           System.out.println(Thread.currentThread() + "init DeadLoopClass");
           while (true) {
@@ -2182,6 +2180,77 @@ public static final int value = 123;
 
 ## 7.4 类加载器
 
+​	<u>Java虚拟机设计团队有意把类加载阶段中的“**通过一个类的全限定名来获取描述该类的二进制字节流**”这个动作放到Java虚拟机外部去实现，以便让应用程序自己决定如何去获取所需的类。实现这个动作的代码被称为“类加载器”（Class Loader）</u>。
+
+​	类加载器可以说是Java语言的一项创新，它是早期Java语言能够快速流行的重要原因之一。类加载器最初是为了满足Java Applet的需求而设计出来的，在今天用在浏览器上的Java Applet技术基本上已经被淘汰[^27]，但类加载器却在类层次划分、OSGi、程序热部署、代码加密等领域大放异彩，成为Java技术体系中一块重要的基石，可谓是失之桑榆，收之东隅。
+
+[^27]:特指浏览器上的Java Applets，在其他领域，如智能卡上，Java Applets仍然有很广阔的市场。
+
+### 7.4.1 类与类加载器
+
+个人小结：
+
++ **对于任意一个类，都必须由加载它的类加载器和这个类本身一起共同确立其在Java虚拟机中的唯一性，每一个类加载器，都拥有一个独立的类名称空间**。<u>这句话可以表达得更通俗一些：比较两个类是否“相等”，只有在这两个类是由同一个类加载器加载的前提下才有意义，否则，即使这两个类来源于同一个Class文件，被同一个Java虚拟机加载，只要加载它们的类加载器不同，那这两个类就必定不相等</u>
+
+---
+
+​	类加载器虽然只用于实现类的加载动作，但它在Java程序中起到的作用却远超类加载阶段。**对于任意一个类，都必须由加载它的类加载器和这个类本身一起共同确立其在Java虚拟机中的唯一性，每一个类加载器，都拥有一个独立的类名称空间**。<u>这句话可以表达得更通俗一些：比较两个类是否“相等”，只有在这两个类是由同一个类加载器加载的前提下才有意义，否则，即使这两个类来源于同一个Class文件，被同一个Java虚拟机加载，只要加载它们的类加载器不同，那这两个类就必定不相等</u>。
+
+​	这里所指的“相等”，包括代表类的Class对象的equals()方法、isAssignableFrom()方法、isInstance()方法的返回结果，也包括了使用instanceof关键字做对象所属关系判定等各种情况。如果没有注意到类加载器的影响，在某些情况下可能会产生具有迷惑性的结果，代码清单7-8中演示了不同的类加载器对instanceof关键字运算的结果的影响。
+
+​	代码清单7-8　不同的类加载器对instanceof关键字运算的结果的影响
+
+```java
+/**
+* 类加载器与instanceof关键字演示
+*
+* @author zzm
+*/
+public class ClassLoaderTest {
+  public static void main(String[] args) throws Exception {
+    ClassLoader myLoader = new ClassLoader() {
+      @Override
+        public Class<?> loadClass(String name) throws ClassNotFoundException {
+        try {
+          String fileName = name.substring(name.lastIndexOf(".") + 1)+".class";
+          InputStream is = getClass().getResourceAsStream(fileName);
+          if (is == null) {
+            return super.loadClass(name);
+          }
+          byte[] b = new byte[is.available()];
+          is.read(b);
+          return defineClass(name, b, 0, b.length);
+        } catch (IOException e) {
+          throw new ClassNotFoundException(name);
+        }
+      }
+    };
+    Object obj = myLoader.loadClass("org.fenixsoft.classloading.ClassLoaderTest").newInstance();
+    System.out.println(obj.getClass());
+    System.out.println(obj instanceof org.fenixsoft.classloading.ClassLoaderTest);
+  }
+}
+```
+
+​	运行结果：
+
+```java
+class org.fenixsoft.classloading.ClassLoaderTest
+false
+```
+
+​	代码清单7-8中构造了一个简单的类加载器，尽管它极为简陋，但是对于这个演示来说已经足够。它可以加载与自己在同一路径下的Class文件，我们使用这个类加载器去加载了一个名为“org.fenixsoft.classloading.ClassLoaderTest”的类，并实例化了这个类的对象。
+
+​	两行输出结果中，从第一行可以看到这个对象确实是类org.fenixsoft.classloading.ClassLoaderTest实例化出来的，但在第二行的输出中却发现这个对象与类org.fenixsoft.classloading.ClassLoaderTest做所属类型检查的时候返回了false。这是因为Java虚拟机中同时存在了两个ClassLoaderTest类，一个是由虚拟机的应用程序类加载器所加载的，另外一个是由我们自定义的类加载器加载的，**虽然它们都来自同一个Class文件，但在Java虚拟机中仍然是两个互相独立的类，做对象所属类型检查时的结果自然为false**。
+
+### 7.4.2 双亲委派模型
+
+​		
 
 
-[^27]:
+
+
+
+
+
+[^28]:
