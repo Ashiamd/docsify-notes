@@ -285,6 +285,8 @@ Shell批量监控服务发送邮件报警
 
    netstat -pan | grep 12345
 
+   `lsof -i :8080`
+
 2. 通过进程ID查找程序
 
    ps -aux | grep 12345
