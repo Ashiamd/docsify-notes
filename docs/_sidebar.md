@@ -15,6 +15,7 @@
     * [**负载均衡-代理**](/study/负载均衡-代理/README)
     * [**计算机网络**](/study/计算机网络/README)
     * [**网络安全**](/study/网络安全/README)
+    * [**推荐系统**](/study/推荐系统/README)
     * [**设计模式**](/study/设计模式/README)
     * [**文件管理**](/study/文件管理/README)
     * [**DataBase**](/study/DataBase/README)

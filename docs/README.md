@@ -22,6 +22,9 @@
 * [操作系统和硬件](https://ashiamd.github.io/docsify-notes/#/study/操作系统和硬件/README)
 * [计算机网络](https://ashiamd.github.io/docsify-notes/#/study/计算机网络/README.md)
 * [网络安全](https://ashiamd.github.io/docsify-notes/#/study/网络安全/README.md)
+* [推荐系统](https://ashiamd.github.io/docsify-notes/#/study/推荐系统/README.md)
+* [设计模式](https://ashiamd.github.io/docsify-notes/#/study/设计模式/README.md)
+* [文件管理](https://ashiamd.github.io/docsify-notes/#/study/文件管理/README.md)
 * [DataBase](https://ashiamd.github.io/docsify-notes/#/study/DataBase/README.md)
 * [Elastic-Stack](https://ashiamd.github.io/docsify-notes/#/study/Elastic-Stack/README.md)
 
