@@ -1678,3 +1678,862 @@ object Test {
 
 # 9. Scala方法与函数
 
+Scala 有方法与函数，二者在语义上的区别很小。Scala 方法是类的一部分，而函数是一个对象可以赋值给一个变量。换句话来说在类中定义的函数即是方法。
+
+Scala 中的方法跟 Java 的类似，方法是组成类的一部分。
+
+Scala 中的函数则是一个完整的对象，Scala 中的函数其实就是继承了 Trait 的类的对象。
+
+Scala 中使用 **val** 语句可以定义函数，**def** 语句定义方法。
+
+```scala
+class Test{
+  def m(x: Int) = x + 3
+  val f = (x: Int) => x + 3
+}
+```
+
+> **注意：**有些翻译上函数(function)与方法(method)是没有区别的。
+
+## 9.1 方法声明
+
+Scala 方法声明格式如下：
+
+```
+def functionName ([参数列表]) : [return type]
+```
+
+如果你不写等于号和方法主体，那么方法会被隐式声明为**抽象(abstract)**，包含它的类型于是也是一个抽象类型。
+
+## 9.2 方法定义
+
+方法定义由一个 **def** 关键字开始，紧接着是可选的参数列表，一个冒号 **:** 和方法的返回类型，一个等于号 **=** ，最后是方法的主体。
+
+Scala 方法定义格式如下：
+
+```scala
+def functionName ([参数列表]) : [return type] = {
+   function body
+   return [expr]
+}
+```
+
+以上代码中 **return type** 可以是任意合法的 Scala 数据类型。参数列表中的参数可以使用逗号分隔。
+
+以下方法的功能是将两个传入的参数相加并求和：
+
+```scala
+object add{
+  def addInt( a:Int, b:Int ) : Int = {
+    var sum:Int = 0
+    sum = a + b
+
+    return sum
+  }
+}
+```
+
+如果方法没有返回值，可以返回为 **Unit**，这个类似于 Java 的 **void**, 实例如下：
+
+```scala
+object Hello{
+  def printMe( ) : Unit = {
+    println("Hello, Scala!")
+  }
+}
+```
+
+## 9.3 方法调用
+
+Scala 提供了多种不同的方法调用方式：
+
+以下是调用方法的标准格式：
+
+```scala
+functionName( 参数列表 )
+```
+
+如果方法使用了实例的对象来调用，我们可以使用类似java的格式 (使用 **.** 号)：
+
+```
+[instance.]functionName( 参数列表 )
+```
+
+以上实例演示了定义与调用方法的实例:
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    println( "Returned Value : " + addInt(5,7) );
+  }
+  def addInt( a:Int, b:Int ) : Int = {
+    var sum:Int = 0
+    sum = a + b
+
+    return sum
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+Returned Value : 12
+```
+
+Scala 也是一种函数式语言，所以函数是 Scala 语言的核心。以下一些函数概念有助于我们更好的理解 Scala 编程：
+
+|                      函数概念解析接案例                      |                                                              |
+| :----------------------------------------------------------: | :----------------------------------------------------------- |
+| [函数传名调用(Call-by-Name)](https://www.runoob.com/scala/functions-call-by-name.html) | [指定函数参数名](https://www.runoob.com/scala/functions-named-arguments.html) |
+| [函数 - 可变参数](https://www.runoob.com/scala/functions-variable-arguments.html) | [递归函数](https://www.runoob.com/scala/recursion-functions.html) |
+| [默认参数值](https://www.runoob.com/scala/functions-default-parameter-values.html) | [高阶函数](https://www.runoob.com/scala/higher-order-functions.html) |
+| [内嵌函数](https://www.runoob.com/scala/nested-functions.html) | [匿名函数](https://www.runoob.com/scala/anonymous-functions.html) |
+| [偏应用函数](https://www.runoob.com/scala/partially-applied-functions.html) | [函数柯里化(Function Currying)](https://www.runoob.com/scala/currying-functions.html) |
+
+### 9.3.0 方法method和函数function的区别
+
+> [Scala 方法与函数](https://www.runoob.com/scala/scala-functions.html)	<=	以下内容来自该文章最下面的高分笔记
+
+#### 方法和函数的区别
+
+1、函数可作为一个参数传入到方法中，而方法不行。
+
+![img](https://www.runoob.com/wp-content/uploads/2018/05/scalafunction1.png)
+
+```
+object MethodAndFunctionDemo {
+  //定义一个方法
+  //方法 m1 参数要求是一个函数，函数的参数必须是两个Int类型
+  //返回值类型也是Int类型
+  def m1(f:(Int,Int) => Int) : Int = {
+    f(2,6)
+  }
+
+  //定义一个函数f1,参数是两个Int类型，返回值是一个Int类型
+  val f1 = (x:Int,y:Int) => x + y
+  //再定义一个函数f2
+  val f2 = (m:Int,n:Int) => m * n
+
+  //main方法
+  def main(args: Array[String]): Unit = {
+    //调用m1方法，并传入f1函数
+    val r1 = m1(f1)
+
+    println(r1)
+
+    //调用m1方法，并传入f2函数
+    val r2 = m1(f2)
+    println(r2)
+  }
+}
+```
+
+运行结果：
+
+```
+8
+12
+```
+
+2、在Scala中无法直接操作方法，如果要操作方法，必须先将其转换成函数。有两种方法可以将方法转换成函数：
+
+```
+val f1 = m _
+```
+
+在方法名称m后面紧跟一个空格和下划线告诉编译器将方法m转换成函数，而不是要调用这个方法。 也可以显示地告诉编译器需要将方法转换成函数：
+
+```
+val f1: (Int) => Int = m
+```
+
+通常情况下编译器会自动将方法转换成函数，例如在一个应该传入函数参数的地方传入了一个方法，编译器会自动将传入的方法转换成函数。
+
+![img](https://www.runoob.com/wp-content/uploads/2018/05/scalafunction2.png)
+
+```
+object TestMap {
+
+  def ttt(f:Int => Int):Unit = {
+    val r = f(10)
+    println(r)
+  }
+
+  val f0 = (x : Int) => x * x
+
+  //定义了一个方法
+  def m0(x:Int) : Int = {
+    //传递进来的参数乘以10
+    x * 10
+  }
+
+  //将方法转换成函数，利用了神奇的下滑线
+  val f1 = m0 _
+
+  def main(args: Array[String]): Unit = {
+    ttt(f0)
+
+    //通过m0 _将方法转化成函数
+    ttt(m0 _);
+
+    //如果直接传递的是方法名称，scala相当于是把方法转成了函数
+    ttt(m0)
+
+    //通过x => m0(x)的方式将方法转化成函数,这个函数是一个匿名函数，等价：(x:Int) => m0(x)
+    ttt(x => m0(x))
+  }
+}
+```
+
+输出结果为：
+
+```
+100
+100
+100
+100
+```
+
+3、函数必须要有参数列表，而方法可以没有参数列表
+
+![img](https://www.runoob.com/wp-content/uploads/2018/05/131403339175801.png)
+
+4、在函数出现的地方我们可以提供一个方法
+
+在需要函数的地方，如果传递一个方法，会自动进行ETA展开（把方法转换为函数）
+
+![img](https://www.runoob.com/wp-content/uploads/2018/05/1527498797-6462-201504.png)
+
+如果我们直接把一个方法赋值给变量会报错。如果我们指定变量的类型就是函数，那么就可以通过编译，如下：
+
+![img](https://www.runoob.com/wp-content/uploads/2018/05/1527498797-2557-201504.png)
+
+当然我们也可以强制把一个方法转换给函数，这就用到了 scala 中的部分应用函数：
+
+![img](https://www.runoob.com/wp-content/uploads/2018/05/1527498797-2599-201504.png)
+
+---
+
+#### scala method 和 function 的区别
+
+英文原文：
+
+A **Function Type** is (roughly) a type of the form *(T1, ..., Tn) => U*, which is a shorth and for the trait `FunctionN` in the standard library. **Anonymous Functions** and **Method Values** have function types, and function types can be used as part of value, variable and function declarations and definitions. In fact, it can be part of a method type.
+
+A **Method Type** is a ***non-value type***. That means there is ***no*** value - no object, no instance - with a method type. As mentioned above, a **Method Value** actually has a **Function Type**. A method type is a `def` declaration - everything about a `def` except its body.
+
+例子：
+
+```
+scala> def m1(x:Int) = x+3
+m1: (x: Int)Int　　　　
+
+scala> val f1 = (x: Int) => x+3
+f1: Int => Int = <function1>
+```
+
+看到没，方法定义和函数定义是不是在scala的解析器signature上就有显示了，def m1(x: Int) = x+3就是一个简单的method的定义。signature中m1: (x: Int)Int　表示method m1有一个参数Int型参数x，返回值是Int型。
+
+val f1 = (x: Int) => x+3则是function的定义，解析器的signature中f1: Int => Int = \<function1\>表示function f1的method体接受一个Int型的参数，输出结果的类型是Int型。
+
+从上面的例子，得出一个总结：
+
+**方法是一个以def开头的带有参数列表（可以无参数列表）的一个逻辑操作块，这正如object或者class中的成员方法一样。**
+
+**函数是一个赋值给一个变量（或者常量）的匿名方法（带或者不带参数列表），并且通过=>转换符号跟上逻辑代码块的一个表达式。=>转换符号后面的逻辑代码块的写法与method的body部分相同。**
+
+##### 其他区别
+
+method 可以作为一个表达式的一部分出现（调用函数并传参），但是 method（带参方法）不能作为最终的表达式（无参方法可以，但是这个就成了方法调用，因为 **scala 允许无参方法调用时省略（）括号**），而 function 可以作为最终的表达式出现。
+
+```shell
+scala> m1
+<console>:12: error: missing arguments for method m1;
+follow this method with `_' if you want to treat it as a partially applied function
+       m1
+       ^
+
+scala> f1
+res1: Int => Int = <function1>
+```
+
+method 可以没有参数列表，参数列表也可以为空。但是 function 必须有参数列表（也可以为空）。
+
+**方法名意味着方法调用，函数名只是代表函数自身**：
+
+```shell
+scala> def m2 = 100;
+m2: Int
+
+scala> def m3() = 1000;
+m3: ()Int
+
+scala> var f2 = => 100;
+<console>:1: error: illegal start of simple expression
+var f2 = => 100;
+^
+
+scala> var f2 =()=> 100;
+f2: () => Int = <function0>
+
+scala> m2
+res2: Int = 100
+
+scala> m3
+res3: Int = 1000
+
+scala> m3()
+res4: Int = 1000
+
+scala> f2
+res5: () => Int = <function0>
+
+scala> f2()
+res6: Int = 100
+```
+
+在函数出现的地方我们可以提供一个方法。
+
+这是因为，**如果期望出现函数的地方我们提供了一个方法的话，该方法就会自动被转换成函数。该行为被称为 ETA expansion**。
+
+注意：
+
+期望出现函数的地方，我们可以使用方法。
+
+**不期望出现函数的地方，方法并不会自动转换成函数**。
+
+**在 scala 中操作符被解释称方法**：　
+
+- 前缀操作符：op obj 被解释称 obj.op
+- 中缀操作符：obj1 op obj2 被解释称 obj1.op(obj2)
+- 后缀操作符：obj op 被解释称 obj.op
+
+```shell
+scala> val ml = List(1,2,3,4)
+ml: List[Int] = List(1, 2, 3, 4)
+
+scala> ml.map((x)=>2*x)
+res0: List[Int] = List(2, 4, 6, 8)
+
+scala> def m(x:Int) = 2*x
+m: (x: Int)Int
+
+scala> ml.map(m)
+res1: List[Int] = List(2, 4, 6, 8)
+
+scala> def m(x:Int) = 3*x
+m: (x: Int)Int
+
+scala> ml.map(m)
+res2: List[Int] = List(3, 6, 9, 12)
+```
+
+**可以在方法名后面加一个下划线强制变成函数**。
+
+**注意：** 方法名与下划线之间至少有一个空格哟!
+
+```shell
+scala> def m3(x: Int): Int = x * x * x
+m3: (x: Int)Int
+
+scala> val f3 = m3_
+<console>:10: error: not found: value m3_
+       val f3 = m3_
+                ^
+
+scala> val f3 = m3 _
+f3: Int => Int = <function1>
+
+scala> f3(3)
+res0: Int = 27
+```
+
+### 9.3.1 Scala 函数传名调用(call-by-name)
+
+Scala的解释器在解析函数参数(function arguments)时有两种方式：
+
+- 传值调用（call-by-value）：先计算参数表达式的值，再应用到函数内部；
+- **传名调用（call-by-name）：将未计算的参数表达式直接应用到函数内部**
+
+在进入函数内部前，传值调用方式就已经将参数表达式的值计算完毕，而传名调用是在函数内部进行参数表达式的值计算的。
+
+这就造成了一种现象，每次使用传名调用时，解释器都会计算一次表达式的值。
+
+```scala
+object Test {
+   def main(args: Array[String]) {
+        delayed(time());
+   }
+
+   def time() = {
+      println("获取时间，单位为纳秒")
+      System.nanoTime
+   }
+   def delayed( t: => Long ) = {
+      println("在 delayed 方法内")
+      println("参数： " + t)
+      t
+   }
+}
+```
+
+以上实例中我们声明了 delayed 方法， 该方法在**变量名和变量类型使用 => 符号来设置传名调用**。
+
+执行以上代码，输出结果如下：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+在 delayed 方法内
+获取时间，单位为纳秒
+参数： 241550840475831
+获取时间，单位为纳秒
+```
+
+### 9.3.2 Scala 指定函数参数名
+
+一般情况下函数调用参数，就按照函数定义时的参数顺序一个个传递。
+
+但是**我们也可以通过指定函数参数名，并且不需要按照顺序向函数传递参数**，实例如下：
+
+```scala
+object Test {
+   def main(args: Array[String]) {
+        printInt(b=5, a=7);
+   }
+   def printInt( a:Int, b:Int ) = {
+      println("Value of a : " + a );
+      println("Value of b : " + b );
+   }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+Value of a :  7
+Value of b :  5
+```
+
+### 9.3.3 Scala 函数 - 可变参数
+
+Scala 允许你指明函数的**最后一个参数**可以是重复的，即我们不需要指定函数参数的个数，可以向函数传入可变长度参数列表。
+
+Scala 通过在参数的类型之后放一个**星号**来设置可变参数(可重复的参数)。例如：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    printStrings("Runoob", "Scala", "Python");
+  }
+  def printStrings( args:String* ) = {
+    var i : Int = 0;
+    for( arg <- args ){
+      println("Arg value[" + i + "] = " + arg );
+      i = i + 1;
+    }
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+Arg value[0] = Runoob
+Arg value[1] = Scala
+Arg value[2] = Python
+```
+
+### 9.3.4 Scala 函数 - 默认参数值
+
+Scala 可以为函数参数指定默认参数值，使用了默认参数，你在调用函数的过程中可以不需要传递参数，这时函数就会调用它的默认参数值，如果传递了参数，则传递值会取代默认值。实例如下：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    println( "返回值 : " + addInt() );
+  }
+  def addInt( a:Int=5, b:Int=7 ) : Int = {
+    var sum:Int = 0
+    sum = a + b
+
+    return sum
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+返回值 : 12
+```
+
+### 9.3.5 Scala 函数嵌套
+
+我们可以在 Scala 函数内定义函数，**定义在函数内的函数称之为局部函数**。
+
+以下实例我们实现阶乘运算，并使用内嵌函数：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    println( factorial(0) )
+    println( factorial(1) )
+    println( factorial(2) )
+    println( factorial(3) )
+  }
+
+  def factorial(i: Int): Int = {
+    def fact(i: Int, accumulator: Int): Int = {
+      if (i <= 1)
+      accumulator
+      else
+      fact(i - 1, i * accumulator)
+    }
+    fact(i, 1)
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+1
+1
+2
+6
+```
+
+### 9.3.6 Scala 匿名函数
+
+Scala 中定义匿名函数的语法很简单，箭头左边是参数列表，右边是函数体。
+
+使用匿名函数后，我们的代码变得更简洁了。
+
+下面的表达式就定义了一个接受一个Int类型输入参数的匿名函数:
+
+```scala
+var inc = (x:Int) => x+1
+```
+
+上述定义的匿名函数，其实是下面这种写法的简写：
+
+```scala
+def add2 = new Function1[Int,Int]{  
+  def apply(x:Int):Int = x+1;  
+} 
+```
+
+以上实例的 inc 现在可作为一个函数，使用方式如下：
+
+```scala
+var x = inc(7)-1
+```
+
+同样我们可以在匿名函数中定义多个参数：
+
+```scala
+var mul = (x: Int, y: Int) => x*y
+```
+
+mul 现在可作为一个函数，使用方式如下：
+
+```scala
+println(mul(3, 4))
+```
+
+我们也可以不给匿名函数设置参数，如下所示：
+
+```scala
+var userDir = () => { System.getProperty("user.dir") }
+```
+
+userDir 现在可作为一个函数，使用方式如下：
+
+```scala
+println( userDir() )
+```
+
+**示例**
+
+```scala
+object Demo {
+  def main(args: Array[String]) {
+    println( "multiplier(1) value = " +  multiplier(1) )
+    println( "multiplier(2) value = " +  multiplier(2) )
+  }
+  var factor = 3
+  val multiplier = (i:Int) => i * factor
+}
+```
+
+将以上代码保持到 Demo.scala 文件中，执行以下命令：
+
+```shell
+$ scalac Demo.scala
+$ scala Demo
+```
+
+输出结果为：
+
+```scala
+multiplier(1) value = 3
+multiplier(2) value = 6
+```
+
+### 9.3.7 Scala 递归函数
+
+递归函数在函数式编程的语言中起着重要的作用。
+
+Scala 同样支持递归函数。
+
+递归函数意味着函数可以调用它本身。
+
+以上实例使用递归函数来计算阶乘：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    for (i <- 1 to 10)
+    println(i + " 的阶乘为: = " + factorial(i) )
+  }
+
+  def factorial(n: BigInt): BigInt = {  
+    if (n <= 1)
+    1  
+    else    
+    n * factorial(n - 1)
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+1 的阶乘为: = 1
+2 的阶乘为: = 2
+3 的阶乘为: = 6
+4 的阶乘为: = 24
+5 的阶乘为: = 120
+6 的阶乘为: = 720
+7 的阶乘为: = 5040
+8 的阶乘为: = 40320
+9 的阶乘为: = 362880
+10 的阶乘为: = 3628800
+```
+
+### 9.3.8 Scala 偏应用函数
+
+**Scala 偏应用函数是一种表达式**，你不需要提供函数需要的所有参数，只需要提供部分，或不提供所需参数。
+
+如下实例，我们打印日志信息：
+
+```scala
+import java.util.Date
+
+object Test {
+  def main(args: Array[String]) {
+    val date = new Date
+    log(date, "message1" )
+    Thread.sleep(1000)
+    log(date, "message2" )
+    Thread.sleep(1000)
+    log(date, "message3" )
+  }
+
+  def log(date: Date, message: String)  = {
+    println(date + "----" + message)
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+Mon Dec 02 12:52:41 CST 2018----message1
+Mon Dec 02 12:52:41 CST 2018----message2
+Mon Dec 02 12:52:41 CST 2018----message3
+```
+
+实例中，log() 方法接收两个参数：date 和 message。我们在程序执行时调用了三次，参数 date 值都相同，message 不同。
+
+我们可以使用偏应用函数优化以上方法，绑定第一个 date 参数，第二个参数使用下划线(_)替换缺失的参数列表，并把这个新的函数值的索引的赋给变量。以上实例修改如下：
+
+```scala
+import java.util.Date
+
+object Test {
+  def main(args: Array[String]) {
+    val date = new Date
+    val logWithDateBound = log(date, _ : String)
+
+    logWithDateBound("message1" )
+    Thread.sleep(1000)
+    logWithDateBound("message2" )
+    Thread.sleep(1000)
+    logWithDateBound("message3" )
+  }
+
+  def log(date: Date, message: String)  = {
+    println(date + "----" + message)
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+Tue Dec 18 11:25:54 CST 2018----message1
+Tue Dec 18 11:25:54 CST 2018----message2
+Tue Dec 18 11:25:54 CST 2018----message3
+```
+
+### 9.3.9 高阶函数
+
+> [Scala泛型的使用](https://www.cnblogs.com/itboys/p/10164173.html)
+>
+> 1. scala的类和方法、函数都可以是泛型。
+>
+> 2. 关于对类型边界的限定分为上边界和下边界（对类进行限制）
+>
+>    + 上边界：表达了泛型的类型必须是"某种类型"或某种类型的"子类"，语法为`<:`
+>    + 下边界：表达了泛型的类型必须是"某种类型"或某种类型的"父类"，语法为`>:`
+>
+> 3. `<%` :view bounds可以进行某种神秘的转换，把你的类型在没有知觉的情况下转换成目标类型
+>
+>    其实你可以认为view bounds是上下边界的加强和补充，语法为：`<%`，要用到implicit进行隐式转换
+>
+> 4. `T:classTag`:相当于动态类型，你使用时传入什么类型就是什么类型
+>
+>    （spark的程序的编译和运行是区分了Driver和Executor的，只有在运行的时候才知道完整的类型信息）
+>
+>    语法为：`[T:ClassTag]`
+>
+> 5. 逆变和协变：`-T`和`+T`（下面有具体例子）+T可以传入其子类和本身（与继承关系一至）-T可以传入其父类和本身（与继承的关系相反）
+>
+> 6. `T:Ordering` :表示将T变成Ordering[T],可以直接用其方法进行比大小,可完成排序等工作
+>
+>    **scala的类和方法、函数都可以是泛型**
+
+**高阶函数（Higher-Order Function）就是操作其他函数的函数**。
+
+Scala 中允许使用高阶函数, 高阶函数可以使用其他函数作为参数，或者使用函数作为输出结果。
+
+以下实例中，apply() 函数使用了另外一个函数 f 和 值 v 作为参数，而函数 f 又调用了参数 v：
+
+```scala
+object Test {
+   def main(args: Array[String]) {
+
+      println( apply( layout, 10) )
+
+   }
+   // 函数 f 和 值 v 作为参数，而函数 f 又调用了参数 v
+   def apply(f: Int => String, v: Int) = f(v)
+
+   def layout[A](x: A) = "[" + x.toString() + "]"
+   
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+[10]
+```
+
+### 9.3.10 函数柯里化(Function Currying)
+
+柯里化(Currying)指的是将原来接受两个参数的函数变成新的接受一个参数的函数的过程。
+
+新的函数返回一个以原有第二个参数为参数的函数。
+
+**示例**
+
+首先我们定义一个函数:
+
+```scala
+def add(x:Int,y:Int)=x+y
+```
+
+那么我们应用的时候，应该是这样用：add(1,2)
+
+现在我们把这个函数变一下形：
+
+```scala
+def add(x:Int)(y:Int) = x + y
+```
+
+那么我们应用的时候，应该是这样用：add(1)(2),最后结果都一样是3，这种方式（过程）就叫柯里化。
+
+**实现过程**
+
+add(1)(2) 实际上是依次调用两个普通函数（非柯里化函数），第一次调用使用一个参数 x，返回一个函数类型的值，第二次使用参数y调用这个函数类型的值。
+
+实质上最先演变成这样一个方法：
+
+```scala
+def add(x:Int)=(y:Int)=>x+y
+```
+
+那么这个函数是什么意思呢？ 接收一个x为参数，返回一个匿名函数，该匿名函数的定义是：接收一个Int型参数y，函数体为x+y。现在我们来对这个方法进行调用。
+
+```scala
+val result = add(1) 
+```
+
+返回一个result，那result的值应该是一个匿名函数：(y:Int)=>1+y
+
+所以为了得到结果，我们继续调用result。
+
+```scala
+val sum = result(2)
+```
+
+最后打印出来的结果就是3。
+
+**完整示例**
+
+下面是一个完整实例：
+
+```scala
+object Test {
+   def main(args: Array[String]) {
+      val str1:String = "Hello, "
+      val str2:String = "Scala!"
+      println( "str1 + str2 = " +  strcat(str1)(str2) )
+   }
+
+   def strcat(s1: String)(s2: String) = {
+      s1 + s2
+   }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+str1 + str2 = Hello, Scala!
+```
+
