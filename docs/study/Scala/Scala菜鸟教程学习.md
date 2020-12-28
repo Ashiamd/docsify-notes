@@ -3888,7 +3888,418 @@ google 键不存在
 
 ## 13.4 Scala 元组
 
+**与列表一样，元组也是不可变的，但与列表不同的是元组可以包含不同类型的元素**。
+
+元组的值是通过将单个的值包含在圆括号中构成的。例如：
+
+```scala
+val t = (1, 3.14, "Fred")  
+```
+
+以上实例在元组中定义了三个元素，对应的类型分别为[Int, Double, java.lang.String]。
+
+此外我们也可以使用以下方式来定义：
+
+```scala
+val t = new Tuple3(1, 3.14, "Fred")
+```
+
+元组的实际类型取决于它的元素的类型，比如 (99, "runoob") 是 Tuple2[Int, String]。 ('u', 'r', "the", 1, 4, "me") 为 Tuple6[Char, Char, String, Int, Int, String]。
+
+**目前 Scala 支持的元组最大长度为 22。对于更大长度你可以使用集合，或者扩展元组**。
+
+访问元组的元素可以通过数字索引，如下一个元组：
+
+```scala
+val t = (4,3,2,1)
+```
+
+我们可以使用 t.\_1 访问第一个元素， t.\_2 访问第二个元素，如下所示：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val t = (4,3,2,1)
+
+    val sum = t._1 + t._2 + t._3 + t._4
+
+    println( "元素之和为: "  + sum )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+元素之和为: 10
+```
+
+### 13.4.1 迭代元组
+
+你可以使用 **Tuple.productIterator()** 方法来迭代输出元组的所有元素：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val t = (4,3,2,1)
+
+    t.productIterator.foreach{ i =>println("Value = " + i )}
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+Value = 4
+Value = 3
+Value = 2
+Value = 1
+```
+
+### 13.4.2 元组转为字符串
+
+你可以使用 **Tuple.toString()** 方法将元组的所有元素组合成一个字符串，实例如下：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val t = new Tuple3(1, "hello", Console)
+
+    println("连接后的字符串为: " + t.toString() )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+连接后的字符串为: (1,hello,scala.Console$@4dd8dc3)
+```
+
+### 13.4.3 元素交换
+
+你可以使用 **Tuple.swap** 方法来交换元组的元素。如下实例：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val t = new Tuple2("www.google.com", "www.runoob.com")
+
+    println("交换后的元组: " + t.swap )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+交换后的元组: (www.runoob.com,www.google.com)
+```
+
 ## 13.5 Scala Option(选项)
 
-## 13.6 Scala Iterator(迭代器)
+Scala Option(选项)类型用来表示一个值是可选的（有值或无值)。
 
+**Option[T] 是一个类型为 T 的可选值的容器： 如果值存在， Option[T] 就是一个 Some[T] ，如果不存在， Option[T] 就是对象 None** 。
+
+接下来我们来看一段代码：
+
+```scala
+// 虽然 Scala 可以不定义变量的类型，不过为了清楚些，我还是
+// 把他显示的定义上了
+
+val myMap: Map[String, String] = Map("key1" -> "value")
+val value1: Option[String] = myMap.get("key1")
+val value2: Option[String] = myMap.get("key2")
+
+println(value1) // Some("value1")
+println(value2) // None
+```
+
+在上面的代码中，myMap 一个是一个 Key 的类型是 String，Value 的类型是 String 的 hash map，但不一样的是他的 get() 返回的是一个叫 Option[String] 的类别。
+
+Scala 使用 Option[String] 来告诉你：「我会想办法回传一个 String，但也可能没有 String 给你」。
+
+myMap 里并没有 key2 这笔数据，get() 方法返回 None。
+
+Option 有两个子类别，一个是 Some，一个是 None，当他回传 Some 的时候，代表这个函式成功地给了你一个 String，而你可以透过 get() 这个函式拿到那个 String，如果他返回的是 None，则代表没有字符串可以给你。
+
+另一个实例：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val sites = Map("runoob" -> "www.runoob.com", "google" -> "www.google.com")
+
+    println("sites.get( \"runoob\" ) : " +  sites.get( "runoob" )) // Some(www.runoob.com)
+    println("sites.get( \"baidu\" ) : " +  sites.get( "baidu" ))  //  None
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+sites.get( "runoob" ) : Some(www.runoob.com)
+sites.get( "baidu" ) : None
+```
+
+你也可以通过模式匹配来输出匹配值。实例如下：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val sites = Map("runoob" -> "www.runoob.com", "google" -> "www.google.com")
+
+    println("show(sites.get( \"runoob\")) : " +  
+            show(sites.get( "runoob")) )
+    println("show(sites.get( \"baidu\")) : " +  
+            show(sites.get( "baidu")) )
+  }
+
+  def show(x: Option[String]) = x match {
+    case Some(s) => s
+    case None => "?"
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+show(sites.get( "runoob")) : www.runoob.com
+show(sites.get( "baidu")) : ?
+```
+
+### 13.5.1 getOrElse() 方法
+
+你可以使用 getOrElse() 方法来获取元组中存在的元素或者使用其默认的值，实例如下：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val a:Option[Int] = Some(5)
+    val b:Option[Int] = None
+
+    println("a.getOrElse(0): " + a.getOrElse(0) )
+    println("b.getOrElse(10): " + b.getOrElse(10) )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+a.getOrElse(0): 5
+b.getOrElse(10): 10
+```
+
+### 13.5.2 isEmpty() 方法
+
+你可以使用 isEmpty() 方法来检测元组中的元素是否为 None，实例如下：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val a:Option[Int] = Some(5)
+    val b:Option[Int] = None
+
+    println("a.isEmpty: " + a.isEmpty )
+    println("b.isEmpty: " + b.isEmpty )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+a.isEmpty: false
+b.isEmpty: true
+```
+
+### 13.5.3 Scala Option 常用方法
+
+下表列出了 Scala Option 常用的方法：
+
+| 序号 | 方法及描述                                                   |
+| :--- | :----------------------------------------------------------- |
+| 1    | **def get: A**获取可选值                                     |
+| 2    | **def isEmpty: Boolean**检测可选类型值是否为 None，是的话返回 true，否则返回 false |
+| 3    | **def productArity: Int**返回元素个数， A(x_1, ..., x_k), 返回 k |
+| 4    | **def productElement(n: Int): Any**获取指定的可选项，以 0 为起始。即 A(x_1, ..., x_k), 返回 x_(n+1) ， 0 < n < k. |
+| 5    | **def exists(p: (A) => Boolean): Boolean**如果可选项中指定条件的元素存在且不为 None 返回 true，否则返回 false。 |
+| 6    | **def filter(p: (A) => Boolean): Option[A]**如果选项包含有值，而且传递给 filter 的条件函数返回 true， filter 会返回 Some 实例。 否则，返回值为 None 。 |
+| 7    | **def filterNot(p: (A) => Boolean): Option[A]**如果选项包含有值，而且传递给 filter 的条件函数返回 false， filter 会返回 Some 实例。 否则，返回值为 None 。 |
+| 8    | **def flatMap\[B](f: (A) => Option[B]): Option[B]**如果选项包含有值，则传递给函数 f 处理后返回，否则返回 None |
+| 9    | **def foreach\[U](f: (A) => U): Unit**如果选项包含有值，则将每个值传递给函数 f， 否则不处理。 |
+| 10   | **def getOrElse\[B >: A](default: => B): B**如果选项包含有值，返回选项值，否则返回设定的默认值。 |
+| 11   | **def isDefined: Boolean**如果可选值是 Some 的实例返回 true，否则返回 false。 |
+| 12   | **def iterator: Iterator[A]**如果选项包含有值，迭代出可选值。如果可选值为空则返回空迭代器。 |
+| 13   | **def map\[B](f: (A) => B): Option[B]**如果选项包含有值， 返回由函数 f 处理后的 Some，否则返回 None |
+| 14   | **def orElse\[B >: A](alternative: => Option[B]): Option[B]**如果一个 Option 是 None ， orElse 方法会返回传名参数的值，否则，就直接返回这个 Option。 |
+| 15   | **def orNull**如果选项包含有值返回选项值，否则返回 null。    |
+
+# 14. Scala Iterator(迭代器)
+
+Scala Iterator（迭代器）不是一个集合，它是一种用于访问集合的方法。
+
+迭代器 it 的两个基本操作是 **next** 和 **hasNext**。
+
+调用 **it.next()** 会返回迭代器的下一个元素，并且更新迭代器的状态。
+
+调用 **it.hasNext()** 用于检测集合中是否还有元素。
+
+让迭代器 it 逐个返回所有元素最简单的方法是使用 while 循环：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val it = Iterator("Baidu", "Google", "Runoob", "Taobao")
+
+    while (it.hasNext){
+      println(it.next())
+    }
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+Baidu
+Google
+Runoob
+Taobao
+```
+
+## 14.1 查找最大与最小元素
+
+你可以使用 **it.min** 和 **it.max** 方法从迭代器中查找最大与最小元素，实例如下:
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val ita = Iterator(20,40,2,50,69, 90)
+    val itb = Iterator(20,40,2,50,69, 90)
+
+    println("最大元素是：" + ita.max )
+    println("最小元素是：" + itb.min )
+
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+最大元素是：90
+最小元素是：2
+```
+
+## 14.2 获取迭代器的长度
+
+你可以使用 **it.size** 或 **it.length** 方法来查看迭代器中的元素个数。实例如下：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val ita = Iterator(20,40,2,50,69, 90)
+    val itb = Iterator(20,40,2,50,69, 90)
+
+    println("ita.size 的值: " + ita.size )
+    println("itb.length 的值: " + itb.length )
+
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+ita.size 的值: 6
+itb.length 的值: 6
+```
+
+## 14.3 Scala Iterator 常用方法
+
+下表列出了 Scala Iterator 常用的方法：
+
+| 序号 | 方法及描述                                                   |
+| :--- | :----------------------------------------------------------- |
+| 1    | **def hasNext: Boolean**如果还有可返回的元素，返回true。     |
+| 2    | **def next(): A**返回迭代器的下一个元素，并且更新迭代器的状态 |
+| 3    | **def ++(that: => Iterator[A]): Iterator[A]**合并两个迭代器  |
+| 4    | **def ++\[B >: A](that :=> GenTraversableOnce[B]): Iterator[B]**合并两个迭代器 |
+| 5    | **def addString(b: StringBuilder): StringBuilder**添加一个字符串到 StringBuilder b |
+| 6    | **def addString(b: StringBuilder, sep: String): StringBuilder**添加一个字符串到 StringBuilder b，并指定分隔符 |
+| 7    | **def buffered: BufferedIterator[A]**迭代器都转换成 BufferedIterator |
+| 8    | **def contains(elem: Any): Boolean**检测迭代器中是否包含指定元素 |
+| 9    | **def copyToArray(xs: Array[A], start: Int, len: Int): Unit**将迭代器中选定的值传给数组 |
+| 10   | **def count(p: (A) => Boolean): Int**返回迭代器元素中满足条件p的元素总数。 |
+| 11   | **def drop(n: Int): Iterator[A]**返回丢弃前n个元素新集合     |
+| 12   | **def dropWhile(p: (A) => Boolean): Iterator[A]**从左向右丢弃元素，直到条件p不成立 |
+| 13   | **def duplicate: (Iterator[A], Iterator[A])**生成两个能分别返回迭代器所有元素的迭代器。 |
+| 14   | **def exists(p: (A) => Boolean): Boolean**返回一个布尔值，指明迭代器元素中是否存在满足p的元素。 |
+| 15   | **def filter(p: (A) => Boolean): Iterator[A]**返回一个新迭代器 ，指向迭代器元素中所有满足条件p的元素。 |
+| 16   | **def filterNot(p: (A) => Boolean): Iterator[A]**返回一个迭代器，指向迭代器元素中不满足条件p的元素。 |
+| 17   | **def find(p: (A) => Boolean): Option[A]**返回第一个满足p的元素或None。注意：如果找到满足条件的元素，迭代器会被置于该元素之后；如果没有找到，会被置于终点。 |
+| 18   | **def flatMap\[B](f: (A) => GenTraversableOnce[B]): Iterator[B]**针对迭代器的序列中的每个元素应用函数f，并返回指向结果序列的迭代器。 |
+| 19   | **def forall(p: (A) => Boolean): Boolean**返回一个布尔值，指明 it 所指元素是否都满足p。 |
+| 20   | **def foreach(f: (A) => Unit): Unit**在迭代器返回的每个元素上执行指定的程序 f |
+| 21   | **def hasDefiniteSize: Boolean**如果迭代器的元素个数有限则返回 true（默认等同于 isEmpty） |
+| 22   | **def indexOf(elem: B): Int**返回迭代器的元素中index等于x的第一个元素。注意：迭代器会越过这个元素。 |
+| 23   | **def indexWhere(p: (A) => Boolean): Int**返回迭代器的元素中下标满足条件p的元素。注意：迭代器会越过这个元素。 |
+| 24   | **def isEmpty: Boolean**检查it是否为空, 为空返回 true，否则返回false（与hasNext相反）。 |
+| 25   | **def isTraversableAgain: Boolean**Tests whether this Iterator can be repeatedly traversed. |
+| 26   | **def length: Int**返回迭代器元素的数量。                    |
+| 27   | **def map\[B](f: (A) => B): Iterator[B]**将 it 中的每个元素传入函数 f 后的结果生成新的迭代器。 |
+| 28   | **def max: A**返回迭代器迭代器元素中最大的元素。             |
+| 29   | **def min: A**返回迭代器迭代器元素中最小的元素。             |
+| 30   | **def mkString: String**将迭代器所有元素转换成字符串。       |
+| 31   | **def mkString(sep: String): String**将迭代器所有元素转换成字符串，并指定分隔符。 |
+| 32   | **def nonEmpty: Boolean**检查容器中是否包含元素（相当于 hasNext）。 |
+| 33   | **def padTo(len: Int, elem: A): Iterator[A]**首先返回迭代器所有元素，追加拷贝 elem 直到长度达到 len。 |
+| 34   | **def patch(from: Int, patchElems: Iterator[B], replaced: Int): Iterator[B]**返回一个新迭代器，其中自第 from 个元素开始的 replaced 个元素被迭代器所指元素替换。 |
+| 35   | **def product: A**返回迭代器所指数值型元素的积。             |
+| 36   | **def sameElements(that: Iterator[_]): Boolean**判断迭代器和指定的迭代器参数是否依次返回相同元素 |
+| 37   | **def seq: Iterator[A]**返回集合的系列视图                   |
+| 38   | **def size: Int**返回迭代器的元素数量                        |
+| 39   | **def slice(from: Int, until: Int): Iterator[A]**返回一个新的迭代器，指向迭代器所指向的序列中从开始于第 from 个元素、结束于第 until 个元素的片段。 |
+| 40   | **def sum: A**返回迭代器所指数值型元素的和                   |
+| 41   | **def take(n: Int): Iterator[A]**返回前 n 个元素的新迭代器。 |
+| 42   | **def toArray: Array[A]**将迭代器指向的所有元素归入数组并返回。 |
+| 43   | **def toBuffer: Buffer[B]**将迭代器指向的所有元素拷贝至缓冲区 Buffer。 |
+| 44   | **def toIterable: Iterable[A]**Returns an Iterable containing all elements of this traversable or iterator. This will not terminate for infinite iterators. |
+| 45   | **def toIterator: Iterator[A]**把迭代器的所有元素归入一个Iterator容器并返回。 |
+| 46   | **def toList: List[A]**把迭代器的所有元素归入列表并返回      |
+| 47   | **def toMap[T, U]: Map[T, U]**将迭代器的所有键值对归入一个Map并返回。 |
+| 48   | **def toSeq: Seq[A]**将代器的所有元素归入一个Seq容器并返回。 |
+| 49   | **def toString(): String**将迭代器转换为字符串               |
+| 50   | **def zip\[B](that: Iterator[B]): Iterator[(A, B)**返回一个新迭代器，指向分别由迭代器和指定的迭代器 that 元素一一对应而成的二元组序列 |
+
+> 更多方法可以参考 [API文档](http://www.scala-lang.org/api/current/index.html#scala.collection.Iterator)
+
+# 15. Scala 类和对象
