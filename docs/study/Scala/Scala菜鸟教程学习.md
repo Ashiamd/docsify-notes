@@ -3119,3 +3119,776 @@ object Test1 {
 
 # 13. Scala Collection
 
+Scala提供了一套很好的集合实现，提供了一些集合类型的抽象。
+
+**Scala 集合分为可变的和不可变的集合**。
+
+可变集合可以在适当的地方被更新或扩展。这意味着你可以修改，添加，移除一个集合的元素。
+
+**而不可变集合类，相比之下，永远不会改变。不过，你仍然可以模拟添加，移除或更新操作。但是这些操作将在每一种情况下都返回一个新的集合，同时使原来的集合不发生改变**。
+
+接下来我们将为大家介绍几种常用集合类型的应用：
+
+| 序号 | 集合及描述                                                   |
+| :--- | :----------------------------------------------------------- |
+| 1    | [Scala List(列表)](https://www.runoob.com/scala/scala-lists.html)List的特征是其元素以线性方式存储，集合中可以存放重复对象。参考 [API文档](http://www.scala-lang.org/api/current/scala/collection/immutable/List.html) |
+| 2    | [Scala Set(集合)](https://www.runoob.com/scala/scala-sets.html)Set是最简单的一种集合。集合中的对象不按特定的方式排序，并且没有重复对象。参考 [API文档](http://www.scala-lang.org/api/current/scala/collection/immutable/Set.html) |
+| 3    | [Scala Map(映射)](https://www.runoob.com/scala/scala-maps.html)Map 是一种把键对象和值对象映射的集合，它的每一个元素都包含一对键对象和值对象。参考 [API文档](http://www.scala-lang.org/api/current/scala/collection/immutable/Map.html) |
+| 4    | [Scala 元组](https://www.runoob.com/scala/scala-tuples.html)元组是不同类型的值的集合 |
+| 5    | [Scala Option](https://www.runoob.com/scala/scala-options.html)Option[T] 表示有可能包含值的容器，也可能不包含值。 |
+| 6    | [Scala Iterator（迭代器）](https://www.runoob.com/scala/scala-iterators.html)迭代器不是一个容器，更确切的说是逐一访问容器内元素的方法。 |
+
+示例：
+
+以下代码判断，演示了所有以上集合类型的定义实例：
+
+```scala
+// 定义整型 List
+val x = List(1,2,3,4)
+
+// 定义 Set
+val x = Set(1,3,5,7)
+
+// 定义 Map
+val x = Map("one" -> 1, "two" -> 2, "three" -> 3)
+
+// 创建两个不同类型元素的元组
+val x = (10, "Runoob")
+
+// 定义 Option
+val x:Option[Int] = Some(5)
+```
+
+> Scala 程序使用 Option 非常频繁，在 Java 中使用 null 来表示空值，代码中很多地方都要添加 null 关键字检测，不然很容易出现 NullPointException。因此 Java 程序需要关心那些变量可能是 null,而这些变量出现 null 的可能性很低，但一但出现，很难查出为什么出现 NullPointerException。
+>
+> Scala 的 Option 类型可以避免这种情况，因此 Scala 应用推荐使用 Option 类型来代表一些可选值。
+>
+> 使用 Option 类型，读者一眼就可以看出这种类型的值可能为 None。
+>
+> 参考链接：[Scala 使用Option、Some、None，避免使用 null](https://www.runoob.com/w3cnote/scala-option-some-none.html)
+
+## 13.1 Scala List(列表)
+
+Scala 列表类似于数组，它们所有元素的类型都相同，但是它们也有所不同：列表是不可变的，值一旦被定义了就不能改变，其次**列表具有递归的结构（也就是链接表结构）**而数组不是。。
+
+列表的元素类型 T 可以写成 List[T]。例如，以下列出了多种类型的列表：
+
+```scala
+// 字符串列表
+val site: List[String] = List("Runoob", "Google", "Baidu")
+
+// 整型列表
+val nums: List[Int] = List(1, 2, 3, 4)
+
+// 空列表
+val empty: List[Nothing] = List()
+
+// 二维列表
+val dim: List[List[Int]] =
+	List(
+  	List(1, 0, 0),
+  	List(0, 1, 0),
+ 		List(0, 0, 1)
+	)
+```
+
+构造列表的两个基本单位是 **Nil** 和 **::**
+
+**Nil** 也可以表示为一个空列表。
+
+以上实例我们可以写成如下所示：
+
+```scala
+// 字符串列表
+val site = "Runoob" :: ("Google" :: ("Baidu" :: Nil))
+
+// 整型列表
+val nums = 1 :: (2 :: (3 :: (4 :: Nil)))
+
+// 空列表
+val empty = Nil
+
+// 二维列表
+val dim = (1 :: (0 :: (0 :: Nil))) ::
+          (0 :: (1 :: (0 :: Nil))) ::
+          (0 :: (0 :: (1 :: Nil))) :: Nil
+```
+
+### 13.1.1 列表基本操作
+
+Scala列表有三个基本操作：
+
+- `head` 返回列表第一个元素
+- `tail` **返回一个列表，包含除了第一元素之外的其他元素**
+- `isEmpty` 在列表为空时返回true
+
+对于Scala列表的任何操作都可以使用这三个基本操作来表达。实例如下:
+
+```scala
+// 字符串列表
+object Test {
+  def main(args: Array[String]) {
+    val site = "Runoob" :: ("Google" :: ("Baidu" :: Nil))
+    val nums = Nil
+
+    println( "第一网站是 : " + site.head )
+    println( "最后一个网站是 : " + site.tail )
+    println( "查看列表 site 是否为空 : " + site.isEmpty )
+    println( "查看 nums 是否为空 : " + nums.isEmpty )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ vim Test.scala 
+$ scala Test.scala 
+第一网站是 : Runoob
+最后一个网站是 : List(Google, Baidu)
+查看列表 site 是否为空 : false
+查看 nums 是否为空 : true
+```
+
+### 13.1.2 连接列表
+
+你可以使用 **:::** 运算符或 **List.:::()** 方法或 **List.concat()** 方法来连接两个或多个列表。实例如下:
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val site1 = "Runoob" :: ("Google" :: ("Baidu" :: Nil))
+    val site2 = "Facebook" :: ("Taobao" :: Nil)
+
+    // 使用 ::: 运算符
+    var fruit = site1 ::: site2
+    println( "site1 ::: site2 : " + fruit )
+
+    // 使用 .:::() 方法 这个是添加到前面，::: 和 concat 都体添加到末尾
+    fruit = site1.:::(site2)
+    println( "site1.:::(site2) : " + fruit )
+
+    // 使用 concat 方法
+    fruit = List.concat(site1, site2)
+    println( "List.concat(site1, site2) : " + fruit  )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ vim Test.scala 
+$ scala Test.scala 
+site1 ::: site2 : List(Runoob, Google, Baidu, Facebook, Taobao)
+site1.:::(site2) : List(Facebook, Taobao, Runoob, Google, Baidu)
+List.concat(site1, site2) : List(Runoob, Google, Baidu, Facebook, Taobao)
+```
+
+### 13.1.3 List.fill()
+
+我们可以使用 List.fill() 方法来创建一个指定重复数量的元素列表：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val site = List.fill(3)("Runoob") // 重复 Runoob 3次
+    println( "site : " + site  )
+
+    val num = List.fill(10)(2)         // 重复元素 2, 10 次
+    println( "num : " + num  )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ vim Test.scala 
+$ scala Test.scala 
+site : List(Runoob, Runoob, Runoob)
+num : List(2, 2, 2, 2, 2, 2, 2, 2, 2, 2)
+```
+
+### 13.1.4 List.tabulate()
+
+List.tabulate() 方法是通过给定的函数来创建列表。
+
+方法的第一个参数为元素的数量，可以是二维的，第二个参数为指定的函数，我们通过指定的函数计算结果并返回值插入到列表中，起始值为 0，实例如下：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    // 通过给定的函数创建 5 个元素
+    val squares = List.tabulate(6)(n => n * n)
+    println( "一维 : " + squares  )
+
+    // 创建二维列表
+    val mul = List.tabulate( 4,5 )( _ * _ )      
+    println( "多维 : " + mul  )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ vim Test.scala 
+$ scala Test.scala 
+一维 : List(0, 1, 4, 9, 16, 25)
+多维 : List(List(0, 0, 0, 0, 0), List(0, 1, 2, 3, 4), List(0, 2, 4, 6, 8), List(0, 3, 6, 9, 12))
+```
+
+### 13.1.5 List.reverse
+
+List.reverse 用于将列表的顺序反转，实例如下：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val site = "Runoob" :: ("Google" :: ("Baidu" :: Nil))
+    println( "site 反转前 : " + site )
+
+    println( "site 反转后 : " + site.reverse )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ vim Test.scala 
+$ scala Test.scala 
+site 反转前 : List(Runoob, Google, Baidu)
+site 反转后 : List(Baidu, Google, Runoob)
+```
+
+### 13.1.6 Scala List 常用方法
+
+下表列出了 Scala List 常用的方法：
+
+| 序号 | 方法及描述                                                   |
+| :--- | :----------------------------------------------------------- |
+| 1    | **def +:(elem: A): List[A]**为列表预添加元素<br/>`scala> val x = List(1)` <br/>`x: List[Int] = List(1)` <br/>`scala> val y = 2 +: x` <br/>`y: List[Int] = List(2, 1)` <br/>`scala> println(x) List(1)` |
+| 2    | **def ::(x: A): List[A]**在列表开头添加元素                  |
+| 3    | **def :::(prefix: List[A]): List[A]**在列表开头添加指定列表的元素 |
+| 4    | **def :+(elem: A): List[A]**复制添加元素后列表。<br/>`scala> val a = List(1)` <br/>`a: List[Int] = List(1)`<br/> `scala> val b = a :+ 2`<br/> `b: List[Int] = List(1, 2)` <br/>`scala> println(a)` <br/>`List(1)` |
+| 5    | **def addString(b: StringBuilder): StringBuilder**将列表的所有元素添加到 StringBuilder |
+| 6    | **def addString(b: StringBuilder, sep: String): StringBuilder**将列表的所有元素添加到 StringBuilder，并指定分隔符 |
+| 7    | **def apply(n: Int): A**通过列表索引获取元素                 |
+| 8    | **def contains(elem: Any): Boolean**检测列表中是否包含指定的元素 |
+| 9    | **def copyToArray(xs: Array[A], start: Int, len: Int): Unit**将列表的元素复制到数组中。 |
+| 10   | **def distinct: List[A]**去除列表的重复元素，并返回新列表    |
+| 11   | **def drop(n: Int): List[A]**丢弃前n个元素，并返回新列表     |
+| 12   | **def dropRight(n: Int): List[A]**丢弃最后n个元素，并返回新列表 |
+| 13   | **def dropWhile(p: (A) => Boolean): List[A]**从左向右丢弃元素，直到条件p不成立 |
+| 14   | **def endsWith\[B](that: Seq[B]): Boolean**检测列表是否以指定序列结尾 |
+| 15   | **def equals(that: Any): Boolean**判断是否相等               |
+| 16   | **def exists(p: (A) => Boolean): Boolean**判断列表中指定条件的元素是否存在。<br/>判断l是否存在某个元素:<br/>`scala> l.exists(s => s == "Hah")` <br/>`res7: Boolean = true` |
+| 17   | **def filter(p: (A) => Boolean): List[A]**输出符号指定条件的所有元素。过滤出长度为3的元素:<br/>`scala> l.filter(s => s.length == 3)` <br/>`res8: List[String] = List(Hah, WOW)` |
+| 18   | **def forall(p: (A) => Boolean): Boolean**检测所有元素。<br/>例如：判断所有元素是否以"H"开头：<br/>`scala> l.forall(s => s.startsWith("H"))`<br/> `res10: Boolean = false` |
+| 19   | **def foreach(f: (A) => Unit): Unit**将函数应用到列表的所有元素 |
+| 20   | **def head: A**获取列表的第一个元素                          |
+| 21   | **def indexOf(elem: A, from: Int): Int**从指定位置 from 开始查找元素第一次出现的位置 |
+| 22   | **def init: List[A]**返回所有元素，除了最后一个              |
+| 23   | **def intersect(that: Seq[A]): List[A]**计算多个集合的交集   |
+| 24   | **def isEmpty: Boolean**检测列表是否为空                     |
+| 25   | **def iterator: Iterator[A]**创建一个新的迭代器来迭代元素    |
+| 26   | **def last: A**返回最后一个元素                              |
+| 27   | **def lastIndexOf(elem: A, end: Int): Int**在指定的位置 end 开始查找元素最后出现的位置 |
+| 28   | **def length: Int**返回列表长度                              |
+| 29   | **def map\[B](f: (A) => B): List[B]**通过给定的方法将所有元素重新计算 |
+| 30   | **def max: A**查找最大元素                                   |
+| 31   | **def min: A**查找最小元素                                   |
+| 32   | **def mkString: String**列表所有元素作为字符串显示           |
+| 33   | **def mkString(sep: String): String**使用分隔符将列表所有元素作为字符串显示 |
+| 34   | **def reverse: List[A]**列表反转                             |
+| 35   | **def sorted[B >: A]: List[A]**列表排序                      |
+| 36   | **def startsWith\[B](that: Seq[B], offset: Int): Boolean**检测列表在指定位置是否包含指定序列 |
+| 37   | **def sum: A**计算集合元素之和                               |
+| 38   | **def tail: List[A]**返回所有元素，除了第一个                |
+| 39   | **def take(n: Int): List[A]**提取列表的前n个元素             |
+| 40   | **def takeRight(n: Int): List[A]**提取列表的后n个元素        |
+| 41   | **def toArray: Array[A]**列表转换为数组                      |
+| 42   | **def toBuffer[B >: A]: Buffer[B]**返回缓冲区，包含了列表的所有元素 |
+| 43   | **def toMap[T, U]: Map[T, U]**List 转换为 Map                |
+| 44   | **def toSeq: Seq[A]**List 转换为 Seq                         |
+| 45   | **def toSet[B >: A]: Set[B]**List 转换为 Set                 |
+| 46   | **def toString(): String**列表转换为字符串                   |
+
+> 更多方法可以参考 [API文档](http://www.scala-lang.org/api/current/scala/collection/immutable/List.html)
+
+## 13.2 Scala Set(集合)
+
+Scala Set(集合)是没有重复的对象集合，所有的元素都是唯一的。
+
+Scala 集合分为可变的和不可变的集合。
+
+默认情况下，Scala 使用的是不可变集合，如果你想使用可变集合，需要引用 **scala.collection.mutable.Set** 包。
+
+默认引用 scala.collection.immutable.Set，不可变集合实例如下：
+
+```scala
+val set = Set(1,2,3)
+println(set.getClass.getName) //
+
+println(set.exists(_ % 2 == 0)) //true
+println(set.drop(1)) //Set(2,3)
+```
+
+如果需要使用可变集合需要引入 scala.collection.mutable.Set：
+
+```scala
+import scala.collection.mutable.Set // 可以在任何地方引入 可变集合
+
+val mutableSet = Set(1,2,3)
+println(mutableSet.getClass.getName) // scala.collection.mutable.HashSet
+
+mutableSet.add(4)
+mutableSet.remove(1)
+mutableSet += 5
+mutableSet -= 2
+
+println(mutableSet) // Set(5, 3, 4)
+
+val another = mutableSet.toSet
+println(another.getClass.getName) // scala.collection.immutable.Set
+```
+
+> **注意：** *虽然可变Set和不可变Set都有添加或删除元素的操作，但是有一个非常大的差别。对不可变Set进行操作，会产生一个新的set，原来的set并没有改变，这与List一样。 而对可变Set进行操作，改变的是该Set本身，与ListBuffer类似。*
+
+### 13.2.1 集合基本操作
+
+Scala集合有三个基本操作：
+
+- `head` 返回集合第一个元素
+- `tail` **返回一个集合，包含除了第一元素之外的其他元素**
+- `isEmpty` 在集合为空时返回true
+
+对于Scala集合的任何操作都可以使用这三个基本操作来表达。实例如下:
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val site = Set("Runoob", "Google", "Baidu")
+    val nums: Set[Int] = Set()
+
+    println( "第一网站是 : " + site.head )
+    println( "最后一个网站是 : " + site.tail )
+    println( "查看列表 site 是否为空 : " + site.isEmpty )
+    println( "查看 nums 是否为空 : " + nums.isEmpty )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ vim Test.scala 
+$ scala Test.scala 
+第一网站是 : Runoob
+最后一个网站是 : Set(Google, Baidu)
+查看列表 site 是否为空 : false
+查看 nums 是否为空 : true
+```
+
+### 13.2.2 连接集合
+
+你可以使用 **++** 运算符或 **Set.++()** 方法来连接两个集合。如果元素有重复的就会移除重复的元素。实例如下：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val site1 = Set("Runoob", "Google", "Baidu")
+    val site2 = Set("Faceboook", "Taobao")
+
+    // ++ 作为运算符使用
+    var site = site1 ++ site2
+    println( "site1 ++ site2 : " + site )
+
+    //  ++ 作为方法使用
+    site = site1.++(site2)
+    println( "site1.++(site2) : " + site )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ vim Test.scala 
+$ scala Test.scala 
+site1 ++ site2 : Set(Faceboook, Taobao, Google, Baidu, Runoob)
+site1.++(site2) : Set(Faceboook, Taobao, Google, Baidu, Runoob)
+```
+
+### 13.2.3 查找集合中最大与最小元素
+
+你可以使用 **Set.min** 方法来查找集合中的最小元素，使用 **Set.max** 方法查找集合中的最大元素。实例如下：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val num = Set(5,6,9,20,30,45)
+
+    // 查找集合中最大与最小元素
+    println( "Set(5,6,9,20,30,45) 集合中的最小元素是 : " + num.min )
+    println( "Set(5,6,9,20,30,45) 集合中的最大元素是 : " + num.max )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ vim Test.scala 
+$ scala Test.scala 
+Set(5,6,9,20,30,45) 集合中的最小元素是 : 5
+Set(5,6,9,20,30,45) 集合中的最大元素是 : 45
+```
+
+### 13.2.4 交集
+
+你可以使用 **Set.&** 方法或 **Set.intersect** 方法来查看两个集合的交集元素。实例如下：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val num1 = Set(5,6,9,20,30,45)
+    val num2 = Set(50,60,9,20,35,55)
+
+    // 交集
+    println( "num1.&(num2) : " + num1.&(num2) )
+    println( "num1.intersect(num2) : " + num1.intersect(num2) )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ vim Test.scala 
+$ scala Test.scala 
+num1.&(num2) : Set(20, 9)
+num1.intersect(num2) : Set(20, 9)
+```
+
+### 13.2.5 Scala Set 常用方法
+
+下表列出了 Scala Set 常用的方法：
+
+| 序号 | 方法及描述                                                   |
+| :--- | :----------------------------------------------------------- |
+| 1    | **def +(elem: A): Set[A]**为集合添加新元素，x并创建一个新的集合，除非元素已存在 |
+| 2    | **def -(elem: A): Set[A]**移除集合中的元素，并创建一个新的集合 |
+| 3    | **def contains(elem: A): Boolean**如果元素在集合中存在，返回 true，否则返回 false。 |
+| 4    | **def &(that: Set[A]): Set[A]**返回两个集合的交集            |
+| 5    | **def &~(that: Set[A]): Set[A]**返回两个集合的差集           |
+| 6    | **def +(elem1: A, elem2: A, elems: A\*): Set[A]**通过添加传入指定集合的元素创建一个新的不可变集合 |
+| 7    | **def ++(elems: A): Set[A]**合并两个集合                     |
+| 8    | **def -(elem1: A, elem2: A, elems: A\*): Set[A]**通过移除传入指定集合的元素创建一个新的不可变集合 |
+| 9    | **def addString(b: StringBuilder): StringBuilder**将不可变集合的所有元素添加到字符串缓冲区 |
+| 10   | **def addString(b: StringBuilder, sep: String): StringBuilder**将不可变集合的所有元素添加到字符串缓冲区，并使用指定的分隔符 |
+| 11   | **def apply(elem: A)**检测集合中是否包含指定元素             |
+| 12   | **def count(p: (A) => Boolean): Int**计算满足指定条件的集合元素个数 |
+| 13   | **def copyToArray(xs: Array[A], start: Int, len: Int): Unit**复制不可变集合元素到数组 |
+| 14   | **def diff(that: Set[A]): Set[A]**比较两个集合的差集         |
+| 15   | **def drop(n: Int): Set[A]]**返回丢弃前n个元素新集合         |
+| 16   | **def dropRight(n: Int): Set[A]**返回丢弃最后n个元素新集合   |
+| 17   | **def dropWhile(p: (A) => Boolean): Set[A]**从左向右丢弃元素，直到条件p不成立 |
+| 18   | **def equals(that: Any): Boolean**equals 方法可用于任意序列。用于比较系列是否相等。 |
+| 19   | **def exists(p: (A) => Boolean): Boolean**判断不可变集合中指定条件的元素是否存在。 |
+| 20   | **def filter(p: (A) => Boolean): Set[A]**输出符合指定条件的所有不可变集合元素。 |
+| 21   | **def find(p: (A) => Boolean): Option[A]**查找不可变集合中满足指定条件的第一个元素 |
+| 22   | **def forall(p: (A) => Boolean): Boolean**查找指定条件是否适用于此集合的所有元素 |
+| 23   | **def foreach(f: (A) => Unit): Unit**将函数应用到不可变集合的所有元素 |
+| 24   | **def head: A**获取不可变集合的第一个元素                    |
+| 25   | **def init: Set[A]**返回所有元素，除了最后一个               |
+| 26   | **def intersect(that: Set[A]): Set[A]**计算两个集合的交集    |
+| 27   | **def isEmpty: Boolean**判断集合是否为空                     |
+| 28   | **def iterator: Iterator[A]**创建一个新的迭代器来迭代元素    |
+| 29   | **def last: A**返回最后一个元素                              |
+| 30   | **def map[B](f: (A) => B): immutable.Set[B]**通过给定的方法将所有元素重新计算 |
+| 31   | **def max: A**查找最大元素                                   |
+| 32   | **def min: A**查找最小元素                                   |
+| 33   | **def mkString: String**集合所有元素作为字符串显示           |
+| 34   | **def mkString(sep: String): String**使用分隔符将集合所有元素作为字符串显示 |
+| 35   | **def product: A**返回不可变集合中数字元素的积。             |
+| 36   | **def size: Int**返回不可变集合元素的数量                    |
+| 37   | **def splitAt(n: Int): (Set[A], Set[A])**把不可变集合拆分为两个容器，第一个由前 n 个元素组成，第二个由剩下的元素组成 |
+| 38   | **def subsetOf(that: Set[A]): Boolean**如果集合中含有子集返回 true，否则返回false |
+| 39   | **def sum: A**返回不可变集合中所有数字元素之和               |
+| 40   | **def tail: Set[A]**返回一个不可变集合中除了第一元素之外的其他元素 |
+| 41   | **def take(n: Int): Set[A]**返回前 n 个元素                  |
+| 42   | **def takeRight(n: Int):Set[A]**返回后 n 个元素              |
+| 43   | **def toArray: Array[A]**将集合转换为数组                    |
+| 44   | **def toBuffer[B >: A]: Buffer[B]**返回缓冲区，包含了不可变集合的所有元素 |
+| 45   | **def toList: List[A]**返回 List，包含了不可变集合的所有元素 |
+| 46   | **def toMap[T, U]: Map[T, U]**返回 Map，包含了不可变集合的所有元素 |
+| 47   | **def toSeq: Seq[A]**返回 Seq，包含了不可变集合的所有元素    |
+| 48   | **def toString(): String**返回一个字符串，以对象来表示       |
+
+> 更多方法可以参考 [API文档](http://www.scala-lang.org/api/current/scala/collection/immutable/List.html)
+
+## 13.3 Scala Map(映射)
+
+Map(映射)是一种可迭代的键值对（key/value）结构。
+
+所有的值都可以通过键来获取。
+
+Map 中的键都是唯一的。
+
+Map 也叫哈希表（Hash tables）。
+
+**Map 有两种类型，可变与不可变，区别在于可变对象可以修改它，而不可变对象不可以**。
+
+默认情况下 Scala 使用不可变 Map。如果你需要使用可变集合，你需要显式的引入 **import scala.collection.mutable.Map** 类
+
+在 Scala 中 你可以同时使用可变与不可变 Map，不可变的直接使用 Map，可变的使用 mutable.Map。以下实例演示了不可变 Map 的应用：
+
+```scala
+// 空哈希表，键为字符串，值为整型
+var A:Map[Char,Int] = Map()
+
+// Map 键值对演示
+val colors = Map("red" -> "#FF0000", "azure" -> "#F0FFFF")
+```
+
+定义 Map 时，需要为键值对定义类型。如果需要添加 key-value 对，可以使用 + 号，如下所示：
+
+```scala
+A += ('I' -> 1)
+A += ('J' -> 5)
+A += ('K' -> 10)
+A += ('L' -> 100)
+```
+
+### 13.3.1 Map 基本操作
+
+Scala Map 有三个基本操作：
+
+| 方法    | 描述                     |
+| :------ | :----------------------- |
+| keys    | 返回 Map 所有的键(key)   |
+| values  | 返回 Map 所有的值(value) |
+| isEmpty | 在 Map 为空时返回true    |
+
+示例：
+
+以下实例演示了以上三个方法的基本应用：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val colors = Map("red" -> "#FF0000",
+                     "azure" -> "#F0FFFF",
+                     "peru" -> "#CD853F")
+
+    val nums: Map[Int, Int] = Map()
+
+    println( "colors 中的键为 : " + colors.keys )
+    println( "colors 中的值为 : " + colors.values )
+    println( "检测 colors 是否为空 : " + colors.isEmpty )
+    println( "检测 nums 是否为空 : " + nums.isEmpty )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+colors 中的键为 : Set(red, azure, peru)
+colors 中的值为 : MapLike(#FF0000, #F0FFFF, #CD853F)
+检测 colors 是否为空 : false
+检测 nums 是否为空 : true
+```
+
+### 13.3.2 Map 合并
+
+你可以使用 **++** 运算符或 **Map.++()** 方法来连接两个 Map，Map 合并时会移除重复的 key。以下演示了两个 Map 合并的实例:
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val colors1 = Map("red" -> "#FF0000",
+                      "azure" -> "#F0FFFF",
+                      "peru" -> "#CD853F")
+    val colors2 = Map("blue" -> "#0033FF",
+                      "yellow" -> "#FFFF00",
+                      "red" -> "#FF0000")
+
+    //  ++ 作为运算符
+    var colors = colors1 ++ colors2
+    println( "colors1 ++ colors2 : " + colors )
+
+    //  ++ 作为方法
+    colors = colors1.++(colors2)
+    println( "colors1.++(colors2) : " + colors )
+
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```scala
+$ scalac Test.scala 
+$ scala Test
+colors1 ++ colors2 : Map(blue -> #0033FF, azure -> #F0FFFF, peru -> #CD853F, yellow -> #FFFF00, red -> #FF0000)
+colors1.++(colors2) : Map(blue -> #0033FF, azure -> #F0FFFF, peru -> #CD853F, yellow -> #FFFF00, red -> #FF0000)
+```
+
+### 13.3.3 输出 Map 的 keys 和 values
+
+以下通过 foreach 循环输出 Map 中的 keys 和 values：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val sites = Map("runoob" -> "http://www.runoob.com",
+                    "baidu" -> "http://www.baidu.com",
+                    "taobao" -> "http://www.taobao.com")
+
+    sites.keys.foreach{ i =>  
+      print( "Key = " + i )
+      println(" Value = " + sites(i) )}
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+Key = runoob Value = http://www.runoob.com
+Key = baidu Value = http://www.baidu.com
+Key = taobao Value = http://www.taobao.com
+```
+
+### 13.3.4 查看 Map 中是否存在指定的 Key
+
+你可以使用 **Map.contains** 方法来查看 Map 中是否存在指定的 Key。实例如下：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val sites = Map("runoob" -> "http://www.runoob.com",
+                    "baidu" -> "http://www.baidu.com",
+                    "taobao" -> "http://www.taobao.com")
+
+    if( sites.contains( "runoob" )){
+      println("runoob 键存在，对应的值为 :"  + sites("runoob"))
+    }else{
+      println("runoob 键不存在")
+    }
+    if( sites.contains( "baidu" )){
+      println("baidu 键存在，对应的值为 :"  + sites("baidu"))
+    }else{
+      println("baidu 键不存在")
+    }
+    if( sites.contains( "google" )){
+      println("google 键存在，对应的值为 :"  + sites("google"))
+    }else{
+      println("google 键不存在")
+    }
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+runoob 键存在，对应的值为 :http://www.runoob.com
+baidu 键存在，对应的值为 :http://www.baidu.com
+google 键不存在
+```
+
+### 13.3.5 Scala Map 方法
+
+下表列出了 Scala Map 常用的方法：
+
+| 序号 | 方法及描述                                                   |
+| :--- | :----------------------------------------------------------- |
+| 1    | **def ++(xs: Map[(A, B)]): Map[A, B]**返回一个新的 Map，新的 Map xs 组成 |
+| 2    | **def -(elem1: A, elem2: A, elems: A\*): Map[A, B]**返回一个新的 Map, 移除 key 为 elem1, elem2 或其他 elems。 |
+| 3    | **def --(xs: GTO[A]): Map[A, B]**返回一个新的 Map, 移除 xs 对象中对应的 key |
+| 4    | **def get(key: A): Option[B]**返回指定 key 的值              |
+| 5    | **def iterator: Iterator[(A, B)]**创建新的迭代器，并输出 key/value 对 |
+| 6    | **def addString(b: StringBuilder): StringBuilder**将 Map 中的所有元素附加到StringBuilder，可加入分隔符 |
+| 7    | **def addString(b: StringBuilder, sep: String): StringBuilder**将 Map 中的所有元素附加到StringBuilder，可加入分隔符 |
+| 8    | **def apply(key: A): B**返回指定键的值，如果不存在返回 Map 的默认方法 |
+| 9    | **def clear(): Unit**清空 Map                                |
+| 10   | **def clone(): Map[A, B]**从一个 Map 复制到另一个 Map        |
+| 11   | **def contains(key: A): Boolean**如果 Map 中存在指定 key，返回 true，否则返回 false。 |
+| 12   | **def copyToArray(xs: Array[(A, B)]): Unit**复制集合到数组   |
+| 13   | **def count(p: ((A, B)) => Boolean): Int**计算满足指定条件的集合元素数量 |
+| 14   | **def default(key: A): B**定义 Map 的默认值，在 key 不存在时返回。 |
+| 15   | **def drop(n: Int): Map[A, B]**返回丢弃前n个元素新集合       |
+| 16   | **def dropRight(n: Int): Map[A, B]**返回丢弃最后n个元素新集合 |
+| 17   | **def dropWhile(p: ((A, B)) => Boolean): Map[A, B]**从左向右丢弃元素，直到条件p不成立 |
+| 18   | **def empty: Map[A, B]**返回相同类型的空 Map                 |
+| 19   | **def equals(that: Any): Boolean**如果两个 Map 相等(key/value 均相等)，返回true，否则返回false |
+| 20   | **def exists(p: ((A, B)) => Boolean): Boolean**判断集合中指定条件的元素是否存在 |
+| 21   | **def filter(p: ((A, B))=> Boolean): Map[A, B]**返回满足指定条件的所有集合 |
+| 22   | **def filterKeys(p: (A) => Boolean): Map[A, B]**返回符合指定条件的不可变 Map |
+| 23   | **def find(p: ((A, B)) => Boolean): Option[(A, B)]**查找集合中满足指定条件的第一个元素 |
+| 24   | **def foreach(f: ((A, B)) => Unit): Unit**将函数应用到集合的所有元素 |
+| 25   | **def init: Map[A, B]**返回所有元素，除了最后一个            |
+| 26   | **def isEmpty: Boolean**检测 Map 是否为空                    |
+| 27   | **def keys: Iterable[A]**返回所有的key/p>                    |
+| 28   | **def last: (A, B)**返回最后一个元素                         |
+| 29   | **def max: (A, B)**查找最大元素                              |
+| 30   | **def min: (A, B)**查找最小元素                              |
+| 31   | **def mkString: String**集合所有元素作为字符串显示           |
+| 32   | **def product: (A, B)**返回集合中数字元素的积。              |
+| 33   | **def remove(key: A): Option[B]**移除指定 key                |
+| 34   | **def retain(p: (A, B) => Boolean): Map.this.type**如果符合满足条件的返回 true |
+| 35   | **def size: Int**返回 Map 元素的个数                         |
+| 36   | **def sum: (A, B)**返回集合中所有数字元素之和                |
+| 37   | **def tail: Map[A, B]**返回一个集合中除了第一元素之外的其他元素 |
+| 38   | **def take(n: Int): Map[A, B]**返回前 n 个元素               |
+| 39   | **def takeRight(n: Int): Map[A, B]**返回后 n 个元素          |
+| 40   | **def takeWhile(p: ((A, B)) => Boolean): Map[A, B]**返回满足指定条件的元素 |
+| 41   | **def toArray: Array[(A, B)]**集合转数组                     |
+| 42   | **def toBuffer[B >: A]: Buffer[B]**返回缓冲区，包含了 Map 的所有元素 |
+| 43   | **def toList: List[A]**返回 List，包含了 Map 的所有元素      |
+| 44   | **def toSeq: Seq[A]**返回 Seq，包含了 Map 的所有元素         |
+| 45   | **def toSet: Set[A]**返回 Set，包含了 Map 的所有元素         |
+| 46   | **def toString(): String**返回字符串对象                     |
+
+> 更多方法可以参考 [API文档](http://www.scala-lang.org/api/current/scala/collection/immutable/Map.html)
+>
+> 使用 **++** 或则 **.++()** 方法合并两个 Map。
+>
+> 需要注意的是: 如果 Map 中存在相同的 key，合并后的 Map 中的 value 会被最右边的 Map 的值所代替。
+>
+> ```scala
+> var suit1 = Map("red"->"#FFF","blue"->"#FED","yellow"->"#00F","green"->"#0F0")
+> var suit2 = Map("red"->"#FF1","green"->"#1F1")
+> var suit3 = suit1++suit2
+> println("the value of suit1 is:" +suit1)
+> println("the value of suit2 is:" +suit2)
+> println("the value of after ++ is:" +suit3)
+> println("the value of after .++() is:" +suit1.++(suit2))
+> ```
+>
+> 结果：
+>
+> ```scala
+> the value of suit1 is:Map(red -> #FFF, blue -> #FED, yellow -> #00F, green -> #0F0)
+> the value of suit2 is:Map(red -> #FF1, green -> #1F1)
+> the value of after ++ is:Map(red -> #FF1, blue -> #FED, yellow -> #00F, green -> #1F1)
+> the value of after .++() is:Map(red -> #FF1, blue -> #FED, yellow -> #00F, green -> #1F1)
+> ```
+
+## 13.4 Scala 元组
+
+## 13.5 Scala Option(选项)
+
+## 13.6 Scala Iterator(迭代器)
+
