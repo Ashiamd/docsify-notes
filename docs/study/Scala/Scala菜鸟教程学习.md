@@ -2537,3 +2537,585 @@ $ scala Test
 str1 + str2 = Hello, Scala!
 ```
 
+# 10. Scala 闭包
+
+**闭包是一个函数，返回值依赖于声明在函数外部的一个或多个变量**。
+
+闭包通常来讲可以简单的认为是可以访问一个函数里面局部变量的另外一个函数。
+
+如下面这段匿名的函数：
+
+```
+val multiplier = (i:Int) => i * 10  
+```
+
+函数体内有一个变量 i，它作为函数的一个参数。如下面的另一段代码：
+
+```
+val multiplier = (i:Int) => i * factor
+```
+
+在 multiplier 中有两个变量：i 和 factor。其中的一个 i 是函数的形式参数，在 multiplier 函数被调用时，i 被赋予一个新的值。然而，factor不是形式参数，而是自由变量，考虑下面代码：
+
+```
+var factor = 3  
+val multiplier = (i:Int) => i * factor  
+```
+
+这里我们引入一个自由变量 factor，这个变量定义在函数外面。
+
+这样定义的函数变量 multiplier 成为一个"闭包"，因为它引用到函数外面定义的变量，定义这个函数的过程是将这个自由变量捕获而构成一个封闭的函数。
+
+完整实例
+
+```scala
+object Test {  
+  def main(args: Array[String]) {  
+    println( "muliplier(1) value = " +  multiplier(1) )  
+    println( "muliplier(2) value = " +  multiplier(2) )  
+  }  
+  var factor = 3  
+  val multiplier = (i:Int) => i * factor  
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala  
+$  scala Test  
+muliplier(1) value = 3  
+muliplier(2) value = 6  
+```
+
+自己的尝试（发现闭包引用函数外面的变量时，并不是直接存值，还是类似引用的形式，会跟踪变量的变化。毕竟Scala里都是对象、函数）
+
+```scala
+scala> var value1 = 3
+value1: Int = 3
+
+scala> var func1 = (i:Int) => i * value1
+func1: Int => Int = $Lambda$1018/1586289269@3f049056
+
+scala> func1(5)
+res0: Int = 15
+
+scala> value1 =4
+value1: Int = 4
+
+scala> func1(6)
+res1: Int = 24
+```
+
+# 11. Scala 字符串
+
+以下实例将字符串赋值给一个常量：
+
+```scala
+object Test {
+  val greeting: String = "Hello,World!"
+
+  def main(args: Array[String]) {
+    println( greeting )
+  }
+}
+```
+
+以上实例定义了变量 greeting，为字符串常量，它的类型为 **String (java.lang.String)**。
+
+**在 Scala 中，字符串的类型实际上是 Java String，它本身没有 String 类**。
+
+**在 Scala 中，String 是一个不可变的对象，所以该对象不可被修改。这就意味着你如果修改字符串就会产生一个新的字符串对象**。（这点和java其实一样的。毕竟用的就是java的String）
+
+但其他对象，如数组就是可变的对象。接下来我们会为大家介绍常用的 java.lang.String 方法。
+
+## 11.1 创建字符串
+
+创建字符串实例如下：
+
+```
+var greeting = "Hello World!";
+
+或
+
+var greeting:String = "Hello World!";
+```
+
+你不一定为字符串指定 String 类型，因为 Scala 编译器会自动推断出字符串的类型为 String。
+
+当然我们也可以直接显示的声明字符串为 String 类型，如下实例：
+
+```scala
+object Test {
+  val greeting: String = "Hello, World!"
+
+  def main(args: Array[String]) {
+    println( greeting )
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+Hello, world!
+```
+
+我们前面提到过 String 对象是不可变的，如果你需要创建一个可以修改的字符串，可以使用 StringBuilder 类，如下实例:
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val buf = new StringBuilder;
+    buf += 'a'
+    buf ++= "bcdef"
+    println( "buf is : " + buf.toString );
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+buf is : abcdef
+```
+
+## 11.2 字符串长度
+
+我们可以使用 length() 方法来获取字符串长度：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    var palindrome = "www.runoob.com";
+    var len = palindrome.length();
+    println( "String Length is : " + len );
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+String Length is : 14
+```
+
+## 11.3 字符串连接
+
+String 类中使用 concat() 方法来连接两个字符串：
+
+```scala
+string1.concat(string2);
+```
+
+实例演示：
+
+```shell
+scala> "菜鸟教程官网： ".concat("www.runoob.com");
+res0: String = 菜鸟教程官网： www.runoob.com
+```
+
+同样你也可以使用加号(+)来连接：
+
+```shell
+scala> "菜鸟教程官网： " + " www.runoob.com"
+res1: String = 菜鸟教程官网：  www.runoob.com
+```
+
+让我们看个完整实例:
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    var str1 = "菜鸟教程官网：";
+    var str2 =  "www.runoob.com";
+    var str3 =  "菜鸟教程的 Slogan 为：";
+    var str4 =  "学的不仅是技术，更是梦想！";
+    println( str1 + str2 );
+    println( str3.concat(str4) );
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+菜鸟教程官网：www.runoob.com
+菜鸟教程的 Slogan 为：学的不仅是技术，更是梦想！
+```
+
+## 11.4 创建格式化字符串
+
+String 类中你可以使用 printf() 方法来格式化字符串并输出，String format() 方法可以返回 String 对象而不是 PrintStream 对象。以下实例演示了 printf() 方法的使用：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    var floatVar = 12.456
+    var intVar = 2000
+    var stringVar = "菜鸟教程!"
+    var fs = printf("浮点型变量为 " +
+                    "%f, 整型变量为 %d, 字符串为 " +
+                    " %s", floatVar, intVar, stringVar)
+    println(fs)
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+浮点型变量为 12.456000, 整型变量为 2000, 字符串为  菜鸟教程!()
+```
+
+## 11.5 String 方法
+
+下表列出了 java.lang.String 中常用的方法，你可以在 Scala 中使用：
+
+| 序号 | 方法及描述                                                   |
+| :--- | :----------------------------------------------------------- |
+| 1    | **char charAt(int index)**返回指定位置的字符                 |
+| 2    | **int compareTo(Object o)**比较字符串与对象                  |
+| 3    | **int compareTo(String anotherString)**按字典顺序比较两个字符串 |
+| 4    | **int compareToIgnoreCase(String str)**按字典顺序比较两个字符串，不考虑大小写 |
+| 5    | **String concat(String str)**将指定字符串连接到此字符串的结尾 |
+| 6    | **boolean contentEquals(StringBuffer sb)**将此字符串与指定的 StringBuffer 比较。 |
+| 7    | **static String copyValueOf(char[] data)**返回指定数组中表示该字符序列的 String |
+| 8    | **static String copyValueOf(char[] data, int offset, int count)**返回指定数组中表示该字符序列的 String |
+| 9    | **boolean endsWith(String suffix)**测试此字符串是否以指定的后缀结束 |
+| 10   | **boolean equals(Object anObject)**将此字符串与指定的对象比较 |
+| 11   | **boolean equalsIgnoreCase(String anotherString)**将此 String 与另一个 String 比较，不考虑大小写 |
+| 12   | **byte getBytes()**使用平台的默认字符集将此 String 编码为 byte 序列，并将结果存储到一个新的 byte 数组中 |
+| 13   | **byte[] getBytes(String charsetName**使用指定的字符集将此 String 编码为 byte 序列，并将结果存储到一个新的 byte 数组中 |
+| 14   | **void getChars(int srcBegin, int srcEnd, char[] dst, int dstBegin)**将字符从此字符串复制到目标字符数组 |
+| 15   | **int hashCode()**返回此字符串的哈希码                       |
+| 16   | **int indexOf(int ch)**返回指定字符在此字符串中第一次出现处的索引 |
+| 17   | **int indexOf(int ch, int fromIndex)**返回在此字符串中第一次出现指定字符处的索引，从指定的索引开始搜索 |
+| 18   | **int indexOf(String str)**返回指定子字符串在此字符串中第一次出现处的索引 |
+| 19   | **int indexOf(String str, int fromIndex)**返回指定子字符串在此字符串中第一次出现处的索引，从指定的索引开始 |
+| 20   | **String intern()**返回字符串对象的规范化表示形式            |
+| 21   | **int lastIndexOf(int ch)**返回指定字符在此字符串中最后一次出现处的索引 |
+| 22   | **int lastIndexOf(int ch, int fromIndex)**返回指定字符在此字符串中最后一次出现处的索引，从指定的索引处开始进行反向搜索 |
+| 23   | **int lastIndexOf(String str)**返回指定子字符串在此字符串中最右边出现处的索引 |
+| 24   | **int lastIndexOf(String str, int fromIndex)**返回指定子字符串在此字符串中最后一次出现处的索引，从指定的索引开始反向搜索 |
+| 25   | **int length()**返回此字符串的长度                           |
+| 26   | **boolean matches(String regex)**告知此字符串是否匹配给定的正则表达式 |
+| 27   | **boolean regionMatches(boolean ignoreCase, int toffset, String other, int ooffset, int len)**测试两个字符串区域是否相等 |
+| 28   | **boolean regionMatches(int toffset, String other, int ooffset, int len)**测试两个字符串区域是否相等 |
+| 29   | **String replace(char oldChar, char newChar)**返回一个新的字符串，它是通过用 newChar 替换此字符串中出现的所有 oldChar 得到的 |
+| 30   | **String replaceAll(String regex, String replacement**使用给定的 replacement 替换此字符串所有匹配给定的正则表达式的子字符串 |
+| 31   | **String replaceFirst(String regex, String replacement)**使用给定的 replacement 替换此字符串匹配给定的正则表达式的第一个子字符串 |
+| 32   | **String[] split(String regex)**根据给定正则表达式的匹配拆分此字符串 |
+| 33   | **String[] split(String regex, int limit)**根据匹配给定的正则表达式来拆分此字符串 |
+| 34   | **boolean startsWith(String prefix)**测试此字符串是否以指定的前缀开始 |
+| 35   | **boolean startsWith(String prefix, int toffset)**测试此字符串从指定索引开始的子字符串是否以指定前缀开始。 |
+| 36   | **CharSequence subSequence(int beginIndex, int endIndex)**返回一个新的字符序列，它是此序列的一个子序列 |
+| 37   | **String substring(int beginIndex)**返回一个新的字符串，它是此字符串的一个子字符串 |
+| 38   | **String substring(int beginIndex, int endIndex)**返回一个新字符串，它是此字符串的一个子字符串 |
+| 39   | **char[] toCharArray()**将此字符串转换为一个新的字符数组     |
+| 40   | **String toLowerCase()**使用默认语言环境的规则将此 String 中的所有字符都转换为小写 |
+| 41   | **String toLowerCase(Locale locale)**使用给定 Locale 的规则将此 String 中的所有字符都转换为小写 |
+| 42   | **String toString()**返回此对象本身（它已经是一个字符串！）  |
+| 43   | **String toUpperCase()**使用默认语言环境的规则将此 String 中的所有字符都转换为大写 |
+| 44   | **String toUpperCase(Locale locale)**使用给定 Locale 的规则将此 String 中的所有字符都转换为大写 |
+| 45   | **String trim()**删除指定字符串的首尾空白符                  |
+| 46   | **static String valueOf(primitive data type x)**返回指定类型参数的字符串表示形式 |
+
+# 12. Scala数组
+
+Scala 语言中提供的数组是用来存储固定大小的同类型元素，数组对于每一门编辑应语言来说都是重要的数据结构之一。
+
+声明数组变量并不是声明 number0、number1、...、number99 一个个单独的变量，而是声明一个就像 numbers 这样的变量，然后使用 numbers[0]、numbers[1]、...、numbers[99] 来表示一个个单独的变量。数组中某个指定的元素是通过索引来访问的。
+
+数组的第一个元素索引为0，最后一个元素的索引为元素总数减1。
+
+## 12.1 声明数组
+
+以下是 Scala 数组声明的语法格式：
+
+```scala
+var z:Array[String] = new Array[String](3)
+
+或
+
+var z = new Array[String](3)
+```
+
+以上语法中，z 声明一个字符串类型的数组，数组长度为 3 ，可存储 3 个元素。我们可以为每个元素设置值，并通过索引来访问每个元素，如下所示：
+
+```scala
+z(0) = "Runoob"; z(1) = "Baidu"; z(4/2) = "Google"
+```
+
+最后一个元素的索引使用了表达式 **4/2** 作为索引，类似于 **z(2) = "Google"**。
+
+我们也可以使用以下方式来定义一个数组：
+
+```scala
+var z = Array("Runoob", "Baidu", "Google")
+```
+
+下图展示了一个长度为 10 的数组 myList，索引值为 0 到 9：
+
+![img](https://www.runoob.com/wp-content/uploads/2013/12/java_array.jpg)
+
+## 12.2 处理数组
+
+数组的元素类型和数组的大小都是确定的，所以当处理数组元素时候，我们通常使用基本的 for 循环。
+
+以下实例演示了数组的创建，初始化等处理过程：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    var myList = Array(1.9, 2.9, 3.4, 3.5)
+
+    // 输出所有数组元素
+    for ( x <- myList ) {
+      println( x )
+    }
+
+    // 计算数组所有元素的总和
+    var total = 0.0;
+    for ( i <- 0 to (myList.length - 1)) {
+      total += myList(i);
+    }
+    println("总和为 " + total);
+
+    // 查找数组中的最大元素
+    var max = myList(0);
+    for ( i <- 1 to (myList.length - 1) ) {
+      if (myList(i) > max) max = myList(i);
+    }
+    println("最大值为 " + max);
+
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+1.9
+2.9
+3.4
+3.5
+总和为 11.7
+最大值为 3.5
+```
+
+## 12.3 多维数组
+
+> [scala中的二维数组_Scala中的多维数组](https://blog.csdn.net/cumt951045/article/details/107803290)
+
+多维数组一个数组中的值可以是另一个数组，另一个数组的值也可以是一个数组。矩阵与表格是我们常见的二维数组。
+
+以上是一个定义了二维数组的实例：
+
+```scala
+val myMatrix = Array.ofDim[Int](3, 4)
+```
+
+实例中数组中包含三个数组元素，每个数组元素又含有三个值。
+
+接下来我们来看一个二维数组处理的完整实例：
+
+```scala
+import Array._
+
+object Test {
+  def main(args: Array[String]) {
+    val myMatrix = Array.ofDim[Int](3, 4)
+
+    // 创建矩阵
+    for (i <- 0 to 2) {
+      for ( j <- 0 to 2) {
+        myMatrix(i)(j) = j;
+      }
+    }
+
+    // 打印二维阵列
+    for (i <- 0 to 2) {
+      for ( j <- 0 to 2) {
+        print(" " + myMatrix(i)(j));
+      }
+      println();
+    }
+
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+0 1 2
+0 1 2
+0 1 2
+```
+
+自己试了下
+
+```scala
+import Array._
+
+object Test {
+  def main(args: Array[String]) {
+    var arr3 = Array.ofDim[Int](1, 2, 3)
+    for (i <- 0 until (1); j <- 0 until (2); k <- 0 until (3)){
+      arr3(i)(j)(k) = k;
+    }
+    for (i <- 0 until (1); j <- 0 until (2); k <- 0 until (3)){
+      print(arr3(i)(j)(k))
+      if(k == 2)
+      println()
+    }
+  }
+}
+```
+
+输出结果如下
+
+```shell
+012
+012
+```
+
+## 12.4 合并数组
+
+以下实例中，我们使用 concat() 方法来合并两个数组，concat() 方法中接受多个数组参数：
+
+```scala
+import Array._
+
+object Test {
+  def main(args: Array[String]) {
+    var myList1 = Array(1.9, 2.9, 3.4, 3.5)
+    var myList2 = Array(8.9, 7.9, 0.4, 1.5)
+		
+    // 这里用的是Array.concat
+    var myList3 =  concat( myList1, myList2)
+
+    // 输出所有数组元素
+    for ( x <- myList3 ) {
+      println( x )
+    }
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+1.9
+2.9
+3.4
+3.5
+8.9
+7.9
+0.4
+1.5
+```
+
+## 12.5 创建区间数组
+
+以下实例中，我们使用了 range() 方法来生成一个区间范围内的数组。range() 方法最后一个参数为步长，默认为 1：
+
+```scala
+import Array._
+
+object Test {
+  def main(args: Array[String]) {
+    var myList1 = range(10, 20, 2)
+    var myList2 = range(10,20)
+
+    // 输出所有数组元素
+    for ( x <- myList1 ) {
+      print( " " + x )
+    }
+    println()
+    for ( x <- myList2 ) {
+      print( " " + x )
+    }
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala
+$ scala Test
+10 12 14 16 18
+10 11 12 13 14 15 16 17 18 19
+```
+
+## 12.6 Scala 数组方法
+
+> [Scala学习之路之篇四（数组Array）](https://blog.csdn.net/weixin_40873462/article/details/89670251)
+
+下表中为 Scala 语言中处理数组的重要方法，使用它前我们需要使用 **import Array._** 引入包。
+
+这里试了一下菜鸟教程没给示例的`Array.tabulate`
+
+```scala
+object Test1 {
+  def main(args: Array[String]): Unit = {
+    // 下面这个等同 var arr = Array.tabulate(2, 2)((a, b) => a + b)
+    var arr = Array.tabulate(2, 2)(_ + _)
+    for (i <- 0 until (2); j <- 0 until (2)) {
+      print(arr(i)(j))
+    }
+    println("\n---")
+    var arr1 = Array.tabulate(5)(i => i + 4)
+    for(item <- arr1){
+      print(item)
+    }
+    println()
+  }
+}
+```
+
+输出如下：
+
+```shell
+0112
+---
+45678
+```
+
+| 序号 | 方法和描述                                                   |
+| :--- | :----------------------------------------------------------- |
+| 1    | **def apply( x: T, xs: T\* ): Array[T]**创建指定对象 T 的数组, T 的值可以是 Unit, Double, Float, Long, Int, Char, Short, Byte, Boolean。 |
+| 2    | **def concat\[T]( xss: Array[T]\* ): Array[T]**合并数组      |
+| 3    | **def copy( src: AnyRef, srcPos: Int, dest: AnyRef, destPos: Int, length: Int ): Unit**复制一个数组到另一个数组上。相等于 Java's System.arraycopy(src, srcPos, dest, destPos, length)。 |
+| 4    | **def empty[T]: Array[T]**返回长度为 0 的数组                |
+| 5    | **def iterate\[T]( start: T, len: Int )( f: (T) => T ): Array[T]**返回指定长度数组，每个数组元素为指定函数的返回值。以上实例数组初始值为 0，长度为 3，计算函数为**a=>a+1**：<br/>`scala> Array.iterate(0,3)(a=>a+1)` <br/>`res1: Array[Int] = Array(0, 1, 2)` |
+| 6    | **def fill\[T]( n: Int )(elem: => T): Array[T]**返回数组，长度为第一个参数指定，同时每个元素使用第二个参数进行填充。 |
+| 7    | **def fill\[T]( n1: Int, n2: Int )( elem: => T ): Array[Array[T]]**返回二数组，长度为第一个参数指定，同时每个元素使用第二个参数进行填充。 |
+| 8    | **def ofDim\[T]( n1: Int ): Array[T]**创建指定长度的数组     |
+| 9    | **def ofDim\[T]( n1: Int, n2: Int ): Array[Array[T]]**创建二维数组 |
+| 10   | **def ofDim\[T]( n1: Int, n2: Int, n3: Int ): Array[Array[Array[T]]]**创建三维数组 |
+| 11   | **def range( start: Int, end: Int, step: Int ): Array[Int]**创建指定区间内的数组，step 为每个元素间的步长 |
+| 12   | **def range( start: Int, end: Int ): Array[Int]**创建指定区间内的数组 |
+| 13   | **def tabulate\[T]( n: Int )(f: (Int)=> T): Array[T]**返回指定长度数组，每个数组元素为指定函数的返回值，默认从 0 开始。以上实例返回 3 个元素：<br/>`scala> Array.tabulate(3)(a => a + 5)`<br/>`res0: Array[Int] = Array(5, 6, 7)` |
+| 14   | **def tabulate\[T]( n1: Int, n2: Int )( f: (Int, Int ) => T): Array[Array[T]]**返回指定长度的二维数组，每个数组元素为指定函数的返回值，默认从 0 开始。 |
+
+# 13. Scala Collection
+
