@@ -4595,3 +4595,377 @@ $ scala Marker
 
 # 16. Scala Trait(特征)
 
+Scala Trait(特征) 相当于 Java 的接口，实际上它比接口还功能强大。
+
+**与接口不同的是，它还可以定义属性和方法的实现**。
+
+**一般情况下Scala的类只能够继承单一父类，但是如果是 Trait(特征) 的话就可以继承多个，从结果来看就是实现了多重继承**。
+
+Trait(特征) 定义的方式与类类似，但它使用的关键字是 **trait**，如下所示：
+
+```scala
+trait Equal {
+  def isEqual(x: Any): Boolean
+  def isNotEqual(x: Any): Boolean = !isEqual(x)
+}
+```
+
+以上Trait(特征)由两个方法组成：**isEqual** 和 **isNotEqual**。isEqual 方法没有定义方法的实现，isNotEqual定义了方法的实现。
+
+**子类继承特征可以实现未被实现的方法。所以其实 Scala Trait(特征)更像 Java 的抽象类。**
+
+以下演示了特征的完整实例：
+
+```scala
+/* 文件名：Test.scala
+ * author:菜鸟教程
+ * url:www.runoob.com
+ */
+trait Equal {
+  def isEqual(x: Any): Boolean
+  def isNotEqual(x: Any): Boolean = !isEqual(x)
+}
+
+class Point(xc: Int, yc: Int) extends Equal {
+  var x: Int = xc
+  var y: Int = yc
+  def isEqual(obj: Any) =
+  obj.isInstanceOf[Point] &&
+  obj.asInstanceOf[Point].x == x
+}
+
+object Test {
+  def main(args: Array[String]) {
+    val p1 = new Point(2, 3)
+    val p2 = new Point(2, 4)
+    val p3 = new Point(3, 3)
+
+    println(p1.isNotEqual(p2))
+    println(p1.isNotEqual(p3))
+    println(p1.isNotEqual(2))
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```scala
+$ scalac Test.scala 
+$ scala Test
+false
+true
+true
+```
+
+## 16.1 特征构造顺序
+
+**特征也可以有构造器，由字段的初始化和其他特征体中的语句构成**。
+
+**这些语句在任何混入该特征的对象在构造时都会被执行**。
+
+构造器的执行顺序：
+
+- **调用超类的构造器**；
+- **特征构造器在超类构造器之后、类构造器之前执行**；
+- 特征由左到右被构造；
+- 每个特征当中，父特征先被构造；
+- **如果多个特征共有一个父特征，父特征不会被重复构造**
+- 所有特征被构造完毕，子类被构造。
+
+**构造器的顺序是类的线性化的反向**。
+
+线性化是描述某个类型的所有超类型的一种技术规格。
+
+# 17. Scala模式匹配
+
+Scala 提供了强大的模式匹配机制，应用也非常广泛。
+
+一个模式匹配包含了一系列备选项，每个都开始于关键字 **case**。每个备选项都包含了一个模式及一到多个表达式。箭头符号 **=>** 隔开了模式和表达式。
+
+以下是一个简单的整型值模式匹配实例：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    println(matchTest(3))
+
+  }
+  def matchTest(x: Int): String = x match {
+    case 1 => "one"
+    case 2 => "two"
+    case _ => "many"
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+many
+```
+
+match 对应 Java 里的 switch，但是写在选择器表达式之后。即： **选择器 match {备选项}。**
+
+match 表达式通过以代码编写的先后次序尝试每个模式来完成计算，只要发现有一个匹配的case，剩下的case不会继续匹配。
+
+接下来我们来看一个不同数据类型的模式匹配：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    println(matchTest("two"))
+    println(matchTest("test"))
+    println(matchTest(1))
+    println(matchTest(6))
+
+  }
+  def matchTest(x: Any): Any = x match {
+    case 1 => "one"
+    case "two" => 2
+    case y: Int => "scala.Int"
+    case _ => "many"
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+2
+many
+one
+scala.Int
+```
+
+实例中第一个 case 对应整型数值 1，第二个 case 对应字符串值 two，第三个 case 对应类型模式，用于判断传入的值是否为整型，**相比使用isInstanceOf来判断类型，使用模式匹配更好**。
+
+第四个 case 表示默认的全匹配备选项，即没有找到其他匹配时的匹配项，类似 switch 中的 default。
+
+## 17.1 使用样例类
+
+> [Scala学习笔记--提取器unapply](https://www.cnblogs.com/gnivor/p/4267347.html)
+
+**使用了case关键字的类定义就是就是样例类(case classes)，样例类是种特殊的类，经过优化以用于模式匹配**。
+
+以下是样例类的简单实例:
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val alice = new Person("Alice", 25)
+    val bob = new Person("Bob", 32)
+    val charlie = new Person("Charlie", 32)
+
+    for (person <- List(alice, bob, charlie)) {
+      person match {
+        case Person("Alice", 25) => println("Hi Alice!")
+        case Person("Bob", 32) => println("Hi Bob!")
+        case Person(name, age) =>
+        println("Age: " + age + " year, name: " + name + "?")
+      }
+    }
+  }
+  // 样例类
+  case class Person(name: String, age: Int)
+}
+```
+
+执行以上代码，输出结果为：
+
+```
+$ scalac Test.scala 
+$ scala Test
+Hi Alice!
+Hi Bob!
+Age: 32 year, name: Charlie?
+```
+
+在声明样例类时，下面的过程自动发生了：
+
+- **构造器的每个参数都成为val，除非显式被声明为var，但是并不推荐这么做**；
+- **在伴生对象中提供了apply方法，所以可以不使用new关键字就可构建对象**；
+- **提供unapply方法使模式匹配可以工作**；
+- **生成toString、equals、hashCode和copy方法，除非显示给出这些方法的定义**。
+
+> 还有几种模式匹配:
+>
+> ```scala
+> case 0 | "" => false    //在0或空字符串的情况下,返回false
+> case 2 | 4 | 6 | 8 | 10 => println("偶数")     //在10及以下的偶数,返回"偶数"
+> case x if x == 2 || x == 3 => println("two's company, three's a crowd")    //在模式匹配中使用if
+> ```
+
+# 18. Scala 正则表达式
+
+Scala 通过 scala.util.matching 包中的 **Regex** 类来支持正则表达式。以下实例演示了使用正则表达式查找单词 **Scala** :
+
+```scala
+import scala.util.matching.Regex
+
+object Test {
+  def main(args: Array[String]) {
+    val pattern = "Scala".r
+    val str = "Scala is Scalable and cool"
+
+    println(pattern findFirstIn str)
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+Some(Scala)
+```
+
+实例中使用 String 类的 r() 方法构造了一个Regex对象。
+
+然后使用 findFirstIn 方法找到首个匹配项。
+
+如果需要查看所有的匹配项可以使用 findAllIn 方法。
+
+你可以使用 mkString( ) 方法来连接正则表达式匹配结果的字符串，并可以使用**管道(|)**来设置不同的模式：
+
+```scala
+import scala.util.matching.Regex
+
+object Test {
+  def main(args: Array[String]) {
+    val pattern = new Regex("(S|s)cala")  // 首字母可以是大写 S 或小写 s
+    val str = "Scala is scalable and cool"
+
+    println((pattern findAllIn str).mkString(","))   // 使用逗号 , 连接返回结果
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```
+$ scalac Test.scala 
+$ scala Test
+Scala,scala
+```
+
+如果你需要将匹配的文本替换为指定的关键词，可以使用 **replaceFirstIn( )** 方法来替换第一个匹配项，使用 **replaceAllIn( )** 方法替换所有匹配项，实例如下:
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+    val pattern = "(S|s)cala".r
+    val str = "Scala is scalable and cool"
+
+    println(pattern replaceFirstIn(str, "Java"))
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+Java is scalable and cool
+```
+
+## 18.1 正则表达式
+
+Scala 的正则表达式继承了 Java 的语法规则，Java 则大部分使用了 Perl 语言的规则。
+
+下表我们给出了常用的一些正则表达式规则：
+
+| 表达式    | 匹配规则                                                     |
+| :-------- | :----------------------------------------------------------- |
+| ^         | 匹配输入字符串开始的位置。                                   |
+| $         | 匹配输入字符串结尾的位置。                                   |
+| .         | 匹配除"\r\n"之外的任何单个字符。                             |
+| [...]     | 字符集。匹配包含的任一字符。例如，"[abc]"匹配"plain"中的"a"。 |
+| [^...]    | 反向字符集。匹配未包含的任何字符。例如，"[^abc]"匹配"plain"中"p"，"l"，"i"，"n"。 |
+| \\A       | 匹配输入字符串开始的位置（无多行支持）                       |
+| \\z       | 字符串结尾(类似$，但不受处理多行选项的影响)                  |
+| \\Z       | 字符串结尾或行尾(不受处理多行选项的影响)                     |
+| re*       | 重复零次或更多次                                             |
+| re+       | 重复一次或更多次                                             |
+| re?       | 重复零次或一次                                               |
+| re{ n}    | 重复n次                                                      |
+| re{ n,}   |                                                              |
+| re{ n, m} | 重复n到m次                                                   |
+| a\|b      | 匹配 a 或者 b                                                |
+| (re)      | 匹配 re,并捕获文本到自动命名的组里                           |
+| (?: re)   | 匹配 re,不捕获匹配的文本，也不给此分组分配组号               |
+| (?> re)   | 贪婪子表达式                                                 |
+| \\w       | 匹配字母或数字或下划线或汉字                                 |
+| \\W       | 匹配任意不是字母，数字，下划线，汉字的字符                   |
+| \\s       | 匹配任意的空白符,相等于 [\t\n\r\f]                           |
+| \\S       | 匹配任意不是空白符的字符                                     |
+| \\d       | 匹配数字，类似 [0-9]                                         |
+| \\D       | 匹配任意非数字的字符                                         |
+| \\G       | 当前搜索的开头                                               |
+| \\n       | 换行符                                                       |
+| \\b       | 通常是单词分界位置，但如果在字符类里使用代表退格             |
+| \\B       | 匹配不是单词开头或结束的位置                                 |
+| \\t       | 制表符                                                       |
+| \\Q       | 开始引号：**\Q(a+b)\*3\E** 可匹配文本 "(a+b)*3"。            |
+| \\E       | 结束引号：**\Q(a+b)\*3\E** 可匹配文本 "(a+b)*3"。            |
+
+## 18.2 正则表达式实例
+
+| 实例            | 描述                                           |
+| :-------------- | :--------------------------------------------- |
+| .               | 匹配除"\r\n"之外的任何单个字符。               |
+| [Rr]uby         | 匹配 "Ruby" 或 "ruby"                          |
+| rub[ye]         | 匹配 "ruby" 或 "rube"                          |
+| [aeiou]         | 匹配小写字母 ：aeiou                           |
+| [0-9]           | 匹配任何数字，类似 [0123456789]                |
+| [a-z]           | 匹配任何 ASCII 小写字母                        |
+| [A-Z]           | 匹配任何 ASCII 大写字母                        |
+| [a-zA-Z0-9]     | 匹配数字，大小写字母                           |
+| [^aeiou]        | 匹配除了 aeiou 其他字符                        |
+| [^0-9]          | 匹配除了数字的其他字符                         |
+| \\d             | 匹配数字，类似: [0-9]                          |
+| \\D             | 匹配非数字，类似: \[^0-9]                      |
+| \\s             | 匹配空格，类似: [ \t\r\n\f]                    |
+| \\S             | 匹配非空格，类似: \[^ \t\r\n\f]                |
+| \\w             | 匹配字母，数字，下划线，类似: [A-Za-z0-9_]     |
+| \\W             | 匹配非字母，数字，下划线，类似: \[^A-Za-z0-9_] |
+| ruby?           | 匹配 "rub" 或 "ruby": y 是可选的               |
+| ruby*           | 匹配 "rub" 加上 0 个或多个的 y。               |
+| ruby+           | 匹配 "rub" 加上 1 个或多个的 y。               |
+| \\d{3}          | 刚好匹配 3 个数字。                            |
+| \\d{3,}         | 匹配 3 个或多个数字。                          |
+| \\d{3,5}        | 匹配 3 个、4 个或 5 个数字。                   |
+| \\D\\d+         | 无分组： + 重复 \d                             |
+| (\\D\\d)+/      | 分组： + 重复 \D\d 对                          |
+| ([Rr]uby(, )?)+ | 匹配 "Ruby"、"Ruby, ruby, ruby"，等等          |
+
+注意上表中的每个字符使用了两个反斜线。这是因为在 Java 和 Scala 中字符串中的反斜线是转义字符。所以如果你要输出 **\\**，你需要在字符串中写成 **\\\\** 来获取一个反斜线。查看以下实例：
+
+```scala
+import scala.util.matching.Regex
+
+object Test {
+  def main(args: Array[String]) {
+    val pattern = new Regex("abl[ae]\\d+")
+    val str = "ablaw is able1 and cool"
+
+    println((pattern findAllIn str).mkString(","))
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+able1
+```
+
+# 19. Scala 异常处理
+
