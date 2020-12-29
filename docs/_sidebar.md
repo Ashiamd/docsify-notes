@@ -5,6 +5,7 @@
     * [**Vue**](/study/Vue/README)
     * [**Java**](/study/Java/README)
     * [**Python**](/study/Python/README)
+    * [**Scala**](/study/Scala/README.md)
     * [**SpringBoot**](/study/SpringBoot/README)
     * [**SpringCloud**](/study/SpringCloud/README)
     * [**MQ**](/study/MQ/README)

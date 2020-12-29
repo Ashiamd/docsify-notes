@@ -5056,6 +5056,8 @@ Exiting finally...
 
 # 20. Scala 提取器(Extractor)
 
+> [Scala学习笔记--提取器unapply](https://www.cnblogs.com/gnivor/p/4267347.html)
+
 提取器是从传递给它的对象中提取出构造该对象的参数。
 
 Scala 标准库包含了一些预定义的提取器，我们会大致的了解一下它们。
@@ -5112,6 +5114,26 @@ unapply方法算是apply方法的反向操作：unapply接受一个对象，然�
 unapply("Zara@gmail.com") 相等于 Some("Zara", "gmail.com")
 unapply("Zara Ali") 相等于 None
 ```
+
+> 相当把参数传给unapply方法执行，然后再把结果复制给对应伴生对象中object的形参。
+>
+> ```scala
+> object Square {
+>   def unapply(z: Double): Option[Double] = Some(math.sqrt(z))
+> }
+> 
+> val number: Double = 36.0
+> number match {
+>   case Square(n) => println(s"square root of $number is $n")
+>   case _ => println("nothing matched")
+> }
+> ```
+>
+> 当我们写下这段pattern match的代码时，编译器其实替我们做了好几件事：
+>
+> 1. 调用unapply，传入number
+> 2. 接收返回值并判断返回值是None，还是Some
+> 3. 如果是Some，则将其解开，并将其中的值赋值给n（就是case Square(n)中的n）
 
 ## 20.1 提取器使用模式匹配
 
