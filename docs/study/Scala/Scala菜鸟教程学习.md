@@ -4969,3 +4969,261 @@ able1
 
 # 19. Scala 异常处理
 
+Scala 的异常处理和其它语言比如 Java 类似。
+
+Scala 的方法可以通过抛出异常的方法的方式来终止相关代码的运行，不必通过返回值。
+
+## 19.1 抛出异常
+
+Scala 抛出异常的方法和 Java一样，使用 throw 方法，例如，抛出一个新的参数异常：
+
+```scala
+throw new IllegalArgumentException
+```
+
+## 19.2 捕获异常
+
+异常捕捉的机制与其他语言中一样，如果有异常发生，catch 字句是按次序捕捉的。因此，在 catch 字句中，越具体的异常越要靠前，越普遍的异常越靠后。 如果抛出的异常不在 catch 字句中，该异常则无法处理，会被升级到调用者处。
+
+捕捉异常的 catch 子句，语法与其他语言中不太一样。在 Scala 里，借用了模式匹配的思想来做异常的匹配，因此，在 catch 的代码里，是一系列 case 字句，如下例所示：
+
+```scala
+import java.io.FileReader
+import java.io.FileNotFoundException
+import java.io.IOException
+
+object Test {
+  def main(args: Array[String]) {
+    try {
+      val f = new FileReader("input.txt")
+    } catch {
+      case ex: FileNotFoundException =>{
+        println("Missing file exception")
+      }
+      case ex: IOException => {
+        println("IO Exception")
+      }
+    }
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+Missing file exception
+```
+
+catch字句里的内容跟match里的case是完全一样的。由于异常捕捉是按次序，如果最普遍的异常，Throwable，写在最前面，则在它后面的case都捕捉不到，因此需要将它写在最后面。
+
+## 19.3 finally 语句
+
+finally 语句用于执行不管是正常处理还是有异常发生时都需要执行的步骤，实例如下：
+
+```scala
+import java.io.FileReader
+import java.io.FileNotFoundException
+import java.io.IOException
+
+object Test {
+  def main(args: Array[String]) {
+    try {
+      val f = new FileReader("input.txt")
+    } catch {
+      case ex: FileNotFoundException => {
+        println("Missing file exception")
+      }
+      case ex: IOException => {
+        println("IO Exception")
+      }
+    } finally {
+      println("Exiting finally...")
+    }
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+Missing file exception
+Exiting finally...
+```
+
+# 20. Scala 提取器(Extractor)
+
+提取器是从传递给它的对象中提取出构造该对象的参数。
+
+Scala 标准库包含了一些预定义的提取器，我们会大致的了解一下它们。
+
+**Scala 提取器是一个带有unapply方法的对象**。
+
+unapply方法算是apply方法的反向操作：unapply接受一个对象，然后从对象中提取值，提取的值通常是用来构造该对象的值。
+
+以下实例演示了邮件地址的提取器对象：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+
+    println ("Apply 方法 : " + apply("Zara", "gmail.com"));
+    println ("Unapply 方法 : " + unapply("Zara@gmail.com"));
+    println ("Unapply 方法 : " + unapply("Zara Ali"));
+
+  }
+  // 注入方法 (可选)
+  def apply(user: String, domain: String) = {
+    user +"@"+ domain
+  }
+
+  // 提取方法（必选）
+  def unapply(str: String): Option[(String, String)] = {
+    val parts = str split "@"
+    if (parts.length == 2){
+      Some(parts(0), parts(1))
+    }else{
+      None
+    }
+  }
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+Apply 方法 : Zara@gmail.com
+Unapply 方法 : Some((Zara,gmail.com))
+Unapply 方法 : None
+```
+
+以上对象定义了两个方法： **apply** 和 **unapply** 方法。通过 apply 方法我们无需使用 new 操作就可以创建对象。所以你可以通过语句 Test("Zara", "gmail.com") 来构造一个字符串 "Zara@gmail.com"。
+
+unapply方法算是apply方法的反向操作：unapply接受一个对象，然后从对象中提取值，提取的值通常是用来构造该对象的值。实例中我们使用 Unapply 方法从对象中提取用户名和邮件地址的后缀。
+
+实例中 unapply 方法在传入的字符串不是邮箱地址时返回 None。代码演示如下：
+
+```shell
+unapply("Zara@gmail.com") 相等于 Some("Zara", "gmail.com")
+unapply("Zara Ali") 相等于 None
+```
+
+## 20.1 提取器使用模式匹配
+
+在我们实例化一个类的时，可以带上0个或者多个的参数，**编译器在实例化的时会调用 apply 方法**。我们可以在类和对象中都定义 apply 方法。
+
+就像我们之前提到过的，unapply 用于提取我们指定查找的值，它与 apply 的操作相反。 当我们在提取器对象中使用 match 语句是，unapply 将自动执行，如下所示：
+
+```scala
+object Test {
+  def main(args: Array[String]) {
+
+    val x = Test(5)
+    println(x)
+
+    x match
+    {
+      case Test(num) => println(x + " 是 " + num + " 的两倍！")
+      //unapply 被调用
+      case _ => println("无法计算")
+    }
+
+  }
+  def apply(x: Int) = x*2
+  def unapply(z: Int): Option[Int] = if (z%2==0) Some(z/2) else None
+}
+```
+
+执行以上代码，输出结果为：
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+10
+10 是 5 的两倍！
+```
+
+# 21. Scala 文件 I/O
+
+Scala 进行文件写操作，直接用的都是 java中 的 I/O 类 （**java.io.File**)：
+
+```scala
+import java.io._
+
+object Test {
+  def main(args: Array[String]) {
+    val writer = new PrintWriter(new File("test.txt" ))
+
+    writer.write("菜鸟教程")
+    writer.close()
+  }
+}
+```
+
+执行以上代码，会在你的当前目录下生产一个 test.txt 文件，文件内容为"菜鸟教程":
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+$ cat test.txt 
+菜鸟教程
+```
+
+## 21.1 从屏幕上读取用户输入
+
+有时候我们需要接收用户在屏幕输入的指令来处理程序。实例如下：
+
+```scala
+import scala.io._
+object Test {
+  def main(args: Array[String]) {
+    print("请输入菜鸟教程官网 : " )
+    val line = StdIn.readLine()
+
+    println("谢谢，你输入的是: " + line)
+  }
+}
+```
+
+> *Scala2.11 后的版本* **Console.readLine** *已废弃，使用* **scala.io.StdIn.readLine()** *方法代替。*
+
+执行以上代码，屏幕上会显示如下信息:
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+请输入菜鸟教程官网 : www.runoob.com
+谢谢，你输入的是: www.runoob.com
+```
+
+## 21.2 从文件上读取内容
+
+从文件读取内容非常简单。我们可以使用 Scala 的 **Source** 类及伴生对象来读取文件。以下实例演示了从 "test.txt"(之前已创建过) 文件中读取内容:
+
+```scala
+import scala.io.Source
+
+object Test {
+  def main(args: Array[String]) {
+    println("文件内容为:" )
+
+    Source.fromFile("test.txt" ).foreach{
+      print
+    }
+  }
+}
+```
+
+执行以上代码，输出结果为:
+
+```shell
+$ scalac Test.scala 
+$ scala Test
+文件内容为:
+菜鸟教程
+```
