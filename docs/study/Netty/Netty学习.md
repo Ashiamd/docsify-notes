@@ -602,3 +602,6 @@ public class ByteBufTest {
 
 ## 9. select、poll、epoll
 
+> [select、poll、epoll之间的区别(搜狗面试)](https://www.cnblogs.com/aspirant/p/9166944.html)
+>
+> [Linux IO模式及 select、poll、epoll详解](https://segmentfault.com/a/1190000003063859)
