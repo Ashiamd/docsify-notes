@@ -228,7 +228,7 @@ YARN（cluster resource management）
 + 名称节点（NameNode）
 + 数据节点（DataNode）
 
-#### 9.1.2.1 块
+#### 1. 块
 
 HDFS的文件被分成块进行存储，块是文件存储处理的逻辑单元
 
@@ -236,7 +236,7 @@ HDFS的文件被分成块进行存储，块是文件存储处理的逻辑单元
 + 简化系统设计：简化了存储管理、方便元数据的管理
 + **适合数据备份**：每个文件块都可以冗余存储到多个节点上，大大提高了系统的容错性和可用性
 
-#### 9.1.2.2 节点
+#### 2. 节点
 
 + NameNode
   + 存储元数据
@@ -247,12 +247,232 @@ HDFS的文件被分成块进行存储，块是文件存储处理的逻辑单元
   + 文件内容保存在**磁盘**
   + **维护了block id到datanode本地文件的映射关系**
 
----
+##### NameNode
 
 ​	NameNode：负责管理分布式文件系统的命名空间（NameSpace），保存了两个核心的数据结构，即FsImage和EditLog。
 
-+ FsImage用于维护文件系统树以及文件树中所有的文件和文件夹的元数据
-+ EditLog操作日志文件记录了所有针对文件的创建、删除、重命名等操作
++ **FsImage用于维护文件系统树以及文件树中所有的文件和文件夹的元数据**
++ **EditLog操作日志文件记录了所有针对文件的创建、删除、重命名等操作**
 
-​	名称节点记录了每个文件中各个块所在的数据节点的位置信息
+​	**名称节点记录了每个文件中各个块所在的数据节点的位置信息**。
+
+---
+
+​	名称节点运行期间EditLog不断变大的问题：
+
+​	运行时，所有对HDFS的更新操作，都会记录懂啊EditLog，导致EditLog不断变大。当重启HDFS时，FsImage的所有内容会首先加载到内存中，之后再执行EditLog。由于EditLog十分庞大，会导致整个重启过程十分缓慢。
+
+​	解决方案：SecondaryNameNode第二名称节点
+
+##### SecondaryNameNode
+
+> [Hadoop学习之SecondaryNameNode](https://www.cnblogs.com/zlingh/p/3986786.html)
+
+​	SecondaryNameNode第二名称节点是HDFS架构中的一个组成部分，用来**保存名称节点对HDFS元数据信息的备份，并减少名称节点重启的时间**。
+
+​	SecondaryNameNode一般单独运行在一台机器上。
+
+工作流程如下：
+
+- SecondaryNameNode节点通知NameNode节点生成新的日志文件，以后的日志都写到新的日志文件中。
+- SecondaryNameNode节点用http get从NameNode节点获得fsimage文件及旧的日志文件。
+- SecondaryNameNode节点将fsimage文件加载到内存中，并执行日志文件中的操作，然后生成新的fsimage文件。
+- SecondaryNameNode节点将新的fsimage文件用http post传回NameNode节点上。
+- NameNode节点可以将旧的fsimage文件及旧的日志文件，换为新的fsimage文件和新的日志文件(第一步生成的)，然后更新fstime文件，写入此次checkpoint的时间。
+- 这样NameNode节点中的fsimage文件保存了最新的checkpoint的元数据信息，日志文件也重新开始，不会变的很大了。
+
+流程图如下所示：
+
+![wKiom1OSgRaDTnQyAAHtiGS9Pvg733.jpg](http://s3.51cto.com/wyfs02/M00/2D/0F/wKiom1OSgRaDTnQyAAHtiGS9Pvg733.jpg)
+
+##### DataNode
+
+DataNode是HDFS的工作节点，存放数据块
+
+数据节点（DataNode）
+
++ 数据节点是分布式文件系统HDFS的工作节点，负责数据的存储和读取，会根据客户端或者是名称节点的调度来进行**数据的存储和检索**，并且**向名称节点定期发送自己所存储的块的列表**
++ 每个数据节点中的数据会被保存在各自节点的本地Linux文件系统中
+
+### 9.1.2 HDFS体系结构
+
+> [Hadoop分布式文件系统：架构和设计](https://hadoop.apache.org/docs/r1.0.4/cn/hdfs_design.html)
+
+HDFS采用master/slave架构。一个HDFS集群是由一个Namenode和一定数目的Datanodes组成。Namenode是一个中心服务器，负责管理文件系统的名字空间(namespace)以及客户端对文件的访问。集群中的Datanode一般是一个节点一个，负责管理它所在节点上的存储。
+
+HDFS暴露了文件系统的名字空间，用户能够以文件的形式在上面存储数据。从内部看，一个文件其实被分成一个或多个数据块，这些块存储在一组Datanode上。
+
++ Namenode执行文件系统的名字空间操作，比如打开、关闭、重命名文件或目录。它也负责确定数据块到具体Datanode节点的映射。
+
++ Datanode负责处理文件系统客户端的读写请求。在Namenode的统一调度下进行数据块的创建、删除和复制。
+
+![HDFS 架构](https://hadoop.apache.org/docs/r1.0.4/cn/images/hdfsarchitecture.gif)
+
+## 9.2 HDFS数据处理原理
+
+**HDFS要实现的目标**
+
++ 兼容廉价的硬件设备
++ 流数据读写
++ 大数据集
++ 简单的文件模型
++ 强大的跨平台兼容性
+
+**HDFS局限性**
+
++ 不适合低延迟数据访问
++ 无法高效存储大量小文件
++ 不支持多用户写入及任意修改文件
+
+### 9.2.1 HDFS数据处理
+
+#### 1. HDFS存储原理：冗余数据保存
+
+> [Hadoop分布式文件系统：架构和设计](https://hadoop.apache.org/docs/r1.0.4/cn/hdfs_design.html)
+
+​	作为一个分布式文件系统，为了保证系统的容错性和可用性，HDFS采用了多副本方式对数据进行冗余存储，**通常一个数据块的多个副本会被分布到不同的数据节点上**。
+
++ 加快数据传输速度
++ 容易检查数据错误
++ **保证数据可靠性**
+
+​	Namenode全权管理数据块的复制，它周期性地从集群中的每个Datanode接收心跳信号和块状态报告(Blockreport)。接收到心跳信号意味着该Datanode节点工作正常。块状态报告包含了一个该Datanode上所有数据块的列表。
+
+![HDFS Datanodes](https://hadoop.apache.org/docs/r1.0.4/cn/images/hdfsdatanodes.gif)
+
+#### 2. HDFS数据存放规则
+
++ 第一个副本：放置在**上传文件的数据节点**；如果是集群外提交，则随机挑选一台磁盘不太满、CPU不太忙的节点
++ 第二个副本：放置在与第一个副本**不同的机架的节点**上
++ 第三个副本：与第一个副本**相同机架的其他节点**上
++ 更多副本：随机节点
+
+> [Hadoop分布式文件系统：架构和设计](https://hadoop.apache.org/docs/r1.0.4/cn/hdfs_design.html)
+>
+> 大型HDFS实例一般运行在跨越多个机架的计算机组成的集群上，不同机架上的两台机器之间的通讯需要经过交换机。在大多数情况下，同一个机架内的两台机器间的带宽会比不同机架的两台机器间的带宽大。
+>
+> 通过一个[机架感知](https://hadoop.apache.org/docs/r1.0.4/cn/cluster_setup.html#Hadoop的机架感知)的过程，Namenode可以确定每个Datanode所属的机架id。一个简单但没有优化的策略就是将副本存放在不同的机架上。这样可以有效防止当整个机架失效时数据的丢失，并且允许读数据的时候充分利用多个机架的带宽。这种策略设置可以将副本均匀分布在集群中，有利于当组件失效情况下的负载均衡。但是，因为这种策略的一个写操作需要传输数据块到多个机架，这增加了写的代价。
+>
+> 在大多数情况下，副本系数是3，HDFS的存放策略是将一个副本存放在**本地机架的节点**上，一个副本放在**同一机架的另一个节点**上，最后一个副本放在**不同机架的节点**上。这种策略减少了机架间的数据传输，这就提高了写操作的效率。
+>
+> 机架的错误远远比节点的错误少，所以这个策略不会影响到数据的可靠性和可用性。于此同时，因为数据块只放在两个（不是三个）不同的机架上，所以此策略减少了读取数据时需要的网络传输总带宽。
+>
+> 在这种策略下，副本并不是均匀分布在不同的机架上。三分之一的副本在一个节点上，三分之二的副本在一个机架上，其他副本均匀分布在剩下的机架中，这一策略在不损害数据可靠性和读取性能的情况下改进了写的性能。
+
+#### 3. HDFS数据读取
+
+1. 客户端请求向NameNode读取元数据
+2. NameNode查看不同数据块不同副本的存放位置列表（列表中包含副本所在节点）
+3. NameNode调用API来确定客户端和DataNode所属机架ID，返回离客户端最近的数据块元数据
+4. 客户端根据元数据从指定DataNode读取数据
+
+> [Hadoop分布式文件系统：架构和设计](https://hadoop.apache.org/docs/r1.0.4/cn/hdfs_design.html)
+>
+> 为了降低整体的带宽消耗和读取延时，HDFS会尽量让读取程序读取离它最近的副本。如果在读取程序的同一个机架上有一个副本，那么就读取该副本。如果一个HDFS集群跨越多个数据中心，那么客户端也将首先读本地数据中心的副本。
+
+#### 4. 数据错误与恢复
+
+​	HDFS具有较高的容错性，可以兼容廉价的硬件，它把硬件出错看作一种常态，而不是异常，并设计了检测数据错误和进行自动恢复的机制。主要包括以下几种情形：名称节点出错、数据节点出错和数据出错。
+
++ 名称节点出错
+
+  NameNode出错，还有SecondaryNameNode提供的备份。
+
++ 数据节点出错
+
+  每个DataNode会定期向名称节点发送"心跳"信息，向NameNode报告自己的状态。
+
+  当某个DataNode出错，NameNode不会再给它们发送任何I/O请求。
+
+  由于有DataNode出错，意味着某些数据的副本数量将小于冗余因子（默认是3），就会启动数据冗余复制，为缺失副本的数据生成新的副本。
+
+  > **HDFS和其他分布式文件系统的最大区别就是可以调整冗余数据的位置**
+
++ 数据出错
+
+  + 网络传输和磁盘错误等因素，都会造成数据错误
+  + 客户端在读取到数据后，会采用md5和sha1对数据进行校验，以确定读取到正确的数据
+
+  1. 在文件被创建时，客户端就会对每一个文件块进行信息摘录，并把这些信息写入到同一个路径的隐藏文件里面
+  2. 请求到一个数据节点读取该数据块，并且向名称节点报告这个文件块有错误，名称节点会定期检查并且重新复制这个块
+
+### 9.2.2 小结
+
+1. HDFS的架构和相关概念
+   + 块
+   + NameNode
+   + SecondaryNameNode
+2. 数据存储和备份原理
+   + 冗余备份
+   + 名称节点、数据节点、数据恢复
+
+## 9.3 HDFS的Java-API
+
++ HDFS文件操作
++ HDFS查看文件信息
+
++ HDFS压缩和解压缩文件
++ ...
+
+## 9.4 HDFS数据读写过程
+
++ FileSystem
+
+  是一个通用文件系统的抽象基类，可以被分布式文件系统继承，所有可能使用Hadoop文件系统的代码，都要使用这个类，Hadoop为FileSystem这个抽象类提供了多种具体实现
+
++ DistributedFileSystem
+
+  是FileSystem在HDFS文件系统中的具体实现
+
++ FileSystem的open()方法
+
+  + 返回的是一个输入流FSDataInputStream对象，在HDFS文件系统中，具体的输入流就是DFSInputStream
+
++ FileSystem中的create()方法
+
+  返回的是一个输出流FSDataOutputStream对象，在HDFS文件系统中，具体的输出流就是DFSOutputStream
+
+### 数据读写过程基本代码
+
+```java
+Configuration conf = new Configuration();
+FileSystem fs = FileSystem.get(conf);
+FSDataInputStream in = fs.open(new Path(uri));
+FSDataOutputStream out = fs.create(new Path(uri));
+```
+
+​	备注：创建一个Configuration对象时，其构造方法会默认加载工程项目下两个配置文件，分别是`hdfs-site.xml`以及`core-site.xml`，这两个文件中会有访问HDFS所需的参数值，主要是`fs.defaultFS`，指定了HDFS的地址（比如`hdfs://localhost:9000`），有了这个地址客户端就可以通过这个地址访问HDFS了
+
+### HDFS读写数据
+
+> [HDFS读写数据流程](https://www.cnblogs.com/Java-Script/p/11090379.html)	<=	下面内容出自该博客
+
+#### 读数据
+
+　1. 与NameNode通信查询元数据，找到文件块所在的DataNode服务器
+ 　2. 挑选一台DataNode（网络拓扑上的就近原则，如果都一样，则随机挑选一台DataNode）服务器，请求建立socket流
+ 　3. DataNode开始发送数据(从磁盘里面读取数据放入流，以packet（一个packet为64kb）为单位来做校验)
+ 　4. 客户端以packet为单位接收，先在本地缓存，然后写入目标文件
+
+![img](https://segmentfault.com/img/remote/1460000013767517?w=999&h=709)
+
+#### 写数据
+
+1. 跟NameNode通信请求上传文件，NameNode检查目标文件是否已经存在，父目录是否已经存在
+
+2. NameNode返回是否可以上传
+
+3. Client先对文件进行切分，请求第一个block该传输到哪些DataNode服务器上
+
+4. NameNode返回3个DataNode服务器DataNode 1，DataNode 2，DataNode 3
+
+5. Client请求3台中的一台DataNode 1(网络拓扑上的就近原则，如果都一样，则随机挑选一台DataNode)上传数据（本质上是一个RPC调用，建立pipeline）,DataNode 1收到请求会继续调用DataNode 2,然后DataNode 2调用DataNode 3，将整个pipeline建立完成，然后逐级返回客户端
+
+6. Client开始往DataNode 1上传第一个block（先从磁盘读取数据放到一个本地内存缓存），以packet为单位。写入的时候DataNode会进行数据校验，它并不是通过一个packet进行一次校验而是以chunk为单位进行校验（512byte）。DataNode 1收到一个packet就会传给DataNode 2，DataNode 2传给DataNode 3，DataNode 1每传一个packet会放入一个应答队列等待应答
+
+7. 当一个block传输完成之后，Client再次请求NameNode上传第二个block的服务器.
+
+![img](https://img2018.cnblogs.com/blog/699090/201906/699090-20190626155745864-1227676006.png)
+
+# 10. HDFS JAVA API-实操
 
