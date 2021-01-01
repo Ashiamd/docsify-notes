@@ -714,7 +714,7 @@ TaskTracker：任务跟踪器，负责任务管理(启动任务，杀死任务�
   }
   ```
 
-​	map输出的<key,value>先要经过shuffle过程把相同key值的所有value聚集起来形成<key,values>后交给reduce端。reduce端接收到<key,values>之后，将输入的key直接复制给输出的key,用for循环遍历values并求和，求和结果就是key值代表的单词出现的总次，将其设置为value，直接输出<key,value>。
+​	**map输出的<key,value>先要经过shuffle过程把相同key值的所有value聚集起来形成<key,values>后交给reduce端**。reduce端接收到<key,values>之后，将输入的key直接复制给输出的key,用for循环遍历values并求和，求和结果就是key值代表的单词出现的总次，将其设置为value，直接输出<key,value>。
 
 ---
 
@@ -773,4 +773,337 @@ public class WordCount {
   }  
 } 
 ```
+
+# 17. MapReduce统计—求平均值
+
+​	求平均值是MapReduce比较常见的算法，求平均数的算法思路：
+
+​	Map端读取数据，在数据输入到Reduce之前先经过shuffle，将map函数输出的key值相同的所有value值形成一个集合value-list，然后将输入到Reduce端，Reduce端汇总并且统计记录数，然后作商即可。
+
+# 18. MapReduce统计—求平均值-实操
+
+## 18.1 相关知识
+
+求平均数是MapReduce比较常见的算法，求平均数的算法也比较简单，一种思路是Map端读取数据，在数据输入到Reduce之前先经过shuffle，将map函数输出的key值相同的所有的value值形成一个集合value-list，然后将输入到Reduce端，Reduce端汇总并且统计记录数，然后作商即可。具体原理如下图所示：
+
+[![img](https://www.ipieuvre.com/doc/exper/1e3fa46d-91ad-11e9-beeb-00215ec892f4/img/01.png)](https://www.ipieuvre.com/doc/exper/1e3fa46d-91ad-11e9-beeb-00215ec892f4/img/01.png)
+
+## 18.2 编写思路
+
++ Mapper代码
+
+  ```java
+  public static class Map extends Mapper<Object , Text , Text , IntWritable>{  
+    private static Text newKey=new Text();  
+    //实现map函数  
+    public void map(Object key,Text value,Context context) throws IOException, InterruptedException{  
+      // 将输入的纯文本文件的数据转化成String  
+      String line=value.toString();  
+      System.out.println(line);  
+      String arr[]=line.split("\t");  
+      newKey.set(arr[0]);  
+      int click=Integer.parseInt(arr[1]);  
+      context.write(newKey, new IntWritable(click));  
+    }  
+  }
+  ```
+
+  map端在采用Hadoop的默认输入方式之后，将输入的value值通过split()方法截取出来，我们把截取的商品点击次数字段转化为IntWritable类型并将其设置为value，把商品分类字段设置为key,然后直接输出key/value的值。
+
++ Reducer代码
+
+  ```java
+  public static class Reduce extends Reducer<Text, IntWritable, Text, IntWritable>{  
+    //实现reduce函数  
+    public void reduce(Text key,Iterable<IntWritable> values,Context context) throws IOException, InterruptedException{  
+      int num=0;  
+      int count=0;  
+      for(IntWritable val:values){  
+        num+=val.get(); //每个元素求和num  
+        count++;        //统计元素的次数count  
+      }  
+      int avg=num/count;  //计算平均数  
+  
+      context.write(key,new IntWritable(avg));  
+    }  
+  }  
+  ```
+
+  map的输出<key,value>经过shuffle过程集成<key,values>键值对，然后将<key,values>键值对交给reduce。reduce端接收到values之后，将输入的key直接复制给输出的key，将values通过for循环把里面的每个元素求和num并统计元素的次数count，然后用num除以count 得到平均值avg，将avg设置为value，最后直接输出<key,value>就可以了。
+
++ 完整代码
+
+  ```java
+  package mapreduce;  
+  import java.io.IOException;  
+  import org.apache.hadoop.conf.Configuration;  
+  import org.apache.hadoop.fs.Path;  
+  import org.apache.hadoop.io.IntWritable;  
+  import org.apache.hadoop.io.NullWritable;  
+  import org.apache.hadoop.io.Text;  
+  import org.apache.hadoop.mapreduce.Job;  
+  import org.apache.hadoop.mapreduce.Mapper;  
+  import org.apache.hadoop.mapreduce.Reducer;  
+  import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;  
+  import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;  
+  import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;  
+  import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;  
+  public class MyAverage{  
+    public static class Map extends Mapper<Object , Text , Text , IntWritable>{  
+      private static Text newKey=new Text();  
+      public void map(Object key,Text value,Context context) throws IOException, InterruptedException{  
+        String line=value.toString();  
+        System.out.println(line);  
+        String arr[]=line.split("\t");  
+        newKey.set(arr[0]);  
+        int click=Integer.parseInt(arr[1]);  
+        context.write(newKey, new IntWritable(click));  
+      }  
+    }  
+    public static class Reduce extends Reducer<Text, IntWritable, Text, IntWritable>{  
+      public void reduce(Text key,Iterable<IntWritable> values,Context context) throws IOException, InterruptedException{  
+        int num=0;  
+        int count=0;  
+        for(IntWritable val:values){  
+          num+=val.get();  
+          count++;  
+        }  
+        int avg=num/count;  
+        context.write(key,new IntWritable(avg));  
+      }  
+    }  
+    public static void main(String[] args) throws IOException, ClassNotFoundException, InterruptedException{  
+      Configuration conf=new Configuration();  
+      System.out.println("start");  
+      Job job =new Job(conf,"MyAverage");  
+      job.setJarByClass(MyAverage.class);  
+      job.setMapperClass(Map.class);  
+      job.setReducerClass(Reduce.class);  
+      job.setOutputKeyClass(Text.class);  
+      job.setOutputValueClass(IntWritable.class);  
+      job.setInputFormatClass(TextInputFormat.class);  
+      job.setOutputFormatClass(TextOutputFormat.class);  
+      Path in=new Path("hdfs://localhost:9000/mymapreduce4/in/goods_click");  
+      Path out=new Path("hdfs://localhost:9000/mymapreduce4/out");  
+      FileInputFormat.addInputPath(job,in);  
+      FileOutputFormat.setOutputPath(job,out);  
+      System.exit(job.waitForCompletion(true) ? 0 : 1);  
+  
+    }  
+  }
+  ```
+
+# 19. MapReduce统计—去重
+
+数据去重：主要是对数据进行有意义的筛选。统计大数据集上的数据种类个数，从网站日志中计算访问地等这些看似庞杂的任务都会涉及数据去重。最终目标是让原始数据中出现次数超过一次的数据在输出文件中只出现一次。
+
+# 20. MapReduce统计—去重-实操
+
+## 20.1 相关知识
+
+​	“数据去重”主要是为了掌握和利用并行化思想来对数据进行有意义的筛选。统计大数据集上的数据种类个数、从网站日志中计算访问地等这些看似庞杂的任务都会涉及数据去重。
+
+​	数据去重的最终目标是让原始数据中出现次数超过一次的数据在输出文件中只出现一次。在MapReduce流程中，map的输出<key,value>经过shuffle过程聚集成<key,value-list>后交给reduce。我们自然而然会想到将同一个数据的所有记录都交给一台reduce机器，无论这个数据出现多少次，只要在最终结果中输出一次就可以了。具体就是reduce的输入应该以数据作为key，而对value-list则没有要求（可以设置为空）。当reduce接收到一个<key,value-list>时就直接将输入的key复制到输出的key中，并将value设置成空值，然后输出<key,value>。
+
+MaprReduce去重流程如下图所示：
+
+[![img](https://www.ipieuvre.com/doc/exper/1e213b2a-91ad-11e9-beeb-00215ec892f4/img/01.png)](https://www.ipieuvre.com/doc/exper/1e213b2a-91ad-11e9-beeb-00215ec892f4/img/01.png)
+
+## 20.2 编写思路
+
+​	数据去重的目的是让原始数据中出现次数超过一次的数据在输出文件中只出现一次。我们自然想到将相同key值的所有value记录交到一台reduce机器，让其无论这个数据出现多少次，最终结果只输出一次。具体就是reduce的输出应该以数据作为key,而对value-list没有要求，当reduce接收到一个时，就直接将key复制到输出的key中，将value设置为空。
+
++ Map代码
+
+  ```java
+  public static class Map extends Mapper<Object , Text , Text , NullWritable>  
+    //map将输入中的value复制到输出数据的key上，并直接输出  
+  {  
+    private static Text newKey=new Text();      //从输入中得到的每行的数据的类型  
+    public void map(Object key,Text value,Context context) throws IOException, InterruptedException  
+      //实现map函数  
+    {             //获取并输出每一次的处理过程  
+      String line=value.toString();  
+      System.out.println(line);  
+      String arr[]=line.split("\t");  
+      newKey.set(arr[1]);  
+      context.write(newKey, NullWritable.get());  
+      System.out.println(newKey);  
+    }  
+  } 
+  ```
+
+  map阶段采用Hadoop的默认的作业输入方式，把输入的value用split()方法截取，截取出的商品id字段设置为key,设置value为空，然后直接输出<key,value>。
+
++ Reduce代码
+
+  ```java
+  public static class Reduce extends Reducer<Text, NullWritable, Text, NullWritable>{  
+    public void reduce(Text key,Iterable<NullWritable> values,Context context) throws IOException, InterruptedException  
+      //实现reduce函数  
+    {  
+      context.write(key,NullWritable.get());   //获取并输出每一次的处理过程  
+    }  
+  }  
+  ```
+
+  map输出的<key,value>键值对经过shuffle过程，聚成<key,value-list>后，会交给reduce函数。reduce函数,不管每个key 有多少个value，它直接将输入的值赋值给输出的key，将输出的value设置为空，然后输出<key,value>就可以了。
+
++ 完整代码
+
+  ```java
+  package mapreduce;  
+  import java.io.IOException;  
+  import org.apache.hadoop.conf.Configuration;  
+  import org.apache.hadoop.fs.Path;  
+  import org.apache.hadoop.io.IntWritable;  
+  import org.apache.hadoop.io.NullWritable;  
+  import org.apache.hadoop.io.Text;  
+  import org.apache.hadoop.mapreduce.Job;  
+  import org.apache.hadoop.mapreduce.Mapper;  
+  import org.apache.hadoop.mapreduce.Reducer;  
+  import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;  
+  import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;  
+  import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;  
+  import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;  
+  public class Filter{  
+    public static class Map extends Mapper<Object , Text , Text , NullWritable>{  
+      private static Text newKey=new Text();  
+      public void map(Object key,Text value,Context context) throws IOException, InterruptedException{  
+        String line=value.toString();  
+        System.out.println(line);  
+        String arr[]=line.split("\t");  
+        newKey.set(arr[1]);  
+        context.write(newKey, NullWritable.get());  
+        System.out.println(newKey);  
+      }  
+    }  
+    public static class Reduce extends Reducer<Text, NullWritable, Text, NullWritable>{  
+      public void reduce(Text key,Iterable<NullWritable> values,Context context) throws IOException, InterruptedException{  
+        context.write(key,NullWritable.get());  
+      }  
+    }  
+    public static void main(String[] args) throws IOException, ClassNotFoundException, InterruptedException{  
+      Configuration conf=new Configuration();  
+      System.out.println("start");  
+      Job job =new Job(conf,"filter");  
+      job.setJarByClass(Filter.class);  
+      job.setMapperClass(Map.class);  
+      job.setReducerClass(Reduce.class);  
+      job.setOutputKeyClass(Text.class);  
+      job.setOutputValueClass(NullWritable.class);  
+      job.setInputFormatClass(TextInputFormat.class);  
+      job.setOutputFormatClass(TextOutputFormat.class);  
+      Path in=new Path("hdfs://localhost:9000/mymapreduce2/in/buyer_favorite1");  
+      Path out=new Path("hdfs://localhost:9000/mymapreduce2/out");  
+      FileInputFormat.addInputPath(job,in);  
+      FileOutputFormat.setOutputPath(job,out);  
+      System.exit(job.waitForCompletion(true) ? 0 : 1);  
+    }  
+  }
+  ```
+
+# 21. MapReduce排序—自然排序
+
+​	在MapReduce过程中默认就有对数据的排序。它是按照key值进行排序的
+
++ 如果key为封装int的IntWriable类型，那么MapReduce会按照数字大小对key排序
++ 如果key为封装String的Text类型，那么MapReduce将按照数据字典顺序对字符排序
+
+MapReduce框架会确保每一个Reducer的输入都是按Key进行排序的。
+
+一般，将排序以及Map的输出传输到Reduce的过程称为混洗（shuffle）。
+
+Shuffle阶段的排序可以理解成两部分：
+
+1. 一个是对spill进行分区时，由于一个分区包含多个key值，所以要对分区内的<key,value>按照key进行排序，即key值相同的一串<key,value>存放在一起，这样一个partition内按照key值整体有序了
+2. 第二部分并不是排序，而是进行merge，merge有两次，一次是map端将多个spill按照分区和分区内的key进行merge，形成一个大的文件。第二次merge是在reduce端，进入同一个reduce的多个map的输出merge在一起
+
+## 21.1 MapReduce的Shuffle
+
+> [Hadoop学习之路（二十三）MapReduce中的shuffle详解](https://www.cnblogs.com/qingyunzong/p/8615024.html)	<=	以下内容出自该博客
+
+​	从Map输出到Reduce输入的整个过程可以广义地称为Shuffle。Shuffle横跨Map端和Reduce端，在Map端包括Spill过程，在Reduce端包括copy和sort过程，如图所示：
+
+![img](https://images2018.cnblogs.com/blog/1228818/201803/1228818-20180321083504916-1942630366.png)
+
+**Spill过程**
+
+Spill过程包括输出、排序、溢写、合并等步骤，如图所示：
+
+![img](https://images2018.cnblogs.com/blog/1228818/201803/1228818-20180321083605120-770489646.png)
+
+**Collect**
+
+每个Map任务不断地以对的形式把数据输出到在内存中构造的一个环形数据结构中。使用环形数据结构是为了更有效地使用内存空间，在内存中放置尽可能多的数据。
+
+这个数据结构其实就是个字节数组，叫Kvbuffer，名如其义，但是这里面不光放置了数据，还放置了一些索引数据，给放置索引数据的区域起了一个Kvmeta的别名，在Kvbuffer的一块区域上穿了一个IntBuffer（字节序采用的是平台自身的字节序）的马甲。数据区域和索引数据区域在Kvbuffer中是相邻不重叠的两个区域，用一个分界点来划分两者，分界点不是亘古不变的，而是每次Spill之后都会更新一次。初始的分界点是0，数据的存储方向是向上增长，索引数据的存储方向是向下增长，如图所示：
+
+![img](https://images2018.cnblogs.com/blog/1228818/201803/1228818-20180321083814970-49385953.png)
+
+Kvbuffer的存放指针bufindex是一直闷着头地向上增长，比如bufindex初始值为0，一个Int型的key写完之后，bufindex增长为4，一个Int型的value写完之后，bufindex增长为8。
+
+索引是对在kvbuffer中的索引，是个四元组，包括：value的起始位置、key的起始位置、partition值、value的长度，占用四个Int长度，Kvmeta的存放指针Kvindex每次都是向下跳四个“格子”，然后再向上一个格子一个格子地填充四元组的数据。比如Kvindex初始位置是-4，当第一个写完之后，(Kvindex+0)的位置存放value的起始位置、(Kvindex+1)的位置存放key的起始位置、(Kvindex+2)的位置存放partition的值、(Kvindex+3)的位置存放value的长度，然后Kvindex跳到-8位置，等第二个和索引写完之后，Kvindex跳到-32位置。
+
+Kvbuffer的大小虽然可以通过参数设置，但是总共就那么大，和索引不断地增加，加着加着，Kvbuffer总有不够用的那天，那怎么办？把数据从内存刷到磁盘上再接着往内存写数据，把Kvbuffer中的数据刷到磁盘上的过程就叫Spill，多么明了的叫法，内存中的数据满了就自动地spill到具有更大空间的磁盘。
+
+关于Spill触发的条件，也就是Kvbuffer用到什么程度开始Spill，还是要讲究一下的。如果把Kvbuffer用得死死得，一点缝都不剩的时候再开始Spill，那Map任务就需要等Spill完成腾出空间之后才能继续写数据；如果Kvbuffer只是满到一定程度，比如80%的时候就开始Spill，那在Spill的同时，Map任务还能继续写数据，如果Spill够快，Map可能都不需要为空闲空间而发愁。两利相衡取其大，一般选择后者。
+
+Spill这个重要的过程是由Spill线程承担，Spill线程从Map任务接到“命令”之后就开始正式干活，干的活叫SortAndSpill，原来不仅仅是Spill，在Spill之前还有个颇具争议性的Sort。
+
+**Sort**
+
+先把Kvbuffer中的数据按照partition值和key两个关键字升序排序，移动的只是索引数据，排序结果是Kvmeta中数据按照partition为单位聚集在一起，同一partition内的按照key有序。
+
+**Spill**
+
+Spill线程为这次Spill过程创建一个磁盘文件：从所有的本地目录中轮训查找能存储这么大空间的目录，找到之后在其中创建一个类似于“spill12.out”的文件。Spill线程根据排过序的Kvmeta挨个partition的把数据吐到这个文件中，一个partition对应的数据吐完之后顺序地吐下个partition，直到把所有的partition遍历完。一个partition在文件中对应的数据也叫段(segment)。
+
+所有的partition对应的数据都放在这个文件里，虽然是顺序存放的，但是怎么直接知道某个partition在这个文件中存放的起始位置呢？强大的索引又出场了。有一个三元组记录某个partition对应的数据在这个文件中的索引：起始位置、原始数据长度、压缩之后的数据长度，一个partition对应一个三元组。然后把这些索引信息存放在内存中，如果内存中放不下了，后续的索引信息就需要写到磁盘文件中了：从所有的本地目录中轮训查找能存储这么大空间的目录，找到之后在其中创建一个类似于“spill12.out.index”的文件，文件中不光存储了索引数据，还存储了crc32的校验数据。(spill12.out.index不一定在磁盘上创建，如果内存（默认1M空间）中能放得下就放在内存中，即使在磁盘上创建了，和spill12.out文件也不一定在同一个目录下。)
+
+每一次Spill过程就会最少生成一个out文件，有时还会生成index文件，Spill的次数也烙印在文件名中。索引文件和数据文件的对应关系如下图所示：
+
+![img](https://images2018.cnblogs.com/blog/1228818/201803/1228818-20180321083927742-1030906351.png)
+
+在Spill线程如火如荼的进行SortAndSpill工作的同时，Map任务不会因此而停歇，而是一无既往地进行着数据输出。Map还是把数据写到kvbuffer中，那问题就来了：只顾着闷头按照bufindex指针向上增长，kvmeta只顾着按照Kvindex向下增长，是保持指针起始位置不变继续跑呢，还是另谋它路？如果保持指针起始位置不变，很快bufindex和Kvindex就碰头了，碰头之后再重新开始或者移动内存都比较麻烦，不可取。Map取kvbuffer中剩余空间的中间位置，用这个位置设置为新的分界点，bufindex指针移动到这个分界点，Kvindex移动到这个分界点的-16位置，然后两者就可以和谐地按照自己既定的轨迹放置数据了，当Spill完成，空间腾出之后，不需要做任何改动继续前进。分界点的转换如下图所示：
+
+![img](https://images2018.cnblogs.com/blog/1228818/201803/1228818-20180321083949570-945173243.png)
+
+Map任务总要把输出的数据写到磁盘上，即使输出数据量很小在内存中全部能装得下，在最后也会把数据刷到磁盘上。
+
+**Merge**
+
+Map任务如果输出数据量很大，可能会进行好几次Spill，out文件和Index文件会产生很多，分布在不同的磁盘上。最后把这些文件进行合并的merge过程闪亮登场。
+
+Merge过程怎么知道产生的Spill文件都在哪了呢？从所有的本地目录上扫描得到产生的Spill文件，然后把路径存储在一个数组里。Merge过程又怎么知道Spill的索引信息呢？没错，也是从所有的本地目录上扫描得到Index文件，然后把索引信息存储在一个列表里。到这里，又遇到了一个值得纳闷的地方。在之前Spill过程中的时候为什么不直接把这些信息存储在内存中呢，何必又多了这步扫描的操作？特别是Spill的索引数据，之前当内存超限之后就把数据写到磁盘，现在又要从磁盘把这些数据读出来，还是需要装到更多的内存中。之所以多此一举，是因为这时kvbuffer这个内存大户已经不再使用可以回收，有内存空间来装这些数据了。（对于内存空间较大的土豪来说，用内存来省却这两个io步骤还是值得考虑的。）
+
+然后为merge过程创建一个叫file.out的文件和一个叫file.out.Index的文件用来存储最终的输出和索引。
+
+一个partition一个partition的进行合并输出。对于某个partition来说，从索引列表中查询这个partition对应的所有索引信息，每个对应一个段插入到段列表中。也就是这个partition对应一个段列表，记录所有的Spill文件中对应的这个partition那段数据的文件名、起始位置、长度等等。
+
+然后对这个partition对应的所有的segment进行合并，目标是合并成一个segment。当这个partition对应很多个segment时，会分批地进行合并：先从segment列表中把第一批取出来，以key为关键字放置成最小堆，然后从最小堆中每次取出最小的输出到一个临时文件中，这样就把这一批段合并成一个临时的段，把它加回到segment列表中；再从segment列表中把第二批取出来合并输出到一个临时segment，把其加入到列表中；这样往复执行，直到剩下的段是一批，输出到最终的文件中。
+
+最终的索引数据仍然输出到Index文件中。
+
+![img](https://images2018.cnblogs.com/blog/1228818/201803/1228818-20180321084015633-2083307488.png)
+
+Map端的Shuffle过程到此结束。
+
+**Copy**
+
+Reduce任务通过HTTP向各个Map任务拖取它所需要的数据。每个节点都会启动一个常驻的HTTP server，其中一项服务就是响应Reduce拖取Map数据。当有MapOutput的HTTP请求过来的时候，HTTP server就读取相应的Map输出文件中对应这个Reduce部分的数据通过网络流输出给Reduce。
+
+Reduce任务拖取某个Map对应的数据，如果在内存中能放得下这次数据的话就直接把数据写到内存中。Reduce要向每个Map去拖取数据，在内存中每个Map对应一块数据，当内存中存储的Map数据占用空间达到一定程度的时候，开始启动内存中merge，把内存中的数据merge输出到磁盘上一个文件中。
+
+如果在内存中不能放得下这个Map的数据的话，直接把Map数据写到磁盘上，在本地目录创建一个文件，从HTTP流中读取数据然后写到磁盘，使用的缓存区大小是64K。拖一个Map数据过来就会创建一个文件，当文件数量达到一定阈值时，开始启动磁盘文件merge，把这些文件合并输出到一个文件。
+
+有些Map的数据较小是可以放在内存中的，有些Map的数据较大需要放在磁盘上，这样最后Reduce任务拖过来的数据有些放在内存中了有些放在磁盘上，最后会对这些来一个全局合并。
+
+**Merge Sort**
+
+这里使用的Merge和Map端使用的Merge过程一样。Map的输出数据已经是有序的，Merge进行一次合并排序，所谓Reduce端的sort过程就是这个合并的过程。一般Reduce是一边copy一边sort，即copy和sort两个阶段是重叠而不是完全分开的。
+
+Reduce端的Shuffle过程至此结束。
+
+# 22. MapReduce排序—二次排序
 
