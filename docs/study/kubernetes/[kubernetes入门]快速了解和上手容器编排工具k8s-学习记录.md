@@ -189,3 +189,7 @@ curl -H "Host: a.b.d" 172.17.0.8
 > [在Play with Kubernetes平台上以测试驱动的方式部署Istio](https://www.jianshu.com/p/7f7919f598ca)
 >
 > [[k8s\]kubeadm k8s免费实验平台labs.play-with-k8s.com,k8s在线测试](https://www.cnblogs.com/iiiiher/p/8203529.html)
+
+## k8s安装
+
+> [在 MacOS 中使用 multipass 安装 microk8s 环境](https://www.cnblogs.com/gaochundong/p/install-microk8s-on-macos-using-multipass.html)
