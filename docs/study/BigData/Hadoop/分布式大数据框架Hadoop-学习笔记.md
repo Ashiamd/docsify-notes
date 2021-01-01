@@ -1,6 +1,6 @@
 # 分布式大数据框架Hadoop-学习笔记
 
-> [分布式大数据框架Hadoop](https://www.ipieuvre.com/course/311)
+> [分布式大数据框架Hadoop](https://www.ipieuvre.com/course/311)	<=	下面是根据该课程学习的笔记
 
 # 1. 大数据的发展
 
@@ -475,4 +475,302 @@ FSDataOutputStream out = fs.create(new Path(uri));
 ![img](https://img2018.cnblogs.com/blog/699090/201906/699090-20190626155745864-1227676006.png)
 
 # 10. HDFS JAVA API-实操
+
+​	Hadoop中关于文件操作类基本上全部是在"org.apache.hadoop.fs"包中，Hadoop类库中最终面向用户提供的接口类是FileSystem，该类封装了几乎所有的文件操作，例如CopyToLocalFile、CopyFromLocalFile、mkdir及delete等。
+
+# 11. HDFS学习--习题
+
+# 12. MapReduce理论概述
+
+1. 分布式并行编程
+2. 并行编程之MapReduce
+3. Map和Reduce函数
+
+## 12.1 MapReduce核心思想
+
+> [一张图看懂MapReduce 架构是如何工作的？ ](https://www.sohu.com/a/131500649_628522)
+
+![img](https://img.mp.itc.cn/upload/20170401/b147dd26ac6e4d5e80e493ca848677b5_th.jpg)
+
+核心思想：**分而治之**。
+
+​	一个存储在分布式文件系统HDFS中的大规模数据集，会被切分成许多独立的分片（split）即：
+
+​	**一个大任务分成多个小的子任务（map），由多个节点进行并行执行，并行执行后，合并结果（reduce）**
+
+<table>
+  <tr>
+  	<th>函数</th>
+    <th>输入</th>
+    <th>输出</th>
+    <th>说明</th>
+  </tr>
+  <tr>
+    <td>Map</td>
+    <td>
+    	<p>
+        &lt;k1,v1&gt;<br/>
+        如：<br/>
+        &lt;行号，“a b c”&gt;
+      </p>
+    </td>
+    <td>
+    	<p>
+        List(&lt;k2,v2&gt;)<br/>
+        如：<br/>
+        &lt;"a"，1&gt;<br/>
+        &lt;"b"，1&gt;<br/>
+        &lt;"c"，1&gt;
+      </p>
+    </td>
+    <td>
+    	<p>
+        1. 将小数据集进一步解析成一批&lt;key，value&gt;对，输入Map函数中进行处理<br/>
+        2. 每一个输入的&lt;k1,v1&gt;会输出一批&lt;k2,v2&gt;。&lt;k2,v2&gt;是计算的中间结果
+      </p>
+    </td>
+  </tr>
+  <tr>
+    <td>Reduce</td>
+    <td>
+    	<p>
+        &lt;k2,List(v2)&gt;<br/>
+        如：<br/>
+        &lt;"a"，&lt;1,1,1&gt;&gt;
+      </p>
+    </td>
+    <td>
+    	<p>
+        &lt;k3,v3&gt;<br/>
+        &lt;"a",3&gt;
+      </p>
+    </td>
+    <td>
+    	<p>
+        输入的中间结果&lt;k2,List(v2)&gt;中的List(v2)表示是一批属于同一个k2的value
+      </p>
+    </td>
+  </tr>
+</table>
+
++ 分布式编程架构
++ 以数据为中心，更看重吞吐量
++ 分而治之的思想
++ Map将一个任务分解成多个子任务
++ Reduce将多个子任务的计算结果汇总
+
+# 13. Mapreduce体系结构
+
++ Job
+  + 一个任务，一个作业
+  + 一个Job会被分成多个Task
++ Task
+  + task里面，又分为Maptask和Reducetask，也就是一个Map任务和Reduce任务
+
++ JobTracker & TaskTracker
+  + MapReduce框架采用了Master/Slave架构，包括一个Master和若干个Slave
+  + Master上运行JobTracker，负责作业的调度、处理和失败后的恢复
+  + Slave上运行的TaskTracker，负责接收JobTracker发给它的作业指令
+
+> Hadoop框架是用Java实现的，但是，MapReduce应用程序不一定要用Java来写，也可以用python
+
+JobTracker：
+
+1. 作业调度
+2. 分配任务、监控任务执行进度
+3. 监控TaskTracker的状态
+
+TaskTracker的角色：
+
+1. 执行任务
+2. 汇报任务状态
+
+![img](https://images2015.cnblogs.com/blog/1166438/201706/1166438-20170626223359321-476907339.png)
+
+MapReduce体系结构主要由四个部分组成，分别是：Client、JobTracker、TaskTracker以及Task
+
+Client：客户端，用于提交作业
+
+JobTracker：作业跟踪器，负责作业调度，作业执行，作业失败后恢复
+
+TaskScheduler：任务调度器，负责任务调度
+
+TaskTracker：任务跟踪器，负责任务管理(启动任务，杀死任务等)
+
+1. Client-提交作业，查看作业状态
+   **提交作业：**用户编写的MapReduce程序通过Client提交到JobTracker端
+   **查看作业状态：**用户可通过Client提供的一些接口查看作业运行状态
+
+2. JobTracker-资源监控、作业调度
+   **JobTracker负责资源监控和作业调度**
+   **资源监控：**JobTracker 监控所有TaskTracker与Job的健康状况，一旦发现节点失效(通信失败或节点故障)，就将相应的任务转移到其他节点
+   **作业调度：**JobTracker 会跟踪任务的执行进度、资源使用量等信息，并将这些信息告诉任务调度器（TaskScheduler），而任务调度器会选择合适的(比较空闲)节点资源来执行任务
+
+3. TaskScheduler-任务调度器 
+
+4. TaskTracker-任务管理
+   TaskTracker 会周期性地通过“心跳”将本节点上资源的使用情况和任务的运行进度汇报给JobTracker，同时接收JobTracker 发送过来的命令并执行相应的操作（如启动新任务、杀死任务等）
+   TaskTracker 使用“slot”等量划分本节点上的资源量（CPU、内存等）。**一个Task 获取到一个slot 后才有机会运行**，而Hadoop调度器(TaskScheduler)的作用就是将各个TaskTracker上的空闲slot分配给Task使用。
+
+   slot 分为Map slot 和Reduce slot 两种，分别供MapTask 和Reduce Task 使用
+
+5. Task
+   Task 分为Map Task 和Reduce Task 两种，均由TaskTracker 启动
+
+> [MapReduce的体系结构](https://www.cnblogs.com/ostin/articles/7082822.html)
+
+# 14. MapReduce学习--习题
+
+# 15. Mapreduce实例:WordCount
+
+分片=>Map=>中间磁盘=>Reduce=>输出
+
+# 16. Mapreduce实例：WordCount-实操
+
+## 16.1 相关知识
+
+​	MapReduce采用的是“分而治之”的思想，把对大规模数据集的操作，分发给一个主节点管理下的各个从节点共同完成，然后通过整合各个节点的中间结果，得到最终结果。简单来说，MapReduce就是”任务的分解与结果的汇总“。
+
+1. MapReduce的工作原理
+
+在分布式计算中，MapReduce框架负责处理了并行编程里分布式存储、工作调度，负载均衡、容错处理以及网络通信等复杂问题，现在我们把处理过程高度抽象为Map与Reduce两个部分来进行阐述，其中Map部分负责把任务分解成多个子任务，Reduce部分负责把分解后多个子任务的处理结果汇总起来，具体设计思路如下。
+
+（1）Map过程需要继承org.apache.hadoop.mapreduce包中Mapper类，并重写其map方法。通过在map方法中添加两句把key值和value值输出到控制台的代码，可以发现map方法中输入的value值存储的是文本文件中的一行（以回车符为行结束标记），而输入的key值存储的是该行的首字母相对于文本文件的首地址的偏移量。然后用StringTokenizer类将每一行拆分成为一个个的字段，把截取出需要的字段（本实验为买家id字段）设置为key，并将其作为map方法的结果输出。
+
+（2）Reduce过程需要继承org.apache.hadoop.mapreduce包中Reducer类，并重写其reduce方法。Map过程输出的<key,value>键值对先经过shuffle过程把key值相同的所有value值聚集起来形成values，此时values是对应key字段的计数值所组成的列表，然后将<key,values>输入到reduce方法中，reduce方法只要遍历values并求和，即可得到某个单词的总次数。
+
+在main()主函数中新建一个Job对象，由Job对象负责管理和运行MapReduce的一个计算任务，并通过Job的一些方法对任务的参数进行相关的设置。本实验是设置使用将继承Mapper的doMapper类完成Map过程中的处理和使用doReducer类完成Reduce过程中的处理。还设置了Map过程和Reduce过程的输出类型：key的类型为Text，value的类型为IntWritable。任务的输出和输入路径则由字符串指定，并由FileInputFormat和FileOutputFormat分别设定。完成相应任务的参数设定后，即可调用job.waitForCompletion()方法执行任务，其余的工作都交由MapReduce框架处理。
+
+2. MapReduce框架的作业运行流程
+
+[![img](https://www.ipieuvre.com/doc/exper/1e146ce6-91ad-11e9-beeb-00215ec892f4/img/01.png)](https://www.ipieuvre.com/doc/exper/1e146ce6-91ad-11e9-beeb-00215ec892f4/img/01.png)
+
+（1）ResourceManager：是YARN资源控制框架的中心模块，负责集群中所有资源的统一管理和分配。它接收来自NM(NodeManager)的汇报，建立AM，并将资源派送给AM(ApplicationMaster)。
+
+（2）NodeManager：简称NM，NodeManager是ResourceManager在每台机器上的代理，负责容器管理，并监控他们的资源使用情况（cpu、内存、磁盘及网络等），以及向ResourceManager提供这些资源使用报告。
+
+（3）ApplicationMaster：以下简称AM。YARN中每个应用都会启动一个AM，负责向RM申请资源，请求NM启动Container，并告诉Container做什么事情。
+
+（4）Container：资源容器。YARN中所有的应用都是在Container之上运行的。AM也是在Container上运行的，不过AM的Container是RM申请的。Container是YARN中资源的抽象，它封装了某个节点上一定量的资源（CPU和内存两类资源）。Container由ApplicationMaster向ResourceManager申请的，由ResouceManager中的资源调度器异步分配给ApplicationMaster。Container的运行是由ApplicationMaster向资源所在的NodeManager发起的，Container运行时需提供内部执行的任务命令（可以是任何命令，比如java、Python、C++进程启动命令均可）以及该命令执行所需的环境变量和外部资源（比如词典文件、可执行文件、jar包等）。
+
+另外，一个应用程序所需的Container分为两大类，如下：
+
+①运行ApplicationMaster的Container：这是由ResourceManager（向内部的资源调度器）申请和启动的，用户提交应用程序时，可指定唯一的ApplicationMaster所需的资源。
+
+②运行各类任务的Container：这是由ApplicationMaster向ResourceManager申请的，并为了ApplicationMaster与NodeManager通信以启动的。
+
+以上两类Container可能在任意节点上，它们的位置通常而言是随机的，即ApplicationMaster可能与它管理的任务运行在一个节点上。
+
+## 16.2 编写思路
+
+下图描述了该mapreduce的执行过程
+
+[![img](https://www.ipieuvre.com/doc/exper/1e146ce6-91ad-11e9-beeb-00215ec892f4/img/12.png)](https://www.ipieuvre.com/doc/exper/1e146ce6-91ad-11e9-beeb-00215ec892f4/img/12.png)
+
+​	大致思路是将hdfs上的文本作为输入，MapReduce通过InputFormat会将文本进行切片处理，并将每行的首字母相对于文本文件的首地址的偏移量作为输入键值对的key，文本内容作为输入键值对的value，经过在map函数处理，输出中间结果<word,1>的形式，并在reduce函数中完成对每个单词的词频统计。整个程序代码主要包括两部分：Mapper部分和Reducer部分。
+
++ Mapper代码
+
+  ```java
+    public static class doMapper extends Mapper<Object, Text, Text, IntWritable>{  
+      //第一个Object表示输入key的类型；第二个Text表示输入value的类型；第三个Text表示输出键的类型；第四个IntWritable表示输出值的类型  
+      public static final IntWritable one = new IntWritable(1);  
+      public static Text word = new Text();  
+      @Override  
+      protected void map(Object key, Text value, Context context)  
+        throws IOException, InterruptedException  
+        //抛出异常  
+      {  
+        StringTokenizer tokenizer = new StringTokenizer(value.toString(),"\t");  
+        //StringTokenizer是Java工具包中的一个类，用于将字符串进行拆分  
+  
+        word.set(tokenizer.nextToken());  
+        //返回当前位置到下一个分隔符之间的字符串  
+        context.write(word, one);  
+        //将word存到容器中，记一个数  
+      }
+    }
+  ```
+
+​	在map函数里有三个参数，前面两个Object key,Text value就是输入的key和value，第三个参数Context context是可以记录输入的key和value。例如context.write(word,one)；此外context还会记录map运算的状态。map阶段采用Hadoop的默认的作业输入方式，把输入的value用StringTokenizer()方法截取出的买家id字段设置为key，设置value为1，然后直接输出<key,value>。
+
++ Reducer代码
+
+  ```java
+  public static class doReducer extends Reducer<Text, IntWritable, Text, IntWritable>{  
+    //参数同Map一样，依次表示是输入键类型，输入值类型，输出键类型，输出值类型  
+    private IntWritable result = new IntWritable();  
+    @Override  
+    protected void reduce(Text key, Iterable<IntWritable> values, Context context)  
+      throws IOException, InterruptedException {  
+      int sum = 0;  
+      for (IntWritable value : values) {  
+        sum += value.get();  
+      }  
+      //for循环遍历，将得到的values值累加  
+      result.set(sum);  
+      context.write(key, result);  
+    }  
+  }
+  ```
+
+​	map输出的<key,value>先要经过shuffle过程把相同key值的所有value聚集起来形成<key,values>后交给reduce端。reduce端接收到<key,values>之后，将输入的key直接复制给输出的key,用for循环遍历values并求和，求和结果就是key值代表的单词出现的总次，将其设置为value，直接输出<key,value>。
+
+---
+
+完整代码：
+
+```java
+package mapreduce;  
+import java.io.IOException;  
+import java.util.StringTokenizer;  
+import org.apache.hadoop.fs.Path;  
+import org.apache.hadoop.io.IntWritable;  
+import org.apache.hadoop.io.Text;  
+import org.apache.hadoop.mapreduce.Job;  
+import org.apache.hadoop.mapreduce.Mapper;  
+import org.apache.hadoop.mapreduce.Reducer;  
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;  
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;  
+public class WordCount {  
+  public static void main(String[] args) throws IOException, ClassNotFoundException, InterruptedException {  
+    Job job = Job.getInstance();  
+    job.setJobName("WordCount");  
+    job.setJarByClass(WordCount.class);  
+    job.setMapperClass(doMapper.class);  
+    job.setReducerClass(doReducer.class);  
+    job.setOutputKeyClass(Text.class);  
+    job.setOutputValueClass(IntWritable.class);  
+    Path in = new Path("hdfs://localhost:9000/mymapreduce1/in/buyer_favorite1");  
+    Path out = new Path("hdfs://localhost:9000/mymapreduce1/out");  
+    FileInputFormat.addInputPath(job, in);  
+    FileOutputFormat.setOutputPath(job, out);  
+    System.exit(job.waitForCompletion(true) ? 0 : 1);  
+  }  
+  public static class doMapper extends Mapper<Object, Text, Text, IntWritable>{  
+    public static final IntWritable one = new IntWritable(1);  
+    public static Text word = new Text();  
+    @Override  
+    protected void map(Object key, Text value, Context context)  
+      throws IOException, InterruptedException {  
+      StringTokenizer tokenizer = new StringTokenizer(value.toString(), "\t");  
+      word.set(tokenizer.nextToken());  
+      context.write(word, one);  
+    }  
+  }  
+  public static class doReducer extends Reducer<Text, IntWritable, Text, IntWritable>{  
+    private IntWritable result = new IntWritable();  
+    @Override  
+    protected void reduce(Text key, Iterable<IntWritable> values, Context context)  
+      throws IOException, InterruptedException {  
+      int sum = 0;  
+      for (IntWritable value : values) {  
+        sum += value.get();  
+      }  
+      result.set(sum);  
+      context.write(key, result);  
+    }  
+  }  
+} 
+```
 
