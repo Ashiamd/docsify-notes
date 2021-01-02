@@ -1107,3 +1107,764 @@ Reduce端的Shuffle过程至此结束。
 
 # 22. MapReduce排序—二次排序
 
+## 22.1 二次排序原理
+
++ 二次排序：在mapreduce中，所有key是需要被比较和排序的，并且是二次，先根据partitioner，再根据大小。
+
++ 二次排序原理：先按照第一字段排序，然后在第一字段相同时按照第二字段排序。根据这一点，我们可以构造一个复合类IntPair，他有两个字段，先利用分区对第一字段排序，再利用分区内的比较对第二字段排序。Java代码主要分为四部分：自定义key，自定义分区函数类，map部分，reduce部分。
+
+## 22.2 小结
+
+注意：输出应该符合自定义Map中定义的输出<IntPair,IntWritable>。最终是生成一个List<IntPair,IntWritable>。
+
+**在map阶段的最后，会先调用job.setPartitionerClass对这个List进行分区，每个分区映射到一个reducer**。
+
+**每个分区内又调用job.setSortComparatorClass设置的key比较函数类排序**。这本身就是一个二次排序。
+
+# 23. Mapreduce实例——排序-实操
+
+## 23.1 相关知识
+
+Map、Reduce任务中Shuffle和排序的过程图如下：
+
+[![img](https://www.ipieuvre.com/doc/exper/1e30f996-91ad-11e9-beeb-00215ec892f4/img/01.png)](https://www.ipieuvre.com/doc/exper/1e30f996-91ad-11e9-beeb-00215ec892f4/img/01.png)
+
+流程分析：
+
+1.Map端：
+
+（1）每个输入分片会让一个map任务来处理，**默认情况下，以HDFS的一个块的大小（默认为64M）为一个分片**，当然我们也可以设置块的大小。map输出的结果会暂且放在一个环形内存缓冲区中（该缓冲区的大小默认为100M，由io.sort.mb属性控制），**当该缓冲区快要溢出时（默认为缓冲区大小的80%，由io.sort.spill.percent属性控制），会在本地文件系统中创建一个溢出文件，将该缓冲区中的数据写入这个文件**。
+
+（2）**在写入磁盘之前，线程首先根据reduce任务的数目将数据划分为相同数目的分区，也就是一个reduce任务对应一个分区的数据**。这样做是为了避免有些reduce任务分配到大量数据，而有些reduce任务却分到很少数据，甚至没有分到数据的尴尬局面。其实分区就是对数据进行hash的过程。然后**对每个分区中的数据进行排序**，**如果此时设置了Combiner，将排序后的结果进行Combine操作，这样做的目的是让尽可能少的数据写入到磁盘**。
+
+（3）**当map任务输出最后一个记录时，可能会有很多的溢出文件，这时需要将这些文件合并**。合并的过程中会不断地进行排序和combine操作，目的有两个：①尽量减少每次写入磁盘的数据量。②尽量减少下一复制阶段网络传输的数据量。最后合并成了一个已分区且已排序的文件。为了减少网络传输的数据量，这里可以将数据压缩，只要将mapred.compress.map.out设置为true就可以了。
+
+（4）将分区中的数据拷贝给相对应的reduce任务。有人可能会问：分区中的数据怎么知道它对应的reduce是哪个呢？其实**map任务一直和其父TaskTracker保持联系，而TaskTracker又一直和JobTracker保持心跳。所以JobTracker中保存了整个集群中的宏观信息。只要reduce任务向JobTracker获取对应的map输出位置就ok了哦**。
+
+​	到这里，map端就分析完了。那到底什么是Shuffle呢？Shuffle的中文意思是“洗牌”，如果我们这样看：一个map产生的数据，结果通过hash过程分区却分配给了不同的reduce任务，是不是一个对数据洗牌的过程呢？
+
+2.Reduce端：
+
+（1）Reduce会接收到不同map任务传来的数据，并且每个map传来的数据都是有序的。**如果reduce端接受的数据量相当小，则直接存储在内存中**（缓冲区大小由mapred.job.shuffle.input.buffer.percent属性控制，表示用作此用途的堆空间的百分比），**如果数据量超过了该缓冲区大小的一定比例（由mapred.job.shuffle.merge.percent决定），则对数据合并后溢写到磁盘中**。
+
+（2）随着溢写文件的增多，后台线程会将它们合并成一个更大的有序的文件，这样做是为了给后面的合并节省时间。**其实不管在map端还是reduce端，MapReduce都是反复地执行排序，合并操作，现在终于明白了有些人为什么会说：排序是hadoop的灵魂**。
+
+（3）合并的过程中会产生许多的中间文件（写入磁盘了），但MapReduce会让写入磁盘的数据尽可能地少，并且**最后一次合并的结果并没有写入磁盘，而是直接输入到reduce函数**。
+
+​	熟悉MapReduce的人都知道：**排序是MapReduce的天然特性！在数据达到reducer之前，MapReduce框架已经对这些数据按键排序了。但是在使用之前，首先需要了解它的默认排序规则。它是按照key值进行排序的，如果key为封装的int为IntWritable类型，那么MapReduce按照数字大小对key排序，如果Key为封装String的Text类型，那么MapReduce将按照数据字典顺序对字符排序。**
+
+​	了解了这个细节，我们就知道应该使用封装int的Intwritable型数据结构了，也就是在map这里，将读入的数据中要排序的字段转化为Intwritable型，然后作为key值输出（不排序的字段作为value）。reduce阶段拿到<key，value-list>之后，将输入的key作为输出的key，并根据value-list中的元素的个数决定输出的次数。
+
+## 23.2 编写思路
+
+​	在MapReduce过程中默认就有对数据的排序。它是按照key值进行排序的，如果key为封装int的IntWritable类型，那么MapReduce会按照数字大小对key排序，如果Key为封装String的Text类型，那么MapReduce将按照数据字典顺序对字符排序。在本例中我们用到第一种，key设置为IntWritable类型，其中MapReduce程序主要分为Map部分和Reduce部分。
+
++ Map部分代码
+
+  ```java
+  public static class Map extends Mapper<Object,Text,IntWritable,Text>{  
+    private static Text goods=new Text();  
+    private static IntWritable num=new IntWritable();  
+    public void map(Object key,Text value,Context context) throws IOException, InterruptedException{  
+      String line=value.toString();  
+      String arr[]=line.split("\t");  
+      num.set(Integer.parseInt(arr[1]));  
+      goods.set(arr[0]);  
+      context.write(num,goods);  
+    }  
+  }  
+  ```
+
+  在map端采用Hadoop默认的输入方式之后，将输入的value值用split()方法截取，把要排序的点击次数字段转化为IntWritable类型并设置为key，商品id字段设置为value，然后直接输出<key,value>。map输出的<key,value>先要经过shuffle过程把相同key值的所有value聚集起来形成<key,value-list>后交给reduce端。
+
++ Reduce部分代码
+
+  ```java
+  public static class Reduce extends Reducer<IntWritable,Text,IntWritable,Text>{  
+    private static IntWritable result= new IntWritable();  
+    //声明对象result  
+    public void reduce(IntWritable key,Iterable<Text> values,Context context) throws IOException, InterruptedException{  
+      for(Text val:values){  
+        context.write(key,val);  
+      }  
+    }  
+  }  
+  ```
+
+  reduce端接收到<key,value-list>之后，将输入的key直接复制给输出的key,用for循环遍历value-list并将里面的元素设置为输出的value，然后将<key,value>逐一输出，根据value-list中元素的个数决定输出的次数。
+
++ 完整代码
+
+  ```java
+  package mapreduce;  
+  import java.io.IOException;  
+  import org.apache.hadoop.conf.Configuration;  
+  import org.apache.hadoop.fs.Path;  
+  import org.apache.hadoop.io.IntWritable;  
+  import org.apache.hadoop.io.Text;  
+  import org.apache.hadoop.mapreduce.Job;  
+  import org.apache.hadoop.mapreduce.Mapper;  
+  import org.apache.hadoop.mapreduce.Reducer;  
+  import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;  
+  import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;  
+  import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;  
+  import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;  
+  public class OneSort {  
+    public static class Map extends Mapper<Object , Text , IntWritable,Text >{  
+      private static Text goods=new Text();  
+      private static IntWritable num=new IntWritable();  
+      public void map(Object key,Text value,Context context) throws IOException, InterruptedException{  
+        String line=value.toString();  
+        String arr[]=line.split("\t");  
+        num.set(Integer.parseInt(arr[1]));  
+        goods.set(arr[0]);  
+        context.write(num,goods);  
+      }  
+    }  
+    public static class Reduce extends Reducer< IntWritable, Text, IntWritable, Text>{  
+      private static IntWritable result= new IntWritable();  
+      public void reduce(IntWritable key,Iterable<Text> values,Context context) throws IOException, InterruptedException{  
+        for(Text val:values){  
+          context.write(key,val);  
+        }  
+      }  
+    }  
+    public static void main(String[] args) throws IOException, ClassNotFoundException, InterruptedException{  
+      Configuration conf=new Configuration();  
+      Job job =new Job(conf,"OneSort");  
+      job.setJarByClass(OneSort.class);  
+      job.setMapperClass(Map.class);  
+      job.setReducerClass(Reduce.class);  
+      job.setOutputKeyClass(IntWritable.class);  
+      job.setOutputValueClass(Text.class);  
+      job.setInputFormatClass(TextInputFormat.class);  
+      job.setOutputFormatClass(TextOutputFormat.class);  
+      Path in=new Path("hdfs://localhost:9000/mymapreduce3/in/goods_visit1");  
+      Path out=new Path("hdfs://localhost:9000/mymapreduce3/out");  
+      FileInputFormat.addInputPath(job,in);  
+      FileOutputFormat.setOutputPath(job,out);  
+      System.exit(job.waitForCompletion(true) ? 0 : 1);  
+  
+    }  
+  }
+  ```
+
+# 24. Mapreduce实例——二次排序-实操
+
+## 24.1 相关知识
+
+​	在Map阶段，使用job.setInputFormatClass定义的InputFormat将输入的数据集分割成小数据块splites，同时InputFormat提供一个RecordReader的实现。本实验中使用的是TextInputFormat，他提供的RecordReader会将文本的字节偏移量作为key，这一行的文本作为value。这就是自定义Map的输入是<LongWritable, Text>的原因。然后调用自定义Map的map方法，将一个个<LongWritable, Text>键值对输入给Map的map方法。注意输出应该符合自定义Map中定义的输出<IntPair, IntWritable>。最终是生成一个List<IntPair, IntWritable>。**在map阶段的最后，会先调用job.setPartitionerClass对这个List进行分区，每个分区映射到一个reducer**。**每个分区内又调用job.setSortComparatorClass设置的key比较函数类排序**。可以看到，这本身就是一个二次排序。 **如果没有通过job.setSortComparatorClass设置key比较函数类，则可以使用key实现的compareTo方法进行排序**。 在本实验中，就使用了IntPair实现的compareTo方法。
+
+​	在Reduce阶段，**reducer接收到所有映射到这个reducer的map输出后，也是会调用job.setSortComparatorClass设置的key比较函数类对所有数据对排序**。然后开始构造一个key对应的value迭代器。这时就要用到**分组，使用job.setGroupingComparatorClass设置的分组函数类**。**只要这个比较器比较的两个key相同，他们就属于同一个组，它们的value放在一个value迭代器，而这个迭代器的key使用属于同一个组的所有key的第一个key**。最后就是进入Reducer的reduce方法，reduce方法的输入是所有的（key和它的value迭代器）。同样注意输入与输出的类型必须与自定义的Reducer中声明的一致。
+
+## 24.2 编写思路
+
+​	二次排序：在mapreduce中，所有的key是需要被比较和排序的，并且是二次，先根据partitioner，再根据大小。而本例中也是要比较两次。先按照第一字段排序，然后在第一字段相同时按照第二字段排序。根据这一点，我们可以构造一个复合类IntPair，他有两个字段，先利用分区对第一字段排序，再利用分区内的比较对第二字段排序。Java代码主要分为四部分：自定义key，自定义分区函数类，map部分，reduce部分。
+
++ 自定义key的代码：
+
+  ```java
+  public static class IntPair implements WritableComparable<IntPair>  
+  {  
+    int first;  //第一个成员变量  
+    int second;  //第二个成员变量  
+  
+    public void set(int left, int right)  
+    {  
+      first = left;  
+      second = right;  
+    }  
+    public int getFirst()  
+    {  
+      return first;  
+    }  
+    public int getSecond()  
+    {  
+      return second;  
+    }  
+    @Override  
+    //反序列化，从流中的二进制转换成IntPair  
+    public void readFields(DataInput in) throws IOException  
+    {  
+      // TODO Auto-generated method stub  
+      first = in.readInt();  
+      second = in.readInt();  
+    }  
+    @Override  
+    //序列化，将IntPair转化成使用流传送的二进制  
+    public void write(DataOutput out) throws IOException  
+    {  
+      // TODO Auto-generated method stub  
+      out.writeInt(first);  
+      out.writeInt(second);  
+    }  
+    @Override  
+    //key的比较  
+    public int compareTo(IntPair o)  
+    {  
+      // TODO Auto-generated method stub  
+      if (first != o.first)  
+      {  
+        return first < o.first ? 1 : -1;  
+      }  
+      else if (second != o.second)  
+      {  
+        return second < o.second ? -1 : 1;  
+      }  
+      else  
+      {  
+        return 0;  
+      }  
+    }  
+    @Override  
+    public int hashCode()  
+    {  
+      return first * 157 + second;  
+    }  
+    @Override  
+    public boolean equals(Object right)  
+    {  
+      if (right == null)  
+        return false;  
+      if (this == right)  
+        return true;  
+      if (right instanceof IntPair)  
+      {  
+        IntPair r = (IntPair) right;  
+        return r.first == first && r.second == second;  
+      }  
+      else  
+      {  
+        return false;  
+      }  
+    }  
+  }
+  ```
+
+  所有自定义的key应该实现接口WritableComparable，因为是可序列的并且可比较的，并重载方法。该类中包含以下几种方法：1.反序列化，从流中的二进制转换成IntPair 方法为public void readFields(DataInput in) throws IOException 2.序列化，将IntPair转化成使用流传送的二进制 方法为public void write(DataOutput out)3. key的比较 public int compareTo(IntPair o) 另外**新定义的类应该重写的两个方法 public int hashCode() 和public boolean equals(Object right)** 。
+
++ 分区函数类代码
+
+  ```java
+  public static class FirstPartitioner extends Partitioner<IntPair, IntWritable>  
+  {  
+    @Override  
+    public int getPartition(IntPair key, IntWritable value,int numPartitions)  
+    {  
+      return Math.abs(key.getFirst() * 127) % numPartitions;  
+    }  
+  }  
+  ```
+
+  对key进行分区，根据自定义key中first乘以127取绝对值在对numPartions取余来进行分区。这主要是为**实现第一次排序**。
+
++ 分组函数类代码
+
+  ```java
+  public static class GroupingComparator extends WritableComparator  
+  {  
+    protected GroupingComparator()  
+    {  
+      super(IntPair.class, true);  
+    }  
+    @Override  
+    //Compare two WritableComparables.  
+    public int compare(WritableComparable w1, WritableComparable w2)  
+    {  
+      IntPair ip1 = (IntPair) w1;  
+      IntPair ip2 = (IntPair) w2;  
+      int l = ip1.getFirst();  
+      int r = ip2.getFirst();  
+      return l == r ? 0 : (l < r ? -1 : 1);  
+    }  
+  }
+  ```
+
+  分组函数类。**在reduce阶段，构造一个key对应的value迭代器的时候，只要first相同就属于同一个组，放在一个value迭代器。这是一个比较器，需要继承WritableComparator**。
+
++ Map代码：
+
+  ```java
+  public static class Map extends Mapper<LongWritable, Text, IntPair, IntWritable>  
+  {  
+    //自定义map  
+    private final IntPair intkey = new IntPair();  
+    private final IntWritable intvalue = new IntWritable();  
+    public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException  
+    {  
+      String line = value.toString();  
+      StringTokenizer tokenizer = new StringTokenizer(line);  
+      int left = 0;  
+      int right = 0;  
+      if (tokenizer.hasMoreTokens())  
+      {  
+        left = Integer.parseInt(tokenizer.nextToken());  
+        if (tokenizer.hasMoreTokens())  
+          right = Integer.parseInt(tokenizer.nextToken());  
+        intkey.set(right, left);  
+        intvalue.set(left);  
+        context.write(intkey, intvalue);  
+      }  
+    }  
+  }
+  ```
+
+  在map阶段，使用job.setInputFormatClass定义的InputFormat将输入的数据集分割成小数据块splites，同时InputFormat提供一个RecordReader的实现。**本例子中使用的是TextInputFormat，他提供的RecordReader会将文本的一行的行号作为key，这一行的文本作为value**。这就是自定义Map的输入是<LongWritable, Text>的原因。然后调用自定义Map的map方法，将一个个<LongWritable, Text>键值对输入给Map的map方法。注意输出应该符合自定义Map中定义的输出<IntPair, IntWritable>。最终是生成一个List<IntPair, IntWritable>。**在map阶段的最后，会先调用job.setPartitionerClass对这个List进行分区，每个分区映射到一个reducer**。**每个分区内又调用job.setSortComparatorClass设置的key比较函数类排序**。可以看到，这本身就是一个二次排序。**如果没有通过job.setSortComparatorClass设置key比较函数类，则使用key实现compareTo方法**。在本例子中，使用了IntPair实现compareTo方法
+
++ Reduce代码：
+
+  ```java
+  public static class Reduce extends Reducer<IntPair, IntWritable, Text, IntWritable>  
+  {  
+    private final Text left = new Text();  
+    private static final Text SEPARATOR = new Text("------------------------------------------------");  
+  
+    public void reduce(IntPair key, Iterable<IntWritable> values,Context context) throws IOException, InterruptedException  
+    {  
+      context.write(SEPARATOR, null);  
+      left.set(Integer.toString(key.getFirst()));  
+      System.out.println(left);  
+      for (IntWritable val : values)  
+      {  
+        context.write(left, val);  
+        //System.out.println(val);  
+      }  
+    }  
+  }
+  ```
+
+  在reduce阶段，**reducer接收到所有映射到这个reducer的map输出后，也是会调用job.setSortComparatorClass设置的key比较函数类对所有数据对排序**。**然后开始构造一个key对应的value迭代器**。这时就要用到**分组，使用job.setGroupingComparatorClass设置的分组函数类**。**只要这个比较器比较的两个key相同，他们就属于同一个组，它们的value放在一个value迭代器，而这个迭代器的key使用属于同一个组的所有key的第一个key**。最后就是进入Reducer的reduce方法，reduce方法的输入是所有的key和它的value迭代器。同样注意输入与输出的类型必须与自定义的Reducer中声明的一致。
+
++ 完整代码：
+
+  ```java
+  package mapreduce;  
+  import java.io.DataInput;  
+  import java.io.DataOutput;  
+  import java.io.IOException;  
+  import java.util.StringTokenizer;  
+  import org.apache.hadoop.conf.Configuration;  
+  import org.apache.hadoop.fs.Path;  
+  import org.apache.hadoop.io.IntWritable;  
+  import org.apache.hadoop.io.LongWritable;  
+  import org.apache.hadoop.io.Text;  
+  import org.apache.hadoop.io.WritableComparable;  
+  import org.apache.hadoop.io.WritableComparator;  
+  import org.apache.hadoop.mapreduce.Job;  
+  import org.apache.hadoop.mapreduce.Mapper;  
+  import org.apache.hadoop.mapreduce.Partitioner;  
+  import org.apache.hadoop.mapreduce.Reducer;  
+  import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;  
+  import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;  
+  import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;  
+  import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;  
+  public class SecondarySort  
+  {  
+  
+    public static class IntPair implements WritableComparable<IntPair>  
+    {  
+      int first;  
+      int second;  
+  
+      public void set(int left, int right)  
+      {  
+        first = left;  
+        second = right;  
+      }  
+      public int getFirst()  
+      {  
+        return first;  
+      }  
+      public int getSecond()  
+      {  
+        return second;  
+      }  
+      @Override  
+  
+      public void readFields(DataInput in) throws IOException  
+      {  
+        // TODO Auto-generated method stub  
+        first = in.readInt();  
+        second = in.readInt();  
+      }  
+      @Override  
+  
+      public void write(DataOutput out) throws IOException  
+      {  
+        // TODO Auto-generated method stub  
+        out.writeInt(first);  
+        out.writeInt(second);  
+      }  
+      @Override  
+  
+      public int compareTo(IntPair o)  
+      {  
+        // TODO Auto-generated method stub  
+        if (first != o.first)  
+        {  
+          return first < o.first ? 1 : -1;  
+        }  
+        else if (second != o.second)  
+        {  
+          return second < o.second ? -1 : 1;  
+        }  
+        else  
+        {  
+          return 0;  
+        }  
+      }  
+      @Override  
+      public int hashCode()  
+      {  
+        return first * 157 + second;  
+      }  
+      @Override  
+      public boolean equals(Object right)  
+      {  
+        if (right == null)  
+          return false;  
+        if (this == right)  
+          return true;  
+        if (right instanceof IntPair)  
+        {  
+          IntPair r = (IntPair) right;  
+          return r.first == first && r.second == second;  
+        }  
+        else  
+        {  
+          return false;  
+        }  
+      }  
+    }  
+  
+    public static class FirstPartitioner extends Partitioner<IntPair, IntWritable>  
+    {  
+      @Override  
+      public int getPartition(IntPair key, IntWritable value,int numPartitions)  
+      {  
+        return Math.abs(key.getFirst() * 127) % numPartitions;  
+      }  
+    }  
+    public static class GroupingComparator extends WritableComparator  
+    {  
+      protected GroupingComparator()  
+      {  
+        super(IntPair.class, true);  
+      }  
+      @Override  
+      //Compare two WritableComparables.  
+      public int compare(WritableComparable w1, WritableComparable w2)  
+      {  
+        IntPair ip1 = (IntPair) w1;  
+        IntPair ip2 = (IntPair) w2;  
+        int l = ip1.getFirst();  
+        int r = ip2.getFirst();  
+        return l == r ? 0 : (l < r ? -1 : 1);  
+      }  
+    }  
+    public static class Map extends Mapper<LongWritable, Text, IntPair, IntWritable>  
+    {  
+      private final IntPair intkey = new IntPair();  
+      private final IntWritable intvalue = new IntWritable();  
+      public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException  
+      {  
+        String line = value.toString();  
+        StringTokenizer tokenizer = new StringTokenizer(line);  
+        int left = 0;  
+        int right = 0;  
+        if (tokenizer.hasMoreTokens())  
+        {  
+          left = Integer.parseInt(tokenizer.nextToken());  
+          if (tokenizer.hasMoreTokens())  
+            right = Integer.parseInt(tokenizer.nextToken());  
+          intkey.set(right, left);  
+          intvalue.set(left);  
+          context.write(intkey, intvalue);  
+        }  
+      }  
+    }  
+  
+    public static class Reduce extends Reducer<IntPair, IntWritable, Text, IntWritable>  
+    {  
+      private final Text left = new Text();  
+      private static final Text SEPARATOR = new Text("------------------------------------------------");  
+  
+      public void reduce(IntPair key, Iterable<IntWritable> values,Context context) throws IOException, InterruptedException  
+      {  
+        context.write(SEPARATOR, null);  
+        left.set(Integer.toString(key.getFirst()));  
+        System.out.println(left);  
+        for (IntWritable val : values)  
+        {  
+          context.write(left, val);  
+          //System.out.println(val);  
+        }  
+      }  
+    }  
+    public static void main(String[] args) throws IOException, InterruptedException, ClassNotFoundException  
+    {  
+  
+      Configuration conf = new Configuration();  
+      Job job = new Job(conf, "secondarysort");  
+      job.setJarByClass(SecondarySort.class);  
+      job.setMapperClass(Map.class);  
+      job.setReducerClass(Reduce.class);  
+      job.setPartitionerClass(FirstPartitioner.class);  
+  
+      job.setGroupingComparatorClass(GroupingComparator.class);  
+      job.setMapOutputKeyClass(IntPair.class);  
+  
+      job.setMapOutputValueClass(IntWritable.class);  
+  
+      job.setOutputKeyClass(Text.class);  
+  
+      job.setOutputValueClass(IntWritable.class);  
+  
+      job.setInputFormatClass(TextInputFormat.class);  
+  
+      job.setOutputFormatClass(TextOutputFormat.class);  
+      String[] otherArgs=new String[2];  
+      otherArgs[0]="hdfs://localhost:9000/mymapreduce8/in/goods_visit2";  
+      otherArgs[1]="hdfs://localhost:9000/mymapreduce8/out";  
+  
+      FileInputFormat.setInputPaths(job, new Path(otherArgs[0]));  
+  
+      FileOutputFormat.setOutputPath(job, new Path(otherArgs[1]));  
+  
+      System.exit(job.waitForCompletion(true) ? 0 : 1);  
+    }  
+  }
+  ```
+
+# 25. MapReduce排序—倒排序索引
+
+## 25.1 倒排索引-原理
+
++ "倒排索引"是文档检索系统中最常用的数据结构，被广泛地应用于全文搜索引擎。
+  + 它主要是用来存储某个单词（或词组）在一个文档或一组文档中的存储位置的映射，即提供了一种根据"内容来查找文档"的方式。由于不是根据"文档来确定文档所包含"的内容，而是进行相反的操作，因而被称为倒排索引（Inverted Index）
++ 实现"倒排索引"主要关注的信息为：单词、文档URL及词频
+
+## 25.2 小结
+
+倒排索引：它主要是用来存储某个单词（或词组）在一个文档或一组文档中的存储位置的映射，即提供了一种根据"内容来查找文档"的方式。
+
+# 26. Mapreduce实例——倒排索引-实操
+
+## 26.1 相关知识
+
+​	"倒排索引"是文档检索系统中最常用的数据结构，被广泛地应用于全文搜索引擎。它主要是用来存储某个单词（或词组）在一个文档或一组文档中的存储位置的映射，即提供了一种根据内容来查找文档的方式。由于不是根据文档来确定文档所包含的内容，而是进行相反的操作，因而称为倒排索引（Inverted Index）。
+
+​	**实现"倒排索引"主要关注的信息为：单词、文档URL及词频**。
+
+​	下面以本实验goods3、goods_visit3、order_items3三张表的数据为例，根据MapReduce的处理过程给出倒排索引的设计思路：
+
+（1）Map过程
+
+首先使用默认的TextInputFormat类对输入文件进行处理，得到文本中每行的偏移量及其内容。显然，Map过程首先必须分析输入的<key,value>对，得到倒排索引中需要的三个信息：单词、文档URL和词频，接着我们对读入的数据利用Map操作进行预处理，如下图所示：
+
+[![img](https://www.ipieuvre.com/doc/exper/1e88d94b-91ad-11e9-beeb-00215ec892f4/img/01.png)](https://www.ipieuvre.com/doc/exper/1e88d94b-91ad-11e9-beeb-00215ec892f4/img/01.png)
+
+这里存在两个问题：**第一，<key,value>对只能有两个值，在不使用Hadoop自定义数据类型的情况下，需要根据情况将其中两个值合并成一个值，作为key或value值。第二，通过一个Reduce过程无法同时完成词频统计和生成文档列表，所以必须增加一个Combine过程完成词频统计**。
+
+这里将商品ID和URL组成key值（如"1024600：goods3"），将词频（商品ID出现次数）作为value，这样做的好处是可以利用MapReduce框架自带的Map端排序，将同一文档的相同单词的词频组成列表，传递给Combine过程，实现类似于WordCount的功能。
+
+（2）Combine过程
+
+经过map方法处理后，Combine过程将key值相同的value值累加，得到一个单词在文档中的词频，如下图所示。如果直接将下图所示的输出作为Reduce过程的输入，在Shuffle过程时将面临一个问题：所有具有相同单词的记录（由单词、URL和词频组成）应该交由同一个Reducer处理，但当前的key值无法保证这一点，所以必须修改key值和value值。这次将单词（商品ID）作为key值，URL和词频组成value值（如"goods3：1"）。这样做的好处是可以利用MapReduce框架默认的HashPartitioner类完成Shuffle过程，将相同单词的所有记录发送给同一个Reducer进行处理。
+
+[![img](https://www.ipieuvre.com/doc/exper/1e88d94b-91ad-11e9-beeb-00215ec892f4/img/01-1.png)](https://www.ipieuvre.com/doc/exper/1e88d94b-91ad-11e9-beeb-00215ec892f4/img/01-1.png)
+
+（3）Reduce过程
+
+经过上述两个过程后，Reduce过程只需将相同key值的所有value值组合成倒排索引文件所需的格式即可，剩下的事情就可以直接交给MapReduce框架进行处理了。如下图所示
+
+[![img](https://www.ipieuvre.com/doc/exper/1e88d94b-91ad-11e9-beeb-00215ec892f4/img/01-2.png)](https://www.ipieuvre.com/doc/exper/1e88d94b-91ad-11e9-beeb-00215ec892f4/img/01-2.png)
+
+## 26.2 编写思路
+
++ Map代码
+
+  首先使用默认的TextInputFormat类对输入文件进行处理，得到文本中每行的偏移量及其内容。显然，Map过程首先必须分析输入的<key,value>对，得到倒排索引中需要的三个信息：单词、文档URL和词频，这里存在两个问题：第一，<key,value>对只能有两个值，在不使用Hadoop自定义数据类型的情况下，需要根据情况将其中两个值合并成一个值，作为key或value值。第二，通过一个Reduce过程无法同时完成词频统计和生成文档列表，所以必须增加一个Combine过程完成词频统计。
+
+  ```java
+  public static class doMapper extends Mapper<Object, Text, Text, Text>{  
+    public static Text myKey = new Text();   // 存储单词和URL组合  
+    public static Text myValue = new Text();  // 存储词频  
+    //private FileSplit filePath;     // 存储Split对象  
+  
+    @Override   // 实现map函数  
+    protected void map(Object key, Text value, Context context)  
+      throws IOException, InterruptedException {  
+      String filePath=((FileSplit)context.getInputSplit()).getPath().toString();  
+      if(filePath.contains("goods")){  
+        String val[]=value.toString().split("\t");  
+        int splitIndex =filePath.indexOf("goods");  
+        myKey.set(val[0] + ":" + filePath.substring(splitIndex));  
+      }else if(filePath.contains("order")){  
+        String val[]=value.toString().split("\t");  
+        int splitIndex =filePath.indexOf("order");  
+        myKey.set(val[2] + ":" + filePath.substring(splitIndex));  
+      }  
+      myValue.set("1");  
+      context.write(myKey, myValue);  
+    }  
+  }
+  ```
+
++ Combiner代码
+
+  **经过map方法处理后，Combine过程将key值相同的value值累加，得到一个单词在文档中的词频**。如果直接将输出作为Reduce过程的输入，在Shuffle过程时将面临一个问题：所有具有相同单词的记录（由单词、URL和词频组成）应该交由同一个Reducer处理，但当前的key值无法保证这一点，所以必须修改key值和value值。这次将单词作为key值，URL和词频组成value值。这样做的好处是可以利用MapReduce框架默认的HashPartitioner类完成Shuffle过程，将相同单词的所有记录发送给同一个Reducer进行处理。
+
+  ```java
+  public static class doCombiner extends Reducer<Text, Text, Text, Text>{  
+    public static Text myK = new Text();  
+    public static Text myV = new Text();  
+  
+    @Override //实现reduce函数  
+    protected void reduce(Text key, Iterable<Text> values, Context context)  
+      throws IOException, InterruptedException {  
+      // 统计词频  
+      int sum = 0 ;  
+      for (Text value : values) {  
+        sum += Integer.parseInt(value.toString());  
+      }  
+      int mysplit = key.toString().indexOf(":");  
+      // 重新设置value值由URL和词频组成  
+      myK.set(key.toString().substring(0, mysplit));  
+      myV.set(key.toString().substring(mysplit + 1) + ":" + sum);  
+      context.write(myK, myV);  
+    }  
+  }  
+  ```
+
++ Reduce代码
+
+  经过上述两个过程后，Reduce过程只需将相同key值的value值组合成倒排索引文件所需的格式即可，剩下的事情就可以直接交给MapReduce框架进行处理了。
+
+  ```java
+  public static class doReducer extends Reducer<Text, Text, Text, Text>{  
+  
+    public static Text myK = new Text();  
+    public static Text myV = new Text();  
+  
+    @Override     // 实现reduce函数  
+    protected void reduce(Text key, Iterable<Text> values, Context context)  
+      throws IOException, InterruptedException {  
+      // 生成文档列表  
+      String myList = new String();  
+  
+      for (Text value : values) {  
+        myList += value.toString() + ";";  
+      }  
+      myK.set(key);  
+      myV.set(myList);  
+      context.write(myK, myV);  
+    }  
+  }
+  ```
+
++ 完整代码
+
+  ```java
+  package mapreduce;  
+  import java.io.IOException;  
+  import org.apache.hadoop.fs.Path;  
+  import org.apache.hadoop.io.Text;  
+  import org.apache.hadoop.mapreduce.Job;  
+  import org.apache.hadoop.mapreduce.Mapper;  
+  import org.apache.hadoop.mapreduce.Reducer;  
+  import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;  
+  import org.apache.hadoop.mapreduce.lib.input.FileSplit;  
+  import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;  
+  public class MyIndex {  
+    public static void main(String[] args) throws IOException, ClassNotFoundException, InterruptedException {  
+      Job job = Job.getInstance();  
+      job.setJobName("InversedIndexTest");  
+      job.setJarByClass(MyIndex.class);  
+  
+      job.setMapperClass(doMapper.class);  
+      job.setCombinerClass(doCombiner.class);  
+      job.setReducerClass(doReducer.class);  
+  
+      job.setOutputKeyClass(Text.class);  
+      job.setOutputValueClass(Text.class);  
+  
+      Path in1 = new Path("hdfs://localhost:9000/mymapreduce9/in/goods3");  
+      Path in2 = new Path("hdfs://localhost:9000/mymapreduce9/in/goods_visit3");  
+      Path in3 = new Path("hdfs://localhost:9000/mymapreduce9/in/order_items3");  
+      Path out = new Path("hdfs://localhost:9000/mymapreduce9/out");  
+  
+      FileInputFormat.addInputPath(job, in1);  
+      FileInputFormat.addInputPath(job, in2);  
+      FileInputFormat.addInputPath(job, in3);  
+      FileOutputFormat.setOutputPath(job, out);  
+  
+      System.exit(job.waitForCompletion(true) ? 0 : 1);  
+    }  
+  
+    public static class doMapper extends Mapper<Object, Text, Text, Text>{  
+      public static Text myKey = new Text();  
+      public static Text myValue = new Text();  
+      //private FileSplit filePath;  
+  
+      @Override  
+      protected void map(Object key, Text value, Context context)  
+        throws IOException, InterruptedException {  
+        String filePath=((FileSplit)context.getInputSplit()).getPath().toString();  
+        if(filePath.contains("goods")){  
+          String val[]=value.toString().split("\t");  
+          int splitIndex =filePath.indexOf("goods");  
+          myKey.set(val[0] + ":" + filePath.substring(splitIndex));  
+        }else if(filePath.contains("order")){  
+          String val[]=value.toString().split("\t");  
+          int splitIndex =filePath.indexOf("order");  
+          myKey.set(val[2] + ":" + filePath.substring(splitIndex));  
+        }  
+        myValue.set("1");  
+        context.write(myKey, myValue);  
+      }  
+    }  
+    public static class doCombiner extends Reducer<Text, Text, Text, Text>{  
+      public static Text myK = new Text();  
+      public static Text myV = new Text();  
+  
+      @Override  
+      protected void reduce(Text key, Iterable<Text> values, Context context)  
+        throws IOException, InterruptedException {  
+        int sum = 0 ;  
+        for (Text value : values) {  
+          sum += Integer.parseInt(value.toString());  
+        }  
+        int mysplit = key.toString().indexOf(":");  
+        myK.set(key.toString().substring(0, mysplit));  
+        myV.set(key.toString().substring(mysplit + 1) + ":" + sum);  
+        context.write(myK, myV);  
+      }  
+    }  
+  
+    public static class doReducer extends Reducer<Text, Text, Text, Text>{  
+  
+      public static Text myK = new Text();  
+      public static Text myV = new Text();  
+  
+      @Override  
+      protected void reduce(Text key, Iterable<Text> values, Context context)  
+        throws IOException, InterruptedException {  
+  
+        String myList = new String();  
+  
+        for (Text value : values) {  
+          myList += value.toString() + ";";  
+        }  
+        myK.set(key);  
+        myV.set(myList);  
+        context.write(myK, myV);  
+      }  
+    }  
+  }  
+  ```
+
+# 27. Mapreduce实例——单表join-实操
+
+
+
