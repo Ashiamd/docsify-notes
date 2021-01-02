@@ -13,4 +13,20 @@
 ## 999. 杂项
 
 > [MySQL 到底能不能放到 Docker 里跑？](https://zhuanlan.zhihu.com/p/47172593)
+>
+> 
+>
+> [SQL之in和exit区别篇](https://blog.csdn.net/qq_36561697/article/details/80713824)	<=	回顾一下
+>
+> [in与exists的取舍](https://blog.csdn.net/dreamwbt/article/details/53363497)	<=	回顾一下
+>
+> 一般而言，外循环的数量级小的，速度更快，因为外层复杂度N，但是内层走索引的话就能缩小到logM
+>
+> A join B也是笛卡尔积，最后保留指定字段相同的结果而已（A内循环，B外循环）
+>
+> A in B，先计算B，然后笛卡尔积，（A内循环，B外循环）
+>
+> A exist B，先计算A，然后笛卡尔积（B内循环，A外循环）
+>
+> not in内外表都不会用到索引，而not exists能用到索引，所以后者任何情况都比前者好
 

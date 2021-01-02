@@ -1866,5 +1866,1074 @@ Map、Reduce任务中Shuffle和排序的过程图如下：
 
 # 27. Mapreduce实例——单表join-实操
 
+## 27.1 相关知识
+
+> [区分笛卡儿积，自然连接，等值连接，内连接，外连接](https://baijiahao.baidu.com/s?id=1655935519271290347&wfr=spider&for=pc)	<=	回顾下数据库基础知识
+
+​	以本实验的buyer1(buyer_id,friends_id)表为例来阐述单表连接的实验原理。单表连接，连接的是左表的buyer_id列和右表的friends_id列，且左表和右表是同一个表。
+
+​	因此，在map阶段将读入数据分割成buyer_id和friends_id之后，会将buyer_id设置成key，friends_id设置成value，直接输出并将其作为左表；再将同一对buyer_id和friends_id中的friends_id设置成key，buyer_id设置成value进行输出，作为右表。
+
+​	为了区分输出中的左右表，需要在输出的value中再加上左右表的信息，比如在value的String最开始处加上字符1表示左表，加上字符2表示右表。这样在map的结果中就形成了左表和右表，然后**在shuffle过程中完成连接**。
+
+​	reduce接收到连接的结果，其中每个key的value-list就包含了"buyer_idfriends_id--friends_idbuyer_id"关系。取出每个key的value-list进行解析，将左表中的buyer_id放入一个数组，右表中的friends_id放入一个数组，然后**对两个数组求笛卡尔积**就是最后的结果了。
+
+[![img](https://www.ipieuvre.com/doc/exper/1e693f7d-91ad-11e9-beeb-00215ec892f4/img/01.png)](https://www.ipieuvre.com/doc/exper/1e693f7d-91ad-11e9-beeb-00215ec892f4/img/01.png)
+
+## 27.2 编写思路
+
++ Map代码
+
+  ```java
+  public static class Map extends Mapper<Object,Text,Text,Text>{  
+    //实现map函数  
+    public void map(Object key,Text value,Context context)  
+      throws IOException,InterruptedException{  
+      String line = value.toString();  
+      String[] arr = line.split("\t");   //按行截取  
+      String mapkey=arr[0];  
+      String mapvalue=arr[1];  
+      String relationtype=new String();  //左右表标识  
+      relationtype="1";  //输出左表  
+      context.write(new Text(mapkey),new Text(relationtype+"+"+mapvalue));  
+      //System.out.println(relationtype+"+"+mapvalue);  
+      relationtype="2";  //输出右表  
+      context.write(new Text(mapvalue),new Text(relationtype+"+"+mapkey));  
+      //System.out.println(relationtype+"+"+mapvalue);  
+  
+    }  
+  } 
+  ```
+
+  Map处理的是一个纯文本文件，Mapper处理的数据是由InputFormat将数据集切分成小的数据集InputSplit，并用RecordReader解析成<key/value>对提供给map函数使用。map函数中用split("\t")方法把每行数据进行截取，并把数据存入到数组arr[]，把arr[0]赋值给mapkey，arr[1]赋值给mapvalue。用两个context的write()方法把数据输出两份，再通过标识符relationtype为1或2对两份输出数据的value打标记。
+
++ Reduce代码
+
+  ```java
+  public static class Reduce extends Reducer<Text, Text, Text, Text>{  
+    //实现reduce函数  
+    public void reduce(Text key,Iterable<Text> values,Context context)  
+      throws IOException,InterruptedException{  
+      int buyernum=0;  
+      String[] buyer=new String[20];  
+      int friendsnum=0;  
+      String[] friends=new String[20];  
+      Iterator ite=values.iterator();  
+      while(ite.hasNext()){  
+        String record=ite.next().toString();  
+        int len=record.length();  
+        int i=2;  
+        if(0==len){  
+          continue;  
+        }  
+        //取得左右表标识  
+        char relationtype=record.charAt(0);  
+        //取出record，放入buyer  
+        if('1'==relationtype){  
+          buyer [buyernum]=record.substring(i);  
+          buyernum++;  
+        }  
+        //取出record，放入friends  
+        if('2'==relationtype){  
+          friends[friendsnum]=record.substring(i);  
+          friendsnum++;  
+        }  
+      }  
+      //buyernum和friendsnum数组求笛卡尔积  
+      if(0!=buyernum&&0!=friendsnum){  
+        for(int m=0;m<buyernum;m++){  
+          for(int n=0;n<friendsnum;n++){  
+            if(buyer[m]!=friends[n]){  
+              //输出结果  
+              context.write(new Text(buyer[m]),new Text(friends[n]));  
+            }  
+          }  
+        }  
+      }  
+    }  
+  }
+  ```
+
+  ​	reduce端在接收map端传来的数据时已经把相同key的所有value都放到一个Iterator容器中values。reduce函数中，首先新建两数组buyer[]和friends[]用来存放map端的两份输出数据。然后Iterator迭代中hasNext()和Next()方法加while循环遍历输出values的值并赋值给record，用charAt(0)方法获取record第一个字符赋值给relationtype，用if判断如果relationtype为1则把用substring(2)方法从下标为2开始截取record将其存放到buyer[]中，如果relationtype为2时将截取的数据放到frindes[]数组中。然后用三个for循环嵌套遍历输出<key,value>，其中key=buyer[m]，value=friends[n]。
+
++ 完整代码
+
+  ```java
+  package mapreduce;  
+  import java.io.IOException;  
+  import java.util.Iterator;  
+  import org.apache.hadoop.conf.Configuration;  
+  import org.apache.hadoop.fs.Path;  
+  import org.apache.hadoop.io.Text;  
+  import org.apache.hadoop.mapreduce.Job;  
+  import org.apache.hadoop.mapreduce.Mapper;  
+  import org.apache.hadoop.mapreduce.Reducer;  
+  import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;  
+  import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;  
+  public class DanJoin {  
+    public static class Map extends Mapper<Object,Text,Text,Text>{  
+      public void map(Object key,Text value,Context context)  
+        throws IOException,InterruptedException{  
+        String line = value.toString();  
+        String[] arr = line.split("\t");  
+        String mapkey=arr[0];  
+        String mapvalue=arr[1];  
+        String relationtype=new String();  
+        relationtype="1";  
+        context.write(new Text(mapkey),new Text(relationtype+"+"+mapvalue));  
+        //System.out.println(relationtype+"+"+mapvalue);  
+        relationtype="2";  
+        context.write(new Text(mapvalue),new Text(relationtype+"+"+mapkey));  
+        //System.out.println(relationtype+"+"+mapvalue);  
+      }  
+    }  
+    public static class Reduce extends Reducer<Text, Text, Text, Text>{  
+      public void reduce(Text key,Iterable<Text> values,Context context)  
+        throws IOException,InterruptedException{  
+        int buyernum=0;  
+        String[] buyer=new String[20];  
+        int friendsnum=0;  
+        String[] friends=new String[20];  
+        Iterator ite=values.iterator();  
+        while(ite.hasNext()){  
+          String record=ite.next().toString();  
+          int len=record.length();  
+          int i=2;  
+          if(0==len){  
+            continue;  
+          }  
+          char relationtype=record.charAt(0);  
+          if('1'==relationtype){  
+            buyer [buyernum]=record.substring(i);  
+            buyernum++;  
+          }  
+          if('2'==relationtype){  
+            friends[friendsnum]=record.substring(i);  
+            friendsnum++;  
+          }  
+        }  
+        if(0!=buyernum&&0!=friendsnum){  
+          for(int m=0;m<buyernum;m++){  
+            for(int n=0;n<friendsnum;n++){  
+              if(buyer[m]!=friends[n]){  
+                context.write(new Text(buyer[m]),new Text(friends[n]));  
+              }  
+            }  
+          }  
+        }  
+      }  
+    }  
+    public static void main(String[] args) throws Exception{  
+  
+      Configuration conf=new Configuration();  
+      String[] otherArgs=new String[2];  
+      otherArgs[0]="hdfs://localhost:9000/mymapreduce7/in/buyer1";  
+      otherArgs[1]="hdfs://localhost:9000/mymapreduce7/out";  
+      Job job=new Job(conf," Table join");  
+      job.setJarByClass(DanJoin.class);  
+      job.setMapperClass(Map.class);  
+      job.setReducerClass(Reduce.class);  
+      job.setOutputKeyClass(Text.class);  
+      job.setOutputValueClass(Text.class);  
+      FileInputFormat.addInputPath(job, new Path(otherArgs[0]));  
+      FileOutputFormat.setOutputPath(job, new Path(otherArgs[1]));  
+      System.exit(job.waitForCompletion(true)?0:1);  
+  
+    }  
+  }  
+  ```
+
+# 28. MapReduce多表关联—Map端join
+
+## 28.1 Map端join
+
+​	MapReduce提供了表连接操作，其中包括：
+
++ Map端join
++ Reduce端join
++ 单表连接
+
+​	现在讨论的是Map端join，Map端join是指数据达到map处理函数之前进行合并的，效率要远远高于Reduce端join，因为Reduce端join是把所有的数据都经过Shuffle，非常消耗资源
+
+## 28.2 使用场景和原理
+
++ Map端join的使用场景：
+  + 一张表数据十分小、一张表数据很大
++ 原理：
+  + Map端join是针对以上场景进行的优化：将小表中的数据全部加在到内存，按**关键字**建立索引。大表中的数据作为map的输入，对map()函数每一对<key,value>输入，就能够方便地和已加载到内存的小数据进行连接。把连接结果按key输出，经过shuffile阶段，reduce端的到的就是已经按key分组并且连接好了的数据。
+
+## 28.3 执行流程
+
+1. 首先在提交作业的时候将小表文件放到该作业的DistributedCache中，然后从DistributedCache中取出该小表进行join连接的<key,value>键值对，将其解释分割放到内存中（可以放到HashMap等等容器中）
+2. 要重写MyMapper类下面的setup()方法，因为这个方法是先于map方法执行的，将较小表先读入到一个HashMap中。
+3. 重写map函数，一行行读入大表的内容，逐一与HashMap中的内容进行比较，若Key相同，则对数据进行格式化处理，然后直接输出。
+4. map函数输出的<key,value>键值对首先经过一个shuffle把key值相同的所有value放到一个迭代器中形成values，然后将<key,values>键值对传递给reduce函数，reduce函数输入的key直接复制给输出的key，输入的values通过增强版for循环遍历逐一输出，循环的次数决定了<key,value>输出的次数
+
+## 28.4 小结
+
+​	Map端join：适用于一张大表和一张小表之间的连接。先将**小表的内容加载到缓存**中，在setup中读取内容，然后在map函数中处理连接，reduce中遍历输出
+
+（注意：两张表中有公共字段）
+
+# 29. Mapreduce实例——Map端join-实操
+
+## 29.1 相关知识
+
+​	**MapReduce提供了表连接操作其中包括Map端join、Reduce端join还有单表连接**。
+
+​	现在我们要讨论的是Map端join，Map端join是指数据到达map处理函数之前进行合并的，效率要远远高于Reduce端join，因为Reduce端join是把所有的数据都经过Shuffle，非常消耗资源。
+
+1. Map端join的使用场景：一张表数据十分小、一张表数据很大。
+
+   ​	Map端join是针对以上场景进行的优化：**将小表中的数据全部加载到内存，按关键字建立索引**。大表中的数据作为map的输入，对map()函数每一对<key,value>输入，都能够方便地和已加载到内存的小数据进行连接。把连接结果按key输出，经过shuffle阶段，reduce端得到的就是已经按key分组并且连接好了的数据。
+
+为了支持文件的复制，Hadoop提供了一个类DistributedCache，使用该类的方法如下：
+
+（1）用户使用静态方法DistributedCache.addCacheFile()指定要复制的文件，它的参数是文件的URI（如果是HDFS上的文件，可以这样：hdfs://namenode:9000/home/XXX/file，其中9000是自己配置的NameNode端口号）。JobTracker在作业启动之前会获取这个URI列表，并将相应的文件拷贝到各个TaskTracker的本地磁盘上。
+
+（2）用户使用DistributedCache.getLocalCacheFiles()方法获取文件目录，并使用标准的文件读写API读取相应的文件。
+
+2.本实验Map端Join的执行流程
+
+（1）首先在提交作业的时候先将小表文件放到该作业的DistributedCache中，然后从DistributeCache中取出该小表进行join连接的 <key ,value>键值对，将其解释分割放到内存中（可以放到HashMap等等容器中）。
+
+（2）**要重写MyMapper类下面的setup()方法，因为这个方法是先于map方法执行的，将较小表先读入到一个HashMap中**。
+
+（3）重写map函数，一行行读入大表的内容，逐一的与HashMap中的内容进行比较，若Key相同，则对数据进行格式化处理，然后直接输出。
+
+（4）map函数输出的<key,value >键值对首先经过一个shuffle把key值相同的所有value放到一个迭代器中形成values，然后将<key,values>键值对传递给reduce函数，reduce函数输入的key直接复制给输出的key，输入的values通过增强版for循环遍历逐一输出，循环的次数决定了<key,value>输出的次数。
+
+## 29.2 编写思路
+
+​	Map端join适用于一个表记录数很少（100条），另一表记录数很多（像几亿条）的情况，我们把小表数据加载到内存中，然后扫描大表，看大表中记录的每条join key/value是否能在内存中找到相同的join key记录，如果有则输出结果。这样避免了一种数据倾斜问题。Mapreduce的Java代码分为两个部分：Mapper部分，Reduce部分。
+
++ Mapper代码
+
+  ```java
+  public static class MyMapper extends Mapper<Object, Text, Text, Text>{  
+    private Map<String, String> dict = new HashMap<>();  
+  
+    @Override  
+    protected void setup(Context context) throws IOException,  
+    InterruptedException {  
+      String fileName = context.getLocalCacheFiles()[0].getName();  
+      System.out.println(fileName);  
+      BufferedReader reader = new BufferedReader(new FileReader(fileName));  
+      String codeandname = null;  
+      while (null != ( codeandname = reader.readLine() ) ) {  
+        String str[]=codeandname.split("\t");  
+        dict.put(str[0], str[2]+"\t"+str[3]);  
+      }  
+      reader.close();  
+    }  
+    @Override  
+    protected void map(Object key, Text value, Context context)  
+      throws IOException, InterruptedException {  
+      String[] kv = value.toString().split("\t");  
+      if (dict.containsKey(kv[1])) {  
+        context.write(new Text(kv[1]), new Text(dict.get(kv[1])+"\t"+kv[2]));  
+      }  
+    }  
+  }
+  ```
+
+  该部分分为setup方法与map方法。在setup方法中首先用getName()获取当前文件名为orders1的文件并赋值给fileName，然后用bufferedReader读取内存中缓存文件。在读文件时用readLine()方法读取每行记录，把该记录用split("\t")方法截取，与order_items文件中相同的字段str[0]作为key值放到map集合dict中，选取所要展现的字段作为value。map函数接收order_items文件数据，并用split("\t")截取数据存放到数组kv[]中（其中kv[1]与str[0]代表的字段相同），用if判断，如果内存中dict集合的key值包含kv[1],则用context的write()方法输出key2/value2值，其中kv[1]作为key2,其他dict.get(kv[1])+"\t"+kv[2]作为value2。
+
++ Reduce代码
+
+  ```java
+  public static class MyReducer extends Reducer<Text, Text, Text, Text>{  
+    @Override  
+    protected void reduce(Text key, Iterable<Text> values, Context context)  
+      throws IOException, InterruptedException {  
+      for (Text text : values) {  
+        context.write(key, text);  
+      }  
+    }  
+  }  
+  ```
+
+  map函数输出的<key,value >键值对首先经过一个suffle把key值相同的所有value放到一个迭代器中形成values，然后将<key,values>键值对传递给reduce函数，reduce函数输入的key直接复制给输出的key，输入的values通过增强版for循环遍历逐一输出。
+
++ 完整代码
+
+  ```java
+  package mapreduce;  
+  import java.io.BufferedReader;  
+  import java.io.FileReader;  
+  import java.io.IOException;  
+  import java.net.URI;  
+  import java.net.URISyntaxException;  
+  import java.util.HashMap;  
+  import java.util.Map;  
+  import org.apache.hadoop.fs.Path;  
+  import org.apache.hadoop.io.Text;  
+  import org.apache.hadoop.mapreduce.Job;  
+  import org.apache.hadoop.mapreduce.Mapper;  
+  import org.apache.hadoop.mapreduce.Reducer;  
+  import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;  
+  import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;  
+  public class MapJoin {  
+  
+    public static class MyMapper extends Mapper<Object, Text, Text, Text>{  
+      private Map<String, String> dict = new HashMap<>();  
+  
+      @Override  
+      protected void setup(Context context) throws IOException,  
+      InterruptedException {  
+        String fileName = context.getLocalCacheFiles()[0].getName();  
+        //System.out.println(fileName);  
+        BufferedReader reader = new BufferedReader(new FileReader(fileName));  
+        String codeandname = null;  
+        while (null != ( codeandname = reader.readLine() ) ) {  
+          String str[]=codeandname.split("\t");  
+          dict.put(str[0], str[2]+"\t"+str[3]);  
+        }  
+        reader.close();  
+      }  
+      @Override  
+      protected void map(Object key, Text value, Context context)  
+        throws IOException, InterruptedException {  
+        String[] kv = value.toString().split("\t");  
+        if (dict.containsKey(kv[1])) {  
+          context.write(new Text(kv[1]), new Text(dict.get(kv[1])+"\t"+kv[2]));  
+        }  
+      }  
+    }  
+    public static class MyReducer extends Reducer<Text, Text, Text, Text>{  
+      @Override  
+      protected void reduce(Text key, Iterable<Text> values, Context context)  
+        throws IOException, InterruptedException {  
+        for (Text text : values) {  
+          context.write(key, text);  
+        }  
+      }  
+    }  
+  
+    public static void main(String[] args) throws ClassNotFoundException, IOException, InterruptedException, URISyntaxException {  
+      Job job = Job.getInstance();  
+      job.setJobName("mapjoin");  
+      job.setJarByClass(MapJoin.class);  
+  
+      job.setMapperClass(MyMapper.class);  
+      job.setReducerClass(MyReducer.class);  
+  
+      job.setOutputKeyClass(Text.class);  
+      job.setOutputValueClass(Text.class);  
+  
+      Path in = new Path("hdfs://localhost:9000/mymapreduce5/in/order_items1");  
+      Path out = new Path("hdfs://localhost:9000/mymapreduce5/out");  
+      FileInputFormat.addInputPath(job, in);  
+      FileOutputFormat.setOutputPath(job, out);  
+  
+      URI uri = new URI("hdfs://localhost:9000/mymapreduce5/in/orders1");  
+      job.addCacheFile(uri);  
+  
+      System.exit(job.waitForCompletion(true) ? 0 : 1);  
+    }  
+  }
+  ```
+
+# 30. MapReduce多表关联—Reduce端join
+
+## 30.1 Reduce端join-原理
+
++ 在Reduce端进行join连接是MapReduce框架进行表之间join操作最为常见的模式。
++ Reduce端join实现原理
+  + Map端的主要工作，为来自不同表（文件）的key/value**对打标签以区别不同来源**的记录。然后用连接字段作为key，其余部分和新加的标志作为value，最后进行输出。
+  + Reduce端的主要工作，在Reduce端义连接字段作为key的分组已经完成，我们只需要在每一个分组当中将那些来源于不同文件的记录（在map阶段已经打标志）分开，最后进行笛卡尔积就ok了。
++ Reduce端join的使用场景
+  + Reduce端连接比Map端连接更为普遍，因为在map阶段不能获取所有需要的join字段，即：同一个key对应的字段可能位于不同map中，但是Reduce端连接效率比较低，因为所有数据都必须经过Shuffle过程。
+
+## 30.2 小结
+
+Reduce端join：
+
+​	Map端读取所有的文件，并在输出的内容里加上标识，代表数据是从哪个文件里来的。Reduce处理函数中，按照标识对数据进行处理。然后将相同的key值进行join连接操作，求出结果并直接输出。
+
+# 31. Mapreduce实例——Reduce端join-实操
+
+## 31.1 相关知识
+
+在Reudce端进行Join连接是MapReduce框架进行表之间Join操作最为常见的模式。
+
+1.Reduce端Join实现原理
+
+（1）Map端的主要工作，为来自不同表（文件）的key/value对打标签以区别不同来源的记录。然后用连接字段作为key，其余部分和新加的标志作为value，最后进行输出。
+
+（2）Reduce端的主要工作，在Reduce端以连接字段作为key的分组已经完成，我们只需要在每一个分组当中将那些来源于不同文件的记录（在map阶段已经打标志）分开，最后进行笛卡尔只就ok了。
+
+2.Reduce端Join的使用场景
+
+​	**Reduce端连接比Map端连接更为普遍，因为在map阶段不能获取所有需要的join字段，即：同一个key对应的字段可能位于不同map中，但是Reduce端连接效率比较低，因为所有数据都必须经过Shuffle过程。**
+
+3.本实验的Reduce端Join代码执行流程：
+
+（1）Map端读取所有的文件，并在输出的内容里加上标识，代表数据是从哪个文件里来的。
+
+（2）在Reduce处理函数中，按照标识对数据进行处理。
+
+（3）然后将相同的key值进行Join连接操作，求出结果并直接输出。
+
+## 31.2 编写思路
+
+> [SQL之in和exit区别篇](https://blog.csdn.net/qq_36561697/article/details/80713824)	<=	回顾一下
+>
+> [in与exists的取舍](https://blog.csdn.net/dreamwbt/article/details/53363497)	<=	回顾一下
+>
+> 一般而言，外循环的数量级小的，速度更快，因为外层复杂度N，但是内层走索引的话就能缩小到logM
+>
+> A join B也是笛卡尔积，最后保留指定字段相同的结果而已（A内循环，B外循环）
+>
+> A in B，先计算B，然后笛卡尔积，（A内循环，B外循环）
+>
+> A exist B，先计算A，然后笛卡尔积（B内循环，A外循环）
+>
+> not in内外表都不会用到索引，而not exists能用到索引，所以后者任何情况都比前者好
+
+(1)Map端读取所有的文件，并在输出的内容里加上标识，代表数据是从哪个文件里来的。
+
+(2)在reduce处理函数中，按照标识对数据进行处理。
+
+(3)然后将相同key值进行join连接操作，求出结果并直接输出。
+
+Mapreduce中join连接分为Map端Join与Reduce端Join，这里是一个Reduce端Join连接。程序主要包括两部分：Map部分和Reduce部分。
+
++ Map代码
+
+  ```java
+  public static class mymapper extends Mapper<Object, Text, Text, Text>{  
+    @Override  
+    protected void map(Object key, Text value, Context context)  
+      throws IOException, InterruptedException {  
+      String filePath = ((FileSplit)context.getInputSplit()).getPath().toString();  
+      if (filePath.contains("orders1")) {  
+        //获取行文本内容  
+        String line = value.toString();  
+        //对行文本内容进行切分  
+        String[] arr = line.split("\t");  
+        ///把结果写出去  
+        context.write(new Text(arr[0]), new Text( "1+" + arr[2]+"\t"+arr[3]));  
+        System.out.println(arr[0] + "_1+" + arr[2]+"\t"+arr[3]);  
+      }else if(filePath.contains("order_items1")) {  
+        String line = value.toString();  
+        String[] arr = line.split("\t");  
+        context.write(new Text(arr[1]), new Text("2+" + arr[2]));  
+        System.out.println(arr[1] + "_2+" + arr[2]);  
+      }  
+    }  
+  }  
+  ```
+
+  Map处理的是一个纯文本文件，Mapper处理的数据是由InputFormat将数据集切分成小的数据集InputSplit，并用RecordReader解析成<key,value>对提供给map函数使用。在map函数中，首先用getPath()方法获取分片InputSplit的路径并赋值给filePath，if判断filePath中如果包含goods.txt文件名，则将map函数输入的value值通过Split("\t")方法进行切分，与goods_visit文件里相同的商品id字段作为key，其他字段前加"1+"作为value。如果if判断filePath包含goods_visit.txt文件名，步骤与上面相同，只是把其他字段前加"2+"作为value。最后把<key,value>通过Context的write方法输出。
+
++ Reduce代码
+
+  ```java
+  public static class myreducer extends Reducer<Text, Text, Text, Text>{  
+    @Override  
+    protected void reduce(Text key, Iterable<Text> values, Context context)  
+      throws IOException, InterruptedException {  
+      Vector<String> left  = new Vector<String>();  //用来存放左表的数据  
+      Vector<String> right = new Vector<String>();  //用来存放右表的数据  
+      //迭代集合数据  
+      for (Text val : values) {  
+        String str = val.toString();  
+        //将集合中的数据添加到对应的left和right中  
+        if (str.startsWith("1+")) {  
+          left.add(str.substring(2));  
+        }  
+        else if (str.startsWith("2+")) {  
+          right.add(str.substring(2));  
+        }  
+      }  
+      //获取left和right集合的长度  
+      int sizeL = left.size();  
+      int sizeR = right.size();  
+      //System.out.println(key + "left:"+left);  
+      //System.out.println(key + "right:"+right);  
+      //遍历两个向量将结果写进去  
+      for (int i = 0; i < sizeL; i++) {  
+        for (int j = 0; j < sizeR; j++) {  
+          context.write( key, new Text(  left.get(i) + "\t" + right.get(j) ) );  
+          //System.out.println(key + " \t" + left.get(i) + "\t" + right.get(j));  
+        }  
+      }  
+    }  
+  } 
+  ```
+
+  map函数输出的<key,value>经过shuffle将key相同的所有value放到一个迭代器中形成values，然后将<key,values>键值对传递给reduce函数。reduce函数中，首先新建两个Vector集合，用于存放输入的values中以"1+"开头和"2+"开头的数据。然后用增强版for循环遍历并嵌套if判断，若判断values里的元素以1+开头，则通过substring(2)方法切分元素，结果存放到left集合中，若values里元素以2+开头，则仍利用substring(2)方法切分元素，结果存放到right集合中。最后再用两个嵌套for循环，遍历输出<key,value>，其中输入的key直接赋值给输出的key，输出的value为left +"\t"+right。
+
++ 完整代码
+
+  ```java
+  package mapreduce;  
+  import java.io.IOException;  
+  import java.util.Iterator;  
+  import java.util.Vector;  
+  import org.apache.hadoop.fs.Path;  
+  import org.apache.hadoop.io.Text;  
+  import org.apache.hadoop.mapreduce.Job;  
+  import org.apache.hadoop.mapreduce.Mapper;  
+  import org.apache.hadoop.mapreduce.Reducer;  
+  import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;  
+  import org.apache.hadoop.mapreduce.lib.input.FileSplit;  
+  import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;  
+  public class ReduceJoin {  
+    public static class mymapper extends Mapper<Object, Text, Text, Text>{  
+      @Override  
+      protected void map(Object key, Text value, Context context)  
+        throws IOException, InterruptedException {  
+        String filePath = ((FileSplit)context.getInputSplit()).getPath().toString();  
+        if (filePath.contains("orders1")) {  
+          String line = value.toString();  
+          String[] arr = line.split("\t");  
+          context.write(new Text(arr[0]), new Text( "1+" + arr[2]+"\t"+arr[3]));  
+          //System.out.println(arr[0] + "_1+" + arr[2]+"\t"+arr[3]);  
+        }else if(filePath.contains("order_items1")) {  
+          String line = value.toString();  
+          String[] arr = line.split("\t");  
+          context.write(new Text(arr[1]), new Text("2+" + arr[2]));  
+          //System.out.println(arr[1] + "_2+" + arr[2]);  
+        }  
+      }  
+    }  
+  
+    public static class myreducer extends Reducer<Text, Text, Text, Text>{  
+      @Override  
+      protected void reduce(Text key, Iterable<Text> values, Context context)  
+        throws IOException, InterruptedException {  
+        Vector<String> left  = new Vector<String>();  
+        Vector<String> right = new Vector<String>();  
+        for (Text val : values) {  
+          String str = val.toString();  
+          if (str.startsWith("1+")) {  
+            left.add(str.substring(2));  
+          }  
+          else if (str.startsWith("2+")) {  
+            right.add(str.substring(2));  
+          }  
+        }  
+  
+        int sizeL = left.size();  
+        int sizeR = right.size();  
+        //System.out.println(key + "left:"+left);  
+        //System.out.println(key + "right:"+right);  
+        for (int i = 0; i < sizeL; i++) {  
+          for (int j = 0; j < sizeR; j++) {  
+            context.write( key, new Text(  left.get(i) + "\t" + right.get(j) ) );  
+            //System.out.println(key + " \t" + left.get(i) + "\t" + right.get(j));  
+          }  
+        }  
+      }  
+    }  
+  
+    public static void main(String[] args) throws IOException, ClassNotFoundException, InterruptedException {  
+      Job job = Job.getInstance();  
+      job.setJobName("reducejoin");  
+      job.setJarByClass(ReduceJoin.class);  
+  
+      job.setMapperClass(mymapper.class);  
+      job.setReducerClass(myreducer.class);  
+  
+      job.setOutputKeyClass(Text.class);  
+      job.setOutputValueClass(Text.class);  
+  
+      Path left = new Path("hdfs://localhost:9000/mymapreduce6/in/orders1");  
+      Path right = new Path("hdfs://localhost:9000/mymapreduce6/in/order_items1");  
+      Path out = new Path("hdfs://localhost:9000/mymapreduce6/out");  
+  
+      FileInputFormat.addInputPath(job, left);  
+      FileInputFormat.addInputPath(job, right);  
+      FileOutputFormat.setOutputPath(job, out);  
+  
+      System.exit(job.waitForCompletion(true) ? 0 : 1);  
+    }  
+  } 
+  ```
+
+# 32. Mapreduce实例——ChainMapReduce-实操
+
+## 32.1 相关知识
+
+​	一些复杂的任务难以用一次MapReduce处理完成，需要多次MapReduce才能完成任务。
+
+​	**Hadoop2.0开始MapReduce作业支持链式处理**，类似于工厂的生产线，每一个阶段都有特定的任务要处理，比如提供原配件——>组装——>打印出厂日期，等等。通过这样进一步的分工，从而提高了生成效率，我们Hadoop中的链式MapReduce也是如此，这些Mapper可以像水流一样，一级一级向后处理，有点类似于Linux的管道。前一个Mapper的输出结果直接可以作为下一个Mapper的输入，形成一个流水线。
+
+​	**链式MapReduce的执行规则：<big>整个Job中只能有一个Reducer</big>，在Reducer前面可以有一个或者多个Mapper，在Reducer的后面可以有0个或者多个Mapper。**
+
+​	Hadoop2.0支持的链式处理MapReduce作业有以下三种：
+
+（1）**顺序链接MapReduce作业**
+
+​	类似于Unix中的管道：mapreduce-1 | mapreduce-2 | mapreduce-3 ......，每一个阶段创建一个job，并将当前输入路径设为前一个的输出。**在最后阶段删除链上生成的中间数据**。
+
+（2）**具有复杂依赖的MapReduce链接**
+
+​	若mapreduce-1处理一个数据集， mapreduce-2 处理另一个数据集，而mapreduce-3对前两个做内部链接。这种情况通过Job和JobControl类管理非线性作业间的依赖。如x.addDependingJob(y)意味着x在y完成前不会启动。
+
+（3）**预处理和后处理的链接**
+
+​	**一般将预处理和后处理写为Mapper任务**。可以自己进行链接或使用ChainMapper和ChainReducer类，生成作业表达式类似于：
+
+​	MAP+ | REDUCE | MAP*
+
+​	如以下作业： Map1 | Map2 | Reduce | Map3 | Map4，把Map2和Reduce视为MapReduce作业核心。Map1作为前处理，Map3， Map4作为后处理。
+
+​	**ChainMapper使用模式：预处理作业，ChainReducer使用模式：设置Reducer并添加后处理Mapper**
+
+​	本实验中用到的就是第三种作业模式：预处理和后处理的链接，生成作业表达式类似于 Map1 | Map2 | Reduce | Map3
+
+## 32.2 编写思路
+
+​	mapreduce执行的大体流程如下图所示：
+
+[![img](https://www.ipieuvre.com/doc/exper/1e95e4b9-91ad-11e9-beeb-00215ec892f4/img/12.png)](https://www.ipieuvre.com/doc/exper/1e95e4b9-91ad-11e9-beeb-00215ec892f4/img/12.png)
+
+​	由上图可知，ChainMapReduce的执行流程为：
+
+​	①首先将文本文件中的数据通过InputFormat实例切割成多个小数据集InputSplit，然后通过RecordReader实例将小数据集InputSplit解析为<key,value>的键值对并提交给Mapper1；
+
+​	②Mapper1里的map函数将输入的value进行切割，把商品名字段作为key值，点击数量字段作为value值，筛选出value值小于等于600的<key,value>，将<key,value>输出给Mapper2；
+
+​	③Mapper2里的map函数再筛选出value值小于100的<key,value>，并将<key,value>输出；
+
+​	④Mapper2输出的<key,value>键值对先经过shuffle，将key值相同的所有value放到一个集合，形成<key,value-list>，然后将所有的<key,value-list>输入给Reducer；
+
+​	⑤Reducer里的reduce函数将value-list集合中的元素进行累加求和作为新的value，并将<key,value>输出给Mapper3；
+
+​	⑥Mapper3里的map函数筛选出key值小于3个字符的<key,value>，并将<key,value>以文本的格式输出到hdfs上。该ChainMapReduce的Java代码主要分为四个部分，分别为：FilterMapper1，FilterMapper2，SumReducer，FilterMapper3。
+
++ FilterMapper1代码
+
+  ```java
+  public static class FilterMapper1 extends Mapper<LongWritable, Text, Text, DoubleWritable> {  
+    private Text outKey = new Text();    //声明对象outKey  
+    private DoubleWritable outValue = new DoubleWritable();    //声明对象outValue  
+    @Override  
+    protected void map(LongWritable key, Text value, Mapper<LongWritable, Text, Text, DoubleWritable>.Context context)  
+      throws IOException,InterruptedException {  
+      String line = value.toString();  
+      if (line.length() > 0) {  
+        String[] splits = line.split("\t");  //按行对内容进行切分  
+        double visit = Double.parseDouble(splits[1].trim());  
+        if (visit <= 600) {    //if循环，判断visit是否小于等于600  
+          outKey.set(splits[0]);  
+          outValue.set(visit);  
+          context.write(outKey, outValue);  //调用context的write方法  
+        }  
+      }  
+    }  
+  } 
+  ```
+
+  ​	首先定义输出的key和value的类型，然后在map方法中获取文本行内容，用Split("\t")对行内容进行切分，把包含点击量的字段转换成double类型并赋值给visit，用if判断，如果visit小于等于600，则设置商品名称字段作为key,设置该visit作为value，用context的write方法输出<key,value>。
+
++ FilterMapper2代码
+
+  ```java
+  
+  public static class FilterMapper2 extends Mapper<Text, DoubleWritable, Text, DoubleWritable> {  
+    @Override  
+    protected void map(Text key, DoubleWritable value, Mapper<Text, DoubleWritable, Text, DoubleWritable>.Context context)  
+      throws IOException,InterruptedException {  
+      if (value.get() < 100) {  
+        context.write(key, value);  
+      }  
+    }  
+  } 
+  ```
+
+  ​	接收mapper1传来的数据，通过value.get()获取输入的value值，再用if判断如果输入的value值小于100，则直接将输入的key赋值给输出的key，输入的value赋值给输出的value，输出<key,value>。
+
++ SumReducer代码
+
+  ```java
+  public  static class SumReducer extends Reducer<Text, DoubleWritable, Text, DoubleWritable> {  
+    private DoubleWritable outValue = new DoubleWritable();  
+    @Override  
+    protected void reduce(Text key, Iterable<DoubleWritable> values, Reducer<Text, DoubleWritable, Text, DoubleWritable>.Context context)  
+      throws IOException, InterruptedException {  
+      double sum = 0;  
+      for (DoubleWritable val : values) {  
+        sum += val.get();  
+      }  
+      outValue.set(sum);  
+      context.write(key, outValue);  
+    }  
+  }  
+  ```
+
+  ​	FilterMapper2输出的<key,value>键值对先经过shuffle，将key值相同的所有value放到一个集合，形成<key,value-list>，然后将所有的<key,value-list>输入给SumReducer。在reduce函数中，用增强版for循环遍历value-list中元素，将其数值进行累加并赋值给sum，然后用outValue.set(sum)方法把sum的类型转变为DoubleWritable类型并将sum设置为输出的value，将输入的key赋值给输出的key，最后用context的write()方法输出<key,value>。
+
++ FilterMapper3代码
+
+  ```java
+  public  static class FilterMapper3 extends Mapper<Text, DoubleWritable, Text, DoubleWritable> {  
+    @Override  
+    protected void map(Text key, DoubleWritable value, Mapper<Text, DoubleWritable, Text, DoubleWritable>.Context context)  
+      throws IOException, InterruptedException {  
+      if (key.toString().length() < 3) {  //for循环，判断key值是否大于3  
+        System.out.println("写出去的内容为：" + key.toString() +"++++"+ value.toString());  
+        context.write(key, value);  
+      }  
+    }  
+  }  
+  ```
+
+  ​	接收reduce传来的数据，通过key.toString().length()获取key值的字符长度，再用if判断如果key值的字符长度小于3，则直接将输入的key赋值给输出的key，输入的value赋值给输出的value，输出<key，value>。
+
++ 完整代码
+
+  ```java
+  package mapreduce;  
+  import java.io.IOException;  
+  import java.net.URI;  
+  import org.apache.hadoop.conf.Configuration;  
+  import org.apache.hadoop.fs.Path;  
+  import org.apache.hadoop.io.LongWritable;  
+  import org.apache.hadoop.io.Text;  
+  import org.apache.hadoop.mapreduce.Job;  
+  import org.apache.hadoop.mapreduce.Mapper;  
+  import org.apache.hadoop.mapreduce.Reducer;  
+  import org.apache.hadoop.mapreduce.lib.chain.ChainMapper;  
+  import org.apache.hadoop.mapreduce.lib.chain.ChainReducer;  
+  import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;  
+  import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;  
+  import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;  
+  import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;  
+  import org.apache.hadoop.mapreduce.lib.partition.HashPartitioner;  
+  import org.apache.hadoop.fs.FileSystem;  
+  import org.apache.hadoop.io.DoubleWritable;  
+  public class ChainMapReduce {  
+    private static final String INPUTPATH = "hdfs://localhost:9000/mymapreduce10/in/goods_0";  
+    private static final String OUTPUTPATH = "hdfs://localhost:9000/mymapreduce10/out";  
+    public static void main(String[] args) {  
+      try {  
+        Configuration conf = new Configuration();  
+        FileSystem fileSystem = FileSystem.get(new URI(OUTPUTPATH), conf);  
+        if (fileSystem.exists(new Path(OUTPUTPATH))) {  
+          fileSystem.delete(new Path(OUTPUTPATH), true);  
+        }  
+        Job job = new Job(conf, ChainMapReduce.class.getSimpleName());  
+        FileInputFormat.addInputPath(job, new Path(INPUTPATH));  
+        job.setInputFormatClass(TextInputFormat.class);  
+        ChainMapper.addMapper(job, FilterMapper1.class, LongWritable.class, Text.class, Text.class, DoubleWritable.class, conf);  
+        ChainMapper.addMapper(job, FilterMapper2.class, Text.class, DoubleWritable.class, Text.class, DoubleWritable.class, conf);  
+        ChainReducer.setReducer(job, SumReducer.class, Text.class, DoubleWritable.class, Text.class, DoubleWritable.class, conf);  
+        ChainReducer.addMapper(job, FilterMapper3.class, Text.class, DoubleWritable.class, Text.class, DoubleWritable.class, conf);  
+        job.setMapOutputKeyClass(Text.class);  
+        job.setMapOutputValueClass(DoubleWritable.class);  
+        job.setPartitionerClass(HashPartitioner.class);  
+        job.setNumReduceTasks(1);  
+        job.setOutputKeyClass(Text.class);  
+        job.setOutputValueClass(DoubleWritable.class);  
+        FileOutputFormat.setOutputPath(job, new Path(OUTPUTPATH));  
+        job.setOutputFormatClass(TextOutputFormat.class);  
+        System.exit(job.waitForCompletion(true) ? 0 : 1);  
+      } catch (Exception e) {  
+        e.printStackTrace();  
+      }  
+    }  
+    public static class FilterMapper1 extends Mapper<LongWritable, Text, Text, DoubleWritable> {  
+      private Text outKey = new Text();  
+      private DoubleWritable outValue = new DoubleWritable();  
+      @Override  
+      protected void map(LongWritable key, Text value, Mapper<LongWritable, Text, Text, DoubleWritable>.Context context)  
+        throws IOException,InterruptedException {  
+        String line = value.toString();  
+        if (line.length() > 0) {  
+          String[] splits = line.split("\t");  
+          double visit = Double.parseDouble(splits[1].trim());  
+          if (visit <= 600) {  
+            outKey.set(splits[0]);  
+            outValue.set(visit);  
+            context.write(outKey, outValue);  
+          }  
+        }  
+      }  
+    }  
+    public static class FilterMapper2 extends Mapper<Text, DoubleWritable, Text, DoubleWritable> {  
+      @Override  
+      protected void map(Text key, DoubleWritable value, Mapper<Text, DoubleWritable, Text, DoubleWritable>.Context context)  
+        throws IOException,InterruptedException {  
+        if (value.get() < 100) {  
+          context.write(key, value);  
+        }  
+      }  
+    }  
+    public  static class SumReducer extends Reducer<Text, DoubleWritable, Text, DoubleWritable> {  
+      private DoubleWritable outValue = new DoubleWritable();  
+      @Override  
+      protected void reduce(Text key, Iterable<DoubleWritable> values, Reducer<Text, DoubleWritable, Text, DoubleWritable>.Context context)  
+        throws IOException, InterruptedException {  
+        double sum = 0;  
+        for (DoubleWritable val : values) {  
+          sum += val.get();  
+        }  
+        outValue.set(sum);  
+        context.write(key, outValue);  
+      }  
+    }  
+    public  static class FilterMapper3 extends Mapper<Text, DoubleWritable, Text, DoubleWritable> {  
+      @Override  
+      protected void map(Text key, DoubleWritable value, Mapper<Text, DoubleWritable, Text, DoubleWritable>.Context context)  
+        throws IOException, InterruptedException {  
+        if (key.toString().length() < 3) {  
+          System.out.println("写出去的内容为：" + key.toString() +"++++"+ value.toString());  
+          context.write(key, value);  
+        }  
+      }  
+  
+    }  
+  
+  }
+  ```
+
+# 33. MapReduce实战PageRank算法-实操
+
+## 33.1 相关知识
+
+​	PageRank：网页排名，右脚网页级别。是以Google 公司创始人Larry Page 之姓来命名。PageRank 计算每一个网页的PageRank值，并根据PageRank值的大小对网页的重要性进行排序。
+
+PageRank的基本思想：
+
+**1.如果一个网页被很多其他网页链接到的话说明这个网页比较重要，也就是PageRank值会相对较高**
+
+**2.如果一个PageRank值很高的网页链接到一个其他的网页，那么被链接到的网页的PageRank值会相应地因此而提高。**
+
+PageRank的算法原理：
+
+PageRank算法总的来说就是预先给每个网页一个PR值，由于PR值物理意义上为一个网页被访问概率，所以一般是1/N，其中N为网页总数。另外，一般情况下，所有网页的PR值的总和为1。如果不为1的话也不是不行，最后算出来的不同网页之间PR值的大小关系仍然是正确的，只是不能直接地反映概率了。
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/01.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/01.png)
+
+如图，假设现在有四张网页，对于页面A来说，它链接到页面B，C，D，即A有3个出链，则它跳转到每个出链B，C，D的概率均为1/3.。如果A有k个出链，跳转到每个出链的概率为1/k。同理B到A，C，D的概率为1/2，0，1/2。C到A，B，D的概率为1，0，0。D到A，B，C的概率为0，1/2，1/2。
+
+转化为矩阵为：
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/02.jpg)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/02.jpg)
+
+​	在上图中，第一列为页面A对各个页面转移的概率，第一行为各个页面对页面A转移的概率。
+
+​	**初始时，每一个页面的PageRank值都是均等的，为1/N，这里也即是1/4**。
+
+​	然后对于页面A来说，根据每一个页面的PageRank值和每个页面对页面A的转移概率，可以算出新一轮页面A的PageRank值。这里，只有页面B转移了自己的1/2给A。页面C转移了自己的全部给A，所以新一轮A的PageRank值为1/4\*1/2+1/4*1=9/24。
+
+​	为了计算方便，我们设置各页面初始的PageRank值为一个列向量V0。然后再基于转移矩阵，我们可以直接求出新一轮各个页面的PageRank值。即 V1 = MV0
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/03.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/03.png)
+
+​	现在得到了各页面新的PageRank值V1, 继续用M 去乘以V1 ,就会得到更新的PageRank值。一直迭代这个过程，可以证明出V最终会收敛。此时停止迭代。这时的V就是各个页面的PageRank值。
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/04.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/04.png)
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/05.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/05.png)
+
+​	处理Dead Ends(终止点)：
+
+​	上面的PageRank计算方法要求整个Web是强联通的。而实际上真实的Web并不是强联通的，**有一类页面，它们不存在任何外链，对其他网页没有PR值的贡献，称之为Dead Ends(终止点)**。如下图：
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/06.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/06.png)
+
+​	这里页面C即是一个终止点。而上面的算法之所以能够成功收敛，很大因素上基于转移矩阵每一列的和为1（每一个页面都至少有一个出链）。当页面C没有出链时，转移矩阵M如下所示：
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/07.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/07.png)
+
+​	基于这个转移矩阵和初始的PageRank列向量，每一次迭代过的PageRank列向量如下：
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/08.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/08.png)
+
+​	解决该问题的一种方法是：迭代拿掉图中的Dead Ends点以及相关的边，之所以是迭代拿掉，是因为当拿掉最初的Dead Ends之后，又可能产生新的Dead Ends点。直到图中没有Dead Ends点为止。然后对剩余的所有节点，计算它们的PageRank ，然后以拿掉Dead Ends的逆序反推各个Dead Ends的PageRank值。
+
+​	比如在上图中，首先拿掉页面C，发现没有产生新的Dead Ends。然后对A，B，D 计算他们的PageRank，他们初始PageRank值均为1/3，且A有两个出链，B有两个出链，D有一个出链，那么由上面的方法可以算出各页面最终的PageRank值。假设算出A的PageRank 为x，B的PageRank 为y，D的PageRank 为z，那么C的PageRank值为1/3\*x + 1/2\*z 。
+
+​	处理Spider Traps（蜘蛛陷阱）：
+
+​	真实的Web链接关系若是转换成转移矩阵，那必将是一个稀疏的矩阵。而稀疏的矩阵迭代相乘会使得中间产生的PageRank向量变得不平滑（一小部分值很大，大部分值很小或接近于0）。而一种Spider Traps节点会加剧这个不平滑的效果，也即是蜘蛛陷阱。它是指某一些页面虽然有外链，但是它只链向自己。如下图所示：
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/09.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/09.png)
+
+​	如果对这个图按照上面的方法进行迭代计算PageRank ， 计算后会发现所有页面的PageRank值都会逐步转移到页面C上来，而其他页面都趋近于零。
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/10.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/10.png)
+
+​	为了解决这个问题，我们需要对PageRank 计算方法进行一个平滑处理–加入teleporting(跳转因子)。也就是说，用户在访问Web页面时，除了按照Web页面的链接关系进行选择以外，他也可能直接在地址栏上输入一个地址进行访问。这样就避免了用户只在一个页面只能进行自身访问，或者进入一个页面无法出来的情况。
+
+加入跳转因子之后，PageRank向量的计算公式修正为：
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/11.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/11.png)
+
+其中，β 通常设置为一个很小的数（0.2或者0.15），e为单位向量，N是所有页面的个数，乘以1/N是因为随机跳转到一个页面的概率是1/N。这样，每次计算PageRank值，既依赖于转移矩阵，同时依赖于小概率的随机跳转。
+
+以上图为例，改进后的PageRank值计算如下：
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/12.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/12.png)
+
+按照这个计算公式迭代下去，会发现spider traps 效应被抑制了，使得各个页面得到一个合理的PageRank值。
+
+## 33.2 任务内容
+
+基于MapReduce 的PageRank 设计思路：
+
+假设目前需要排名Dev网页有如下四个：
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/13.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/13.png)
+
+其中每一行中第一列为网页，第二列为该网页的pagerank值，之后的列均为该网页链接的其他网页。
+
+Baidu存在三个外链接。
+
+Google存在两个外链接。
+
+Sina存在一个外链接。
+
+Hao123存在两个外链接。
+
+由数据可以看出：指向Baidu的链接有一个，指向Google的链接有两个，指向Sina的链接有三个，指向Hao123的链接有两个，所以Sina的PR应该最高，其次是Google和Hao123相等，最后是Baidu。
+
+因为我们要迭代的计算PageRank值，那么每次MapReduce 的输出要和输入的格式是一样的，这样才能使得Mapreduce 的输出用来作为下一轮MapReduce 的输入。
+
+我们每次得到的输出如下：
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/14.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/14.png)
+
+Map过程的设计：
+
+1.对每一行文本进行解析，获得当前网页、当前网页的PageRank值、当前网页要链接到的其他网页
+
+2.计算出要链接到的其他网页的个数，然后求出当前网页对其他网页的贡献值。
+
+输出设计时，要输出两种：
+
+第一种输出的< key ,value>中的key 表示其他网页，value 表示当前网页对其他网页的贡献值。
+
+第二种输出的< key ,value>中的key 表示当前网页，value 表示所有其他网页。
+
+为了区别这两种输出，第一种输出的value里加入“@”，第二种输出的value里加入“&”
+
+经过Map后的结果为：
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/15.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/15.png)
+
+Map结果输出之后，经过Shuffle过程排序并合并，结果如下：
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/16.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/16.png)
+
+由shuffle结果可知，shuffle过程的输出key表示一个网页，输出value表示一个列表，里面有两类：一类是从其他网页获得的贡献值，一类是该网页的所有出链网页
+
+Reduce过程的设计：
+
+1.shuffle的输出也即是reduce的输入。
+
+2.reduce输入的key直接作为输出的key
+
+对reduce输入的value进行解析，它是一个列表：
+
+若列表里的值里包含“@”，就把该值“@”后面的字符串转化成float型加起来
+
+若列表里的值里包含“&”，就把该值“&”后面的字符串提取出来
+
+把所有贡献值的加和，和提取的字符串进行连接，作为reduce的输出value
+
+最终输出如下：
+
+[![img](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/17.png)](https://www.ipieuvre.com/doc/exper/28fcb358-91ad-11e9-beeb-00215ec892f4/img/17.png)
+
+## 33.3 完整代码
+
+​	下面编写代码，实现功能为：使用MR实现PageRank，计算出Baidu、Google、Sina、Hao123四个网站的PR值排名。
+
+```java
+package mr_pagerank;  
+import java.io.IOException;  
+import java.util.StringTokenizer;  
+import org.apache.hadoop.conf.Configuration;  
+import org.apache.hadoop.fs.Path;  
+import org.apache.hadoop.io.Text;  
+import org.apache.hadoop.mapreduce.Job;  
+import org.apache.hadoop.mapreduce.Mapper;  
+import org.apache.hadoop.mapreduce.Reducer;  
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;  
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;  
+public class PageRank {  
+  /*map过程*/  
+  public static class mapper extends Mapper<Object,Text,Text,Text>{  
+    private String id;  
+    private float pr;  
+    private int count;  
+    private float average_pr;  
+    public void map(Object key,Text value,Context context)  
+      throws IOException,InterruptedException{  
+      StringTokenizer str = new StringTokenizer(value.toString());//对value进行解析  
+      id =str.nextToken();//id为解析的第一个词，代表当前网页  
+      pr = Float.parseFloat(str.nextToken());//pr为解析的第二个词，转换为float类型，代表PageRank值  
+      count = str.countTokens();//count为剩余词的个数，代表当前网页的出链网页个数  
+      average_pr = pr/count;//求出当前网页对出链网页的贡献值  
+      String linkids ="&";//下面是输出的两类，分别有'@'和'&'区分  
+      while(str.hasMoreTokens()){  
+        String linkid = str.nextToken();  
+        context.write(new Text(linkid),new Text("@"+average_pr));//输出的是<出链网页，获得的贡献值>  
+        linkids +=" "+ linkid;  
+      }  
+      context.write(new Text(id), new Text(linkids));//输出的是<当前网页，所有出链网页>  
+    }  
+  }  
+  /*reduce过程*/  
+  public static class reduce extends Reducer<Text,Text,Text,Text>{  
+    public void reduce(Text key,Iterable<Text> values,Context context)  
+      throws IOException,InterruptedException{  
+      String link = "";  
+      float pr = 0;  
+      /*对values中的每一个value进行分析，通过其第一个字符是'@'还是'&'进行判断 
+    通过这个循环，可以求出当前网页获得的贡献值之和，也即是新的PageRank值；同时求出当前 
+    网页的所有出链网页 */  
+      for(Text val:values){  
+        if(val.toString().substring(0,1).equals("@")){  
+          pr += Float.parseFloat(val.toString().substring(1));  
+        }  
+        else if(val.toString().substring(0,1).equals("&")){  
+          link += val.toString().substring(1);  
+        }  
+      }  
+      pr = 0.8f*pr + 0.2f*0.25f;//加入跳转因子，进行平滑处理  
+      String result = pr+link;  
+      context.write(key, new Text(result));  
+    }  
+  }  
+
+
+  public static void main(String[] args) throws Exception{  
+    Configuration conf = new Configuration();  
+    conf.set("mapred.job.tracker", "hdfs://127.0.0.1:9000");  
+    //设置数据输入路径  
+    String pathIn ="hdfs://127.0.0.1:9000/pagerank/input";  
+    //设置数据输出路径  
+    String pathOut="hdfs://127.0.0.1:9000/pagerank/output/pr";  
+    for(int i=1;i<100;i++){      //加入for循环，最大循环100次  
+      Job job = new Job(conf,"page rank");  
+      job.setJarByClass(PageRank.class);  
+      job.setMapperClass(mapper.class);  
+      job.setReducerClass(reduce.class);  
+      job.setOutputKeyClass(Text.class);  
+      job.setOutputValueClass(Text.class);  
+      FileInputFormat.addInputPath(job, new Path(pathIn));  
+      FileOutputFormat.setOutputPath(job, new Path(pathOut));  
+      pathIn = pathOut;//把输出的地址改成下一次迭代的输入地址  
+      pathOut = pathOut+'-'+i;//把下一次的输出设置成一个新地址。  
+      System.out.println("正在执行第"+i+"次");  
+      job.waitForCompletion(true);//把System.exit()去掉  
+      //由于PageRank通常迭代30~40次，就可以收敛，这里我们设置循环35次  
+      if(i == 35){  
+        System.out.println("总共执行了"+i+"次之后收敛");  
+        break;  
+      }  
+    }  
+  }  
+
+}
+```
+
 
 
