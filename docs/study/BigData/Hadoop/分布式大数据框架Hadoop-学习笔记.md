@@ -50,6 +50,8 @@ YARN（cluster resource management）
 > [HIVE与PIG对比](https://blog.csdn.net/eversliver/article/details/81107160)
 >
 > [日志收集组件flume和logstash对比](https://www.jianshu.com/p/f0b25ce6dd17)
+>
+> [HADOOP生态圈介绍](https://www.cnblogs.com/hanzhi/articles/8969109.html)	<=	详细介绍的文章，下面图的出处。
 
 + HDFS（分布式存储系统）
 + MapReduce（分布式计算框架）
@@ -62,6 +64,8 @@ YARN（cluster resource management）
 + Mathout（数据挖掘库）
 + Oozie（作业流调度系统）
 + Ambari（安装部署工具）
+
+![image](https://images2015.cnblogs.com/blog/204677/201601/204677-20160105160808168-1696883282.png)
 
 # 3. Hadoop伪分布式安装
 
