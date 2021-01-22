@@ -238,3 +238,22 @@ The following instructions assume that 1. ~ 4. steps of [the above instructions]
 
 ​	For information on setting up fully-distributed, non-trivial clusters see [Cluster Setup](https://hadoop.apache.org/docs/stable/hadoop-project-dist/hadoop-common/ClusterSetup.html).
 
+# 5. mac安装hadoop
+
+>[mac安装hadoop及配置伪分布式](https://blog.csdn.net/weixin_44570264/article/details/106872445)	<=	跟着这个确实可以
+>
+>```shell
+>vim ~/.bash_profile
+>
+># hadoop-3.3.0 第一条是hadoop的解压目录
+>export HADOOP_HOME=/Users/ashiamd/mydocs/dev-tools/hadoop/hadoop-3.3.0
+>export HADOOP_INSTALL=$HADOOP_HOME
+>export HADOOP_MAPRED_HOME=$HADOOP_HOME
+>export HADOOP_COMMON_HOME=$HADOOP_HOME
+>export HADOOP_HDFS_HOME=$HADOOP_HOME
+>export YARN_HOME=$HADOOP_HOME
+>export HADOOP_COMMON_LIB_NATIVE_DIR=$HADOOP_HOME/lib/native
+>export HADOOP_OPTS="-Djava.library.path=$HADOOP_HOME/lib"
+>export PATH=$PATH:$HADOOP_HOME/sbin:$HADOOP_HOME/bin
+>```
+
