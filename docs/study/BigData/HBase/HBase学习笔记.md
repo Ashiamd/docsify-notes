@@ -1594,3 +1594,549 @@ See the Performance section [perf.schema](https://hbase.apache.org/book.html#per
 
 # HBase and MapReduce
 
+​	Apache MapReduce is a software framework used to analyze large amounts of data. It is provided by [Apache Hadoop](https://hadoop.apache.org/). MapReduce itself is out of the scope of this document. A good place to get started with MapReduce is https://hadoop.apache.org/docs/r2.6.0/hadoop-mapreduce-client/hadoop-mapreduce-client-core/MapReduceTutorial.html. MapReduce version 2 (MR2)is now part of [YARN](https://hadoop.apache.org/docs/r2.3.0/hadoop-yarn/hadoop-yarn-site/).
+
+​	This chapter discusses specific configuration steps you need to take to use MapReduce on data within HBase. In addition, it discusses other interactions and issues between HBase and MapReduce jobs. Finally, it discusses [Cascading](https://hbase.apache.org/book.html#cascading), an [alternative API](http://www.cascading.org/) for MapReduce.
+
+> `mapred` and `mapreduce`
+>
+> There are two mapreduce packages in HBase as in MapReduce itself: *org.apache.hadoop.hbase.mapred* and *org.apache.hadoop.hbase.mapreduce*. The former does old-style API and the latter the new mode. The latter has more facility though you can usually find an equivalent in the older package. Pick the package that goes with your MapReduce deploy. When in doubt or starting over, pick *org.apache.hadoop.hbase.mapreduce*. In the notes below, we refer to *o.a.h.h.mapreduce* but replace with *o.a.h.h.mapred* if that is what you are using.
+
+## 48. HBase, MapReduce, and the CLASSPATH
+
+默认情况下，部署到 MapReduce 集群的 MapReduce 作业无权访问 $HBASE_CONF_DIR 类或 HBase 类下的 HBase 配置。
+
+要为 MapReduce 作业提供他们需要的访问权限，可以添加 hbase-site.xml_to _ $ HADOOP_HOME / conf，并将 HBase jar 添加到 $ HADOOP_HOME / lib 目录。然后，您需要在群集中复制这些更改。或者你可以编辑 $ HADOOP_HOME / conf / hadoop-env.sh，并将 hbase 依赖添加到HADOOP_CLASSPATH 变量中。这两种方法都不推荐使用，因为它会使用 HBase 引用污染您的 Hadoop 安装。它还需要您在 Hadoop 可以使用 HBase 数据之前重新启动 Hadoop 集群。
+
+**推荐的方法是让 HBase 添加它的依赖 jar 并使用 HADOOP_CLASSPATHor -libjars。**
+
+自 HBase 0.90.x 以来，HBase 将其依赖 JAR 添加到作业配置本身。依赖关系只需要在本地 CLASSPATH 可用，从这里它们将被拾取并捆绑到部署到MapReduce 集群的 fat 工作 jar 中。一个基本的技巧就是将完整的 hbase 类路径（所有 hbase 和依赖 jar 以及配置）传递给 mapreduce 作业运行器，让hbase 实用程序从完整类路径中选取需要将其添加到 MapReduce 作业配置中的源代码。 
+
+下面的示例针对名为 usertable 的表运行捆绑的 HBase RowCounter MapReduce 作业。它设置为 HADOOP_CLASSPATH 需要在 MapReduce 上下文中运行的 jar 包（包括配置文件，如 hbase-site.xml）。确保为您的系统使用正确版本的 HBase JAR；请在下面的命令行中替换 VERSION 字符串 w/本地 hbase 安装的版本。反引号（`符号）使 shell 执行子命令，设置输入 hbase classpath 为 HADOOP_CLASSPATH。这个例子假设你使用 BASH 兼容的 shell。
+
+```
+$ HADOOP_CLASSPATH=`${HBASE_HOME}/bin/hbase classpath` \
+  ${HADOOP_HOME}/bin/hadoop jar ${HBASE_HOME}/lib/hbase-mapreduce-VERSION.jar \
+  org.apache.hadoop.hbase.mapreduce.RowCounter usertable
+```
+
+上述的命令将针对 hadoop 配置指向的群集上的本地配置指向的 hbase 群集启动行计数 mapreduce 作业。
+
+hbase-mapreduce.jar 的主要内容是一个 Driver（驱动程序），它列出了几个与 hbase 一起使用的基本 mapreduce 任务。例如，假设您的安装是hbase 2.0.0-SNAPSHOT：
+
+```
+$ HADOOP_CLASSPATH=`${HBASE_HOME}/bin/hbase classpath` \
+  ${HADOOP_HOME}/bin/hadoop jar ${HBASE_HOME}/lib/hbase-mapreduce-2.0.0-SNAPSHOT.jar
+An example program must be given as the first argument.
+Valid program names are:
+  CellCounter: Count cells in HBase table.
+  WALPlayer: Replay WAL files.
+  completebulkload: Complete a bulk data load.
+  copytable: Export a table from local cluster to peer cluster.
+  export: Write table data to HDFS.
+  exportsnapshot: Export the specific snapshot to a given FileSystem.
+  import: Import data written by Export.
+  importtsv: Import data in TSV format.
+  rowcounter: Count rows in HBase table.
+  verifyrep: Compare the data from tables in two different clusters. WARNING: It doesn't work for incrementColumnValues'd cells since the timestamp is changed after being appended to the log.
+```
+
+您可以使用上面列出的缩短名称作为 mapreduce 作业，如下面的行计数器作业重新运行（再次假设您的安装为 hbase 2.0.0-SNAPSHOT）：
+
+```
+$ HADOOP_CLASSPATH=`${HBASE_HOME}/bin/hbase classpath` \
+  ${HADOOP_HOME}/bin/hadoop jar ${HBASE_HOME}/lib/hbase-mapreduce-2.0.0-SNAPSHOT.jar \
+  rowcounter usertable
+```
+
+您可能会发现更多有选择性的 hbase mapredcp 工具输出；它列出了针对 hbase 安装运行基本 mapreduce 作业所需的最小 jar 集。它不包括配置。如果您希望MapReduce 作业找到目标群集，则可能需要添加这些文件。一旦你开始做任何实质的事情，你可能还必须添加指向额外的 jar 的指针。只需在运行 hbase mapredcp 时通过系统属性 Dtmpjars 来指定附加项。
+
+对于不打包它们的依赖关系或调用 TableMapReduceUtil#addDependencyJars 的作业，以下命令结构是必需的：
+
+```
+$ HADOOP_CLASSPATH=`${HBASE_HOME}/bin/hbase mapredcp`:${HBASE_HOME}/conf hadoop jar MyApp.jar MyJobMainClass -libjars $(${HBASE_HOME}/bin/hbase mapredcp | tr ':' ',') ...
+```
+
+**注意**
+
+如果您从构建目录运行 HBase 而不是安装位置，该示例可能无法运行。您可能会看到类似以下的错误：
+
+```
+java.lang.RuntimeException: java.lang.ClassNotFoundException: org.apache.hadoop.hbase.mapreduce.RowCounter$RowCounterMapper
+```
+
+如果发生这种情况，请尝试按如下方式修改该命令，以便在构建环境中使用来自 target/ 目录的 HBase JAR 。
+
+```
+$ HADOOP_CLASSPATH=${HBASE_BUILD_HOME}/hbase-mapreduce/target/hbase-mapreduce-VERSION-SNAPSHOT.jar:`${HBASE_BUILD_HOME}/bin/hbase classpath` ${HADOOP_HOME}/bin/hadoop jar ${HBASE_BUILD_HOME}/hbase-mapreduce/target/hbase-mapreduce-VERSION-SNAPSHOT.jar rowcounter usertable
+```
+
+**HBase MapReduce 用户在 0.96.1 和 0.98.4 的通知**
+
+一些使用 HBase 的 MapReduce 作业无法启动。该症状是类似于以下情况的异常:
+
+```
+Exception in thread "main" java.lang.IllegalAccessError: class
+    com.google.protobuf.ZeroCopyLiteralByteString cannot access its superclass
+    com.google.protobuf.LiteralByteString
+    at java.lang.ClassLoader.defineClass1(Native Method)
+    at java.lang.ClassLoader.defineClass(ClassLoader.java:792)
+    at java.security.SecureClassLoader.defineClass(SecureClassLoader.java:142)
+    at java.net.URLClassLoader.defineClass(URLClassLoader.java:449)
+    at java.net.URLClassLoader.access$100(URLClassLoader.java:71)
+    at java.net.URLClassLoader$1.run(URLClassLoader.java:361)
+    at java.net.URLClassLoader$1.run(URLClassLoader.java:355)
+    at java.security.AccessController.doPrivileged(Native Method)
+    at java.net.URLClassLoader.findClass(URLClassLoader.java:354)
+    at java.lang.ClassLoader.loadClass(ClassLoader.java:424)
+    at java.lang.ClassLoader.loadClass(ClassLoader.java:357)
+    at
+    org.apache.hadoop.hbase.protobuf.ProtobufUtil.toScan(ProtobufUtil.java:818)
+    at
+    org.apache.hadoop.hbase.mapreduce.TableMapReduceUtil.convertScanToString(TableMapReduceUtil.java:433)
+    at
+    org.apache.hadoop.hbase.mapreduce.TableMapReduceUtil.initTableMapperJob(TableMapReduceUtil.java:186)
+    at
+    org.apache.hadoop.hbase.mapreduce.TableMapReduceUtil.initTableMapperJob(TableMapReduceUtil.java:147)
+    at
+    org.apache.hadoop.hbase.mapreduce.TableMapReduceUtil.initTableMapperJob(TableMapReduceUtil.java:270)
+    at
+    org.apache.hadoop.hbase.mapreduce.TableMapReduceUtil.initTableMapperJob(TableMapReduceUtil.java:100)
+...
+```
+
+这是由 HBASE-9867 中引入的优化导致的，它无意中引入了类加载器依赖性。
+
+这会影响两个作业，即使用 libjars 选项和 "fat jar" (在嵌套的 lib 文件夹中打包其运行时依赖项)。
+
+为了满足新的加载器要求，hbase-protocol.jar 必须包含在 Hadoop 的类路径中。以下内容包括用于历史目的。
+
+通过在 Hadoop 的 lib 目录中包括对 hbase-protocol.jar 协议的引用，通过 symlink 或将 jar 复制到新的位置，可以解决整个系统。
+
+这也可以通过 HADOOP_CLASSPATH 在作业提交时将它包含在环境变量中来实现。启动打包依赖关系的作业时，以下所有三个启动命令均满足此要求：
+
+```
+$ HADOOP_CLASSPATH=/path/to/hbase-protocol.jar:/path/to/hbase/conf hadoop jar MyJob.jar MyJobMainClass
+$ HADOOP_CLASSPATH=$(hbase mapredcp):/path/to/hbase/conf hadoop jar MyJob.jar MyJobMainClass
+$ HADOOP_CLASSPATH=$(hbase classpath) hadoop jar MyJob.jar MyJobMainClass
+```
+
+对于不打包它们的依赖关系的 jar，下面的命令结构是必需的：
+
+```
+$ HADOOP_CLASSPATH=$(hbase mapredcp):/etc/hbase/conf hadoop jar MyApp.jar MyJobMainClass -libjars $(hbase mapredcp | tr ':' ',') ...
+```
+
+##  49. MapReduce Scan Caching
+
+现在，TableMapReduceUtil 恢复了在传入的 Scan 对象中设置扫描程序缓存（在将结果返回给客户端之前缓存的行数）的选项。由于 HBase 0.95（HBASE-11558）中的错误，此功能丢失。这是为 HBase 0.98.5 和0.96.3 而定的。选择扫描仪缓存的优先顺序如下：
+
+1. 在扫描对象上设置的缓存设置。
+2. 通过配置选项 hbase.client.scanner.caching 指定的缓存设置，可以在 hbase-site.xml 中手动设置或通过辅助方法 TableMapReduceUtil.setScannerCaching() 设置。
+3. 默认值 HConstants.DEFAULT_HBASE_CLIENT_SCANNER_CACHING，设置为 100。
+
+优化缓存设置是客户端等待结果的时间和客户端需要接收的结果集的数量之间的一种平衡。如果缓存设置过大，客户端可能会等待很长时间，否则请求可能会超时。如果设置太小，扫描需要返回几个结果。如果将 scan 视为 shovel，则更大的缓存设置类似于更大的 shovel，而更小的缓存设置相当于更多的 shovel，以填充 bucket。
+
+上面提到的优先级列表允许您设置合理的默认值，并针对特定操作对其进行覆盖。
+
+## 50. Bundled HBase MapReduce Jobs
+
+HBase JAR 也可作为一些捆绑 MapReduce 作业的驱动程序。要了解捆绑的 MapReduce 作业，请运行以下命令：
+
+```shell
+$ ${HADOOP_HOME}/bin/hadoop jar ${HBASE_HOME}/hbase-mapreduce-VERSION.jar
+An example program must be given as the first argument.
+Valid program names are:
+  copytable: Export a table from local cluster to peer cluster
+  completebulkload: Complete a bulk data load.
+  export: Write table data to HDFS.
+  import: Import data written by Export.
+  importtsv: Import data in TSV format.
+  rowcounter: Count rows in HBase table
+```
+
+每个有效的程序名都是捆绑的 MapReduce 作业。要运行其中一个作业，请在下面的示例之后为您的命令建模。
+
+```shell
+$ ${HADOOP_HOME}/bin/hadoop jar ${HBASE_HOME}/hbase-mapreduce-VERSION.jar rowcounter myTable
+```
+
+## 51. HBase as a MapReduce Job Data Source and Data Sink
+
+​	对于 MapReduce 作业，HBase 可以用作数据源、TableInputFormat 和数据接收器、TableOutputFormat 或 MultiTableOutputFormat。编写读取或写入HBase 的 MapReduce作业，建议子类化 TableMapper 或 TableReducer。
+
+​	如果您运行使用 HBase 作为源或接收器的 MapReduce 作业，则需要在配置中指定源和接收器表和列名称。
+
+​	当您从 HBase 读取时，TableInputFormat 请求 HBase 的区域列表并制作一张映射，可以是一个 map-per-region 或 mapreduce.job.maps mapreduce.job.maps ，映射到大于区域数目的数字。如果您为每个节点运行 TaskTracer/NodeManager 和 RegionServer，则映射将在相邻的 TaskTracker/NodeManager 上运行。在写入 HBase 时，避免使用 Reduce 步骤并从映射中写回 HBase 是有意义的。当您的作业不需要 MapReduce 对映射发出的数据进行排序和排序时，这种方法就可以工作。**在插入时，HBase 'sorts'，因此除非需要，否则双重排序（并在您的 MapReduce 集群周围混洗数据）没有意义**。如果您不需要 Reduce，则映射可能会发出在作业结束时为报告处理的记录计数，或者将 Reduces 的数量设置为零并使用 TableOutputFormat。**如果运行 Reduce 步骤在你的情况下是有意义的，则通常应使用多个Reducers，以便在 HBase 群集上传播负载**。
+
+​	<small>When you read from HBase, the `TableInputFormat` requests the list of regions from HBase and makes a map, which is either a `map-per-region` or `mapreduce.job.maps` map, whichever is smaller. If your job only has two maps, raise `mapreduce.job.maps` to a number greater than the number of regions. Maps will run on the adjacent TaskTracker/NodeManager if you are running a TaskTracer/NodeManager and RegionServer per node. When writing to HBase, it may make sense to avoid the Reduce step and write back into HBase from within your map. This approach works when your job does not need the sort and collation that MapReduce does on the map-emitted data. On insert, HBase 'sorts' so there is no point double-sorting (and shuffling data around your MapReduce cluster) unless you need to. If you do not need the Reduce, your map might emit counts of records processed for reporting at the end of the job, or set the number of Reduces to zero and use TableOutputFormat. **If running the Reduce step makes sense in your case, you should typically use multiple reducers so that load is spread across the HBase cluster**.</small>
+
+​	一个新的 HBase 分区程序 HRegionPartitioner 可以运行与现有区域数量一样多的 reducers。当您的表格很大时，HRegionPartitioner 是合适的，并且您的上传不会在完成时大大改变现有区域的数量。否则使用默认分区程序。
+
+​	<small>A new HBase partitioner, the [HRegionPartitioner](https://hbase.apache.org/apidocs/org/apache/hadoop/hbase/mapreduce/HRegionPartitioner.html), can run as many reducers the number of existing regions. The HRegionPartitioner is suitable when your table is large and your upload will not greatly alter the number of existing regions upon completion. Otherwise use the default partitioner.</small>
+
+## 52. Writing HFiles Directly During Bulk Import
+
+​	如果您正在导入新表格，则可以绕过 HBase API 并将您的内容直接写入文件系统，格式化为 HBase 数据文件（HFiles）。您的导入将运行得更快，也许快一个数量级。有关此机制如何工作的更多信息，请参阅批量加载。
+
+​	<small>**If you are importing into a new table, you can bypass the HBase API and write your content directly to the filesystem, formatted into HBase data files (HFiles). Your import will run faster, perhaps an order of magnitude faster**. For more on how this mechanism works, see [Bulk Loading](https://hbase.apache.org/book.html#arch.bulk.load).</small>
+
+## 53. RowCounter Example
+
+​	The included [RowCounter](https://hbase.apache.org/apidocs/org/apache/hadoop/hbase/mapreduce/RowCounter.html) MapReduce job uses `TableInputFormat` and does a count of all rows in the specified table. To run it, use the following command:
+
+```
+$ ./bin/hadoop jar hbase-X.X.X.jar
+```
+
+​	This will invoke the HBase MapReduce Driver class. Select `rowcounter` from the choice of jobs offered. This will print rowcounter usage advice to standard output. Specify the tablename, column to count, and output directory. If you have classpath errors, see [HBase, MapReduce, and the CLASSPATH](https://hbase.apache.org/book.html#hbase.mapreduce.classpath).
+
+## 54. Map-Task Splitting
+
+### 54.1. The Default HBase MapReduce Splitter
+
+​	**When [TableInputFormat](https://hbase.apache.org/apidocs/org/apache/hadoop/hbase/mapreduce/TableInputFormat.html) is used to source an HBase table in a MapReduce job, its splitter will make a map task for each region of the table.** Thus, if there are 100 regions in the table, there will be 100 map-tasks for the job - regardless of how many column families are selected in the Scan.
+
+### 54.2. Custom Splitters
+
+​	For those interested in implementing custom splitters, see the method `getSplits` in [TableInputFormatBase](https://hbase.apache.org/apidocs/org/apache/hadoop/hbase/mapreduce/TableInputFormatBase.html). That is where the logic for map-task assignment resides.
+
+## 55. HBase MapReduce Examples
+
+### 55.1. HBase MapReduce Read Example
+
+以下是以只读方式将 HBase 用作 MapReduce 源的示例。具体来说，有一个 Mapper 实例，但没有 Reducer，并且没有任何内容从 Mapper 发出。这项工作将被定义如下：
+
+```
+Configuration config = HBaseConfiguration.create();
+Job job = new Job(config, "ExampleRead");
+job.setJarByClass(MyReadJob.class);     // class that contains mapper
+
+Scan scan = new Scan();
+scan.setCaching(500);        // 1 is the default in Scan, which will be bad for MapReduce jobs
+scan.setCacheBlocks(false);  // don't set to true for MR jobs
+// set other scan attrs
+...
+
+TableMapReduceUtil.initTableMapperJob(
+  tableName,        // input HBase table name
+  scan,             // Scan instance to control CF and attribute selection
+  MyMapper.class,   // mapper
+  null,             // mapper output key
+  null,             // mapper output value
+  job);
+job.setOutputFormatClass(NullOutputFormat.class);   // because we aren't emitting anything from mapper
+
+boolean b = job.waitForCompletion(true);
+if (!b) {
+  throw new IOException("error with job!");
+}
+```
+
+映射器实例将扩展 TableMapper：
+
+```
+public static class MyMapper extends TableMapper<Text, Text> {
+
+  public void map(ImmutableBytesWritable row, Result value, Context context) throws InterruptedException, IOException {
+    // process data for the row from the Result instance.
+   }
+}
+```
+
+###  55.2. HBase MapReduce Read/Write Example
+
+以下是使用 HBase 作为 MapReduce 的源代码和接收器的示例。这个例子将简单地将数据从一个表复制到另一个表。
+
+```
+Configuration config = HBaseConfiguration.create();
+Job job = new Job(config,"ExampleReadWrite");
+job.setJarByClass(MyReadWriteJob.class);    // class that contains mapper
+
+Scan scan = new Scan();
+scan.setCaching(500);        // 1 is the default in Scan, which will be bad for MapReduce jobs
+scan.setCacheBlocks(false);  // don't set to true for MR jobs
+// set other scan attrs
+
+TableMapReduceUtil.initTableMapperJob(
+  sourceTable,      // input table
+  scan,             // Scan instance to control CF and attribute selection
+  MyMapper.class,   // mapper class
+  null,             // mapper output key
+  null,             // mapper output value
+  job);
+TableMapReduceUtil.initTableReducerJob(
+  targetTable,      // output table
+  null,             // reducer class
+  job);
+job.setNumReduceTasks(0);
+
+boolean b = job.waitForCompletion(true);
+if (!b) {
+    throw new IOException("error with job!");
+}
+```
+
+需要解释的是 TableMapReduceUtil 正在做什么，特别是对于Reducer。TableOutputFormat 被用作 outputFormat 类，并且正在配置几个参数（例如，TableOutputFormat.OUTPUT_TABLE），以及将 reducer 输出键设置为 ImmutableBytesWritable 和 reducer 值为 Writable。这些可以由程序员在作业和 conf 中设置，但 TableMapReduceUtil 试图让事情变得更容易。
+
+以下是示例映射器，它将创建 Put 并匹配输入 Result 并发出它。注意：这是 CopyTable 实用程序的功能。
+
+```
+public static class MyMapper extends TableMapper<ImmutableBytesWritable, Put>  {
+
+  public void map(ImmutableBytesWritable row, Result value, Context context) throws IOException, InterruptedException {
+    // this example is just copying the data from the source table...
+      context.write(row, resultToPut(row,value));
+    }
+
+    private static Put resultToPut(ImmutableBytesWritable key, Result result) throws IOException {
+      Put put = new Put(key.get());
+      for (KeyValue kv : result.raw()) {
+        put.add(kv);
+      }
+      return put;
+    }
+}
+```
+
+实际上并没有一个简化步骤，所以 TableOutputFormat 负责将 Put 发送到目标表。
+
+这只是一个例子，开发人员可以选择不使用 TableOutputFormat 并连接到目标表本身。
+
+### 55.3. HBase MapReduce Read/Write Example With Multi-Table Output
+
+​	TODO: example for `MultiTableOutputFormat`.
+
+### 55.4. HBase MapReduce Summary to HBase Example
+
+以下的示例使用 HBase 作为 MapReduce 源，并使用一个summarization步骤。此示例将计算表中某个值的不同实例的数量，并将这些汇总计数写入另一个表中。
+
+```java
+Configuration config = HBaseConfiguration.create();
+Job job = new Job(config,"ExampleSummary");
+job.setJarByClass(MySummaryJob.class);     // class that contains mapper and reducer
+
+Scan scan = new Scan();
+scan.setCaching(500);        // 1 is the default in Scan, which will be bad for MapReduce jobs
+scan.setCacheBlocks(false);  // don't set to true for MR jobs
+// set other scan attrs
+
+TableMapReduceUtil.initTableMapperJob(
+  sourceTable,        // input table
+  scan,               // Scan instance to control CF and attribute selection
+  MyMapper.class,     // mapper class
+  Text.class,         // mapper output key
+  IntWritable.class,  // mapper output value
+  job);
+TableMapReduceUtil.initTableReducerJob(
+  targetTable,        // output table
+  MyTableReducer.class,    // reducer class
+  job);
+job.setNumReduceTasks(1);   // at least one, adjust as required
+
+boolean b = job.waitForCompletion(true);
+if (!b) {
+  throw new IOException("error with job!");
+}
+```
+
+In this example mapper a column with a String-value is chosen as the value to summarize upon. This value is used as the key to emit from the mapper, and an `IntWritable` represents an instance counter.
+
+```java
+public static class MyMapper extends TableMapper<Text, IntWritable>  {
+  public static final byte[] CF = "cf".getBytes();
+  public static final byte[] ATTR1 = "attr1".getBytes();
+
+  private final IntWritable ONE = new IntWritable(1);
+  private Text text = new Text();
+
+  public void map(ImmutableBytesWritable row, Result value, Context context) throws IOException, InterruptedException {
+    String val = new String(value.getValue(CF, ATTR1));
+    text.set(val);     // we can only emit Writables...
+    context.write(text, ONE);
+  }
+}
+```
+
+In the reducer, the "ones" are counted (just like any other MR example that does this), and then emits a `Put`.
+
+```java
+public static class MyTableReducer extends TableReducer<Text, IntWritable, ImmutableBytesWritable>  {
+  public static final byte[] CF = "cf".getBytes();
+  public static final byte[] COUNT = "count".getBytes();
+
+  public void reduce(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
+    int i = 0;
+    for (IntWritable val : values) {
+      i += val.get();
+    }
+    Put put = new Put(Bytes.toBytes(key.toString()));
+    put.add(CF, COUNT, Bytes.toBytes(i));
+
+    context.write(null, put);
+  }
+}
+```
+
+### 55.5. HBase MapReduce Summary to File Example
+
+This very similar to the summary example above, with exception that this is using HBase as a MapReduce source but HDFS as the sink. The differences are in the job setup and in the reducer. The mapper remains the same.
+
+```java
+Configuration config = HBaseConfiguration.create();
+Job job = new Job(config,"ExampleSummaryToFile");
+job.setJarByClass(MySummaryFileJob.class);     // class that contains mapper and reducer
+
+Scan scan = new Scan();
+scan.setCaching(500);        // 1 is the default in Scan, which will be bad for MapReduce jobs
+scan.setCacheBlocks(false);  // don't set to true for MR jobs
+// set other scan attrs
+
+TableMapReduceUtil.initTableMapperJob(
+  sourceTable,        // input table
+  scan,               // Scan instance to control CF and attribute selection
+  MyMapper.class,     // mapper class
+  Text.class,         // mapper output key
+  IntWritable.class,  // mapper output value
+  job);
+job.setReducerClass(MyReducer.class);    // reducer class
+job.setNumReduceTasks(1);    // at least one, adjust as required
+FileOutputFormat.setOutputPath(job, new Path("/tmp/mr/mySummaryFile"));  // adjust directories as required
+
+boolean b = job.waitForCompletion(true);
+if (!b) {
+  throw new IOException("error with job!");
+}
+```
+
+As stated above, the previous Mapper can run unchanged with this example. As for the Reducer, it is a "generic" Reducer instead of extending TableMapper and emitting Puts.
+
+```java
+public static class MyReducer extends Reducer<Text, IntWritable, Text, IntWritable>  {
+
+  public void reduce(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
+    int i = 0;
+    for (IntWritable val : values) {
+      i += val.get();
+    }
+    context.write(key, new IntWritable(i));
+  }
+}
+```
+
+### 55.6. HBase MapReduce Summary to HBase Without Reducer
+
+​	It is also possible to perform summaries without a reducer - if you use HBase as the reducer.
+
+​	An HBase target table would need to exist for the job summary. The Table method `incrementColumnValue` would be used to atomically increment values. From a performance perspective, it might make sense to keep a Map of values with their values to be incremented for each map-task, and make one update per key at during the `cleanup` method of the mapper. However, your mileage may vary depending on the number of rows to be processed and unique keys.
+
+​	In the end, the summary results are in HBase.
+
+###  55.7. HBase MapReduce Summary to RDBMS
+
+​	Sometimes it is more appropriate to generate summaries to an RDBMS. For these cases, it is possible to generate summaries directly to an RDBMS via a custom reducer. The `setup` method can connect to an RDBMS (the connection information can be passed via custom parameters in the context) and the cleanup method can close the connection.
+
+​	It is critical to understand that number of reducers for the job affects the summarization implementation, and you’ll have to design this into your reducer. Specifically, whether it is designed to run as a singleton (one reducer) or multiple reducers. Neither is right or wrong, it depends on your use-case. **Recognize that the more reducers that are assigned to the job, the more simultaneous connections to the RDBMS will be created - this will scale, but only to a point**.
+
+```java
+public static class MyRdbmsReducer extends Reducer<Text, IntWritable, Text, IntWritable>  {
+
+  private Connection c = null;
+
+  public void setup(Context context) {
+    // create DB connection...
+  }
+
+  public void reduce(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
+    // do summarization
+    // in this example the keys are Text, but this is just an example
+  }
+
+  public void cleanup(Context context) {
+    // close db connection
+  }
+
+}
+```
+
+In the end, the summary results are written to your RDBMS table/s.
+
+## 56. Accessing Other HBase Tables in a MapReduce Job
+
+Although the framework currently allows one HBase table as input to a MapReduce job, other HBase tables can be accessed as lookup tables, etc., in a MapReduce job via creating an Table instance in the setup method of the Mapper.
+
+```java
+public class MyMapper extends TableMapper<Text, LongWritable> {
+  private Table myOtherTable;
+
+  public void setup(Context context) {
+    // In here create a Connection to the cluster and save it or use the Connection
+    // from the existing table
+    myOtherTable = connection.getTable("myOtherTable");
+  }
+
+  public void map(ImmutableBytesWritable row, Result value, Context context) throws IOException, InterruptedException {
+    // process Result...
+    // use 'myOtherTable' for lookups
+  }
+```
+
+## 57. Speculative Execution
+
+> [MapReduce的 Speculative Execution机制](https://blog.csdn.net/u011495642/article/details/83623517)
+>
+> 如果10台机器，同时运行10个Mapper，9台都干完了，就1台始终没有提交。
+>
+> 调度器就会着急了，它就会找到这个机器运行的数据，和这个数据的副本在哪儿，再其他有副本的机器上开个任务，
+>
+> 谁先计算完，我就先收集谁的数据。
+
+​	通常建议关闭使用 HBase 作为源的 MapReduce 作业的推测执行（speculative execution）功能。这可以通过属性或整个集群来实现。特别是对于长时间运行的作业，推测执行将创建重复的映射任务，将您的数据写入 HBase；这可能不是你想要的。
+
+> It is generally advisable to turn off speculative execution for MapReduce jobs that use HBase as a source. This can either be done on a per-Job basis through properties, or on the entire cluster. Especially for longer running jobs, speculative execution will create duplicate map-tasks which will double-write your data to HBase; this is probably not what you want.
+>
+> See [spec.ex](https://hbase.apache.org/book.html#spec.ex) for more information.
+
+## 58. Cascading
+
+​	**[Cascading](http://www.cascading.org/) is an alternative API for MapReduce, which actually uses MapReduce, but allows you to write your MapReduce code in a simplified way.**
+
+​	The following example shows a Cascading `Flow` which "sinks" data into an HBase cluster. The same `hBaseTap` API could be used to "source" data as well.
+
+```java
+// read data from the default filesystem
+// emits two fields: "offset" and "line"
+Tap source = new Hfs( new TextLine(), inputFileLhs );
+
+// store data in an HBase cluster
+// accepts fields "num", "lower", and "upper"
+// will automatically scope incoming fields to their proper familyname, "left" or "right"
+Fields keyFields = new Fields( "num" );
+String[] familyNames = {"left", "right"};
+Fields[] valueFields = new Fields[] {new Fields( "lower" ), new Fields( "upper" ) };
+Tap hBaseTap = new HBaseTap( "multitable", new HBaseScheme( keyFields, familyNames, valueFields ), SinkMode.REPLACE );
+
+// a simple pipe assembly to parse the input into fields
+// a real app would likely chain multiple Pipes together for more complex processing
+Pipe parsePipe = new Each( "insert", new Fields( "line" ), new RegexSplitter( new Fields( "num", "lower", "upper" ), " " ) );
+
+// "plan" a cluster executable Flow
+// this connects the source Tap and hBaseTap (the sink Tap) to the parsePipe
+Flow parseFlow = new FlowConnector( properties ).connect( source, hBaseTap, parsePipe );
+
+// start the flow, and block until complete
+parseFlow.complete();
+
+// open an iterator on the HBase table we stuffed data into
+TupleEntryIterator iterator = parseFlow.openSink();
+
+while(iterator.hasNext())
+  {
+  // print out each tuple from HBase
+  System.out.println( "iterator.next() = " + iterator.next() );
+  }
+
+iterator.close();
+```
+
+# 
