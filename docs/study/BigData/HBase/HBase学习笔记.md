@@ -6,6 +6,12 @@
 
 # Introduction
 
+> [hbase列存储怎么根据rowkey拼接成一条整行的数据？](https://www.zhihu.com/question/316484317/answer/635155771)
+>
+> [HBase基本概念与基本使用](https://www.cnblogs.com/swordfall/p/8737328.html)
+>
+> 上述两篇博文，质量挺高，建议阅读
+
 HBase是Apache的Hadoop项目的子项目，是Hadoop Database的简称。
 
 HBase是一个高可靠性、高性能、面向列、可伸缩的分布式存储系统，利用HBase技术可在廉价PC Server上搭建起大规模结构化存储集群。
@@ -208,6 +214,23 @@ Hbase表中的每个列都归属于某个列族，列族必须作为标模式(sc
 列名以列族做为前缀，每个“列族”都可以有多个成员(colunm):如 course:math，course:english，新的列族成员(列)可以随后按需、动态加入。
 
 **权限控制、存储以及调优都是在列族层面进行的**。
+
+---
+
+> [hbase列存储怎么根据rowkey拼接成一条整行的数据？](https://www.zhihu.com/question/316484317/answer/635155771)
+>
+> 首先HBase不是列存储，是列族+kv存储。HBase的表数据是按照rowkey有序的，一个区间的rowkey数据，组成一个分区 Region，region是HBase管理的最小单位，一个rowkey的数据只属于某一个region，region被分配到不同的regionserver中，通常一个region只对应一个regionserver。所以读取rowkey其实本质是读取某个region(某个regionserver)，然后region由一个或者多个列族组长，每个列族由 memstore，一个或者多个HFile组成，HFile通常是由memstore flush到HDFS或者bulkload产生的。一个HFile 内部是全局有序的，查询的时候由memstore，HFile 组成一个最小堆(查询还可能涉及到blockcache)，然后按序取数据返回即可。多个列族的话，本质没什么大的区别。看起来比较简单，实际上，HBase 查询那块代码还是比较复杂的。
+>
+> [HBase基本概念与基本使用](https://www.cnblogs.com/swordfall/p/8737328.html)
+>
+> ![img](https://images2018.cnblogs.com/blog/1217276/201805/1217276-20180502141711373-31653278.png)
+>
+> ![img](https://images2018.cnblogs.com/blog/1217276/201805/1217276-20180502154607794-710652455.png)
+>
+> HRegionServer管理一系列HRegion对象；
+> 　　每个HRegion对应Table中一个Region，HRegion由多个HStore组成；
+> 　　每个HStore对应Table中一个Column Family的存储；
+> 　　Column Family就是一个集中的存储单元，故将具有相同IO特性的Column放在一个Column Family会更高效。
 
 ## 27. Cells
 
@@ -2139,4 +2162,3 @@ while(iterator.hasNext())
 iterator.close();
 ```
 
-# 
