@@ -614,7 +614,7 @@ TaskTracker：任务跟踪器，负责任务管理(启动任务，杀死任务�
 
 4. TaskTracker-任务管理
    TaskTracker 会周期性地通过“心跳”将本节点上资源的使用情况和任务的运行进度汇报给JobTracker，同时接收JobTracker 发送过来的命令并执行相应的操作（如启动新任务、杀死任务等）
-   TaskTracker 使用“slot”等量划分本节点上的资源量（CPU、内存等）。**一个Task 获取到一个slot 后才有机会运行**，而Hadoop调度器(TaskScheduler)的作用就是将各个TaskTracker上的空闲slot分配给Task使用。
+   TaskTracker 使用“slot”等量划分本节点上的资源量（CPU、内存等）。**一个Task 获取到一个slot 后才有机会运行**，而<u>Hadoop调度器(TaskScheduler)的作用就是将各个TaskTracker上的空闲slot分配给Task使用</u>。
 
    slot 分为Map slot 和Reduce slot 两种，分别供MapTask 和Reduce Task 使用
 
