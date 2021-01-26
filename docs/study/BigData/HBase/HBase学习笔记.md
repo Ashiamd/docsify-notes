@@ -11,6 +11,8 @@
 > [HBase基本概念与基本使用](https://www.cnblogs.com/swordfall/p/8737328.html)
 >
 > 上述两篇博文，质量挺高，建议阅读
+>
+> ![img](https://images2018.cnblogs.com/blog/1217276/201805/1217276-20180502141711373-31653278.png)
 
 HBase是Apache的Hadoop项目的子项目，是Hadoop Database的简称。
 
