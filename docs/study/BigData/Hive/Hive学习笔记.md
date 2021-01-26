@@ -4,7 +4,9 @@
 
 # Installation and Configuration
 
-> [安装跟着官方教程走就好了](https://cwiki.apache.org/confluence/display/Hive/GettingStarted#GettingStarted-InstallationandConfiguration)
+> [安装跟着官方教程走就好了](https://cwiki.apache.org/confluence/display/Hive/GettingStarted#GettingStarted-InstallationandConfiguration)	<=	后面又出各种问题，官方这个安装可能对Linux完全没问题？后面我又找了别人mac的安装教程
+>
+> [Mac上配置Hive3.1.0](https://blog.csdn.net/zhangvalue/article/details/84282827)
 
 ## 安装中可能遇到的异常
 
@@ -102,13 +104,13 @@ While this usually points to a map-reduce cluster with multiple nodes, <u>Hadoop
 
 In addition, `mapred.local.dir` should point to a path that's valid on the local machine (for example `/tmp/<username>/mapred/local`). (Otherwise, the user will get an exception allocating local disk space.)
 
-Starting with release 0.7, Hive also supports a mode to run map-reduce jobs in local-mode automatically. The relevant options are `hive.exec.mode.local.auto`, `hive.exec.mode.local.auto.inputbytes.max`, and `hive.exec.mode.local.auto.tasks.max`:
+**Starting with release 0.7, Hive also supports a mode to run map-reduce jobs in local-mode automatically.** The relevant options are `hive.exec.mode.local.auto`, `hive.exec.mode.local.auto.inputbytes.max`, and `hive.exec.mode.local.auto.tasks.max`:
 
 ```
   hive> SET hive.exec.mode.local.auto=false;
 ```
 
-Note that this feature is *disabled* by default. If enabled, Hive analyzes the size of each map-reduce job in a query and may run it locally if the following thresholds are satisfied:
+**Note that this feature is *disabled* by default**. If enabled, Hive analyzes the size of each map-reduce job in a query and may run it locally if the following thresholds are satisfied:
 
 - The total input size of the job is lower than: `hive.exec.mode.local.auto.inputbytes.max` (128MB by default)
 - The total number of map-tasks is less than: `hive.exec.mode.local.auto.tasks.max` (4 by default)
@@ -116,4 +118,28 @@ Note that this feature is *disabled* by default. If enabled, Hive analyzes the s
 
 So for queries over small data sets, or for queries with multiple map-reduce jobs where the input to subsequent jobs is substantially smaller (because of reduction/filtering in the prior job), jobs may be run locally.
 
-Note that there may be differences in the runtime environment of Hadoop server nodes and the machine running the Hive client (because of different jvm versions or different software libraries). This can cause unexpected behavior/errors while running in local mode. Also note that local mode execution is done in a separate, child jvm (of the Hive client). If the user so wishes, the maximum amount of memory for this child jvm can be controlled via the option `hive.mapred.local.mem`. By default, it's set to zero, in which case Hive lets Hadoop determine the default memory limits of the child jvm.
+Note that there may be differences in the runtime environment of Hadoop server nodes and the machine running the Hive client (because of different jvm versions or different software libraries). This can cause unexpected behavior/errors while running in local mode. **Also note that local mode execution is done in a separate, child jvm (of the Hive client)**. If the user so wishes, the maximum amount of memory for this child jvm can be controlled via the option `hive.mapred.local.mem`. By default, it's set to zero, in which case Hive lets Hadoop determine the default memory limits of the child jvm.
+
+# DDL Operations
+
+ The Hive DDL operations are documented in [Hive Data Definition Language](https://cwiki.apache.org/confluence/display/Hive/LanguageManual+DDL).
+
+## Creating Hive Tables
+
+> [关于hive异常：Unable to instantiate org.apache.hadoop.hive.ql.metadata.SessionHiveMetaStor](https://blog.csdn.net/hhj724/article/details/79094138)
+>
+> [Unable to instantiate org.apache.hadoop.hive.ql.metadata.SessionHiveMetaStoreClient](https://www.58jb.com/html/89.html)
+
+```shell
+  hive> CREATE TABLE pokes (foo INT, bar STRING);
+```
+
+creates a table called pokes with two columns, the first being an integer and the other a string.
+
+```shell
+  hive> CREATE TABLE invites (foo INT, bar STRING) PARTITIONED BY (ds STRING);
+```
+
+creates a table called invites with two columns and a partition column called ds. The partition column is a virtual column. It is not part of the data itself but is derived from the partition that a particular dataset is loaded into.
+
+By default, tables are assumed to be of text input format and the delimiters are assumed to be ^A(ctrl-a).
