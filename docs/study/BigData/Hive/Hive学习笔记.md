@@ -237,6 +237,8 @@ The above command will load data from an HDFS file/directory to the table.
 
 # SQL Operations
 
+> **下面操作前如果安装Hive配置的是MySQL，那么需要先开启MySQL服务，且保证本地Hadoop已经启动，保证Hadoop网络通讯不受影响（开放端口、如果有防火墙干扰可以考虑暂时关闭<=学习测试环境）**
+
 The Hive query operations are documented in [Select](https://cwiki.apache.org/confluence/display/Hive/LanguageManual+Select).
 
 ## Example Queries
@@ -251,6 +253,8 @@ More are available in the Hive sources at `ql/src/test/queries/positive`.
 > 在hadoop的sbin目录执行`./mr-jobhistory-daemon.sh start historyserver`
 >
 > [NoSuchFieldException: parentOffset - Hive on Spark](https://stackoverflow.com/questions/60811684/nosuchfieldexception-parentoffset-hive-on-spark)	<=	即检查自己JAVA_HOME是jdk8而不是11
+>
+> **注意，如果出现Socket连接问题，可以关闭防火墙试试看（我就是自己的TripMode网络防火墙干扰了Hadoop的连接）**
 
 ```
   hive> SELECT a.foo FROM invites a WHERE a.ds='2008-08-15';
@@ -289,6 +293,8 @@ selects the sum of a column. The avg, min, or max can also be used. Note that fo
 
 ### GROUP BY
 
+> *这里events表需要先根据前面的CREATE TABLE指令建表，且需要和invites表的列一致，才能成功清空events数据再把invites的数据覆盖上去*
+
 ```
   hive> FROM invites a INSERT OVERWRITE TABLE events SELECT a.bar, count(*) WHERE a.foo > 0 GROUP BY a.bar;
   hive> INSERT OVERWRITE TABLE events SELECT a.bar, count(*) FROM invites a WHERE a.foo > 0 GROUP BY a.bar;
@@ -297,6 +303,8 @@ selects the sum of a column. The avg, min, or max can also be used. Note that fo
 Note that for versions of Hive which don't include [HIVE-287](https://issues.apache.org/jira/browse/HIVE-287), you'll need to use `COUNT(1)` in place of `COUNT(*)`.
 
 ### JOIN
+
+*这个需要events这个表DDL预先定义三列，且数据类型符合SELECT投影的三列*
 
 ```
   hive> FROM pokes t1 JOIN invites t2 ON (t1.bar = t2.bar) INSERT OVERWRITE TABLE events SELECT t1.bar, t1.foo, t2.foo;
@@ -319,4 +327,132 @@ Note that for versions of Hive which don't include [HIVE-287](https://issues.apa
 ```
 
 This streams the data in the map phase through the script `/bin/cat` (like Hadoop streaming).
-Similarly – streaming can be used on the reduce side (please see the [Hive Tutorial](https://cwiki.apache.org/confluence/display/Hive/Tutorial#Tutorial-Custommap%2Freducescripts) for examples).
+**Similarly – streaming can be used on the reduce side** (please see the [Hive Tutorial](https://cwiki.apache.org/confluence/display/Hive/Tutorial#Tutorial-Custommap%2Freducescripts) for examples).
+
+# Simple Example Use Cases
+
+## MovieLens User Ratings
+
+First, create a table with tab-delimited text file format:
+
+```
+CREATE TABLE u_data (
+  userid INT,
+  movieid INT,
+  rating INT,
+  unixtime STRING)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE;
+```
+
+Then, download the data files from **MovieLens 100k** on the [GroupLens datasets](http://grouplens.org/datasets/movielens/) page (which also has a README.txt file and index of unzipped files):
+
+```
+wget http://files.grouplens.org/datasets/movielens/ml-100k.zip
+```
+
+or:
+
+```
+curl --remote-name http://files.grouplens.org/datasets/movielens/ml-100k.zip
+```
+
+Note:  If the link to [GroupLens datasets](http://grouplens.org/datasets/movielens/) does not work, please report it on [HIVE-5341](https://issues.apache.org/jira/browse/HIVE-5341) or send a message to the [user@hive.apache.org mailing list](http://hive.apache.org/mailing_lists.html).
+
+Unzip the data files:
+
+```shell
+unzip ml-100k.zip
+```
+
+And load `u.data` into the table that was just created:
+
+```sql
+LOAD DATA LOCAL INPATH '<path>/u.data'
+OVERWRITE INTO TABLE u_data;
+```
+
+Count the number of rows in table u_data:
+
+```sql
+SELECT COUNT(*) FROM u_data;
+```
+
+Note that for older versions of Hive which don't include [HIVE-287](https://issues.apache.org/jira/browse/HIVE-287), you'll need to use COUNT(1) in place of COUNT(*).
+
+Now we can do some complex data analysis on the table `u_data`:
+
+Create `weekday_mapper.py`:
+
+```sql
+import sys
+import datetime
+
+for line in sys.stdin:
+  line = line.strip()
+  userid, movieid, rating, unixtime = line.split('\t')
+  weekday = datetime.datetime.fromtimestamp(float(unixtime)).isoweekday()
+  print '\t'.join([userid, movieid, rating, str(weekday)])
+```
+
+Use the mapper script:
+
+```sql
+CREATE TABLE u_data_new (
+  userid INT,
+  movieid INT,
+  rating INT,
+  weekday INT)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t';
+
+add FILE weekday_mapper.py;
+
+INSERT OVERWRITE TABLE u_data_new
+SELECT
+  TRANSFORM (userid, movieid, rating, unixtime)
+  USING 'python weekday_mapper.py'
+  AS (userid, movieid, rating, weekday)
+FROM u_data;
+
+SELECT weekday, COUNT(*)
+FROM u_data_new
+GROUP BY weekday;
+```
+
+Note that if you're using Hive 0.5.0 or earlier you will need to use `COUNT(1)` in place of `COUNT(*)`.
+
+## Apache Weblog Data
+
+> [hive 建表报错：ParseException - cannot recognize input near 'end' 'string'](https://blog.csdn.net/u011940366/article/details/51396152/)
+
+The format of Apache weblog is customizable, while most webmasters use the default.
+For default Apache weblog, we can create a table with the following command.
+
+More about RegexSerDe can be found here in [HIVE-662](https://issues.apache.org/jira/browse/HIVE-662) and [HIVE-1719](https://issues.apache.org/jira/browse/HIVE-1719).
+
+```sql
+CREATE TABLE apachelog (
+  host STRING,
+  identity STRING,
+  `user` STRING,
+  `time` STRING,
+  request STRING,
+  status STRING,
+  size STRING,
+  referer STRING,
+  agent STRING)
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.RegexSerDe'
+WITH SERDEPROPERTIES (
+  "input.regex" = "([^]*) ([^]*) ([^]*) (-|\\[^\\]*\\]) ([^ \"]*|\"[^\"]*\") (-|[0-9]*) (-|[0-9]*)(?: ([^ \"]*|\".*\") ([^ \"]*|\".*\"))?"
+)
+STORED AS TEXTFILE;
+```
+
+---
+
+# LanguageManual
+
+> [LanguageManual](https://cwiki.apache.org/confluence/display/Hive/LanguageManual)
+
