@@ -1333,6 +1333,8 @@ The *Click Event Count* application also has another option, turned off by defau
 
 ## Goals and Scope of this Training
 
+> [ETL讲解（很详细！！！）](https://www.cnblogs.com/yjd_hycf_space/p/7772722.html)
+
 ​	This training presents an introduction to Apache Flink that includes just enough to get you started writing scalable streaming ETL, analytics, and event-driven applications, while leaving out a lot of (ultimately important) details. The focus is on providing straightforward introductions to Flink’s APIs for managing state and time, with the expectation that having mastered these fundamentals, you’ll be much better equipped to pick up the rest of what you need to know from the more detailed reference documentation. The links at the end of each section will lead you to where you can learn more.
 
 ​	Specifically, you will learn:
@@ -1400,7 +1402,7 @@ The *Click Event Count* application also has another option, turned off by defau
 
 ![State is sharded](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/parallel-job.png)
 
-​	State is always accessed locally, which helps Flink applications achieve high throughput and low-latency. You can choose to keep state on the JVM heap, or if it is too large, in efficiently organized on-disk data structures.
+​	**State is always accessed locally, which helps Flink applications achieve high throughput and low-latency. You can choose to keep state on the JVM heap, or if it is too large, in efficiently organized on-disk data structures.**
 
 ![State is local](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/local-state.png)
 
@@ -1409,6 +1411,8 @@ The *Click Event Count* application also has another option, turned off by defau
 ​	Flink is able to provide fault-tolerant, exactly-once semantics through a combination of state snapshots and stream replay. These snapshots capture the entire state of the distributed pipeline, recording offsets into the input queues as well as the state throughout the job graph that has resulted from having ingested the data up to that point. When a failure occurs, the sources are rewound, the state is restored, and processing is resumed. As depicted above, these state snapshots are captured asynchronously, without impeding the ongoing processing.
 
 # Intro to the DataStream API
+
+> [Intro to the DataStream API](https://ci.apache.org/projects/flink/flink-docs-release-1.12/learn-flink/datastream_api.html)
 
 ​	The focus of this training is to broadly cover the DataStream API well enough that you will be able to get started writing streaming applications.
 
@@ -1423,3 +1427,4 @@ and Flink falls back to Kryo for other types. It is also possible to use other s
 
 ## Java tuples and POJOs
 
+Flink’s native serializer can operate efficiently on tuples and POJOs.
