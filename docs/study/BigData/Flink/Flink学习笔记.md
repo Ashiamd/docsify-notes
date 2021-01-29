@@ -4,6 +4,8 @@
 
 # Try FLink
 
+> [【笔记】Flink 官方教程 Section1 Try Fink](https://blog.csdn.net/m0_37809890/article/details/107933643)
+
 ## Local Installation
 
 > [Flink不同版本间的编译区别](https://www.jianshu.com/p/2bccee5c2c8b)
@@ -642,7 +644,7 @@ tEnv.executeSql("CREATE TABLE spend_report (\n" +
 
 ### The Query
 
-​	With the environment configured and tables registered, you are ready to build your first application. From the `TableEnvironment` you can read `from` an input table to read its rows and then write those results into an output table using `executeInsert`. The `report` function is where you will implement your business logic. It is currently unimplemented.
+​	With the environment configured and tables registered, you are ready to build your first application. **From the `TableEnvironment` you can read `from` an input table to read its rows and then write those results into an output table using `executeInsert`.** The `report` function is where you will implement your business logic. It is currently unimplemented.
 
 ```java
 Table transactions = tEnv.from("transactions");
@@ -658,5 +660,766 @@ EnvironmentSettings settings = EnvironmentSettings.newInstance().inBatchMode().b
 TableEnvironment tEnv = TableEnvironment.create(settings); 
 ```
 
-One of Flink’s unique properties is that it provides consistent semantics across batch and streaming. This means you can develop and test applications in batch mode on static datasets, and deploy to production as streaming applications.
+​	**One of Flink’s unique properties is that it provides consistent semantics across batch and streaming**. 
+
+​	This means **you can develop and test applications in batch mode on static datasets, and deploy to production as streaming applications**.
+
+## Attempt One
+
+Now with the skeleton of a Job set-up, you are ready to add some business logic. The goal is to build a report that shows the total spend for each account across each hour of the day. This means the timestamp column needs be be rounded down from millisecond to hour granularity.
+
+Flink supports developing relational applications in pure [SQL](https://ci.apache.org/projects/flink/flink-docs-release-1.12/dev/table/sql/) or using the [Table API](https://ci.apache.org/projects/flink/flink-docs-release-1.12/dev/table/tableApi.html). The Table API is a fluent DSL inspired by SQL, that can be written in Python, Java, or Scala and supports strong IDE integration. Just like a SQL query, Table programs can select the required fields and group by your keys. These features, allong with [built-in functions](https://ci.apache.org/projects/flink/flink-docs-release-1.12/dev/table/functions/systemFunctions.html) like `floor` and `sum`, you can write this report.
+
+```java
+public static Table report(Table transactions) {
+    return transactions.select(
+            $("account_id"),
+            $("transaction_time").floor(TimeIntervalUnit.HOUR).as("log_ts"),
+            $("amount"))
+        .groupBy($("account_id"), $("log_ts"))
+        .select(
+            $("account_id"),
+            $("log_ts"),
+            $("amount").sum().as("amount"));
+}
+```
+
+## User Defined Functions
+
+​	Flink contains a limited number of built-in functions, and sometimes you need to extend it with a [user-defined function](https://ci.apache.org/projects/flink/flink-docs-release-1.12/dev/table/functions/udfs.html). If `floor` wasn’t predefined, you could implement it yourself.
+
+```java
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+
+import org.apache.flink.table.annotation.DataTypeHint;
+import org.apache.flink.table.functions.ScalarFunction;
+
+public class MyFloor extends ScalarFunction {
+
+    public @DataTypeHint("TIMESTAMP(3)") LocalDateTime eval(
+        @DataTypeHint("TIMESTAMP(3)") LocalDateTime timestamp) {
+
+        return timestamp.truncatedTo(ChronoUnit.HOURS);
+    }
+}
+```
+
+And then quickly integrate it in your application.
+
+```java
+public static Table report(Table transactions) {
+    return transactions.select(
+            $("account_id"),
+            call(MyFloor.class, $("transaction_time")).as("log_ts"),
+            $("amount"))
+        .groupBy($("account_id"), $("log_ts"))
+        .select(
+            $("account_id"),
+            $("log_ts"),
+            $("amount").sum().as("amount"));
+}
+```
+
+This query consumes all records from the `transactions` table, calculates the report, and outputs the results in an efficient, scalable manner. Running the test with this implementation will pass.
+
+## Adding Windows
+
+Grouping data based on time is a typical operation in data processing, especially when working with infinite streams. **A grouping based on time is called a [window](https://ci.apache.org/projects/flink/flink-docs-release-1.12/dev/stream/operators/windows.html) and Flink offers flexible windowing semantics**. **The most basic type of window is called a `Tumble` window, which has a fixed size and whose buckets do not overlap**.
+
+```java
+public static Table report(Table transactions) {
+    return transactions
+        .window(Tumble.over(lit(1).hour()).on($("transaction_time")).as("log_ts"))
+        .groupBy($("account_id"), $("log_ts"))
+        .select(
+            $("account_id"),
+            $("log_ts").start().as("log_ts"),
+            $("amount").sum().as("amount"));
+}
+```
+
+This defines your application as using one hour tumbling windows based on the timestamp column. So a row with timestamp `2019-06-01 01:23:47` is put in the `2019-06-01 01:00:00` window.
+
+Aggregations based on time are unique because time, as opposed to other attributes, generally moves forward in a continuous streaming application. Unlike `floor` and your UDF, **window functions are [intrinsics](https://en.wikipedia.org/wiki/Intrinsic_function), which allows the runtime to apply additional optimizations**. In a batch context, windows offer a convenient API for grouping records by a timestamp attribute.
+
+Running the test with this implementation will also pass.
+
+## Once More, With Streaming!
+
+And that’s it, a fully functional, stateful, distributed streaming application! The query continuously consumes the stream of transactions from Kafka, computes the hourly spendings, and emits results as soon as they are ready. **Since the input is unbounded, the query keeps running until it is manually stopped. And because the Job uses time window-based aggregations, Flink can perform specific optimizations such as state clean up when the framework knows that no more records will arrive for a particular window.**
+
+The table playground is fully dockerized and runnable locally as streaming application. The environment contains a Kafka topic, a continuous data generator, MySql, and Grafana.
+
+From within the `table-walkthrough` folder start the docker-compose script.
+
+```shell
+$ docker-compose build
+$ docker-compose up -d
+```
+
+You can see information on the running job via the [Flink console](http://localhost:8082/).
+
+![Flink Console](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/spend-report-console.png)
+
+Explore the results from inside MySQL.
+
+```mysql
+$ docker-compose exec mysql mysql -Dsql-demo -usql-demo -pdemo-sql
+
+mysql> use sql-demo;
+Database changed
+
+mysql> select count(*) from spend_report;
++----------+
+| count(*) |
++----------+
+|      110 |
++----------+
+```
+
+Finally, go to [Grafana](http://localhost:3000/d/FOe0PbmGk/walkthrough?viewPanel=2&orgId=1&refresh=5s) to see the fully visualized result!
+
+![Grafana](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/spend-report-grafana.png)
+
+# Flink Operations Playground
+
+​	There are many ways to deploy and operate Apache Flink in various environments. Regardless of this variety, the fundamental building blocks of a Flink Cluster remain the same, and similar operational principles apply.
+
+​	In this playground, you will learn how to manage and run Flink Jobs. You will see how to deploy and monitor an application, experience how Flink recovers from Job failure, and perform everyday operational tasks like upgrades and rescaling.
+
+## Anatomy of this Playground
+
+​	This playground consists of a long living [Flink Session Cluster](https://ci.apache.org/projects/flink/flink-docs-release-1.12/concepts/glossary.html#flink-session-cluster) and a Kafka Cluster.
+
+​	**A Flink Cluster always consists of a [JobManager](https://ci.apache.org/projects/flink/flink-docs-release-1.12/concepts/glossary.html#flink-jobmanager) and one or more [Flink TaskManagers](https://ci.apache.org/projects/flink/flink-docs-release-1.12/concepts/glossary.html#flink-taskmanager).** The JobManager is responsible for handling [Job](https://ci.apache.org/projects/flink/flink-docs-release-1.12/concepts/glossary.html#flink-job) submissions, the supervision of Jobs as well as resource management. The Flink TaskManagers are the worker processes and are responsible for the execution of the actual [Tasks](https://ci.apache.org/projects/flink/flink-docs-release-1.12/concepts/glossary.html#task) which make up a Flink Job. In this playground you will start with a single TaskManager, but scale out to more TaskManagers later. Additionally, this playground comes with a dedicated *client* container, which we use to submit the Flink Job initially and to perform various operational tasks later on. The *client* container is not needed by the Flink Cluster itself but only included for ease of use.
+
+​	The Kafka Cluster consists of a Zookeeper server and a Kafka Broker.
+
+![Flink Docker Playground](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/flink-docker-playground.svg)
+
+​	When the playground is started a Flink Job called *Flink Event Count* will be submitted to the JobManager. Additionally, two Kafka Topics *input* and *output* are created.
+
+![Click Event Count Example](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/click-event-count-example.svg)
+
+​	The Job consumes `ClickEvent`s from the *input* topic, each with a `timestamp` and a `page`. The events are then keyed by `page` and counted in 15 second [windows](https://ci.apache.org/projects/flink/flink-docs-release-1.12/dev/stream/operators/windows.html). The results are written to the *output* topic.
+
+​	There are six different pages and we generate 1000 click events per page and 15 seconds. Hence, the output of the Flink job should show 1000 views per page and window.
+
+## Starting the Playground
+
+​	The playground environment is set up in just a few steps. We will walk you through the necessary commands and show how to validate that everything is running correctly.
+
+​	We assume that you have [Docker](https://docs.docker.com/) (1.12+) and [docker-compose](https://docs.docker.com/compose/) (2.1+) installed on your machine.
+
+​	The required configuration files are available in the [flink-playgrounds](https://github.com/apache/flink-playgrounds) repository. Check it out and spin up the environment:
+
+```shell
+git clone --branch release-1.12 https://github.com/apache/flink-playgrounds.git
+cd flink-playgrounds/operations-playground
+docker-compose build
+docker-compose up -d
+```
+
+Afterwards, you can inspect the running Docker containers with the following command:
+
+```shell
+docker-compose ps
+
+                    Name                                  Command               State                   Ports                
+-----------------------------------------------------------------------------------------------------------------------------
+operations-playground_clickevent-generator_1   /docker-entrypoint.sh java ...   Up       6123/tcp, 8081/tcp                  
+operations-playground_client_1                 /docker-entrypoint.sh flin ...   Exit 0                                       
+operations-playground_jobmanager_1             /docker-entrypoint.sh jobm ...   Up       6123/tcp, 0.0.0.0:8081->8081/tcp    
+operations-playground_kafka_1                  start-kafka.sh                   Up       0.0.0.0:9094->9094/tcp              
+operations-playground_taskmanager_1            /docker-entrypoint.sh task ...   Up       6123/tcp, 8081/tcp                  
+operations-playground_zookeeper_1              /bin/sh -c /usr/sbin/sshd  ...   Up       2181/tcp, 22/tcp, 2888/tcp, 3888/tcp
+```
+
+This indicates that the client container has successfully submitted the Flink Job (`Exit 0`) and all cluster components as well as the data generator are running (`Up`).
+
+You can stop the playground environment by calling:
+
+```shell
+docker-compose down -v
+```
+
+## Entering the Playground
+
+​	There are many things you can try and check out in this playground. In the following two sections we will show you how to interact with the Flink Cluster and demonstrate some of Flink’s key features.
+
+### Flink WebUI
+
+​	The most natural starting point to observe your Flink Cluster is the WebUI exposed under [http://localhost:8081](http://localhost:8081/). If everything went well, you’ll see that the cluster initially consists of one TaskManager and executes a Job called *Click Event Count*.
+
+![Playground Flink WebUI](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/playground-webui.png)
+
+​	The Flink WebUI contains a lot of useful and interesting information about your Flink Cluster and its Jobs (JobGraph, Metrics, Checkpointing Statistics, TaskManager Status,…).
+
+### Logs
+
+**JobManager**
+
+The JobManager logs can be tailed via `docker-compose`.
+
+```shell
+docker-compose logs -f jobmanager
+```
+
+After the initial startup you should mainly see log messages for every checkpoint completion.
+
+**TaskManager**
+
+The TaskManager log can be tailed in the same way.
+
+```shell
+docker-compose logs -f taskmanager
+```
+
+After the initial startup you should mainly see log messages for every checkpoint completion.
+
+### Flink CLI
+
+The [Flink CLI](https://ci.apache.org/projects/flink/flink-docs-release-1.12/deployment/cli.html) can be used from within the client container. For example, to print the `help` message of the Flink CLI you can run
+
+```shell
+docker-compose run --no-deps client flink --help
+```
+
+### Flink REST API
+
+The [Flink REST API](https://ci.apache.org/projects/flink/flink-docs-release-1.12/ops/rest_api.html#api) is exposed via `localhost:8081` on the host or via `jobmanager:8081` from the client container, e.g. to list all currently running jobs, you can run:
+
+```shell
+curl localhost:8081/jobs
+```
+
+### Kafka Topics
+
+You can look at the records that are written to the Kafka Topics by running
+
+```shell
+//input topic (1000 records/s)
+docker-compose exec kafka kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic input
+
+//output topic (24 records/min)
+docker-compose exec kafka kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic output
+```
+
+## Time to Play!
+
+​	Now that you learned how to interact with Flink and the Docker containers, let’s have a look at some common operational tasks that you can try out on our playground. All of these tasks are independent of each other, i.e. you can perform them in any order. Most tasks can be executed via the [CLI](https://ci.apache.org/projects/flink/flink-docs-release-1.12/try-flink/flink-operations-playground.html#flink-cli) and the [REST API](https://ci.apache.org/projects/flink/flink-docs-release-1.12/try-flink/flink-operations-playground.html#flink-rest-api).
+
+### Listing Running Jobs
+
+**Command**
+
+```
+docker-compose run --no-deps client flink list
+```
+
+**Expected Output**
+
+```
+Waiting for response...
+------------------ Running/Restarting Jobs -------------------
+16.07.2019 16:37:55 : <job-id> : Click Event Count (RUNNING)
+--------------------------------------------------------------
+No scheduled jobs.
+```
+
+The JobID is assigned to a Job upon submission and is needed to perform actions on the Job via the CLI or REST API.
+
+### Observing Failure & Recovery
+
+Flink provides exactly-once processing guarantees under (partial) failure. In this playground you can observe and - to some extent - verify this behavior.
+
+#### Step 1: Observing the Output
+
+As described [above](https://ci.apache.org/projects/flink/flink-docs-release-1.12/try-flink/flink-operations-playground.html#anatomy-of-this-playground), the events in this playground are generate such that each window contains exactly one thousand records. So, in order to verify that Flink successfully recovers from a TaskManager failure without data loss or duplication you can tail the output topic and check that - after recovery - all windows are present and the count is correct.
+
+For this, start reading from the *output* topic and leave this command running until after recovery (Step 3).
+
+```
+docker-compose exec kafka kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic output
+```
+
+#### Step 2: Introducing a Fault
+
+In order to simulate a partial failure you can kill a TaskManager. In a production setup, this could correspond to a loss of the TaskManager process, the TaskManager machine or simply a transient exception being thrown from the framework or user code (e.g. due to the temporary unavailability of an external resource).
+
+```
+docker-compose kill taskmanager
+```
+
+After a few seconds, the JobManager will notice the loss of the TaskManager, cancel the affected Job, and immediately resubmit it for recovery. When the Job gets restarted, its tasks remain in the `SCHEDULED` state, which is indicated by the purple colored squares (see screenshot below).
+
+![Playground Flink WebUI](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/playground-webui-failure.png)
+
+**Note**: Even though the tasks of the job are in SCHEDULED state and not RUNNING yet, the overall status of a Job is shown as RUNNING.
+
+At this point, the tasks of the Job cannot move from the `SCHEDULED` state to `RUNNING` because there are no resources (TaskSlots provided by TaskManagers) to the run the tasks. Until a new TaskManager becomes available, the Job will go through a cycle of cancellations and resubmissions.
+
+In the meantime, the data generator keeps pushing `ClickEvent`s into the *input* topic. This is similar to a real production setup where data is produced while the Job to process it is down.
+
+#### Step 3: Recovery
+
+Once you restart the TaskManager, it reconnects to the JobManager.
+
+```
+docker-compose up -d taskmanager
+```
+
+When the JobManager is notified about the new TaskManager, it schedules the tasks of the recovering Job to the newly available TaskSlots. Upon restart, the tasks recover their state from the last successful [checkpoint](https://ci.apache.org/projects/flink/flink-docs-release-1.12/learn-flink/fault_tolerance.html) that was taken before the failure and switch to the `RUNNING` state.
+
+The Job will quickly process the full backlog of input events (accumulated during the outage) from Kafka and produce output at a much higher rate (> 24 records/minute) until it reaches the head of the stream. In the *output* you will see that all keys (`page`s) are present for all time windows and that every count is exactly one thousand. Since we are using the [FlinkKafkaProducer](https://ci.apache.org/projects/flink/flink-docs-release-1.12/dev/connectors/kafka.html#kafka-producers-and-fault-tolerance) in its “at-least-once” mode, there is a chance that you will see some duplicate output records.
+
+**Note**: Most production setups rely on a resource manager (Kubernetes, Yarn, Mesos) to automatically restart failed processes.
+
+### Upgrading & Rescaling a Job
+
+Upgrading a Flink Job always involves two steps: First, the Flink Job is gracefully stopped with a [Savepoint](https://ci.apache.org/projects/flink/flink-docs-release-1.12/ops/state/savepoints.html). A Savepoint is a consistent snapshot of the complete application state at a well-defined, globally consistent point in time (similar to a checkpoint). Second, the upgraded Flink Job is started from the Savepoint. In this context “upgrade” can mean different things including the following:
+
+- An upgrade to the configuration (incl. the parallelism of the Job)
+- An upgrade to the topology of the Job (added/removed Operators)
+- An upgrade to the user-defined functions of the Job
+
+Before starting with the upgrade you might want to start tailing the *output* topic, in order to observe that no data is lost or corrupted in the course the upgrade.
+
+```
+docker-compose exec kafka kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic output
+```
+
+#### Step 1: Stopping the Job
+
+To gracefully stop the Job, you need to use the “stop” command of either the CLI or the REST API. For this you will need the JobID of the Job, which you can obtain by [listing all running Jobs](https://ci.apache.org/projects/flink/flink-docs-release-1.12/try-flink/flink-operations-playground.html#listing-running-jobs) or from the WebUI. With the JobID you can proceed to stopping the Job:
+
+**Command**
+
+```
+docker-compose run --no-deps client flink stop <job-id>
+```
+
+**Expected Output**
+
+```
+Suspending job "<job-id>" with a savepoint.
+Savepoint completed. Path: file:<savepoint-path>
+```
+
+The Savepoint has been stored to the `state.savepoint.dir` configured in the *flink-conf.yaml*, which is mounted under */tmp/flink-savepoints-directory/* on your local machine. You will need the path to this Savepoint in the next step.
+
+#### Step 2a: Restart Job without Changes
+
+You can now restart the upgraded Job from this Savepoint. For simplicity, you can start by restarting it without any changes.
+
+**Command**
+
+```
+docker-compose run --no-deps client flink run -s <savepoint-path> \
+  -d /opt/ClickCountJob.jar \
+  --bootstrap.servers kafka:9092 --checkpointing --event-time
+```
+
+**Expected Output**
+
+```
+Job has been submitted with JobID <job-id>
+```
+
+Once the Job is `RUNNING` again, you will see in the *output* Topic that records are produced at a higher rate while the Job is processing the backlog accumulated during the outage. Additionally, you will see that no data was lost during the upgrade: all windows are present with a count of exactly one thousand.
+
+#### Step 2b: Restart Job with a Different Parallelism (Rescaling)
+
+Alternatively, you could also rescale the Job from this Savepoint by passing a different parallelism during resubmission.
+
+**Command**
+
+```
+docker-compose run --no-deps client flink run -p 3 -s <savepoint-path> \
+  -d /opt/ClickCountJob.jar \
+  --bootstrap.servers kafka:9092 --checkpointing --event-time
+```
+
+**Expected Output**
+
+```
+Starting execution of program
+Job has been submitted with JobID <job-id>
+```
+
+Now, the Job has been resubmitted, but it will not start as there are not enough TaskSlots to execute it with the increased parallelism (2 available, 3 needed). With
+
+```
+docker-compose scale taskmanager=2
+```
+
+you can add a second TaskManager with two TaskSlots to the Flink Cluster, which will automatically register with the JobManager. Shortly after adding the TaskManager the Job should start running again.
+
+Once the Job is “RUNNING” again, you will see in the *output* Topic that no data was lost during rescaling: all windows are present with a count of exactly one thousand.
+
+## Querying the Metrics of a Job
+
+The JobManager exposes system and user [metrics](https://ci.apache.org/projects/flink/flink-docs-release-1.12/ops/metrics.html) via its REST API.
+
+The endpoint depends on the scope of these metrics. Metrics scoped to a Job can be listed via `jobs/<job-id>/metrics`. The actual value of a metric can be queried via the `get` query parameter.
+
+**Request**
+
+```
+curl "localhost:8081/jobs/<jod-id>/metrics?get=lastCheckpointSize"
+```
+
+**Expected Response (pretty-printed; no placeholders)**
+
+```
+[
+  {
+    "id": "lastCheckpointSize",
+    "value": "9378"
+  }
+]
+```
+
+The REST API can not only be used to query metrics, but you can also retrieve detailed information about the status of a running Job.
+
+**Request**
+
+```
+# find the vertex-id of the vertex of interest
+curl localhost:8081/jobs/<jod-id>
+```
+
+**Expected Response (pretty-printed)**
+
+```
+{
+  "jid": "<job-id>",
+  "name": "Click Event Count",
+  "isStoppable": false,
+  "state": "RUNNING",
+  "start-time": 1564467066026,
+  "end-time": -1,
+  "duration": 374793,
+  "now": 1564467440819,
+  "timestamps": {
+    "CREATED": 1564467066026,
+    "FINISHED": 0,
+    "SUSPENDED": 0,
+    "FAILING": 0,
+    "CANCELLING": 0,
+    "CANCELED": 0,
+    "RECONCILING": 0,
+    "RUNNING": 1564467066126,
+    "FAILED": 0,
+    "RESTARTING": 0
+  },
+  "vertices": [
+    {
+      "id": "<vertex-id>",
+      "name": "ClickEvent Source",
+      "parallelism": 2,
+      "status": "RUNNING",
+      "start-time": 1564467066423,
+      "end-time": -1,
+      "duration": 374396,
+      "tasks": {
+        "CREATED": 0,
+        "FINISHED": 0,
+        "DEPLOYING": 0,
+        "RUNNING": 2,
+        "CANCELING": 0,
+        "FAILED": 0,
+        "CANCELED": 0,
+        "RECONCILING": 0,
+        "SCHEDULED": 0
+      },
+      "metrics": {
+        "read-bytes": 0,
+        "read-bytes-complete": true,
+        "write-bytes": 5033461,
+        "write-bytes-complete": true,
+        "read-records": 0,
+        "read-records-complete": true,
+        "write-records": 166351,
+        "write-records-complete": true
+      }
+    },
+    {
+      "id": "<vertex-id>",
+      "name": "Timestamps/Watermarks",
+      "parallelism": 2,
+      "status": "RUNNING",
+      "start-time": 1564467066441,
+      "end-time": -1,
+      "duration": 374378,
+      "tasks": {
+        "CREATED": 0,
+        "FINISHED": 0,
+        "DEPLOYING": 0,
+        "RUNNING": 2,
+        "CANCELING": 0,
+        "FAILED": 0,
+        "CANCELED": 0,
+        "RECONCILING": 0,
+        "SCHEDULED": 0
+      },
+      "metrics": {
+        "read-bytes": 5066280,
+        "read-bytes-complete": true,
+        "write-bytes": 5033496,
+        "write-bytes-complete": true,
+        "read-records": 166349,
+        "read-records-complete": true,
+        "write-records": 166349,
+        "write-records-complete": true
+      }
+    },
+    {
+      "id": "<vertex-id>",
+      "name": "ClickEvent Counter",
+      "parallelism": 2,
+      "status": "RUNNING",
+      "start-time": 1564467066469,
+      "end-time": -1,
+      "duration": 374350,
+      "tasks": {
+        "CREATED": 0,
+        "FINISHED": 0,
+        "DEPLOYING": 0,
+        "RUNNING": 2,
+        "CANCELING": 0,
+        "FAILED": 0,
+        "CANCELED": 0,
+        "RECONCILING": 0,
+        "SCHEDULED": 0
+      },
+      "metrics": {
+        "read-bytes": 5085332,
+        "read-bytes-complete": true,
+        "write-bytes": 316,
+        "write-bytes-complete": true,
+        "read-records": 166305,
+        "read-records-complete": true,
+        "write-records": 6,
+        "write-records-complete": true
+      }
+    },
+    {
+      "id": "<vertex-id>",
+      "name": "ClickEventStatistics Sink",
+      "parallelism": 2,
+      "status": "RUNNING",
+      "start-time": 1564467066476,
+      "end-time": -1,
+      "duration": 374343,
+      "tasks": {
+        "CREATED": 0,
+        "FINISHED": 0,
+        "DEPLOYING": 0,
+        "RUNNING": 2,
+        "CANCELING": 0,
+        "FAILED": 0,
+        "CANCELED": 0,
+        "RECONCILING": 0,
+        "SCHEDULED": 0
+      },
+      "metrics": {
+        "read-bytes": 20668,
+        "read-bytes-complete": true,
+        "write-bytes": 0,
+        "write-bytes-complete": true,
+        "read-records": 6,
+        "read-records-complete": true,
+        "write-records": 0,
+        "write-records-complete": true
+      }
+    }
+  ],
+  "status-counts": {
+    "CREATED": 0,
+    "FINISHED": 0,
+    "DEPLOYING": 0,
+    "RUNNING": 4,
+    "CANCELING": 0,
+    "FAILED": 0,
+    "CANCELED": 0,
+    "RECONCILING": 0,
+    "SCHEDULED": 0
+  },
+  "plan": {
+    "jid": "<job-id>",
+    "name": "Click Event Count",
+    "nodes": [
+      {
+        "id": "<vertex-id>",
+        "parallelism": 2,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "ClickEventStatistics Sink",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "<vertex-id>",
+            "ship_strategy": "FORWARD",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "<vertex-id>",
+        "parallelism": 2,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "ClickEvent Counter",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "<vertex-id>",
+            "ship_strategy": "HASH",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "<vertex-id>",
+        "parallelism": 2,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "Timestamps/Watermarks",
+        "inputs": [
+          {
+            "num": 0,
+            "id": "<vertex-id>",
+            "ship_strategy": "FORWARD",
+            "exchange": "pipelined_bounded"
+          }
+        ],
+        "optimizer_properties": {}
+      },
+      {
+        "id": "<vertex-id>",
+        "parallelism": 2,
+        "operator": "",
+        "operator_strategy": "",
+        "description": "ClickEvent Source",
+        "optimizer_properties": {}
+      }
+    ]
+  }
+}
+```
+
+Please consult the [REST API reference](https://ci.apache.org/projects/flink/flink-docs-release-1.12/ops/rest_api.html#api) for a complete list of possible queries including how to query metrics of different scopes (e.g. TaskManager metrics);
+
+## Variants
+
+You might have noticed that the *Click Event Count* application was always started with `--checkpointing` and `--event-time` program arguments. By omitting these in the command of the *client* container in the `docker-compose.yaml`, you can change the behavior of the Job.
+
+- `--checkpointing` enables [checkpoint](https://ci.apache.org/projects/flink/flink-docs-release-1.12/learn-flink/fault_tolerance.html), which is Flink’s fault-tolerance mechanism. If you run without it and go through [failure and recovery](https://ci.apache.org/projects/flink/flink-docs-release-1.12/try-flink/flink-operations-playground.html#observing-failure--recovery), you should will see that data is actually lost.
+- `--event-time` enables [event time semantics](https://ci.apache.org/projects/flink/flink-docs-release-1.12/dev/event_time.html) for your Job. When disabled, the Job will assign events to windows based on the wall-clock time instead of the timestamp of the `ClickEvent`. Consequently, the number of events per window will not be exactly one thousand anymore.
+
+The *Click Event Count* application also has another option, turned off by default, that you can enable to explore the behavior of this job under backpressure. You can add this option in the command of the *client* container in `docker-compose.yaml`.
+
+- `--backpressure` adds an additional operator into the middle of the job that causes severe backpressure during even-numbered minutes (e.g., during 10:12, but not during 10:13). This can be observed by inspecting various [network metrics](https://ci.apache.org/projects/flink/flink-docs-release-1.12/ops/metrics.html#default-shuffle-service) such as `outputQueueLength` and `outPoolUsage`, and/or by using the [backpressure monitoring](https://ci.apache.org/projects/flink/flink-docs-release-1.12/ops/monitoring/back_pressure.html#monitoring-back-pressure) available in the WebUI.
+
+# Learn Flink: Hands-on Training
+
+## Goals and Scope of this Training
+
+​	This training presents an introduction to Apache Flink that includes just enough to get you started writing scalable streaming ETL, analytics, and event-driven applications, while leaving out a lot of (ultimately important) details. The focus is on providing straightforward introductions to Flink’s APIs for managing state and time, with the expectation that having mastered these fundamentals, you’ll be much better equipped to pick up the rest of what you need to know from the more detailed reference documentation. The links at the end of each section will lead you to where you can learn more.
+
+​	Specifically, you will learn:
+
+- how to implement streaming data processing pipelines
+- how and why Flink manages state
+- how to use event time to consistently compute accurate analytics
+- how to build event-driven applications on continuous streams
+- how Flink is able to provide fault-tolerant, stateful stream processing with exactly-once semantics
+
+​	This training focuses on four critical concepts: continuous processing of streaming data, event time, stateful stream processing, and state snapshots. This page introduces these concepts.
+
+​	**Note** Accompanying this training is a set of hands-on exercises that will guide you through learning how to work with the concepts being presented. A link to the relevant exercise is provided at the end of each section.
+
+## Stream Processing
+
+​	Streams are data’s natural habitat. Whether it is events from web servers, trades from a stock exchange, or sensor readings from a machine on a factory floor, data is created as part of a stream. But when you analyze data, you can either organize your processing around *bounded* or *unbounded* streams, and which of these paradigms you choose has profound consequences.
+
+![Bounded and unbounded streams](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/bounded-unbounded.png)
+
+​	**Batch processing** is the paradigm at work when you process a bounded data stream. In this mode of operation you can choose to ingest the entire dataset before producing any results, which means that it is possible, for example, to sort the data, compute global statistics, or produce a final report that summarizes all of the input.
+
+​	**Stream processing**, on the other hand, involves unbounded data streams. Conceptually, at least, the input may never end, and so you are forced to continuously process the data as it arrives.
+
+​	In Flink, applications are composed of **streaming dataflows** that may be transformed by user-defined **operators**. These dataflows form directed graphs that start with one or more **sources**, and end in one or more **sinks**.
+
+![A DataStream program, and its dataflow.](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/program_dataflow.svg)
+
+​	Often there is a one-to-one correspondence between the transformations in the program and the operators in the dataflow. Sometimes, however, one transformation may consist of multiple operators.
+
+​	An application may consume real-time data from streaming sources such as message queues or distributed logs, like Apache Kafka or Kinesis. But flink can also consume bounded, historic data from a variety of data sources. Similarly, the streams of results being produced by a Flink application can be sent to a wide variety of systems that can be connected as sinks.
+
+![Flink application with sources and sinks](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/flink-application-sources-sinks.png)
+
+### Parallel Dataflows
+
+​	Programs in Flink are inherently parallel and distributed. During execution, a *stream* has one or more **stream partitions**, and each *operator* has one or more **operator subtasks**. The operator subtasks are independent of one another, and execute in different threads and possibly on different machines or containers.
+
+​	The number of operator subtasks is the **parallelism** of that particular operator. Different operators of the same program may have different levels of parallelism.
+
+![A parallel dataflow](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/parallel_dataflow.svg)
+
+​	Streams can transport data between two operators in a *one-to-one* (or *forwarding*) pattern, or in a *redistributing* pattern:
+
+- **One-to-one** streams (for example between the *Source* and the *map()* operators in the figure above) preserve the partitioning and ordering of the elements. That means that subtask[1] of the *map()* operator will see the same elements in the same order as they were produced by subtask[1] of the *Source* operator.
+- **Redistributing** streams (as between *map()* and *keyBy/window* above, as well as between *keyBy/window* and *Sink*) change the partitioning of streams. Each *operator subtask* sends data to different target subtasks, depending on the selected transformation. Examples are *keyBy()* (which re-partitions by hashing the key), *broadcast()*, or *rebalance()* (which re-partitions randomly). In a *redistributing* exchange the ordering among the elements is only preserved within each pair of sending and receiving subtasks (for example, subtask[1] of *map()* and subtask[2] of *keyBy/window*). So, for example, the redistribution between the keyBy/window and the Sink operators shown above introduces non-determinism regarding the order in which the aggregated results for different keys arrive at the Sink.
+
+## Timely Stream Processing
+
+​	For most streaming applications it is very valuable to be able re-process historic data with the same code that is used to process live data – and to produce deterministic, consistent results, regardless.
+
+​	It can also be crucial to pay attention to the order in which events occurred, rather than the order in which they are delivered for processing, and to be able to reason about when a set of events is (or should be) complete. For example, consider the set of events involved in an e-commerce transaction, or financial trade.
+
+​	These requirements for timely stream processing can be met by using event time timestamps that are recorded in the data stream, rather than using the clocks of the machines processing the data.
+
+## Stateful Stream Processing
+
+​	Flink’s operations can be stateful. This means that how one event is handled can depend on the accumulated effect of all the events that came before it. State may be used for something simple, such as counting events per minute to display on a dashboard, or for something more complex, such as computing features for a fraud detection model.
+
+​	A Flink application is run in parallel on a distributed cluster. The various parallel instances of a given operator will execute independently, in separate threads, and in general will be running on different machines.
+
+​	The set of parallel instances of a stateful operator is effectively a sharded key-value store. Each parallel instance is responsible for handling events for a specific group of keys, and the state for those keys is kept locally.
+
+​	The diagram below shows a job running with a parallelism of two across the first three operators in the job graph, terminating in a sink that has a parallelism of one. The third operator is stateful, and you can see that a fully-connected network shuffle is occurring between the second and third operators. This is being done to partition the stream by some key, so that all of the events that need to be processed together, will be.
+
+![State is sharded](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/parallel-job.png)
+
+​	State is always accessed locally, which helps Flink applications achieve high throughput and low-latency. You can choose to keep state on the JVM heap, or if it is too large, in efficiently organized on-disk data structures.
+
+![State is local](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/local-state.png)
+
+## Fault Tolerance via State Snapshots
+
+​	Flink is able to provide fault-tolerant, exactly-once semantics through a combination of state snapshots and stream replay. These snapshots capture the entire state of the distributed pipeline, recording offsets into the input queues as well as the state throughout the job graph that has resulted from having ingested the data up to that point. When a failure occurs, the sources are rewound, the state is restored, and processing is resumed. As depicted above, these state snapshots are captured asynchronously, without impeding the ongoing processing.
+
+# Intro to the DataStream API
+
+​	The focus of this training is to broadly cover the DataStream API well enough that you will be able to get started writing streaming applications.
+
+## What can be Streamed?
+
+Flink’s DataStream APIs for Java and Scala will let you stream anything they can serialize. Flink’s own serializer is used for
+
+- basic types, i.e., String, Long, Integer, Boolean, Array
+- composite types: Tuples, POJOs, and Scala case classes
+
+and Flink falls back to Kryo for other types. It is also possible to use other serializers with Flink. Avro, in particular, is well supported.
+
+## Java tuples and POJOs
 
