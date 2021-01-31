@@ -1920,3 +1920,251 @@ close
 close
 ```
 
+## 5.6 数据重分区操作
+
+重分区操作，在DataStream类中可以看到很多`Partitioner`字眼的类。
+
+**其中`partitionCustom(...)`方法用于自定义重分区**。
+
+java代码：
+
+```java
+package apitest.transform;
+
+import apitest.beans.SensorReading;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2021/2/1 12:38 AM
+ */
+public class TransformTest6_Partition {
+  public static void main(String[] args) throws Exception{
+
+    // 创建执行环境
+    StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+    // 设置并行度 = 4
+    env.setParallelism(4);
+
+    // 从文件读取数据
+    DataStream<String> inputStream = env.readTextFile("/Users/ashiamd/mydocs/docs/study/javadocument/javadocument/IDEA_project/Flink_Tutorial/src/main/resources/sensor.txt");
+
+    // 转换成SensorReading类型
+    DataStream<SensorReading> dataStream = inputStream.map(line -> {
+      String[] fields = line.split(",");
+      return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+    });
+
+    // SingleOutputStreamOperator多并行度默认就rebalance,轮询方式分配
+    dataStream.print("input");
+
+    // 1. shuffle (并非批处理中的获取一批后才打乱，这里每次获取到直接打乱且分区)
+    DataStream<String> shuffleStream = inputStream.shuffle();
+    shuffleStream.print("shuffle");
+
+    // 2. keyBy (Hash，然后取模)
+    dataStream.keyBy(SensorReading::getId).print("keyBy");
+
+    // 3. global (直接发送给第一个分区，少数特殊情况才用)
+    dataStream.global().print("global");
+
+    env.execute();
+  }
+}
+```
+
+输出：
+
+```shell
+input:3> SensorReading{id='sensor_1', timestamp=1547718199, temperature=35.8}
+input:3> SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
+input:1> SensorReading{id='sensor_1', timestamp=1547718207, temperature=36.3}
+input:1> SensorReading{id='sensor_1', timestamp=1547718209, temperature=32.8}
+shuffle:2> sensor_6,1547718201,15.4
+shuffle:1> sensor_1,1547718199,35.8
+input:4> SensorReading{id='sensor_7', timestamp=1547718202, temperature=6.7}
+input:4> SensorReading{id='sensor_10', timestamp=1547718205, temperature=38.1}
+shuffle:1> sensor_1,1547718207,36.3
+shuffle:2> sensor_1,1547718209,32.8
+global:1> SensorReading{id='sensor_1', timestamp=1547718199, temperature=35.8}
+keyBy:3> SensorReading{id='sensor_1', timestamp=1547718199, temperature=35.8}
+global:1> SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
+keyBy:3> SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
+keyBy:3> SensorReading{id='sensor_1', timestamp=1547718207, temperature=36.3}
+keyBy:3> SensorReading{id='sensor_1', timestamp=1547718209, temperature=32.8}
+global:1> SensorReading{id='sensor_1', timestamp=1547718207, temperature=36.3}
+shuffle:1> sensor_7,1547718202,6.7
+global:1> SensorReading{id='sensor_1', timestamp=1547718209, temperature=32.8}
+shuffle:2> sensor_10,1547718205,38.1
+input:2> SensorReading{id='sensor_1', timestamp=1547718212, temperature=37.1}
+global:1> SensorReading{id='sensor_7', timestamp=1547718202, temperature=6.7}
+keyBy:4> SensorReading{id='sensor_7', timestamp=1547718202, temperature=6.7}
+keyBy:2> SensorReading{id='sensor_10', timestamp=1547718205, temperature=38.1}
+global:1> SensorReading{id='sensor_10', timestamp=1547718205, temperature=38.1}
+shuffle:1> sensor_1,1547718212,37.1
+keyBy:3> SensorReading{id='sensor_1', timestamp=1547718212, temperature=37.1}
+global:1> SensorReading{id='sensor_1', timestamp=1547718212, temperature=37.1}
+```
+
+## 5.7 Sink
+
+> [Flink之流处理API之Sink](https://blog.csdn.net/lixinkuan328/article/details/104116894)
+
+​	Flink没有类似于spark中foreach方法，让用户进行迭代的操作。虽有对外的输出操作都要利用Sink完成。最后通过类似如下方式完成整个任务最终输出操作。
+
+```java
+stream.addSink(new MySink(xxxx)) 
+```
+
+​	官方提供了一部分的框架的sink。除此以外，需要用户自定义实现sink。
+
+![img](https://img-blog.csdnimg.cn/20200130221249884.png)
+
+### 5.7.1 Kafka
+
+1. pom依赖
+
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <project xmlns="http://maven.apache.org/POM/4.0.0"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+       <modelVersion>4.0.0</modelVersion>
+   
+       <groupId>org.example</groupId>
+       <artifactId>Flink_Tutorial</artifactId>
+       <version>1.0-SNAPSHOT</version>
+   
+       <properties>
+           <maven.compiler.source>8</maven.compiler.source>
+           <maven.compiler.target>8</maven.compiler.target>
+           <flink.version>1.12.1</flink.version>
+           <scala.binary.version>2.12</scala.binary.version>
+       </properties>
+   
+       <dependencies>
+           <dependency>
+               <groupId>org.apache.flink</groupId>
+               <artifactId>flink-java</artifactId>
+               <version>${flink.version}</version>
+           </dependency>
+           <dependency>
+               <groupId>org.apache.flink</groupId>
+               <artifactId>flink-streaming-scala_${scala.binary.version}</artifactId>
+               <version>${flink.version}</version>
+           </dependency>
+           <dependency>
+               <groupId>org.apache.flink</groupId>
+               <artifactId>flink-clients_${scala.binary.version}</artifactId>
+               <version>${flink.version}</version>
+           </dependency>
+   
+           <!-- kafka -->
+           <dependency>
+               <groupId>org.apache.flink</groupId>
+               <artifactId>flink-connector-kafka_${scala.binary.version}</artifactId>
+               <version>${flink.version}</version>
+           </dependency>
+       </dependencies>
+   
+   </project>
+   ```
+
+2. 编写java代码
+
+   ```java
+   package apitest.sink;
+   
+   import apitest.beans.SensorReading;
+   import org.apache.flink.api.common.serialization.SimpleStringSchema;
+   import org.apache.flink.streaming.api.datastream.DataStream;
+   import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+   import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer;
+   import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
+   
+   import java.util.Properties;
+   
+   /**
+    * @author : Ashiamd email: ashiamd@foxmail.com
+    * @date : 2021/2/1 1:11 AM
+    */
+   public class SinkTest1_Kafka {
+       public static void main(String[] args) throws Exception{
+           // 创建执行环境
+           StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+   
+           // 并行度设置为1
+           env.setParallelism(1);
+   
+           Properties properties = new Properties();
+           properties.setProperty("bootstrap.servers", "localhost:9092");
+           properties.setProperty("group.id", "consumer-group");
+           properties.setProperty("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+           properties.setProperty("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+           properties.setProperty("auto.offset.reset", "latest");
+   
+           // 从Kafka中读取数据
+           DataStream<String> inputStream = env.addSource( new FlinkKafkaConsumer<String>("sensor", new SimpleStringSchema(), properties));
+   
+           // 序列化从Kafka中读取的数据
+           DataStream<String> dataStream = inputStream.map(line -> {
+               String[] fields = line.split(",");
+               return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2])).toString();
+           });
+   
+           // 将数据写入Kafka
+           dataStream.addSink( new FlinkKafkaProducer<String>("localhost:9092", "sinktest", new SimpleStringSchema()));
+           
+           env.execute();
+       }
+   }
+   ```
+
+3. 启动zookeeper
+
+   ```shell
+   $ bin/zookeeper-server-start.sh config/zookeeper.properties
+   ```
+
+4. 启动kafka服务
+
+   ```shell
+   $ bin/kafka-server-start.sh config/server.properties
+   ```
+
+5. 新建kafka生产者console
+
+   ```shell
+   $ bin/kafka-console-producer.sh --broker-list localhost:9092  --topic sensor
+   ```
+
+6. 新建kafka消费者console
+
+   ```shell
+   $ bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic sinktest
+   ```
+
+7. 运行Flink程序，在kafka生产者console输入数据，查看kafka消费者console的输出结果
+
+   输入(kafka生产者console)
+
+   ```shell
+   >sensor_1,1547718199,35.8
+   >sensor_6,1547718201,15.4
+   ```
+
+   输出(kafka消费者console)
+
+   ```shell
+   SensorReading{id='sensor_1', timestamp=1547718199, temperature=35.8}
+   SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
+   ```
+
+这里Flink的作用相当于pipeline了。
+
+
+
+
+
