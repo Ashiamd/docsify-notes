@@ -1949,7 +1949,7 @@ public class TransformTest6_Partition {
     env.setParallelism(4);
 
     // 从文件读取数据
-    DataStream<String> inputStream = env.readTextFile("/Users/ashiamd/mydocs/docs/study/javadocument/javadocument/IDEA_project/Flink_Tutorial/src/main/resources/sensor.txt");
+    DataStream<String> inputStream = env.readTextFile("/tmp/Flink_Tutorial/src/main/resources/sensor.txt");
 
     // 转换成SensorReading类型
     DataStream<SensorReading> dataStream = inputStream.map(line -> {
@@ -2163,6 +2163,462 @@ stream.addSink(new MySink(xxxx))
    ```
 
 这里Flink的作用相当于pipeline了。
+
+### 5.7.2 Redis
+
+> [flink-connector-redis](https://mvnrepository.com/search?q=flink-connector-redis)
+>
+> 查询Flink连接器，最简单的就是查询关键字`flink-connector-`
+
+这里将Redis当作sink的输出对象。
+
+1. pom依赖
+
+   这个可谓相当老的依赖了，2017年的。
+
+   ```xml
+   <!-- https://mvnrepository.com/artifact/org.apache.bahir/flink-connector-redis -->
+   <dependency>
+       <groupId>org.apache.bahir</groupId>
+       <artifactId>flink-connector-redis_2.11</artifactId>
+       <version>1.0</version>
+   </dependency>
+   ```
+
+2. 编写java代码
+
+   ```java
+   package apitest.sink;
+   
+   import apitest.beans.SensorReading;
+   import org.apache.flink.streaming.api.datastream.DataStream;
+   import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+   import org.apache.flink.streaming.connectors.redis.RedisSink;
+   import org.apache.flink.streaming.connectors.redis.common.config.FlinkJedisPoolConfig;
+   import org.apache.flink.streaming.connectors.redis.common.mapper.RedisCommand;
+   import org.apache.flink.streaming.connectors.redis.common.mapper.RedisCommandDescription;
+   import org.apache.flink.streaming.connectors.redis.common.mapper.RedisMapper;
+   
+   /**
+    * @author : Ashiamd email: ashiamd@foxmail.com
+    * @date : 2021/2/1 1:47 AM
+    */
+   public class SinkTest2_Redis {
+       public static void main(String[] args) throws Exception {
+           StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+           env.setParallelism(1);
+   
+           // 从文件读取数据
+           DataStream<String> inputStream = env.readTextFile("/tmp/Flink_Tutorial/src/main/resources/sensor.txt");
+   
+           // 转换成SensorReading类型
+           DataStream<SensorReading> dataStream = inputStream.map(line -> {
+               String[] fields = line.split(",");
+               return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+           });
+   
+           // 定义jedis连接配置(我这里连接的是docker的redis)
+           FlinkJedisPoolConfig config = new FlinkJedisPoolConfig.Builder()
+                   .setHost("localhost")
+                   .setPort(6379)
+                   .setPassword("123456")
+                   .setDatabase(0)
+                   .build();
+   
+           dataStream.addSink(new RedisSink<>(config, new MyRedisMapper()));
+   
+           env.execute();
+       }
+   
+       // 自定义RedisMapper
+       public static class MyRedisMapper implements RedisMapper<SensorReading> {
+           // 定义保存数据到redis的命令，存成Hash表，hset sensor_temp id temperature
+           @Override
+           public RedisCommandDescription getCommandDescription() {
+               return new RedisCommandDescription(RedisCommand.HSET, "sensor_temp");
+           }
+   
+           @Override
+           public String getKeyFromData(SensorReading data) {
+               return data.getId();
+           }
+   
+           @Override
+           public String getValueFromData(SensorReading data) {
+               return data.getTemperature().toString();
+           }
+       }
+   }
+   
+   ```
+
+3. 启动redis服务（我这里是docker里的）
+
+4. 启动Flink程序
+
+5. 查看Redis里的数据
+
+   *因为最新数据覆盖前面的，所以最后redis里呈现的是最新的数据。*
+
+   ```shell
+   localhost:0>hgetall sensor_temp
+   1) "sensor_1"
+   2) "37.1"
+   3) "sensor_6"
+   4) "15.4"
+   5) "sensor_7"
+   6) "6.7"
+   7) "sensor_10"
+   8) "38.1"
+   ```
+
+### 5.7.3 Elasticsearch
+
+> [Flink 1.12.1 ElasticSearch连接 Sink](https://blog.csdn.net/weixin_42066446/article/details/113243977)
+
+1. pom依赖
+
+   ```xml
+   <!-- ElasticSearch7 -->
+   <dependency>
+       <groupId>org.apache.flink</groupId>
+       <artifactId>flink-connector-elasticsearch7_2.12</artifactId>
+       <version>1.12.1</version>
+   </dependency>
+   ```
+
+2. 编写java代码
+
+   ```java
+   package apitest.sink;
+   
+   import apitest.beans.SensorReading;
+   import org.apache.flink.api.common.functions.RuntimeContext;
+   import org.apache.flink.streaming.api.datastream.DataStream;
+   import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+   import org.apache.flink.streaming.connectors.elasticsearch.ElasticsearchSinkFunction;
+   import org.apache.flink.streaming.connectors.elasticsearch.RequestIndexer;
+   import org.apache.flink.streaming.connectors.elasticsearch7.ElasticsearchSink;
+   import org.apache.http.HttpHost;
+   import org.elasticsearch.action.index.IndexRequest;
+   import org.elasticsearch.client.Requests;
+   
+   import java.util.ArrayList;
+   import java.util.HashMap;
+   import java.util.List;
+   
+   /**
+    * @author : Ashiamd email: ashiamd@foxmail.com
+    * @date : 2021/2/1 2:13 AM
+    */
+   public class SinkTest3_Es {
+       public static void main(String[] args) throws Exception {
+           StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+           env.setParallelism(1);
+   
+           // 从文件读取数据
+           DataStream<String> inputStream = env.readTextFile("/tmp/Flink_Tutorial/src/main/resources/sensor.txt");
+   
+           // 转换成SensorReading类型
+           DataStream<SensorReading> dataStream = inputStream.map(line -> {
+               String[] fields = line.split(",");
+               return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+           });
+   
+           // 定义es的连接配置
+           List<HttpHost> httpHosts = new ArrayList<>();
+           httpHosts.add(new HttpHost("localhost", 9200));
+   
+           dataStream.addSink( new ElasticsearchSink.Builder<SensorReading>(httpHosts, new MyEsSinkFunction()).build());
+   
+           env.execute();
+       }
+   
+       // 实现自定义的ES写入操作
+       public static class MyEsSinkFunction implements ElasticsearchSinkFunction<SensorReading> {
+           @Override
+           public void process(SensorReading element, RuntimeContext ctx, RequestIndexer indexer) {
+               // 定义写入的数据source
+               HashMap<String, String> dataSource = new HashMap<>();
+               dataSource.put("id", element.getId());
+               dataSource.put("temp", element.getTemperature().toString());
+               dataSource.put("ts", element.getTimestamp().toString());
+   
+               // 创建请求，作为向es发起的写入命令(ES7统一type就是_doc，不再允许指定type)
+               IndexRequest indexRequest = Requests.indexRequest()
+                       .index("sensor")
+                       .source(dataSource);
+   
+               // 用index发送请求
+               indexer.add(indexRequest);
+           }
+       }
+   }
+   ```
+
+3. 启动ElasticSearch（我这里是docker启动的
+
+4. 运行Flink程序，查看ElasticSearch是否新增数据
+
+   ```shell
+   $ curl "localhost:9200/sensor/_search?pretty"
+   {
+     "took" : 1,
+     "timed_out" : false,
+     "_shards" : {
+       "total" : 1,
+       "successful" : 1,
+       "skipped" : 0,
+       "failed" : 0
+     },
+     "hits" : {
+       "total" : {
+         "value" : 7,
+         "relation" : "eq"
+       },
+       "max_score" : 1.0,
+       "hits" : [
+         {
+           "_index" : "sensor",
+           "_type" : "_doc",
+           "_id" : "jciyWXcBiXrGJa12kSQt",
+           "_score" : 1.0,
+           "_source" : {
+             "temp" : "35.8",
+             "id" : "sensor_1",
+             "ts" : "1547718199"
+           }
+         },
+         {
+           "_index" : "sensor",
+           "_type" : "_doc",
+           "_id" : "jsiyWXcBiXrGJa12kSQu",
+           "_score" : 1.0,
+           "_source" : {
+             "temp" : "15.4",
+             "id" : "sensor_6",
+             "ts" : "1547718201"
+           }
+         },
+         {
+           "_index" : "sensor",
+           "_type" : "_doc",
+           "_id" : "j8iyWXcBiXrGJa12kSQu",
+           "_score" : 1.0,
+           "_source" : {
+             "temp" : "6.7",
+             "id" : "sensor_7",
+             "ts" : "1547718202"
+           }
+         },
+         {
+           "_index" : "sensor",
+           "_type" : "_doc",
+           "_id" : "kMiyWXcBiXrGJa12kSQu",
+           "_score" : 1.0,
+           "_source" : {
+             "temp" : "38.1",
+             "id" : "sensor_10",
+             "ts" : "1547718205"
+           }
+         },
+         {
+           "_index" : "sensor",
+           "_type" : "_doc",
+           "_id" : "kciyWXcBiXrGJa12kSQu",
+           "_score" : 1.0,
+           "_source" : {
+             "temp" : "36.3",
+             "id" : "sensor_1",
+             "ts" : "1547718207"
+           }
+         },
+         {
+           "_index" : "sensor",
+           "_type" : "_doc",
+           "_id" : "ksiyWXcBiXrGJa12kSQu",
+           "_score" : 1.0,
+           "_source" : {
+             "temp" : "32.8",
+             "id" : "sensor_1",
+             "ts" : "1547718209"
+           }
+         },
+         {
+           "_index" : "sensor",
+           "_type" : "_doc",
+           "_id" : "k8iyWXcBiXrGJa12kSQu",
+           "_score" : 1.0,
+           "_source" : {
+             "temp" : "37.1",
+             "id" : "sensor_1",
+             "ts" : "1547718212"
+           }
+         }
+       ]
+     }
+   }
+   ```
+
+### 5.7.4 JDBC自定义sink
+
+> [Flink之Mysql数据CDC](https://www.cnblogs.com/ywjfx/p/14263718.html)
+>
+> [JDBC Connector](https://ci.apache.org/projects/flink/flink-docs-release-1.12/zh/dev/connectors/jdbc.html)	<=	官方目前没有专门针对MySQL的，我们自己实现就好了
+
+这里测试的是连接MySQL。
+
+1. pom依赖（我本地docker里的mysql是8.0.19版本的）
+
+   ```xml
+   <!-- https://mvnrepository.com/artifact/mysql/mysql-connector-java -->
+   <dependency>
+       <groupId>mysql</groupId>
+       <artifactId>mysql-connector-java</artifactId>
+       <version>8.0.19</version>
+   </dependency>
+   ```
+
+2. 启动mysql服务（我本地是docker启动的）
+
+3. 新建数据库
+
+   ```sql
+   CREATE DATABASE `flink_test` DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci;
+   ```
+
+4. 新建schema
+
+   ```sql
+   CREATE TABLE `sensor_temp` (
+     `id` varchar(32) NOT NULL,
+     `temp` double NOT NULL
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+   ```
+
+5. 编写java代码
+
+   ```java
+   package apitest.sink;
+   
+   import apitest.beans.SensorReading;
+   import apitest.source.SourceTest4_UDF;
+   import org.apache.flink.configuration.Configuration;
+   import org.apache.flink.streaming.api.datastream.DataStream;
+   import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+   import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
+   
+   import java.sql.Connection;
+   import java.sql.DriverManager;
+   import java.sql.PreparedStatement;
+   
+   /**
+    * @author : Ashiamd email: ashiamd@foxmail.com
+    * @date : 2021/2/1 2:48 AM
+    */
+   public class SinkTest4_Jdbc {
+       public static void main(String[] args) throws Exception {
+   
+           // 创建执行环境
+           StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+   
+           // 设置并行度 = 1
+           env.setParallelism(1);
+   
+           // 从文件读取数据
+   //        DataStream<String> inputStream = env.readTextFile("/tmp/Flink_Tutorial/src/main/resources/sensor.txt");
+   //
+   //        // 转换成SensorReading类型
+   //        DataStream<SensorReading> dataStream = inputStream.map(line -> {
+   //            String[] fields = line.split(",");
+   //            return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+   //        });
+   
+           // 使用之前编写的随机变动温度的SourceFunction来生成数据
+           DataStream<SensorReading> dataStream = env.addSource(new SourceTest4_UDF.MySensorSource());
+   
+           dataStream.addSink(new MyJdbcSink());
+   
+           env.execute();
+       }
+   
+       // 实现自定义的SinkFunction
+       public static class MyJdbcSink extends RichSinkFunction<SensorReading> {
+           // 声明连接和预编译语句
+           Connection connection = null;
+           PreparedStatement insertStmt = null;
+           PreparedStatement updateStmt = null;
+   
+           @Override
+           public void open(Configuration parameters) throws Exception {
+               connection = DriverManager.getConnection("jdbc:mysql://localhost:3306/flink_test?useUnicode=true&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8&useSSL=false", "root", "example");
+               insertStmt = connection.prepareStatement("insert into sensor_temp (id, temp) values (?, ?)");
+               updateStmt = connection.prepareStatement("update sensor_temp set temp = ? where id = ?");
+           }
+   
+           // 每来一条数据，调用连接，执行sql
+           @Override
+           public void invoke(SensorReading value, Context context) throws Exception {
+               // 直接执行更新语句，如果没有更新那么就插入
+               updateStmt.setDouble(1, value.getTemperature());
+               updateStmt.setString(2, value.getId());
+               updateStmt.execute();
+               if (updateStmt.getUpdateCount() == 0) {
+                   insertStmt.setString(1, value.getId());
+                   insertStmt.setDouble(2, value.getTemperature());
+                   insertStmt.execute();
+               }
+           }
+   
+           @Override
+           public void close() throws Exception {
+               insertStmt.close();
+               updateStmt.close();
+               connection.close();
+           }
+       }
+   }
+   ```
+
+6. 运行Flink程序，查看MySQL数据（可以看到MySQL里的数据一直在变动）
+
+   ```shell
+   mysql> SELECT * FROM sensor_temp;
+   +-----------+--------------------+
+   | id        | temp               |
+   +-----------+--------------------+
+   | sensor_3  | 20.489172407885917 |
+   | sensor_10 |  73.01289164711463 |
+   | sensor_4  | 43.402500895809744 |
+   | sensor_1  |  6.894772325662007 |
+   | sensor_2  | 101.79309911751122 |
+   | sensor_7  | 63.070612021580324 |
+   | sensor_8  |  63.82606628090501 |
+   | sensor_5  |  57.67115738487047 |
+   | sensor_6  |  50.84442627975055 |
+   | sensor_9  |  52.58400793021675 |
+   +-----------+--------------------+
+   10 rows in set (0.00 sec)
+   
+   mysql> SELECT * FROM sensor_temp;
+   +-----------+--------------------+
+   | id        | temp               |
+   +-----------+--------------------+
+   | sensor_3  | 19.498209543035923 |
+   | sensor_10 |  71.92981963197121 |
+   | sensor_4  | 43.566017489470426 |
+   | sensor_1  |  6.378208186786803 |
+   | sensor_2  | 101.71010087830145 |
+   | sensor_7  |  62.11402602179431 |
+   | sensor_8  |  64.33196455020062 |
+   | sensor_5  |  56.39071692662006 |
+   | sensor_6  | 48.952784757264894 |
+   | sensor_9  | 52.078086096436685 |
+   +-----------+--------------------+
+   10 rows in set (0.00 sec)
+   ```
+
+
 
 
 
