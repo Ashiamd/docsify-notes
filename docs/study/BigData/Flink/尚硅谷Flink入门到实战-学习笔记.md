@@ -1106,5 +1106,817 @@ public class SourceTest4_UDF {
 ....
 ```
 
+## 5.3 Transform
 
+map、flatMap、filter通常被统一称为**基本转换算子**（**简单转换算子**）。
+
+### 5.3.1 基本转换算子(map/flatMap/filter)
+
+> [到处是map、flatMap，啥意思？](https://zhuanlan.zhihu.com/p/66196174)
+
+java代码：
+
+```java
+package apitest.transform;
+
+import org.apache.flink.api.common.functions.FilterFunction;
+import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.util.Collector;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2021/1/31 7:31 PM
+ */
+public class TransformTest1_Base {
+    public static void main(String[] args) throws Exception {
+        // 创建执行环境
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        // 使得任务抢占同一个线程
+        env.setParallelism(1);
+
+        // 从文件中获取数据输出
+        DataStream<String> dataStream = env.readTextFile("/tmp/Flink_Tutorial/src/main/resources/sensor.txt");
+
+        // 1. map, String => 字符串长度INT
+        DataStream<Integer> mapStream = dataStream.map(new MapFunction<String, Integer>() {
+            @Override
+            public Integer map(String value) throws Exception {
+                return value.length();
+            }
+        });
+
+        // 2. flatMap，按逗号分割字符串
+        DataStream<String> flatMapStream = dataStream.flatMap(new FlatMapFunction<String, String>() {
+            @Override
+            public void flatMap(String value, Collector<String> out) throws Exception {
+                String[] fields = value.split(",");
+                for(String field:fields){
+                    out.collect(field);
+                }
+            }
+        });
+
+        // 3. filter,筛选"sensor_1"开头的数据
+        DataStream<String> filterStream = dataStream.filter(new FilterFunction<String>() {
+            @Override
+            public boolean filter(String value) throws Exception {
+                return value.startsWith("sensor_1");
+            }
+        });
+
+        // 打印输出
+        mapStream.print("map");
+        flatMapStream.print("flatMap");
+        filterStream.print("filter");
+
+        env.execute();
+    }
+}
+
+```
+
+输出：
+
+```shell
+map> 24
+flatMap> sensor_1
+flatMap> 1547718199
+flatMap> 35.8
+filter> sensor_1,1547718199,35.8
+map> 24
+flatMap> sensor_6
+flatMap> 1547718201
+flatMap> 15.4
+map> 23
+flatMap> sensor_7
+flatMap> 1547718202
+flatMap> 6.7
+map> 25
+flatMap> sensor_10
+flatMap> 1547718205
+flatMap> 38.1
+filter> sensor_10,1547718205,38.1
+map> 24
+flatMap> sensor_1
+flatMap> 1547718207
+flatMap> 36.3
+filter> sensor_1,1547718207,36.3
+map> 24
+flatMap> sensor_1
+flatMap> 1547718209
+flatMap> 32.8
+filter> sensor_1,1547718209,32.8
+map> 24
+flatMap> sensor_1
+flatMap> 1547718212
+flatMap> 37.1
+filter> sensor_1,1547718212,37.1
+```
+
+### 5.3.2 聚合操作算子
+
+> [Flink_Trasform算子](https://blog.csdn.net/dongkang123456/article/details/108361376)
+
++ DataStream里没有reduce和sum这类聚合操作的方法，因为**Flink设计中，所有数据必须先分组才能做聚合操作**。
++ **先keyBy得到KeyedStream，然后调用其reduce、sum等聚合操作方法。（先分组后聚合）**
+
+---
+
+常见的聚合操作算子主要有：
+
++ keyBy
++ 滚动聚合算子Rolling Aggregation
+
++ reduce
+
+---
+
+#### keyBy
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200902141943335.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2RvbmdrYW5nMTIzNDU2,size_16,color_FFFFFF,t_70#pic_center)
+
+**DataStream -> KeyedStream**：逻辑地将一个流拆分成不相交的分区，每个分区包含具有相同key的元素，在内部以hash的形式实现的。
+
+1、KeyBy会重新分区；
+2、不同的key有可能分到一起，因为是通过hash原理实现的；
+
+#### Rolling Aggregation
+
+这些算子可以针对KeyedStream的每一个支流做聚合。
+
++ sum()
++ min()
++ max()
++ minBy()
++ maxBy()
+
+---
+
+测试maxBy的java代码一
+
+```java
+package apitest.transform;
+
+import apitest.beans.SensorReading;
+import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.KeyedStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2021/1/31 9:51 PM
+ * 滚动聚合，测试
+ */
+public class TransformTest2_RollingAggregation {
+    public static void main(String[] args) throws Exception {
+        // 创建 执行环境
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        // 执行环境并行度设置1
+        env.setParallelism(1);
+
+        DataStream<String> dataStream = env.readTextFile("/tmp/Flink_Tutorial/src/main/resources/sensor.txt");
+
+//        DataStream<SensorReading> sensorStream = dataStream.map(new MapFunction<String, SensorReading>() {
+//            @Override
+//            public SensorReading map(String value) throws Exception {
+//                String[] fields = value.split(",");
+//                return new SensorReading(fields[0],new Long(fields[1]),new Double(fields[2]));
+//            }
+//        });
+
+        DataStream<SensorReading> sensorStream = dataStream.map(line -> {
+            String[] fields = line.split(",");
+            return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+        });
+        // 先分组再聚合
+        // 分组
+        KeyedStream<SensorReading, String> keyedStream = sensorStream.keyBy(SensorReading::getId);
+
+        // 滚动聚合，max和maxBy区别在于，maxBy除了用于max比较的字段以外，其他字段也会更新成最新的，而max只有比较的字段更新，其他字段不变
+        DataStream<SensorReading> resultStream = keyedStream.maxBy("temperature");
+
+        resultStream.print("result");
+
+        env.execute();
+    }
+}
+```
+
+其中`sensor.txt`文件内容如下
+
+```txt
+sensor_1,1547718199,35.8
+sensor_6,1547718201,15.4
+sensor_7,1547718202,6.7
+sensor_10,1547718205,38.1
+sensor_1,1547718207,36.3
+sensor_1,1547718209,32.8
+sensor_1,1547718212,37.1
+```
+
+输出如下：
+
+*由于是滚动更新，每次输出历史最大值，所以下面36.3才会出现两次*
+
+```shell
+result> SensorReading{id='sensor_1', timestamp=1547718199, temperature=35.8}
+result> SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
+result> SensorReading{id='sensor_7', timestamp=1547718202, temperature=6.7}
+result> SensorReading{id='sensor_10', timestamp=1547718205, temperature=38.1}
+result> SensorReading{id='sensor_1', timestamp=1547718207, temperature=36.3}
+result> SensorReading{id='sensor_1', timestamp=1547718207, temperature=36.3}
+result> SensorReading{id='sensor_1', timestamp=1547718212, temperature=37.1}
+```
+
+#### reduce
+
+​	**Reduce适用于更加一般化的聚合操作场景**。java中需要实现`ReduceFunction`函数式接口。
+
+---
+
+​	在前面Rolling Aggregation的前提下，对需求进行修改。获取同组历史温度最高的传感器信息，同时要求实时更新其时间戳信息。
+
+java代码如下：
+
+```java
+package apitest.transform;
+
+import apitest.beans.SensorReading;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.KeyedStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.kafka.common.metrics.stats.Max;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2021/1/31 10:14 PM
+ * 复杂场景，除了获取最大温度的整个传感器信息以外，还要求时间戳更新成最新的
+ */
+public class TransformTest3_Reduce {
+    public static void main(String[] args) throws Exception {
+        // 创建 执行环境
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        // 执行环境并行度设置1
+        env.setParallelism(1);
+
+        DataStream<String> dataStream = env.readTextFile("/tmp/Flink_Tutorial/src/main/resources/sensor.txt");
+
+        DataStream<SensorReading> sensorStream = dataStream.map(line -> {
+            String[] fields = line.split(",");
+            return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+        });
+        // 先分组再聚合
+        // 分组
+        KeyedStream<SensorReading, String> keyedStream = sensorStream.keyBy(SensorReading::getId);
+
+        // reduce，自定义规约函数，获取max温度的传感器信息以外，时间戳要求更新成最新的
+        DataStream<SensorReading> resultStream = keyedStream.reduce(
+                (curSensor,newSensor)->new SensorReading(curSensor.getId(),newSensor.getTimestamp(), Math.max(curSensor.getTemperature(), newSensor.getTemperature()))
+        );
+
+        resultStream.print("result");
+
+        env.execute();
+    }
+}
+```
+
+`sensor.txt`文件内容如下：
+
+```txt
+sensor_1,1547718199,35.8
+sensor_6,1547718201,15.4
+sensor_7,1547718202,6.7
+sensor_10,1547718205,38.1
+sensor_1,1547718207,36.3
+sensor_1,1547718209,32.8
+sensor_1,1547718212,37.1
+```
+
+输出如下：
+
+*和前面“Rolling Aggregation”小节不同的是，倒数第二条数据的时间戳用了当前比较时最新的时间戳。*
+
+```shell
+result> SensorReading{id='sensor_1', timestamp=1547718199, temperature=35.8}
+result> SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
+result> SensorReading{id='sensor_7', timestamp=1547718202, temperature=6.7}
+result> SensorReading{id='sensor_10', timestamp=1547718205, temperature=38.1}
+result> SensorReading{id='sensor_1', timestamp=1547718207, temperature=36.3}
+result> SensorReading{id='sensor_1', timestamp=1547718209, temperature=36.3}
+result> SensorReading{id='sensor_1', timestamp=1547718212, temperature=37.1}
+```
+
+### 5.3.3 多流转换算子
+
+> [Flink_Trasform算子](https://blog.csdn.net/dongkang123456/article/details/108361376)
+
+多流转换算子一般包括：
+
++ Split和Select （新版已经移除）
++ Connect和CoMap
+
++ Union
+
+#### Split和Select
+
+**注：新版Flink已经不存在Split和Select这两个API了（至少Flink1.12.1没有！）**
+
+##### Split
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200902194203248.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2RvbmdrYW5nMTIzNDU2,size_16,color_FFFFFF,t_70#pic_center)
+**DataStream -> SplitStream**：根据某些特征把DataStream拆分成SplitStream;
+
+**SplitStream虽然看起来像是两个Stream，但是其实它是一个特殊的Stream**;
+
+##### Select
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200902194442828.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2RvbmdrYW5nMTIzNDU2,size_16,color_FFFFFF,t_70#pic_center)
+**SplitStream -> DataStream**：从一个SplitStream中获取一个或者多个DataStream;
+
+**我们可以结合split&select将一个DataStream拆分成多个DataStream。**
+
+---
+
+测试场景：根据传感器温度高低，划分成两组，high和low（>30归入high）：
+
+*这个我发现在Flink当前时间最新版1.12.1已经不是DataStream的方法了，被去除了*
+
+这里直接附上教程代码（Flink1.10.1）
+
+```java
+package com.atguigu.apitest.transform;/**
+ * Copyright (c) 2018-2028 尚硅谷 All Rights Reserved
+ * <p>
+ * Project: FlinkTutorial
+ * Package: com.atguigu.apitest.transform
+ * Version: 1.0
+ * <p>
+ * Created by wushengran on 2020/11/7 16:14
+ */
+
+import com.atguigu.apitest.beans.SensorReading;
+import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.java.tuple.Tuple3;
+import org.apache.flink.streaming.api.collector.selector.OutputSelector;
+import org.apache.flink.streaming.api.datastream.ConnectedStreams;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+import org.apache.flink.streaming.api.datastream.SplitStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.co.CoMapFunction;
+
+import java.util.Collections;
+
+/**
+ * @ClassName: TransformTest4_MultipleStreams
+ * @Description:
+ * @Author: wushengran on 2020/11/7 16:14
+ * @Version: 1.0
+ */
+public class TransformTest4_MultipleStreams {
+  public static void main(String[] args) throws Exception {
+    StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+    env.setParallelism(1);
+
+    // 从文件读取数据
+    DataStream<String> inputStream = env.readTextFile("D:\\Projects\\BigData\\FlinkTutorial\\src\\main\\resources\\sensor.txt");
+
+    // 转换成SensorReading
+    DataStream<SensorReading> dataStream = inputStream.map(line -> {
+      String[] fields = line.split(",");
+      return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+    } );
+
+    // 1. 分流，按照温度值30度为界分为两条流
+    SplitStream<SensorReading> splitStream = dataStream.split(new OutputSelector<SensorReading>() {
+      @Override
+      public Iterable<String> select(SensorReading value) {
+        return (value.getTemperature() > 30) ? Collections.singletonList("high") : Collections.singletonList("low");
+      }
+    });
+
+    DataStream<SensorReading> highTempStream = splitStream.select("high");
+    DataStream<SensorReading> lowTempStream = splitStream.select("low");
+    DataStream<SensorReading> allTempStream = splitStream.select("high", "low");
+
+    highTempStream.print("high");
+    lowTempStream.print("low");
+    allTempStream.print("all");
+  }
+}
+```
+
+输出结果如下：
+
+```shell
+high> SensorReading{id='sensor_1', timestamp=1547718199, temperature=35.8}
+all > SensorReading{id='sensor_1', timestamp=1547718199, temperature=35.8}
+low > SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
+all > SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
+...
+```
+
+#### Connect和CoMap
+
+##### Connect
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200902202832986.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2RvbmdrYW5nMTIzNDU2,size_16,color_FFFFFF,t_70#pic_center)
+**DataStream,DataStream -> ConnectedStreams**: 连接两个保持他们类型的数据流，两个数据流被Connect 之后，只是被放在了一个流中，内部依然保持各自的数据和形式不发生任何变化，两个流相互独立。
+
+##### CoMap
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200902203333640.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2RvbmdrYW5nMTIzNDU2,size_16,color_FFFFFF,t_70#pic_center)
+**ConnectedStreams -> DataStream**: 作用于ConnectedStreams 上，功能与map和flatMap一样，对ConnectedStreams 中的**每一个Stream分别进行map和flatMap操作**；
+
+---
+
+虽然Flink1.12.1的DataStream有connect和map方法，但是教程基于前面的split和select编写，所以这里直接附上教程的代码：
+
+```java
+package com.atguigu.apitest.transform;/**
+ * Copyright (c) 2018-2028 尚硅谷 All Rights Reserved
+ * <p>
+ * Project: FlinkTutorial
+ * Package: com.atguigu.apitest.transform
+ * Version: 1.0
+ * <p>
+ * Created by wushengran on 2020/11/7 16:14
+ */
+
+import com.atguigu.apitest.beans.SensorReading;
+import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.java.tuple.Tuple3;
+import org.apache.flink.streaming.api.collector.selector.OutputSelector;
+import org.apache.flink.streaming.api.datastream.ConnectedStreams;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+import org.apache.flink.streaming.api.datastream.SplitStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.co.CoMapFunction;
+
+import java.util.Collections;
+
+/**
+ * @ClassName: TransformTest4_MultipleStreams
+ * @Description:
+ * @Author: wushengran on 2020/11/7 16:14
+ * @Version: 1.0
+ */
+public class TransformTest4_MultipleStreams {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        // 从文件读取数据
+        DataStream<String> inputStream = env.readTextFile("D:\\Projects\\BigData\\FlinkTutorial\\src\\main\\resources\\sensor.txt");
+
+        // 转换成SensorReading
+        DataStream<SensorReading> dataStream = inputStream.map(line -> {
+            String[] fields = line.split(",");
+            return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+        } );
+
+        // 1. 分流，按照温度值30度为界分为两条流
+        SplitStream<SensorReading> splitStream = dataStream.split(new OutputSelector<SensorReading>() {
+            @Override
+            public Iterable<String> select(SensorReading value) {
+                return (value.getTemperature() > 30) ? Collections.singletonList("high") : Collections.singletonList("low");
+            }
+        });
+
+        DataStream<SensorReading> highTempStream = splitStream.select("high");
+        DataStream<SensorReading> lowTempStream = splitStream.select("low");
+        DataStream<SensorReading> allTempStream = splitStream.select("high", "low");
+
+        // highTempStream.print("high");
+        // lowTempStream.print("low");
+        // allTempStream.print("all");
+
+        // 2. 合流 connect，将高温流转换成二元组类型，与低温流连接合并之后，输出状态信息
+        DataStream<Tuple2<String, Double>> warningStream = highTempStream.map(new MapFunction<SensorReading, Tuple2<String, Double>>() {
+            @Override
+            public Tuple2<String, Double> map(SensorReading value) throws Exception {
+                return new Tuple2<>(value.getId(), value.getTemperature());
+            }
+        });
+
+        ConnectedStreams<Tuple2<String, Double>, SensorReading> connectedStreams = warningStream.connect(lowTempStream);
+
+        DataStream<Object> resultStream = connectedStreams.map(new CoMapFunction<Tuple2<String, Double>, SensorReading, Object>() {
+            @Override
+            public Object map1(Tuple2<String, Double> value) throws Exception {
+                return new Tuple3<>(value.f0, value.f1, "high temp warning");
+            }
+
+            @Override
+            public Object map2(SensorReading value) throws Exception {
+                return new Tuple2<>(value.getId(), "normal");
+            }
+        });
+
+        resultStream.print();
+    }
+}
+```
+
+输出如下：
+
+```shell
+(sensor_1,35.8,high temp warning)
+(sensor_6,normal)
+(sensor_10,38.1,high temp warning)
+(sensor_7,normal)
+(sensor_1,36.3,high temp warning)
+(sensor_1,32.8,high temp warning)
+(sensor_1,37.1,high temp warning)
+```
+
+#### Union
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200902205220165.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2RvbmdrYW5nMTIzNDU2,size_16,color_FFFFFF,t_70#pic_center)
+
+**DataStream -> DataStream**：对**两个或者两个以上**的DataStream进行Union操作，产生一个包含多有DataStream元素的新DataStream。
+
+**问题：和Connect的区别？**
+
+1. Connect 的数据类型可以不同，**Connect 只能合并两个流**；
+2. **Union可以合并多条流，Union的数据结构必须是一样的**；
+
+```java
+// 3. union联合多条流
+//        warningStream.union(lowTempStream); 这个不行，因为warningStream类型是DataStream<Tuple2<String, Double>>，而highTempStream是DataStream<SensorReading>
+        highTempStream.union(lowTempStream, allTempStream);
+```
+
+### 5.3.4 算子转换
+
+> [Flink常用算子Transformation（转换）](https://blog.csdn.net/a_drjiaoda/article/details/89357916)
+
+​	在Storm中，我们常常用Bolt的层级关系来表示各个数据的流向关系，组成一个拓扑。
+
+​	在Flink中，**Transformation算子就是将一个或多个DataStream转换为新的DataStream**，可以将多个转换组合成复杂的数据流拓扑。
+​	如下图所示，DataStream会由不同的Transformation操作，转换、过滤、聚合成其他不同的流，从而完成我们的业务要求。
+
+![img](https://img-blog.csdnimg.cn/20190417171341810.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2FfZHJqaWFvZGE=,size_16,color_FFFFFF,t_70)
+
+## 5.4 支持的数据类型
+
+​	Flink流应用程序处理的是以数据对象表示的事件流。所以在Flink内部，我们需要能够处理这些对象。它们**需要被序列化和反序列化**，以便通过网络传送它们；或者从状态后端、检查点和保存点读取它们。为了有效地做到这一点，Flink需要明确知道应用程序所处理的数据类型。Flink使用类型信息的概念来表示数据类型，并为每个数据类型生成特定的序列化器、反序列化器和比较器。
+
+​	Flink还具有一个类型提取系统，该系统分析函数的输入和返回类型，以自动获取类型信息，从而获得序列化器和反序列化器。但是，在某些情况下，例如lambda函数或泛型类型，需要显式地提供类型信息，才能使应用程序正常工作或提高其性能。
+
+​	Flink支持Java和Scala中所有常见数据类型。使用最广泛的类型有以下几种。
+
+### 5.4.1 基础数据类型
+
+​	Flink支持所有的Java和Scala基础数据类型，Int, Double, Long, String, …
+
+```java
+DataStream<Integer> numberStream = env.fromElements(1, 2, 3, 4);
+numberStream.map(data -> data * 2);
+```
+
+### 5.4.2 Java和Scala元组(Tuples)
+
+java不像Scala天生支持元组Tuple类型，java的元组类型由Flink的包提供，默认提供Tuple0~Tuple25
+
+```java
+DataStream<Tuple2<String, Integer>> personStream = env.fromElements( 
+  new Tuple2("Adam", 17), 
+  new Tuple2("Sarah", 23) 
+); 
+personStream.filter(p -> p.f1 > 18);
+```
+
+### 5.4.3 Scala样例类(case classes)
+
+```scala
+case class Person(name:String,age:Int)
+
+val numbers: DataStream[(String,Integer)] = env.fromElements(
+  Person("张三",12),
+  Person("李四"，23)
+)
+```
+
+### 5.4.4 Java简单对象(POJO)
+
+java的POJO这里要求必须提供无参构造函数
+
++ 成员变量要求都是public（或者private但是提供get、set方法）
+
+```java
+public class Person{
+  public String name;
+  public int age;
+  public Person() {}
+  public Person( String name , int age) {
+    this.name = name;
+    this.age = age;
+  }
+}
+DataStream Pe rson > persons = env.fromElements(
+  new Person (" Alex", 42),
+  new Person (" Wendy",23)
+);
+```
+
+### 5.4.5 其他(Arrays, Lists, Maps, Enums,等等)
+
+Flink对Java和Scala中的一些特殊目的的类型也都是支持的，比如Java的ArrayList，HashMap，Enum等等。
+
+## 5.5 实现UDF函数——更细粒度的控制流
+
+### 5.5.1 函数类(Function Classes)
+
+​	Flink暴露了所有UDF函数的接口(实现方式为接口或者抽象类)。例如MapFunction, FilterFunction, ProcessFunction等等。
+
+​	下面例子实现了FilterFunction接口：
+
+```java
+DataStream<String> flinkTweets = tweets.filter(new FlinkFilter()); 
+public static class FlinkFilter implements FilterFunction<String> { 
+  @Override public boolean filter(String value) throws Exception { 
+    return value.contains("flink");
+  }
+}
+```
+
+​	还可以将函数实现成匿名类
+
+```java
+DataStream<String> flinkTweets = tweets.filter(
+  new FilterFunction<String>() { 
+    @Override public boolean filter(String value) throws Exception { 
+      return value.contains("flink"); 
+    }
+  }
+);
+```
+
+​	我们filter的字符串"flink"还可以当作参数传进去。
+
+```java
+DataStream<String> tweets = env.readTextFile("INPUT_FILE "); 
+DataStream<String> flinkTweets = tweets.filter(new KeyWordFilter("flink")); 
+public static class KeyWordFilter implements FilterFunction<String> { 
+  private String keyWord; 
+
+  KeyWordFilter(String keyWord) { 
+    this.keyWord = keyWord; 
+  } 
+
+  @Override public boolean filter(String value) throws Exception { 
+    return value.contains(this.keyWord); 
+  } 
+}
+```
+
+### 5.5.2 匿名函数(Lambda Functions)
+
+```java
+DataStream<String> tweets = env.readTextFile("INPUT_FILE"); 
+DataStream<String> flinkTweets = tweets.filter( tweet -> tweet.contains("flink") );
+```
+
+### 5.5.3 富函数(Rich Functions)
+
+​	“富函数”是DataStream API提供的一个函数类的接口，所有Flink函数类都有其Rich版本。
+
+​	**它与常规函数的不同在于，可以获取运行环境的上下文，并拥有一些生命周期方法，所以可以实现更复杂的功能**。
+
++ RichMapFunction
+
++ RichFlatMapFunction
+
++ RichFilterFunction
+
++ …
+
+​	Rich Function有一个**生命周期**的概念。典型的生命周期方法有：
+
++ **`open()`方法是rich function的初始化方法，当一个算子例如map或者filter被调用之前`open()`会被调用。**
+
++ **`close()`方法是生命周期中的最后一个调用的方法，做一些清理工作。**
+
++ **`getRuntimeContext()`方法提供了函数的RuntimeContext的一些信息，例如函数执行的并行度，任务的名字，以及state状态**
+
+```java
+public static class MyMapFunction extends RichMapFunction<SensorReading, Tuple2<Integer, String>> { 
+
+  @Override public Tuple2<Integer, String> map(SensorReading value) throws Exception {
+    return new Tuple2<>(getRuntimeContext().getIndexOfThisSubtask(), value.getId()); 
+  } 
+
+  @Override public void open(Configuration parameters) throws Exception { 
+    System.out.println("my map open"); // 以下可以做一些初始化工作，例如建立一个和HDFS的连接 
+  } 
+
+  @Override public void close() throws Exception { 
+    System.out.println("my map close"); // 以下做一些清理工作，例如断开和HDFS的连接 
+  } 
+}
+```
+
+---
+
+测试代码：
+
+```java
+package apitest.transform;
+
+import apitest.beans.SensorReading;
+import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.common.functions.RichMapFunction;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2021/2/1 12:21 AM
+ */
+public class TransformTest5_RichFunction {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(4);
+
+        DataStream<String> inputStream = env.readTextFile("/tmp/Flink_Tutorial/src/main/resources/sensor.txt");
+
+        // 转换成SensorReading类型
+        DataStream<SensorReading> dataStream = inputStream.map(line -> {
+            String[] fields = line.split(",");
+            return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+        });
+
+        DataStream<Tuple2<String, Integer>> resultStream = dataStream.map( new MyMapper() );
+
+        resultStream.print();
+
+        env.execute();
+    }
+
+    // 传统的Function不能获取上下文信息，只能处理当前数据，不能和其他数据交互
+    public static class MyMapper0 implements MapFunction<SensorReading, Tuple2<String, Integer>> {
+        @Override
+        public Tuple2<String, Integer> map(SensorReading value) throws Exception {
+            return new Tuple2<>(value.getId(), value.getId().length());
+        }
+    }
+
+    // 实现自定义富函数类（RichMapFunction是一个抽象类）
+    public static class MyMapper extends RichMapFunction<SensorReading, Tuple2<String, Integer>> {
+        @Override
+        public Tuple2<String, Integer> map(SensorReading value) throws Exception {
+//            RichFunction可以获取State状态
+//            getRuntimeContext().getState();
+            return new Tuple2<>(value.getId(), getRuntimeContext().getIndexOfThisSubtask());
+        }
+
+        @Override
+        public void open(Configuration parameters) throws Exception {
+            // 初始化工作，一般是定义状态，或者建立数据库连接
+            System.out.println("open");
+        }
+
+        @Override
+        public void close() throws Exception {
+            // 一般是关闭连接和清空状态的收尾操作
+            System.out.println("close");
+        }
+    }
+}
+
+```
+
+输出如下：
+
+由于设置了执行环境env的并行度为4，所以有4个slot执行自定义的RichFunction，输出4次open和close
+
+```shell
+open
+open
+open
+open
+4> (sensor_1,3)
+4> (sensor_6,3)
+close
+2> (sensor_1,1)
+2> (sensor_1,1)
+close
+3> (sensor_1,2)
+close
+1> (sensor_7,0)
+1> (sensor_10,0)
+close
+```
 
