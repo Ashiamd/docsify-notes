@@ -95,7 +95,7 @@ public class WordCount {
     ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
 
     // 从文件中读取数据
-    String inputPath = "/Users/ashiamd/mydocs/docs/study/javadocument/javadocument/IDEA_project/Flink_Tutorial/src/main/resources/hello.txt";
+    String inputPath = "/tmp/Flink_Tutorial/src/main/resources/hello.txt";
     DataSet<String> inputDataSet = env.readTextFile(inputPath);
 
     // 对数据集进行处理，按空格分词展开，转换成(word, 1)二元组进行统计
@@ -178,7 +178,7 @@ public class StreamWordCount {
         // env.setMaxParallelism(32);
       
         // 从文件中读取数据
-        String inputPath = "/Users/ashiamd/mydocs/docs/study/javadocument/javadocument/IDEA_project/Flink_Tutorial/src/main/resources/hello.txt";
+        String inputPath = "/tmp/Flink_Tutorial/src/main/resources/hello.txt";
         DataStream<String> inputDataStream = env.readTextFile(inputPath);
 
         // 基于数据流进行转换计算
@@ -252,7 +252,7 @@ public class StreamWordCount {
            // env.setMaxParallelism(32);
    
            // 从文件中读取数据
-   //        String inputPath = "/Users/ashiamd/mydocs/docs/study/javadocument/javadocument/IDEA_project/Flink_Tutorial/src/main/resources/hello.txt";
+   //        String inputPath = "/tmp/Flink_Tutorial/src/main/resources/hello.txt";
    //        DataStream<String> inputDataStream = env.readTextFile(inputPath);
    
            // 从socket文本流读取数据
@@ -730,4 +730,381 @@ eg：这里我配置文件设置`taskmanager.numberOfTaskSlots: 4`，实际Job�
 *ps：如果`算子.shuffle()`，能够强制算子之后重分区到不同slot执行下一个算子操作，逻辑上也实现了任务不参与任务链合并=>但是仅为“不参与任务链的合并”，这个明显不是最优解操作*
 
 > [Flink slotSharingGroup disableChain startNewChain 用法案例](https://blog.csdn.net/qq_31866793/article/details/102786249)
+
+# 5. Flink流处理API
+
+## 5.1 Environment
+
+![img](https://img-blog.csdnimg.cn/20191124113558631.png)
+
+### 5.1.1 getExecutionEnvironment
+
+​	创建一个执行环境，表示当前执行程序的上下文。如果程序是独立调用的，则此方法返回本地执行环境；如果从命令行客户端调用程序以提交到集群，则此方法返回此集群的执行环境，也就是说，getExecutionEnvironment会根据查询运行的方式决定返回什么样的运行环境，是最常用的一种创建执行环境的方式。
+
+`ExecutionEnvironment env = ExecutionEnvironment.*getExecutionEnvironment*(); `
+
+`StreamExecutionEnvironment env = StreamExecutionEnvironment.*getExecutionEnvironment*(); `
+
+如果没有设置并行度，会以flink-conf.yaml中的配置为准，默认是1。
+
+![img](https://img-blog.csdnimg.cn/20191124113636435.png)
+
+### 5.1.2 createLocalEnvironment
+
+​	返回本地执行环境，需要在调用时指定默认的并行度。
+
+`LocalStreamEnvironment env = StreamExecutionEnvironment.*createLocalEnvironment*(1); `
+
+### 5.1.3 createRemoteEnvironment
+
+​	返回集群执行环境，将Jar提交到远程服务器。需要在调用时指定JobManager的IP和端口号，并指定要在集群中运行的Jar包。
+
+`StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironment(1);`
+
+## 5.2 Source
+
+> [Flink-Environment的三种方式和Source的四种读取方式-从集合中、从kafka中、从文件中、自定义](https://blog.csdn.net/qq_40180229/article/details/106335725)
+
+### 5.2.1 从集合读取数据
+
+java代码：
+
+```java
+package apitest.source;
+
+import apitest.beans.SensorReading;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+
+import java.util.Arrays;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2021/1/31 5:13 PM
+ * 测试Flink从集合中获取数据
+ */
+public class SourceTest1_Collection {
+    public static void main(String[] args) throws Exception {
+        // 创建执行环境
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        // 设置env并行度1，使得整个任务抢占同一个线程执行
+        env.setParallelism(1);
+
+        // Source: 从集合Collection中获取数据
+        DataStream<SensorReading> dataStream = env.fromCollection(
+                Arrays.asList(
+                        new SensorReading("sensor_1", 1547718199L, 35.8),
+                        new SensorReading("sensor_6", 1547718201L, 15.4),
+                        new SensorReading("sensor_7", 1547718202L, 6.7),
+                        new SensorReading("sensor_10", 1547718205L, 38.1)
+                )
+        );
+
+        DataStream<Integer> intStream = env.fromElements(1,2,3,4,5,6,7,8,9);
+
+        // 打印输出
+        dataStream.print("SENSOR");
+        intStream.print("INT");
+
+        // 执行
+        env.execute("JobName");
+
+    }
+
+}
+```
+
+输出：
+
+```shell
+INT> 1
+INT> 2
+SENSOR> SensorReading{id='sensor_1', timestamp=1547718199, temperature=35.8}
+INT> 3
+SENSOR> SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
+INT> 4
+SENSOR> SensorReading{id='sensor_7', timestamp=1547718202, temperature=6.7}
+INT> 5
+SENSOR> SensorReading{id='sensor_10', timestamp=1547718205, temperature=38.1}
+INT> 6
+INT> 7
+INT> 8
+INT> 9
+```
+
+### 5.2.2 从文件读取数据
+
+java代码如下：
+
+```java
+package apitest.source;
+
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2021/1/31 5:26 PM
+ * Flink从文件中获取数据
+ */
+public class SourceTest2_File {
+    public static void main(String[] args) throws Exception {
+        // 创建执行环境
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        // 使得任务抢占同一个线程
+        env.setParallelism(1);
+
+        // 从文件中获取数据输出
+        DataStream<String> dataStream = env.readTextFile("/tmp/Flink_Tutorial/src/main/resources/sensor.txt");
+
+        dataStream.print();
+
+        env.execute();
+    }
+}
+
+```
+
+sensor.txt文件内容
+
+```txt
+sensor_1,1547718199,35.8
+sensor_6,1547718201,15.4
+sensor_7,1547718202,6.7
+sensor_10,1547718205,38.1
+sensor_1,1547718207,36.3
+sensor_1,1547718209,32.8
+sensor_1,1547718212,37.1
+```
+
+输出：
+
+```shell
+sensor_1,1547718199,35.8
+sensor_6,1547718201,15.4
+sensor_7,1547718202,6.7
+sensor_10,1547718205,38.1
+sensor_1,1547718207,36.3
+sensor_1,1547718209,32.8
+sensor_1,1547718212,37.1
+```
+
+### 5.2.3 从Kafka读取数据
+
+1. pom依赖
+
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <project xmlns="http://maven.apache.org/POM/4.0.0"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+       <modelVersion>4.0.0</modelVersion>
+   
+       <groupId>org.example</groupId>
+       <artifactId>Flink_Tutorial</artifactId>
+       <version>1.0-SNAPSHOT</version>
+   
+       <properties>
+           <maven.compiler.source>8</maven.compiler.source>
+           <maven.compiler.target>8</maven.compiler.target>
+           <flink.version>1.12.1</flink.version>
+           <scala.binary.version>2.12</scala.binary.version>
+       </properties>
+   
+       <dependencies>
+           <dependency>
+               <groupId>org.apache.flink</groupId>
+               <artifactId>flink-java</artifactId>
+               <version>${flink.version}</version>
+           </dependency>
+           <dependency>
+               <groupId>org.apache.flink</groupId>
+               <artifactId>flink-streaming-scala_${scala.binary.version}</artifactId>
+               <version>${flink.version}</version>
+           </dependency>
+           <dependency>
+               <groupId>org.apache.flink</groupId>
+               <artifactId>flink-clients_${scala.binary.version}</artifactId>
+               <version>${flink.version}</version>
+           </dependency>
+   
+           <!-- kafka -->
+           <dependency>
+               <groupId>org.apache.flink</groupId>
+               <artifactId>flink-connector-kafka_${scala.binary.version}</artifactId>
+               <version>${flink.version}</version>
+           </dependency>
+       </dependencies>
+   </project>
+   ```
+
+2. 启动zookeeper
+
+   ```shell
+   $ bin/zookeeper-server-start.sh config/zookeeper.properties
+   ```
+
+3. 启动kafka服务
+
+   ```shell
+   $ bin/kafka-server-start.sh config/server.properties
+   ```
+
+4. 启动kafka生产者
+
+   ```shell
+   $ bin/kafka-console-producer.sh --broker-list localhost:9092  --topic sensor
+   ```
+
+5. 编写java代码
+
+   ```java
+   package apitest.source;
+   
+   import org.apache.flink.api.common.serialization.SimpleStringSchema;
+   import org.apache.flink.streaming.api.datastream.DataStream;
+   import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+   import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer;
+   
+   import java.util.Properties;
+   
+   /**
+    * @author : Ashiamd email: ashiamd@foxmail.com
+    * @date : 2021/1/31 5:44 PM
+    */
+   public class SourceTest3_Kafka {
+   
+       public static void main(String[] args) throws Exception {
+           // 创建执行环境
+           StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+   
+           // 设置并行度1
+           env.setParallelism(1);
+   
+           Properties properties = new Properties();
+           properties.setProperty("bootstrap.servers", "localhost:9092");
+           // 下面这些次要参数
+           properties.setProperty("group.id", "consumer-group");
+           properties.setProperty("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+           properties.setProperty("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+           properties.setProperty("auto.offset.reset", "latest");
+   
+           // flink添加外部数据源
+           DataStream<String> dataStream = env.addSource(new FlinkKafkaConsumer<String>("sensor", new SimpleStringSchema(),properties));
+   
+           // 打印输出
+           dataStream.print();
+   
+           env.execute();
+       }
+   }
+   ```
+
+6. 运行java代码，在Kafka生产者console中输入
+
+   ```shell
+   $ bin/kafka-console-producer.sh --broker-list localhost:9092  --topic sensor
+   >sensor_1,1547718199,35.8
+   >sensor_6,1547718201,15.4
+   >
+   ```
+
+7. java输出
+
+   ```shell
+   sensor_1,1547718199,35.8
+   sensor_6,1547718201,15.4
+   ```
+
+### 5.2.4 自定义Source
+
+java代码：
+
+```java
+package apitest.source;
+
+import apitest.beans.SensorReading;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.source.SourceFunction;
+
+import java.util.HashMap;
+import java.util.Random;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2021/1/31 6:44 PM
+ */
+public class SourceTest4_UDF {
+    public static void main(String[] args) throws Exception {
+        // 创建执行环境
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        DataStream<SensorReading> dataStream = env.addSource(new MySensorSource());
+
+        dataStream.print();
+
+        env.execute();
+    }
+
+    // 实现自定义的SourceFunction
+    public static class MySensorSource implements SourceFunction<SensorReading> {
+
+        // 标示位，控制数据产生
+        private volatile boolean running = true;
+
+
+        @Override
+        public void run(SourceContext<SensorReading> ctx) throws Exception {
+            //定义一个随机数发生器
+            Random random = new Random();
+
+            // 设置10个传感器的初始温度
+            HashMap<String, Double> sensorTempMap = new HashMap<>();
+            for (int i = 0; i < 10; ++i) {
+                sensorTempMap.put("sensor_" + (i + 1), 60 + random.nextGaussian() * 20);
+            }
+
+            while (running) {
+                for (String sensorId : sensorTempMap.keySet()) {
+                    // 在当前温度基础上随机波动
+                    Double newTemp = sensorTempMap.get(sensorId) + random.nextGaussian();
+                    sensorTempMap.put(sensorId, newTemp);
+                    ctx.collect(new SensorReading(sensorId,System.currentTimeMillis(),newTemp));
+                }
+                // 控制输出评率
+                Thread.sleep(2000L);
+            }
+        }
+
+        @Override
+        public void cancel() {
+            this.running = false;
+        }
+    }
+}
+```
+
+输出：
+
+```shell
+7> SensorReading{id='sensor_9', timestamp=1612091759321, temperature=83.80320976056609}
+15> SensorReading{id='sensor_10', timestamp=1612091759321, temperature=68.77967856820972}
+1> SensorReading{id='sensor_1', timestamp=1612091759321, temperature=45.75304941852771}
+6> SensorReading{id='sensor_6', timestamp=1612091759321, temperature=71.80036477804133}
+3> SensorReading{id='sensor_7', timestamp=1612091759321, temperature=55.262086521569564}
+2> SensorReading{id='sensor_2', timestamp=1612091759321, temperature=64.0969570576537}
+5> SensorReading{id='sensor_5', timestamp=1612091759321, temperature=51.09761352612651}
+14> SensorReading{id='sensor_3', timestamp=1612091759313, temperature=32.49085393551031}
+4> SensorReading{id='sensor_8', timestamp=1612091759321, temperature=64.83732456896752}
+16> SensorReading{id='sensor_4', timestamp=1612091759321, temperature=88.88318538017865}
+12> SensorReading{id='sensor_2', timestamp=1612091761325, temperature=65.21522804626638}
+16> SensorReading{id='sensor_6', timestamp=1612091761325, temperature=70.49210870668041}
+15> SensorReading{id='sensor_5', timestamp=1612091761325, temperature=50.32349231082738}
+....
+```
+
+
 
