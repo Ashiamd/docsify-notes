@@ -3269,7 +3269,7 @@ env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 **注：具体的时间，还需要从数据中提取时间戳。**
 
-## 7.3 WaterMark
+## 7.3 Watermark
 
 ### 7.3.1 概念
 
@@ -3321,11 +3321,296 @@ env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/2020052620175060.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
 
-​	当Flink接收到数据时，会按照一定的规则去生成Watermark，这条Watermark就等于当前所有到达数据中的maxEventTime-延迟时长，也就是说，Watermark是基于数据携带的时间戳生成的，一旦Watermark比当前未触发的窗口的停止时间要晚，那么就会触发相应窗口的执行。由于event time是由数据携带的，因此，如果运行过程中无法获取新的数据，那么没有被触发的窗口将永远都不被触发。
+​	当Flink接收到数据时，会按照一定的规则去生成Watermark，这条Watermark就等于当前所有到达数据中的maxEventTime-延迟时长，也就是说，**Watermark是基于数据携带的时间戳生成的**，一旦Watermark比当前未触发的窗口的停止时间要晚，那么就会触发相应窗口的执行。
+
+​	**由于event time是由数据携带的，因此，如果运行过程中无法获取新的数据，那么没有被触发的窗口将永远都不被触发**。
 
 ​	上图中，我们设置的允许最大延迟到达时间为2s，所以时间戳为7s的事件对应的Watermark是5s，时间戳为12s的事件的Watermark是10s，如果我们的窗口1是1s~5s，窗口2是6s~10s，那么时间戳为7s的事件到达时的Watermarker恰好触发窗口1，时间戳为12s的事件到达时的Watermark恰好触发窗口2。
 
-​	Watermark 就是触发前一窗口的“关窗时间”，一旦触发关门那么以当前时刻为准在窗口范围内的所有所有数据都会收入窗中。
+​	**Watermark 就是触发前一窗口的“关窗时间”，一旦触发关门那么以当前时刻为准在窗口范围内的所有所有数据都会收入窗中。**
 
-​	只要没有达到水位那么不管现实中的时间推进了多久都不会触发关窗。
+​	**只要没有达到水位那么不管现实中的时间推进了多久都不会触发关窗。**
+
+### 7.3.2 Watermark的特点
+
+> [Flink-时间语义与Wartmark及EventTime在Window中的使用](https://blog.csdn.net/qq_40180229/article/details/106363815)
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200526204111817.png)
+
++ watermark 是一条特殊的数据记录
+
++ **watermark 必须单调递增**，以确保任务的事件时间时钟在向前推进，而不是在后退
+
++ watermark 与数据的时间戳相关
+
+### 7.3.3 Watermark的传递
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200526204125805.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
+1. 图一，当前Task有四个上游Task给自己传输WaterMark信息，通过比较，只取当前最小值作为自己的本地Event-time clock，上图中，当前Task[0,2)的桶就可关闭了，因为所有上游中2s最小，能保证2s的WaterMark是准确的（所有上游Watermark都已经>=2s)。这时候将Watermark=2广播到当前Task的下游。
+2. 图二，上游的Watermark持续变动，此时Watermark=3成为新的最小值，更新本地Task的event-time clock，同时将最新的Watermark=3广播到下游
+3. 图三，上游的Watermark虽然更新了，但是当前最小值还是3，所以不更新event-time clock，也不需要广播到下游
+4. 图四，和图二同理，更新本地event-time clock，同时向下游广播最新的Watermark=4
+
+### 7.3.4 Watermark的引入
+
+​	watermark的引入很简单，对于乱序数据，最常见的引用方式如下：
+
+```scala
+dataStream.assignTimestampsAndWatermarks( new BoundedOutOfOrdernessTimestampExtractor<SensorReading>(Time.milliseconds(1000)) {
+  @Override
+  public long extractTimestamp(element: SensorReading): Long = { 
+    return element.getTimestamp() * 1000L;
+  } 
+});
+```
+
+​	**Event Time的使用一定要指定数据源中的时间戳。否则程序无法知道事件的事件时间是什么(数据源里的数据没有时间戳的话，就只能使用Processing Time了)**。
+
+​	我们看到上面的例子中创建了一个看起来有点复杂的类，这个类实现的其实就是分配时间戳的接口。Flink暴露了TimestampAssigner接口供我们实现，使我们可以自定义如何从事件数据中抽取时间戳。
+
+```java
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+// 设置事件时间语义 env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
+DataStream<SensorReading> dataStream = env.addSource(new SensorSource()) .assignTimestampsAndWatermarks(new MyAssigner());
+```
+
+MyAssigner有两种类型
+
++ AssignerWithPeriodicWatermarks
+
++ AssignerWithPunctuatedWatermarks
+
+以上两个接口都继承自TimestampAssigner。
+
+#### TimestampAssigner
+
+##### AssignerWithPeriodicWatermarks
+
++ 周期性的生成 watermark：系统会周期性的将 watermark 插入到流中
+
++ 默认周期是200毫秒，可以使用 `ExecutionConfig.setAutoWatermarkInterval()` 方法进行设置
+
++ **升序和前面乱序的处理 BoundedOutOfOrderness ，都是基于周期性 watermark 的**。
+
+##### AssignerWithPunctuatedWatermarks
+
++ 没有时间周期规律，可打断的生成 watermark（即可实现每次获取数据都更新watermark）
+
+### 7.3.5 Watermark的设定
+
++ 在Flink中，Watermark由应用程序开发人员生成，这通常需要对相应的领域有一定的了解
++ 如果Watermark设置的延迟太久，收到结果的速度可能就会很慢，解决办法是在水位线到达之前输出一个近似结果
++ 如果Watermark到达得太早，则可能收到错误结果，不过Flink处理迟到数据的机制可以解决这个问题
+
+​	*一般大数据场景都是考虑高并发情况，所以一般使用周期性生成Watermark的方式，避免频繁地生成Watermark。*
+
+### 7.3.6 测试代码
+
+测试Watermark和迟到数据
+
+java代码（旧版Flink），新版的代码我暂时不打算折腾，之后用上再说吧。
+
+```java
+public class WindowTest3_EventTimeWindow {
+  public static void main(String[] args) throws Exception {
+    StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+    // Flink1.12.X 已经默认就是使用EventTime了，所以不需要这行代码
+    //        env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
+    env.getConfig().setAutoWatermarkInterval(100);
+
+    // socket文本流
+    DataStream<String> inputStream = env.socketTextStream("localhost", 7777);
+
+    // 转换成SensorReading类型，分配时间戳和watermark
+    DataStream<SensorReading> dataStream = inputStream.map(line -> {
+      String[] fields = line.split(",");
+      return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+    })
+      //              
+      //                // 旧版 (新版官方推荐用assignTimestampsAndWatermarks(WatermarkStrategy) )
+      // 升序数据设置事件时间和watermark
+      //.assignTimestampsAndWatermarks(new AscendingTimestampExtractor<SensorReading>() {
+      //  @Override
+      //  public long extractAscendingTimestamp(SensorReading element) {
+      //    return element.getTimestamp() * 1000L;
+      //  }
+      //})
+      
+      // 旧版 (新版官方推荐用assignTimestampsAndWatermarks(WatermarkStrategy) )
+      // 乱序数据设置时间戳和watermark
+      .assignTimestampsAndWatermarks(new BoundedOutOfOrdernessTimestampExtractor<SensorReading>(Time.seconds(2)) {
+        @Override
+        public long extractTimestamp(SensorReading element) {
+          return element.getTimestamp() * 1000L;
+        }
+      });
+
+    OutputTag<SensorReading> outputTag = new OutputTag<SensorReading>("late") {
+    };
+
+    // 基于事件时间的开窗聚合，统计15秒内温度的最小值
+    SingleOutputStreamOperator<SensorReading> minTempStream = dataStream.keyBy("id")
+      .timeWindow(Time.seconds(15))
+      .allowedLateness(Time.minutes(1))
+      .sideOutputLateData(outputTag)
+      .minBy("temperature");
+
+    minTempStream.print("minTemp");
+    minTempStream.getSideOutput(outputTag).print("late");
+
+    env.execute();
+  }
+}
+```
+
+### 7.3.7 窗口起始点和偏移量
+
+> [flink-Window Assingers(窗口分配器)中offset偏移量](https://juejin.cn/post/6844904110941011976)
+
+​	时间偏移一个很大的用处是用来调准非0时区的窗口，例如:在中国你需要指定一个8小时的时间偏移。
+
+# 8. Flink状态管理
+
+> [Flink_Flink中的状态](https://blog.csdn.net/dongkang123456/article/details/108430338)
+>
+> [Flink状态管理详解：Keyed State和Operator List State深度解析](https://zhuanlan.zhihu.com/p/104171679)	<=	不错的文章，建议阅读
+
++ 算子状态（Operator State）
++ 键控状态（Keyed State）
++ 状态后端（State Backends）
+
+## 8.1 状态概述
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200906125916475.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2RvbmdrYW5nMTIzNDU2,size_16,color_FFFFFF,t_70#pic_center)
+
+- 由一个任务维护，并且用来计算某个结果的所有数据，都属于这个任务的状态
+- 可以认为任务状态就是一个本地变量，可以被任务的业务逻辑访问
+- **Flink 会进行状态管理，包括状态一致性、故障处理以及高效存储和访问，以便于开发人员可以专注于应用程序的逻辑**
+
+---
+
+- **在Flink中，状态始终与特定算子相关联**
+- 为了使运行时的Flink了解算子的状态，算子需要预先注册其状态
+
+**总的来说，有两种类型的状态：**
+
++ **算子状态（Operator State）**
+  + 算子状态的作用范围限定为**算子任务**（也就是不能跨任务访问）
++ **键控状态（Keyed State）**
+  + 根据输入数据流中定义的键（key）来维护和访问
+
+### 算子状态
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200906173949148.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2RvbmdrYW5nMTIzNDU2,size_16,color_FFFFFF,t_70#pic_center)
+
++ 算子状态的作用范围限定为算子任务，同一并行任务所处理的所有数据都可以访问到相同的状态。
+
++ 状态对于**同一任务**而言是共享的。（**不能跨slot**）
+
++ 状态算子不能由相同或不同算子的另一个任务访问。
+
+#### 算子状态数据结构
+
++ 列表状态(List state) 
+  +  将状态表示为一组数据的列表
+
++ 联合列表状态(Union list state)
+  + 也将状态表示未数据的列表。它与常规列表状态的区别在于，在发生故障时，或者从保存点(savepoint)启动应用程序时如何恢复
+
++ 广播状态(Broadcast state)
+  + 如果一个算子有多项任务，而它的每项任务状态又都相同，那么这种特殊情况最适合应用广播状态
+
+#### 测试代码
+
+实际一般用算子状态比较少，一般还是键控状态用得多一点。
+
+```java
+package apitest.state;
+
+import apitest.beans.SensorReading;
+import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.streaming.api.checkpoint.ListCheckpointed;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+
+import java.util.Collections;
+import java.util.List;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2021/2/2 4:05 AM
+ */
+public class StateTest1_OperatorState {
+
+  public static void main(String[] args) throws Exception {
+    StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+    env.setParallelism(1);
+
+    // socket文本流
+    DataStream<String> inputStream = env.socketTextStream("localhost", 7777);
+
+    // 转换成SensorReading类型
+    DataStream<SensorReading> dataStream = inputStream.map(line -> {
+      String[] fields = line.split(",");
+      return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+    });
+
+    // 定义一个有状态的map操作，统计当前分区数据个数
+    SingleOutputStreamOperator<Integer> resultStream = dataStream.map(new MyCountMapper());
+
+    resultStream.print();
+
+    env.execute();
+  }
+
+  // 自定义MapFunction
+  public static class MyCountMapper implements MapFunction<SensorReading, Integer>, ListCheckpointed<Integer> {
+    // 定义一个本地变量，作为算子状态
+    private Integer count = 0;
+
+    @Override
+    public Integer map(SensorReading value) throws Exception {
+      count++;
+      return count;
+    }
+
+    @Override
+    public List<Integer> snapshotState(long checkpointId, long timestamp) throws Exception {
+      return Collections.singletonList(count);
+    }
+
+    @Override
+    public void restoreState(List<Integer> state) throws Exception {
+      for (Integer num : state) {
+        count += num;
+      }
+    }
+  }
+}
+```
+
+输入(本地开启socket后输入)
+
+```shell
+sensor_1,1547718199,35.8
+sensor_1,1547718199,35.8
+sensor_1,1547718199,35.8
+sensor_1,1547718199,35.8
+sensor_1,1547718199,35.8
+```
+
+输出
+
+```shell
+1
+2
+3
+4
+5
+```
+
+
 
