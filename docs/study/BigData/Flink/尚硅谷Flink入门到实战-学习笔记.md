@@ -3411,6 +3411,8 @@ MyAssigner有两种类型
 
 java代码（旧版Flink），新版的代码我暂时不打算折腾，之后用上再说吧。
 
+**这里设置的Watermark是2s，实际一般设置和window大小一致。**
+
 ```java
 public class WindowTest3_EventTimeWindow {
   public static void main(String[] args) throws Exception {
@@ -3464,6 +3466,168 @@ public class WindowTest3_EventTimeWindow {
   }
 }
 ```
+
+#### 并行任务Watermark传递测试
+
+在前面代码的基础上，修改执行环境并行度为4，进行测试
+
+```java
+public class WindowTest3_EventTimeWindow {
+  public static void main(String[] args) throws Exception {
+    StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+    env.setParallelism(4);
+
+    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
+    env.getConfig().setAutoWatermarkInterval(100);
+
+    // socket文本流
+    DataStream<String> inputStream = env.socketTextStream("localhost", 7777);
+
+    // 转换成SensorReading类型，分配时间戳和watermark
+    DataStream<SensorReading> dataStream = inputStream.map(line -> {
+      String[] fields = line.split(",");
+      return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+    })
+      
+      // 乱序数据设置时间戳和watermark
+      .assignTimestampsAndWatermarks(new BoundedOutOfOrdernessTimestampExtractor<SensorReading>(Time.seconds(2)) {
+        @Override
+        public long extractTimestamp(SensorReading element) {
+          return element.getTimestamp() * 1000L;
+        }
+      });
+
+    OutputTag<SensorReading> outputTag = new OutputTag<SensorReading>("late") {
+    };
+
+    // 基于事件时间的开窗聚合，统计15秒内温度的最小值
+    SingleOutputStreamOperator<SensorReading> minTempStream = dataStream.keyBy("id")
+      .timeWindow(Time.seconds(15))
+      .allowedLateness(Time.minutes(1))
+      .sideOutputLateData(outputTag)
+      .minBy("temperature");
+
+    minTempStream.print("minTemp");
+    minTempStream.getSideOutput(outputTag).print("late");
+
+    env.execute();
+  }
+}
+```
+
+启动本地socket，输入数据，查看结果
+
+```shell
+nc -lk 7777
+```
+
+输入：
+
+```shell
+sensor_1,1547718199,35.8
+sensor_6,1547718201,15.4
+sensor_7,1547718202,6.7
+sensor_10,1547718205,38.1
+sensor_1,1547718207,36.3
+sensor_1,1547718211,34
+sensor_1,1547718212,31.9
+sensor_1,1547718212,31.9
+sensor_1,1547718212,31.9
+sensor_1,1547718212,31.9
+```
+
+输出
+
+*注意：上面输入全部输入后，才突然有下面4条输出！*
+
+```shell
+minTemp:2> SensorReading{id='sensor_10', timestamp=1547718205, temperature=38.1}
+minTemp:3> SensorReading{id='sensor_1', timestamp=1547718199, temperature=35.8}
+minTemp:4> SensorReading{id='sensor_7', timestamp=1547718202, temperature=6.7}
+minTemp:3> SensorReading{id='sensor_6', timestamp=1547718201, temperature=15.4}
+```
+
+##### 分析
+
+1. **计算窗口起始位置Start和结束位置End**
+
+   从`TumblingProcessingTimeWindows`类里的`assignWindows`方法，我们可以得知窗口的起点计算方法如下：
+   $$
+   窗口起点start = timestamp - (timestamp -offset+WindowSize) \% WindowSize
+   $$
+   由于我们没有设置offset，所以这里`start=第一个数据的时间戳1547718199-(1547718199-0+15)%15=1547718195`
+
+   计算得到窗口初始位置为`Start = 1547718195`，那么这个窗口理论上本应该在1547718195+15的位置关闭，也就是`End=1547718210`
+
+   ```java
+   @Override
+   public Collection<TimeWindow> assignWindows(
+     Object element, long timestamp, WindowAssignerContext context) {
+     final long now = context.getCurrentProcessingTime();
+     if (staggerOffset == null) {
+       staggerOffset =
+         windowStagger.getStaggerOffset(context.getCurrentProcessingTime(), size);
+     }
+     long start =
+       TimeWindow.getWindowStartWithOffset(
+       now, (globalOffset + staggerOffset) % size, size);
+     return Collections.singletonList(new TimeWindow(start, start + size));
+   }
+   
+   // 跟踪 getWindowStartWithOffset 方法得到TimeWindow的方法
+   public static long getWindowStartWithOffset(long timestamp, long offset, long windowSize) {
+     return timestamp - (timestamp - offset + windowSize) % windowSize;
+   }
+   ```
+
+2. **计算修正后的Window输出结果的时间**
+
+   测试代码中Watermark设置的`maxOutOfOrderness`最大乱序程度是2s，所以实际获取到End+2s的时间戳数据时（达到Watermark），才认为Window需要输出计算的结果（不关闭，因为设置了允许迟到1min）
+
+   **所以实际应该是1547718212的数据到来时才触发Window输出计算结果。**
+
+   ```java
+   .assignTimestampsAndWatermarks(new BoundedOutOfOrdernessTimestampExtractor<SensorReading>(Time.seconds(2)) {
+     @Override
+     public long extractTimestamp(SensorReading element) {
+       return element.getTimestamp() * 1000L;
+     }
+   });
+   
+   
+   // BoundedOutOfOrdernessTimestampExtractor.java
+   public BoundedOutOfOrdernessTimestampExtractor(Time maxOutOfOrderness) {
+     if (maxOutOfOrderness.toMilliseconds() < 0) {
+       throw new RuntimeException(
+         "Tried to set the maximum allowed "
+         + "lateness to "
+         + maxOutOfOrderness
+         + ". This parameter cannot be negative.");
+     }
+     this.maxOutOfOrderness = maxOutOfOrderness.toMilliseconds();
+     this.currentMaxTimestamp = Long.MIN_VALUE + this.maxOutOfOrderness;
+   }
+   @Override
+   public final Watermark getCurrentWatermark() {
+     // this guarantees that the watermark never goes backwards.
+     long potentialWM = currentMaxTimestamp - maxOutOfOrderness;
+     if (potentialWM >= lastEmittedWatermark) {
+       lastEmittedWatermark = potentialWM;
+     }
+     return new Watermark(lastEmittedWatermark);
+   }
+   ```
+
+3. 为什么上面输入中，最后连续四条相同输入，才触发Window输出结果？
+
+   + **Watermark会向子任务广播**
+     + 我们在map才设置Watermark，map根据Rebalance轮询方式分配数据。所以前4个输入分别到4个slot中，4个slot计算得出的Watermark不同（分别是1547718199-2，1547718201-2，1547718202-2，1547718205-2）
+
+   + **Watermark传递时，会选择当前接收到的最小一个作为自己的Watermark**
+     + 前4次输入中，有些map子任务还没有接收到数据，所以其下游的keyBy后的slot里watermark就是`Long.MIN_VALUE`（因为4个上游的Watermark广播最小值就是默认的`Long.MIN_VALUE`）
+     + 并行度4，在最后4个相同的输入，使得Rebalance到4个map子任务的数据的`currentMaxTimestamp`都是1547718212，经过`getCurrentWatermark()`的计算（`currentMaxTimestamp-maxOutOfOrderness`），4个子任务都计算得到watermark=1547718210，4个map子任务向4个keyBy子任务广播`watermark=1547718210`，使得keyBy子任务们获取到4个上游的Watermark最小值就是1547718210，然后4个KeyBy子任务都更新自己的Watermark为1547718210。
+   + **根据Watermark的定义，我们认为>=Watermark的数据都已经到达。由于此时watermark >= 窗口End，所以Window输出计算结果（4个子任务，4个结果）。**
 
 ### 7.3.7 窗口起始点和偏移量
 
@@ -3738,4 +3902,129 @@ sensor_1,1547718199,35.8
     }
   }
   ```
+
+### 场景测试
+
+假设做一个温度报警，如果一个传感器前后温差超过10度就报警。这里使用键控状态Keyed State + flatMap来实现
+
++ java代码
+
+  ```java
+  package apitest.state;
+  
+  import apitest.beans.SensorReading;
+  import org.apache.flink.api.common.functions.RichFlatMapFunction;
+  import org.apache.flink.api.common.state.ValueState;
+  import org.apache.flink.api.common.state.ValueStateDescriptor;
+  import org.apache.flink.api.java.tuple.Tuple3;
+  import org.apache.flink.configuration.Configuration;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.util.Collector;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/2 6:37 PM
+   */
+  public class StateTest3_KeyedStateApplicationCase {
+  
+    public static void main(String[] args) throws Exception {
+      // 创建执行环境
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      // 设置并行度 = 1
+      env.setParallelism(1);
+      // 从socket获取数据
+      DataStream<String> inputStream = env.socketTextStream("localhost", 7777);
+      // 转换为SensorReading类型
+      DataStream<SensorReading> dataStream = inputStream.map(line -> {
+        String[] fields = line.split(",");
+        return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+      });
+  
+      SingleOutputStreamOperator<Tuple3<String, Double, Double>> resultStream = dataStream.keyBy(SensorReading::getId).flatMap(new MyFlatMapper(10.0));
+  
+      resultStream.print();
+  
+      env.execute();
+    }
+  
+    // 如果 传感器温度 前后差距超过指定温度(这里指定10.0),就报警
+    public static class MyFlatMapper extends RichFlatMapFunction<SensorReading, Tuple3<String, Double, Double>> {
+  
+      // 报警的温差阈值
+      private final Double threshold;
+  
+      // 记录上一次的温度
+      ValueState<Double> lastTemperature;
+  
+      public MyFlatMapper(Double threshold) {
+        this.threshold = threshold;
+      }
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        // 从运行时上下文中获取keyedState
+        lastTemperature = getRuntimeContext().getState(new ValueStateDescriptor<Double>("last-temp", Double.class));
+      }
+  
+      @Override
+      public void close() throws Exception {
+        // 手动释放资源
+        lastTemperature.clear();
+      }
+  
+      @Override
+      public void flatMap(SensorReading value, Collector<Tuple3<String, Double, Double>> out) throws Exception {
+        Double lastTemp = lastTemperature.value();
+        Double curTemp = value.getTemperature();
+  
+        // 如果不为空，判断是否温差超过阈值，超过则报警
+        if (lastTemp != null) {
+          if (Math.abs(curTemp - lastTemp) >= threshold) {
+            out.collect(new Tuple3<>(value.getId(), lastTemp, curTemp));
+          }
+        }
+  
+        // 更新保存的"上一次温度"
+        lastTemperature.update(curTemp);
+      }
+    }
+  }
+  ```
+
++ 启动socket
+
+  ```shell
+  nc -lk 7777
+  ```
+
++ 输入数据，查看结果
+
+  + 输入
+
+    ```shell
+    sensor_1,1547718199,35.8
+    sensor_1,1547718199,32.4
+    sensor_1,1547718199,42.4
+    sensor_10,1547718205,52.6   
+    sensor_10,1547718205,22.5
+    sensor_7,1547718202,6.7
+    sensor_7,1547718202,9.9
+    sensor_1,1547718207,36.3
+    sensor_7,1547718202,19.9
+    sensor_7,1547718202,30
+    ```
+
+  + 输出
+
+    *中间没有输出（sensor_7,9.9,19.9)，应该是double浮点数计算精度问题，不管它*
+
+    ```shell
+    (sensor_1,32.4,42.4)
+    (sensor_10,52.6,22.5)
+    (sensor_7,19.9,30.0)
+    ```
+
+
 
