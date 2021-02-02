@@ -3271,6 +3271,8 @@ env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 ## 7.3 Watermark
 
+> [Flink流计算编程--watermark（水位线）简介](https://blog.csdn.net/lmalds/article/details/52704170)	<=	不错的文章，建议阅读
+
 ### 7.3.1 概念
 
 * **Flink对于迟到数据有三层保障**，先来后到的保障顺序是：
@@ -3404,6 +3406,10 @@ MyAssigner有两种类型
 + 如果Watermark到达得太早，则可能收到错误结果，不过Flink处理迟到数据的机制可以解决这个问题
 
 ​	*一般大数据场景都是考虑高并发情况，所以一般使用周期性生成Watermark的方式，避免频繁地生成Watermark。*
+
+---
+
+**注：一般认为Watermark的设置代码，在里Source步骤越近的地方越合适。**
 
 ### 7.3.6 测试代码
 
@@ -4026,5 +4032,419 @@ sensor_1,1547718199,35.8
     (sensor_7,19.9,30.0)
     ```
 
+## 8.4 状态后端 State Backends
 
+> [Flink_Flink中的状态](https://blog.csdn.net/dongkang123456/article/details/108430338)
+
+### 8.4.1 概述
+
++ 每传入一条数据，有状态的算子任务都会读取和更新状态。
+
++ 由于有效的状态访问对于处理数据的低延迟至关重要，因此每个并行任务都会在本地维护其状态，以确保快速的状态访问。
+
++ 状态的存储、访问以及维护，由一个可插入的组件决定，这个组件就叫做**状态后端( state backend)**
+
++ **状态后端主要负责两件事：本地状态管理，以及将检查点(checkPoint)状态写入远程存储**
+
+### 8.4.2 选择一个状态后端
+
++ MemoryStateBackend
+  + 内存级的状态后端，会将键控状态作为内存中的对象进行管理，将它们存储在TaskManager的JVM堆上，而将checkpoint存储在JobManager的内存中
+  + 特点：快速、低延迟，但不稳定
++ FsStateBackend（默认）
+  + 将checkpoint存到远程的持久化文件系统（FileSystem）上，而对于本地状态，跟MemoryStateBackend一样，也会存在TaskManager的JVM堆上
+  + 同时拥有内存级的本地访问速度，和更好的容错保证
++ RocksDBStateBackend
+  + 将所有状态序列化后，存入本地的RocksDB中存储
+
+### 8.4.3 配置文件
+
+`flink-conf.yaml`
+
+```yaml
+#==============================================================================
+# Fault tolerance and checkpointing
+#==============================================================================
+
+# The backend that will be used to store operator state checkpoints if
+# checkpointing is enabled.
+#
+# Supported backends are 'jobmanager', 'filesystem', 'rocksdb', or the
+# <class-name-of-factory>.
+#
+# state.backend: filesystem
+上面这个就是默认的checkpoint存在filesystem
+
+
+# Directory for checkpoints filesystem, when using any of the default bundled
+# state backends.
+#
+# state.checkpoints.dir: hdfs://namenode-host:port/flink-checkpoints
+
+# Default target directory for savepoints, optional.
+#
+# state.savepoints.dir: hdfs://namenode-host:port/flink-savepoints
+
+# Flag to enable/disable incremental checkpoints for backends that
+# support incremental checkpoints (like the RocksDB state backend). 
+#
+# state.backend.incremental: false
+
+# The failover strategy, i.e., how the job computation recovers from task failures.
+# Only restart tasks that may have been affected by the task failure, which typically includes
+# downstream tasks and potentially upstream tasks if their produced data is no longer available for consumption.
+
+jobmanager.execution.failover-strategy: region
+
+上面这个region指，多个并行度的任务要是有个挂掉了，只重启那个任务所属的region（可能含有多个子任务），而不需要重启整个Flink程序
+```
+
+### 8.4.4 样例代码
+
++ 其中使用RocksDBStateBackend需要另外加入pom依赖
+
+  ```xml
+  <!-- RocksDBStateBackend -->
+  <dependency>
+    <groupId>org.apache.flink</groupId>
+    <artifactId>flink-statebackend-rocksdb_${scala.binary.version}</artifactId>
+    <version>${flink.version}</version>
+  </dependency>
+  ```
+
++ java代码
+
+  ```java
+  package apitest.state;
+  
+  import apitest.beans.SensorReading;
+  import org.apache.flink.api.common.restartstrategy.RestartStrategies;
+  import org.apache.flink.api.common.time.Time;
+  import org.apache.flink.contrib.streaming.state.RocksDBStateBackend;
+  import org.apache.flink.runtime.state.filesystem.FsStateBackend;
+  import org.apache.flink.runtime.state.memory.MemoryStateBackend;
+  import org.apache.flink.streaming.api.CheckpointingMode;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/2 11:35 PM
+   */
+  public class StateTest4_FaultTolerance {
+      public static void main(String[] args) throws Exception {
+          StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+          env.setParallelism(1);
+  
+          // 1. 状态后端配置
+          env.setStateBackend(new MemoryStateBackend());
+          env.setStateBackend(new FsStateBackend("checkpointDataUri"));
+          // 这个需要另外导入依赖
+          env.setStateBackend(new RocksDBStateBackend("checkpointDataUri"));
+  
+          // socket文本流
+          DataStream<String> inputStream = env.socketTextStream("localhost", 7777);
+  
+          // 转换成SensorReading类型
+          DataStream<SensorReading> dataStream = inputStream.map(line -> {
+              String[] fields = line.split(",");
+              return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+          });
+  
+          dataStream.print();
+          env.execute();
+      }
+  }
+  ```
+
+# 9. ProcessFunction API(底层API)
+
+​	我们之前学习的**转换算子**是无法访问事件的<u>时间戳信息和水位线信息</u>的。而这在一些应用场景下，极为重要。例如MapFunction这样的map转换算子就无法访问时间戳或者当前事件的事件时间。
+
+​	基于此，DataStream API提供了一系列的Low-Level转换算子。可以**访问时间戳**、**watermark**以及**注册定时事件**。还可以输出**特定的一些事件**，例如超时事件等。<u>Process Function用来构建事件驱动的应用以及实现自定义的业务逻辑(使用之前的window函数和转换算子无法实现)。例如，FlinkSQL就是使用Process Function实现的</u>。
+
+Flink提供了8个Process Function：
+
+- ProcessFunction
+- KeyedProcessFunction
+- CoProcessFunction
+- ProcessJoinFunction
+- BroadcastProcessFunction
+- KeyedBroadcastProcessFunction
+- ProcessWindowFunction
+- ProcessAllWindowFunction
+
+## 9.1 KeyedProcessFunction
+
+​	这个是相对比较常用的ProcessFunction，根据名字就可以知道是用在keyedStream上的。
+
+​	KeyedProcessFunction用来操作KeyedStream。KeyedProcessFunction会处理流的每一个元素，输出为0个、1个或者多个元素。所有的Process Function都继承自RichFunction接口，所以都有`open()`、`close()`和`getRuntimeContext()`等方法。而`KeyedProcessFunction<K, I, O>`还额外提供了两个方法:
+
++ `processElement(I value, Context ctx, Collector<O> out)`，流中的每一个元素都会调用这个方法，调用结果将会放在Collector数据类型中输出。Context可以访问元素的时间戳，元素的 key ，以及TimerService 时间服务。 Context 还可以将结果输出到别的流(side outputs)。
++ `onTimer(long timestamp, OnTimerContext ctx, Collector<O> out)`，是一个回调函数。当之前注册的定时器触发时调用。参数timestamp 为定时器所设定的触发的时间戳。Collector 为输出结果的集合。OnTimerContext和processElement的Context 参数一样，提供了上下文的一些信息，例如定时器触发的时间信息(事件时间或者处理时间)。
+
+### 测试代码
+
+设置一个获取数据后第5s给出提示信息的定时器。
+
+```java
+package processfunction;
+
+import apitest.beans.SensorReading;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.java.tuple.Tuple;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+import org.apache.flink.util.Collector;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2021/2/3 12:30 AM
+ */
+public class ProcessTest1_KeyedProcessFunction {
+  public static void main(String[] args) throws Exception{
+    StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+    env.setParallelism(1);
+
+    // socket文本流
+    DataStream<String> inputStream = env.socketTextStream("localhost", 7777);
+
+    // 转换成SensorReading类型
+    DataStream<SensorReading> dataStream = inputStream.map(line -> {
+      String[] fields = line.split(",");
+      return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+    });
+
+    // 测试KeyedProcessFunction，先分组然后自定义处理
+    dataStream.keyBy("id")
+      .process( new MyProcess() )
+      .print();
+
+    env.execute();
+  }
+
+  // 实现自定义的处理函数
+  public static class MyProcess extends KeyedProcessFunction<Tuple, SensorReading, Integer> {
+    ValueState<Long> tsTimerState;
+
+    @Override
+    public void open(Configuration parameters) throws Exception {
+      tsTimerState =  getRuntimeContext().getState(new ValueStateDescriptor<Long>("ts-timer", Long.class));
+    }
+
+    @Override
+    public void processElement(SensorReading value, Context ctx, Collector<Integer> out) throws Exception {
+      out.collect(value.getId().length());
+
+      // context
+      // Timestamp of the element currently being processed or timestamp of a firing timer.
+      ctx.timestamp();
+      // Get key of the element being processed.
+      ctx.getCurrentKey();
+      //            ctx.output();
+      ctx.timerService().currentProcessingTime();
+      ctx.timerService().currentWatermark();
+      // 在5处理时间的5秒延迟后触发
+      ctx.timerService().registerProcessingTimeTimer( ctx.timerService().currentProcessingTime() + 5000L);
+      tsTimerState.update(ctx.timerService().currentProcessingTime() + 1000L);
+      //            ctx.timerService().registerEventTimeTimer((value.getTimestamp() + 10) * 1000L);
+      // 删除指定时间触发的定时器
+      //            ctx.timerService().deleteProcessingTimeTimer(tsTimerState.value());
+    }
+
+    @Override
+    public void onTimer(long timestamp, OnTimerContext ctx, Collector<Integer> out) throws Exception {
+      System.out.println(timestamp + " 定时器触发");
+      ctx.getCurrentKey();
+      //            ctx.output();
+      ctx.timeDomain();
+    }
+
+    @Override
+    public void close() throws Exception {
+      tsTimerState.clear();
+    }
+  }
+}
+```
+
+启动本地socket
+
+```shell
+nc -lk 7777
+```
+
+输入
+
+```shell
+sensor_1,1547718207,36.3
+```
+
+输出
+
+```shell
+8
+1612283803911 定时器触发
+```
+
+## 9.2 TimerService和定时器(Timers)
+
+​	Context 和OnTimerContext 所持有的TimerService 对象拥有以下方法：
+
++ `long currentProcessingTime()` 返回当前处理时间
+
++ `long currentWatermark()` 返回当前watermark 的时间戳
+
++ `void registerProcessingTimeTimer( long timestamp)` 会注册当前key的processing time的定时器。当processing time 到达定时时间时，触发timer。
+
++ **`void registerEventTimeTimer(long timestamp)` 会注册当前key 的event time 定时器。当Watermark水位线大于等于定时器注册的时间时，触发定时器执行回调函数。**
+
++ `void deleteProcessingTimeTimer(long timestamp)` 删除之前注册处理时间定时器。如果没有这个时间戳的定时器，则不执行。
+
++ `void deleteEventTimeTimer(long timestamp)` 删除之前注册的事件时间定时器，如果没有此时间戳的定时器，则不执行。
+
+​	**当定时器timer 触发时，会执行回调函数onTimer()。注意定时器timer 只能在keyed streams 上面使用。**
+
+### 测试代码
+
+下面举个例子说明KeyedProcessFunction 如何操作KeyedStream。
+
+需求：监控温度传感器的温度值，如果温度值在10 秒钟之内(processing time)连续上升，则报警。
+
++ java代码
+
+  ```java
+  package processfunction;
+  
+  import apitest.beans.SensorReading;
+  import org.apache.flink.api.common.state.ValueState;
+  import org.apache.flink.api.common.state.ValueStateDescriptor;
+  import org.apache.flink.api.common.time.Time;
+  import org.apache.flink.configuration.Configuration;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+  import org.apache.flink.util.Collector;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/3 1:02 AM
+   */
+  public class ProcessTest2_ApplicationCase {
+  
+    public static void main(String[] args) throws Exception {
+      // 创建执行环境
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      // 设置并行度为1
+      env.setParallelism(1);
+      // 从socket中获取数据
+      DataStream<String> inputStream = env.socketTextStream("localhost", 7777);
+      // 转换数据为SensorReading类型
+      DataStream<SensorReading> sensorReadingStream = inputStream.map(line -> {
+        String[] fields = line.split(",");
+        return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+      });
+      // 如果存在连续10s内温度持续上升的情况，则报警
+      sensorReadingStream.keyBy(SensorReading::getId)
+        .process(new TempConsIncreWarning(Time.seconds(10).toMilliseconds()))
+        .print();
+      env.execute();
+    }
+  
+    // 如果存在连续10s内温度持续上升的情况，则报警
+    public static class TempConsIncreWarning extends KeyedProcessFunction<String, SensorReading, String> {
+  
+      public TempConsIncreWarning(Long interval) {
+        this.interval = interval;
+      }
+  
+      // 报警的时间间隔(如果在interval时间内温度持续上升，则报警)
+      private Long interval;
+  
+      // 上一个温度值
+      private ValueState<Double> lastTemperature;
+      // 最近一次定时器的触发时间(报警时间)
+      private ValueState<Long> recentTimerTimeStamp;
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        lastTemperature = getRuntimeContext().getState(new ValueStateDescriptor<Double>("lastTemperature", Double.class));
+        recentTimerTimeStamp = getRuntimeContext().getState(new ValueStateDescriptor<Long>("recentTimerTimeStamp", Long.class));
+      }
+  
+      @Override
+      public void close() throws Exception {
+        lastTemperature.clear();
+        recentTimerTimeStamp.clear();
+      }
+  
+      @Override
+      public void processElement(SensorReading value, Context ctx, Collector<String> out) throws Exception {
+        // 当前温度值
+        double curTemp = value.getTemperature();
+        // 上一次温度(没有则设置为当前温度)
+        double lastTemp = lastTemperature.value() != null ? lastTemperature.value() : curTemp;
+        // 计时器状态值(时间戳)
+        Long timerTimestamp = recentTimerTimeStamp.value();
+  
+        // 如果 当前温度 > 上次温度 并且 没有设置报警计时器，则设置
+        if (curTemp > lastTemp && null == timerTimestamp) {
+          long warningTimestamp = ctx.timerService().currentProcessingTime() + interval;
+          ctx.timerService().registerProcessingTimeTimer(warningTimestamp);
+          recentTimerTimeStamp.update(warningTimestamp);
+        }
+        // 如果 当前温度 < 上次温度，且 设置了报警计时器，则清空计时器
+        else if (curTemp <= lastTemp && timerTimestamp != null) {
+          ctx.timerService().deleteProcessingTimeTimer(timerTimestamp);
+          recentTimerTimeStamp.clear();
+        }
+        // 更新保存的温度值
+        lastTemperature.update(curTemp);
+      }
+  
+      // 定时器任务
+      @Override
+      public void onTimer(long timestamp, OnTimerContext ctx, Collector<String> out) throws Exception {
+        // 触发报警，并且清除 定时器状态值
+        out.collect("传感器" + ctx.getCurrentKey() + "温度值连续" + interval + "ms上升");
+        recentTimerTimeStamp.clear();
+      }
+    }
+  }
+  ```
+
++ 启动本地socket，之后输入数据
+
+  ```shell
+  nc -lk 7777
+  ```
+
+  + 输入
+
+    ```shell
+    sensor_1,1547718199,35.8
+    sensor_1,1547718199,34.1
+    sensor_1,1547718199,34.2
+    sensor_1,1547718199,35.1
+    sensor_6,1547718201,15.4
+    sensor_7,1547718202,6.7
+    sensor_10,1547718205,38.1
+    sensor_10,1547718205,39  
+    sensor_6,1547718201,18  
+    sensor_7,1547718202,9.1
+    ```
+
+  + 输出
+
+    ```shell
+    传感器sensor_1温度值连续10000ms上升
+    传感器sensor_10温度值连续10000ms上升
+    传感器sensor_6温度值连续10000ms上升
+    传感器sensor_7温度值连续10000ms上升
+    ```
+
+    
 
