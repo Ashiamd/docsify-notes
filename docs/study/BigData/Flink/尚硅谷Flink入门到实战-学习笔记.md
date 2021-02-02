@@ -3501,7 +3501,7 @@ public class WindowTest3_EventTimeWindow {
 + **键控状态（Keyed State）**
   + 根据输入数据流中定义的键（key）来维护和访问
 
-### 算子状态
+## 8.2 算子状态 Operator State
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20200906173949148.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2RvbmdrYW5nMTIzNDU2,size_16,color_FFFFFF,t_70#pic_center)
 
@@ -3511,7 +3511,7 @@ public class WindowTest3_EventTimeWindow {
 
 + 状态算子不能由相同或不同算子的另一个任务访问。
 
-#### 算子状态数据结构
+### 算子状态数据结构
 
 + 列表状态(List state) 
   +  将状态表示为一组数据的列表
@@ -3522,7 +3522,7 @@ public class WindowTest3_EventTimeWindow {
 + 广播状态(Broadcast state)
   + 如果一个算子有多项任务，而它的每项任务状态又都相同，那么这种特殊情况最适合应用广播状态
 
-#### 测试代码
+### 测试代码
 
 实际一般用算子状态比较少，一般还是键控状态用得多一点。
 
@@ -3612,5 +3612,130 @@ sensor_1,1547718199,35.8
 5
 ```
 
+## 8.3 键控状态 Keyed State
 
+> [Flink_Flink中的状态](https://blog.csdn.net/dongkang123456/article/details/108430338)
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200906182710217.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2RvbmdrYW5nMTIzNDU2,size_16,color_FFFFFF,t_70#pic_center)
+
++ 键控状态是根据输入数据流中定义的键（key）来维护和访问的。
+
++ **Flink 为每个key维护一个状态实例，并将具有相同键的所有数据，都分区到同一个算子任务中，这个任务会维护和处理这个key对应的状态。**
+
++ **当任务处理一条数据时，他会自动将状态的访问范围限定为当前数据的key**。
+
+### 键控状态数据结构
+
++ 值状态(value state)
+  + 将状态表示为单个的值
+
++ 列表状态(List state)
+  + 将状态表示为一组数据的列表
+
++ 映射状态(Map state)
+  + 将状态表示为一组key-value对
+
++ **聚合状态(Reducing state & Aggregating State)**
+  + 将状态表示为一个用于聚合操作的列表
+
+### 测试代码
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200906183806458.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2RvbmdrYW5nMTIzNDU2,size_16,color_FFFFFF,t_70#pic_center)
+
+*注：声明一个键控状态，一般在算子的open()中声明，因为运行时才能获取上下文信息*
+
++ java测试代码
+
+  ```java
+  package apitest.state;
+  
+  import apitest.beans.SensorReading;
+  import org.apache.flink.api.common.functions.RichMapFunction;
+  import org.apache.flink.api.common.state.*;
+  import org.apache.flink.configuration.Configuration;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/2 5:41 PM
+   */
+  public class StateTest2_KeyedState {
+  
+    public static void main(String[] args) throws Exception {
+      // 创建执行环境
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      // 设置并行度 = 1
+      env.setParallelism(1);
+      // 从本地socket读取数据
+      DataStream<String> inputStream = env.socketTextStream("localhost", 7777);
+  
+      // 转换成SensorReading类型
+      DataStream<SensorReading> dataStream = inputStream.map(line -> {
+        String[] fields = line.split(",");
+        return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+      });
+  
+      // 使用自定义map方法，里面使用 我们自定义的Keyed State
+      DataStream<Integer> resultStream = dataStream
+        .keyBy(SensorReading::getId)
+        .map(new MyMapper());
+  
+      resultStream.print("result");
+      env.execute();
+    }
+  
+    // 自定义map富函数，测试 键控状态
+    public static class MyMapper extends RichMapFunction<SensorReading,Integer>{
+  
+      //        Exception in thread "main" java.lang.IllegalStateException: The runtime context has not been initialized.
+      //        ValueState<Integer> valueState = getRuntimeContext().getState(new ValueStateDescriptor<Integer>("my-int", Integer.class));
+  
+      private ValueState<Integer> valueState;
+  
+  
+      // 其它类型状态的声明
+      private ListState<String> myListState;
+      private MapState<String, Double> myMapState;
+      private ReducingState<SensorReading> myReducingState;
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        valueState = getRuntimeContext().getState(new ValueStateDescriptor<Integer>("my-int", Integer.class));
+  
+        myListState = getRuntimeContext().getListState(new ListStateDescriptor<String>("my-list", String.class));
+        myMapState = getRuntimeContext().getMapState(new MapStateDescriptor<String, Double>("my-map", String.class, Double.class));
+        //            myReducingState = getRuntimeContext().getReducingState(new ReducingStateDescriptor<SensorReading>())
+  
+      }
+  
+      // 这里就简单的统计每个 传感器的 信息数量
+      @Override
+      public Integer map(SensorReading value) throws Exception {
+        // 其它状态API调用
+        // list state
+        for(String str: myListState.get()){
+          System.out.println(str);
+        }
+        myListState.add("hello");
+        // map state
+        myMapState.get("1");
+        myMapState.put("2", 12.3);
+        myMapState.remove("2");
+        // reducing state
+        //            myReducingState.add(value);
+  
+        myMapState.clear();
+  
+  
+        Integer count = valueState.value();
+        // 第一次获取是null，需要判断
+        count = count==null?0:count;
+        ++count;
+        valueState.update(count);
+        return count;
+      }
+    }
+  }
+  ```
 
