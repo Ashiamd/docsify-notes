@@ -2843,7 +2843,7 @@ window function 定义了要对窗口中收集的数据做的计算操作，主�
 
 1. 测试滚动时间窗口的**增量聚合函数**
 
-   增量聚合函数，特点即每次数据过来都处理，但是到了窗口临界才输出结果。
+   增量聚合函数，特点即每次数据过来都处理，但是**到了窗口临界才输出结果**。
 
    + 编写java代码
 
@@ -6451,7 +6451,7 @@ public class TableTest5_TimeAndWindow {
     StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
 
     // 2. 读入文件数据，得到DataStream
-    DataStream<String> inputStream = env.readTextFile("/Users/ashiamd/mydocs/docs/study/javadocument/javadocument/IDEA_project/Flink_Tutorial/src/main/resources/sensor.txt");
+    DataStream<String> inputStream = env.readTextFile("/tmp/Flink_Tutorial/src/main/resources/sensor.txt");
 
     // 3. 转换成POJO
     DataStream<SensorReading> dataStream = inputStream.map(line -> {
@@ -6603,7 +6603,7 @@ public class UdfTest1_ScalarFunction {
     StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
 
     // 1. 读取数据
-    DataStream<String> inputStream = env.readTextFile("/Users/ashiamd/mydocs/docs/study/javadocument/javadocument/IDEA_project/Flink_Tutorial/src/main/resources/sensor.txt");
+    DataStream<String> inputStream = env.readTextFile("/tmp/Flink_Tutorial/src/main/resources/sensor.txt");
 
     // 2. 转换成POJO
     DataStream<SensorReading> dataStream = inputStream.map(line -> {
@@ -6728,7 +6728,7 @@ public class UdfTest2_TableFunction {
     StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
 
     // 1. 读取数据
-    DataStream<String> inputStream = env.readTextFile("/Users/ashiamd/mydocs/docs/study/javadocument/javadocument/IDEA_project/Flink_Tutorial/src/main/resources/sensor.txt");
+    DataStream<String> inputStream = env.readTextFile("/tmp/Flink_Tutorial/src/main/resources/sensor.txt");
 
     // 2. 转换成POJO
     DataStream<SensorReading> dataStream = inputStream.map(line -> {
@@ -6812,4 +6812,294 @@ result> sensor_1,1547718212,1,1
 sql> sensor_1,1547718212,sensor,6
 sql> sensor_1,1547718212,1,1
 ```
+
+### 13.1.3 聚合函数(Aggregate Functions)
+
+**聚合，多对一，类似前面的窗口聚合**
+
+---
+
++ 用户自定义聚合函数（User-Defined Aggregate Functions，UDAGGs）可以把一个表中的数据，聚合成一个标量值
++ 用户定义的聚合函数，是通过继承 AggregateFunction 抽象类实现的
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200601221643915.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
++ AggregationFunction要求必须实现的方法
+  + `createAccumulator()`
+  + `accumulate()`
+  + `getValue()`
++ AggregateFunction 的工作原理如下：
+  + 首先，它需要一个累加器（Accumulator），用来保存聚合中间结果的数据结构；可以通过调用 `createAccumulator()` 方法创建空累加器
+  + 随后，对每个输入行调用函数的 `accumulate()` 方法来更新累加器
+  + 处理完所有行后，将调用函数的 `getValue()` 方法来计算并返回最终结果
+
+#### 测试代码
+
+```java
+package apitest.tableapi.udf;
+
+import apitest.beans.SensorReading;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.table.api.Table;
+import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.table.functions.AggregateFunction;
+import org.apache.flink.types.Row;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2021/2/4 4:24 AM
+ */
+public class UdfTest3_AggregateFunction {
+  public static void main(String[] args) throws Exception {
+    StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+    env.setParallelism(1);
+
+    StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
+
+    // 1. 读取数据
+    DataStream<String> inputStream = env.readTextFile("/Users/ashiamd/mydocs/docs/study/javadocument/javadocument/IDEA_project/Flink_Tutorial/src/main/resources/sensor.txt");
+
+    // 2. 转换成POJO
+    DataStream<SensorReading> dataStream = inputStream.map(line -> {
+      String[] fields = line.split(",");
+      return new SensorReading(fields[0], new Long(fields[1]), new Double(fields[2]));
+    });
+
+    // 3. 将流转换成表
+    Table sensorTable = tableEnv.fromDataStream(dataStream, "id, timestamp as ts, temperature as temp");
+
+    // 4. 自定义聚合函数，求当前传感器的平均温度值
+    // 4.1 table API
+    AvgTemp avgTemp = new AvgTemp();
+
+    // 需要在环境中注册UDF
+    tableEnv.registerFunction("avgTemp", avgTemp);
+    Table resultTable = sensorTable
+      .groupBy("id")
+      .aggregate("avgTemp(temp) as avgtemp")
+      .select("id, avgtemp");
+
+    // 4.2 SQL
+    tableEnv.createTemporaryView("sensor", sensorTable);
+    Table resultSqlTable = tableEnv.sqlQuery("select id, avgTemp(temp) " +
+                                             " from sensor group by id");
+
+    // 打印输出
+    tableEnv.toRetractStream(resultTable, Row.class).print("result");
+    tableEnv.toRetractStream(resultSqlTable, Row.class).print("sql");
+
+    env.execute();
+  }
+
+  // 实现自定义的AggregateFunction
+  public static class AvgTemp extends AggregateFunction<Double, Tuple2<Double, Integer>> {
+    @Override
+    public Double getValue(Tuple2<Double, Integer> accumulator) {
+      return accumulator.f0 / accumulator.f1;
+    }
+
+    @Override
+    public Tuple2<Double, Integer> createAccumulator() {
+      return new Tuple2<>(0.0, 0);
+    }
+
+    // 必须实现一个accumulate方法，来数据之后更新状态
+    // 这里方法名必须是这个，且必须public。
+    // 累加器参数，必须得是第一个参数；随后的才是我们自己传的入参
+    public void accumulate(Tuple2<Double, Integer> accumulator, Double temp) {
+      accumulator.f0 += temp;
+      accumulator.f1 += 1;
+    }
+  }
+}
+```
+
+输出结果：
+
+```shell
+result> (true,sensor_1,35.8)
+result> (true,sensor_6,15.4)
+result> (true,sensor_7,6.7)
+result> (true,sensor_10,38.1)
+result> (false,sensor_1,35.8)
+result> (true,sensor_1,36.05)
+sql> (true,sensor_1,35.8)
+result> (false,sensor_1,36.05)
+sql> (true,sensor_6,15.4)
+result> (true,sensor_1,34.96666666666666)
+sql> (true,sensor_7,6.7)
+result> (false,sensor_1,34.96666666666666)
+sql> (true,sensor_10,38.1)
+result> (true,sensor_1,35.5)
+sql> (false,sensor_1,35.8)
+sql> (true,sensor_1,36.05)
+sql> (false,sensor_1,36.05)
+sql> (true,sensor_1,34.96666666666666)
+sql> (false,sensor_1,34.96666666666666)
+sql> (true,sensor_1,35.5)
+```
+
+### 13.1.4 表聚合函数
+
++ 用户定义的表聚合函数（User-Defined Table Aggregate Functions，UDTAGGs），可以把一个表中数据，聚合为具有多行和多列的结果表
++ 用户定义表聚合函数，是通过继承 TableAggregateFunction 抽象类来实现的
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200601223517314.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
++ AggregationFunction 要求必须实现的方法：
+  + `createAccumulator()`
+  + `accumulate()`
+  + `emitValue()`
++ TableAggregateFunction 的工作原理如下：
+  + 首先，它同样需要一个累加器（Accumulator），它是保存聚合中间结果的数据结构。通过调用 `createAccumulator()` 方法可以创建空累加器。
+  + 随后，对每个输入行调用函数的 `accumulate()` 方法来更新累加器。
+  + 处理完所有行后，将调用函数的 `emitValue()` 方法来计算并返回最终结果。
+
+#### 测试代码
+
+> [Flink-函数 | 用户自定义函数（UDF）标量函数 | 表函数 | 聚合函数 | 表聚合函数](https://blog.csdn.net/qq_40180229/article/details/106482550)
+
+```scala
+import com.atguigu.bean.SensorReading
+import org.apache.flink.streaming.api.TimeCharacteristic
+import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor
+import org.apache.flink.streaming.api.scala._
+import org.apache.flink.streaming.api.windowing.time.Time
+import org.apache.flink.table.api.Table
+import org.apache.flink.table.api.scala._
+import org.apache.flink.table.functions.TableAggregateFunction
+import org.apache.flink.types.Row
+import org.apache.flink.util.Collector
+
+object TableAggregateFunctionTest {
+  def main(args: Array[String]): Unit = {
+
+    val env: StreamExecutionEnvironment = StreamExecutionEnvironment.getExecutionEnvironment
+    env.setParallelism(1)
+
+    // 开启事件时间语义
+    env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime)
+
+    // 创建表环境
+    val tableEnv: StreamTableEnvironment = StreamTableEnvironment.create(env)
+
+    val inputDStream: DataStream[String] = env.readTextFile("D:\\MyWork\\WorkSpaceIDEA\\flink-tutorial\\src\\main\\resources\\SensorReading.txt")
+
+    val dataDStream: DataStream[SensorReading] = inputDStream.map(
+      data => {
+        val dataArray: Array[String] = data.split(",")
+        SensorReading(dataArray(0), dataArray(1).toLong, dataArray(2).toDouble)
+      })
+    .assignTimestampsAndWatermarks( new BoundedOutOfOrdernessTimestampExtractor[SensorReading]
+                                   ( Time.seconds(1) ) {
+                                     override def extractTimestamp(element: SensorReading): Long = element.timestamp * 1000L
+                                   } )
+
+    // 用proctime定义处理时间
+    val dataTable: Table = tableEnv
+    .fromDataStream(dataDStream, 'id, 'temperature, 'timestamp.rowtime as 'ts)
+
+    // 使用自定义的hash函数，求id的哈希值
+    val myAggTabTemp = MyAggTabTemp()
+
+    // 查询 Table API 方式
+    val resultTable: Table = dataTable
+    .groupBy('id)
+    .flatAggregate( myAggTabTemp('temperature) as ('temp, 'rank) )
+    .select('id, 'temp, 'rank)
+
+
+    // SQL调用方式，首先要注册表
+    tableEnv.createTemporaryView("dataTable", dataTable)
+    // 注册函数
+    tableEnv.registerFunction("myAggTabTemp", myAggTabTemp)
+
+    /*
+    val resultSqlTable: Table = tableEnv.sqlQuery(
+      """
+        |select id, temp, `rank`
+        |from dataTable, lateral table(myAggTabTemp(temperature)) as aggtab(temp, `rank`)
+        |group by id
+        |""".stripMargin)
+*/
+
+
+    // 测试输出
+    resultTable.toRetractStream[ Row ].print( "scalar" )
+    //resultSqlTable.toAppendStream[ Row ].print( "scalar_sql" )
+    // 查看表结构
+    dataTable.printSchema()
+
+    env.execute(" table ProcessingTime test job")
+  }
+}
+
+// 自定义状态类
+case class AggTabTempAcc() {
+  var highestTemp: Double = Double.MinValue
+  var secondHighestTemp: Double = Double.MinValue
+}
+
+case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTempAcc]{
+  // 初始化状态
+  override def createAccumulator(): AggTabTempAcc = new AggTabTempAcc()
+
+  // 每来一个数据后，聚合计算的操作
+  def accumulate( acc: AggTabTempAcc, temp: Double ): Unit ={
+    // 将当前温度值，跟状态中的最高温和第二高温比较，如果大的话就替换
+    if( temp > acc.highestTemp ){
+      // 如果比最高温还高，就排第一，其它温度依次后移
+      acc.secondHighestTemp = acc.highestTemp
+      acc.highestTemp = temp
+    } else if( temp > acc.secondHighestTemp ){
+      acc.secondHighestTemp = temp
+    }
+  }
+
+  // 实现一个输出数据的方法，写入结果表中
+  def emitValue( acc: AggTabTempAcc, out: Collector[(Double, Int)] ): Unit ={
+    out.collect((acc.highestTemp, 1))
+    out.collect((acc.secondHighestTemp, 2))
+  }
+}
+```
+
+# 14. 基于flink的电商用户行为数据分析
+
+> [Flink电商项目第一天-电商用户行为分析及完整图步骤解析-热门商品统计TopN的实现](https://blog.csdn.net/qq_40180229/article/details/106502286)
+
++ 批处理和流处理
++ 电商用户行为分析
++ 数据源解析
++ 项目模块划分
+
+## 14.1 批处理和流处理
+
+### 批处理
+
+批处理主要操作大容量静态数据集，并在计算过程完成后返回结果。
+
+可以认为，处理的是用一个固定时间间隔分组的数据点集合。
+
+批处理模式中使用的数据集通常符合下列特征：
+
++ **有界：批处理数据集代表数据的有限集合**
++ **持久：数据通常始终存储在某种类型的持久存储位置中**
++ **大量：批处理操作通常是处理极为海量数据集的唯一方法**
+
+### 流处理
+
+流处理可以对随时进入系统的数据进行计算。
+
+流处理方式无需针对整个数据集执行操作，而是对通过系统传输的每个数据项执行操作。
+
+流处理中的数据集是“无边界”的，这就产生了几个重要的影响：
+
++ 可以处理几乎无限量的数据，但**同一时间只能处理一条数据，不同记录间只维持最少量的状态**
+
++ 处理工作是基于事件的，除非明确停止否则没有“尽头”
+
++ 处理结果立刻可用，并会随着新数据的抵达继续更新。
 
