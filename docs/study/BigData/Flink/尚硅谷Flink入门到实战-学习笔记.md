@@ -6859,7 +6859,7 @@ public class UdfTest3_AggregateFunction {
     StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
 
     // 1. 读取数据
-    DataStream<String> inputStream = env.readTextFile("/Users/ashiamd/mydocs/docs/study/javadocument/javadocument/IDEA_project/Flink_Tutorial/src/main/resources/sensor.txt");
+    DataStream<String> inputStream = env.readTextFile("/tmp/Flink_Tutorial/src/main/resources/sensor.txt");
 
     // 2. 转换成POJO
     DataStream<SensorReading> dataStream = inputStream.map(line -> {
@@ -7102,4 +7102,724 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
 + 处理工作是基于事件的，除非明确停止否则没有“尽头”
 
 + 处理结果立刻可用，并会随着新数据的抵达继续更新。
+
+## 14.2 电商用户行为分析
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602182834724.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
++ 统计分析
+  + 点击、浏览
+  + 热门商品、近期热门商品、分类热门商品，流量统计
++ 偏好统计
+  + 收藏、喜欢、评分、打标签
+  + 用户画像，推荐列表（结合特征工程和机器学习算法）
++ 风险控制
+  + 下订单、支付、登录
+  + 刷单监控，订单失效监控，恶意登录（短时间内频繁登录失败）监控
+
+### 项目模块设计
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602183018421.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602183121950.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
+### 数据源
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602183227549.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
+### 数据源-数据结构
+
+**UserBehavior**
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602183249723.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
+**ApacheLogEvent**
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602183323920.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
+## 14.3 项目模块
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602183434342.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
+### 14.3.1 热门实时商品统计
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602183513841.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602183537531.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
++ 按照商品id进行分区
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602183613384.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
++ 设置窗口时间
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602183637249.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
++ 时间窗口（timeWindow）区间为左闭右开
++ 同一份数据会被分发到不同的窗口
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602183733756.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
++ 窗口聚合
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602183749122.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
++ 窗口聚合策略——没出现一条记录就加一
+
++ 实现AggregateFunction接口
+
+  `interface AggregateFunction<IN, ACC, OUT>`
+
++ 定义输出结构——`ItemViewCount(itemId,windowEnd,count)`
+
++ 实现WindowFunction接口
+
+  + `interface WindowFunction<IN,OUT,KEY,W extends Window>`
+
+    + IN：输入为累加器的类型，Long
+    + OUT：窗口累加以后输出的类型为`ItemViewCount(itemId: Long,windowEnd: Long,count: Long)`，windowEnd为窗口的结束时间，也是窗口的唯一标识
+    + KEY：Tuple泛型，在这里是itemId，窗口根据itemId聚合
+    + W：聚合的窗口，`w.getEnd`就能拿到窗口的结束时间
+
+    ```java
+    public void apply(Tuple tuple, TimeWindow window,
+                     Iterable<Long> input, Collector<ItemViewCount> out)throws Exception {
+      Long itemId = tuple.getField(0);
+      Long windowEnd - window.getEnd();
+      Long count = input.iterator().next();
+      out.collect(new ItemViewCount(itemId, windowEnd, count));
+    }
+    ```
+
++ 窗口聚合示例
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602183856808.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
++  **进行统计整理 —— keyBy(“windowEnd”)**
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/2020060218391775.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
++ 状态编程
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602183935754.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
++ **最终排序输出——keyedProcessFunction**
+
+  + 针对有状态流的底层API
+  + KeyedProcessFunction会对分区后的每一条子流进行处理
+  + 以windowEnd作为key，保证分流以后每一条流的数据都在一个时间窗口内
+  + 从ListState中读取当前流的状态，存储数据进行排序输出
+
+  ---
+
+  + 用ProcessFunction定义KeyedStream的处理逻辑
+  + 分区之后，每个KeyedStream都有其自己的生命周期
+    + open：初始化，在这里可以获取当前流的状态
+    + processElement：处理流中每一个元素时调用
+    + onTimer：定时调用，注册定时器Timer并触发之后的回调操作
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602184003237.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
+
+#### 代码1-文件
+
++ 父pom依赖
+
+  ```xml
+  <?xml version="1.0" encoding="UTF-8"?>
+  <project xmlns="http://maven.apache.org/POM/4.0.0"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+  
+    <groupId>org.example</groupId>
+    <artifactId>UserBehaviorAnalysis</artifactId>
+    <packaging>pom</packaging>
+    <version>1.0-SNAPSHOT</version>
+    <modules>
+      <module>HotItemsAnalysis</module>
+    </modules>
+  
+    <properties>
+      <maven.compiler.source>8</maven.compiler.source>
+      <maven.compiler.target>8</maven.compiler.target>
+      <flink.version>1.12.1</flink.version>
+      <scala.binary.version>2.12</scala.binary.version>
+      <kafka.version>2.7.0</kafka.version>
+      <mysql.version>8.0.19</mysql.version>
+    </properties>
+  
+    <dependencies>
+  
+      <!-- flink -->
+      <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-java</artifactId>
+        <version>${flink.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
+        <version>${flink.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-clients_${scala.binary.version}</artifactId>
+        <version>${flink.version}</version>
+      </dependency>
+  
+      <!-- kafka -->
+      <dependency>
+        <groupId>org.apache.kafka</groupId>
+        <artifactId>kafka_${scala.binary.version}</artifactId>
+        <version>${kafka.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-connector-kafka_${scala.binary.version}</artifactId>
+        <version>${flink.version}</version>
+      </dependency>
+    </dependencies>
+  
+    <build>
+      <plugins>
+        <plugin>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <configuration>
+            <source>1.8</source>
+            <target>1.8</target>
+            <encoding>UTF-8</encoding>
+          </configuration>
+        </plugin>
+      </plugins>
+    </build>
+  
+  </project>
+  ```
+
++ java代码
+
+  ```java
+  import beans.ItemViewCount;
+  import beans.UserBehavior;
+  import org.apache.commons.compress.utils.Lists;
+  import org.apache.flink.api.common.functions.AggregateFunction;
+  import org.apache.flink.api.common.state.ListState;
+  import org.apache.flink.api.common.state.ListStateDescriptor;
+  import org.apache.flink.configuration.Configuration;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
+  import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+  import org.apache.flink.streaming.api.windowing.assigners.SlidingProcessingTimeWindows;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.Collector;
+  
+  import java.sql.Timestamp;
+  import java.util.ArrayList;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/4 6:07 PM
+   */
+  public class HotItems {
+    public static void main(String[] args) throws Exception {
+      // 1. 创建执行环境
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      // 设置并行度为1
+      env.setParallelism(1);
+  
+      // 2. 从csv文件中获取数据
+      DataStream<String> inputStream = env.readTextFile("/tmp/UserBehaviorAnalysis/HotItemsAnalysis/src/main/resources/UserBehavior.csv");
+  
+      // 3. 转换成POJO,分配时间戳和watermark
+      DataStream<UserBehavior> userBehaviorDataStream = inputStream.map(line -> {
+        String[] fields = line.split(",");
+        return new UserBehavior(new Long(fields[0]), new Long(fields[1]), new Integer(fields[2]), fields[3], new Long(fields[4]));
+      }).assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+        new BoundedOutOfOrdernessTimestampExtractor<UserBehavior>(Time.of(200, TimeUnit.MILLISECONDS)) {
+          @Override
+          public long extractTimestamp(UserBehavior element) {
+            return element.getTimestamp() * 1000L;
+          }
+        }
+      ));
+  
+      // 4. 分组开窗聚合，得到每个窗口内各个商品的count值
+      //        DataStream<ItemViewCount> windowAggStream = userBehaviorDataStream
+      DataStream<ItemViewCount> windowAggStream = userBehaviorDataStream
+        // 过滤只保留pv行为
+        .filter(userBehavior -> "pv".equals(userBehavior.getBehavior()))
+        // 按照商品ID分组
+        .keyBy(UserBehavior::getItemId)
+        // 滑动窗口
+        .window(SlidingEventTimeWindows.of(Time.hours(1), Time.minutes(5)))
+        .aggregate(new ItemCountAgg(), new WindowItemCountResult());
+  
+      // 5. 收集同一窗口的所有商品的count数据，排序输出top n
+      DataStream<String> resultStream = windowAggStream
+        // 按照窗口分组
+        .keyBy(ItemViewCount::getWindowEnd)
+        // 用自定义处理函数排序取前5
+        .process(new TopNHotItems(5));
+  
+      resultStream.print();
+  
+      env.execute("hot items analysis");
+    }
+  
+    // 实现自定义增量聚合函数
+    public static class ItemCountAgg implements AggregateFunction<UserBehavior, Long, Long> {
+  
+      @Override
+      public Long createAccumulator() {
+        return 0L;
+      }
+  
+      @Override
+      public Long add(UserBehavior value, Long accumulator) {
+        return accumulator + 1;
+      }
+  
+      @Override
+      public Long getResult(Long accumulator) {
+        return accumulator;
+      }
+  
+      @Override
+      public Long merge(Long a, Long b) {
+        return a + b;
+      }
+    }
+  
+    // 自定义全窗口函数
+    public static class WindowItemCountResult implements WindowFunction<Long, ItemViewCount, Long, TimeWindow> {
+  
+      @Override
+      public void apply(Long itemId, TimeWindow window, Iterable<Long> input, Collector<ItemViewCount> out) throws Exception {
+        Long windowEnd = window.getEnd();
+        Long count = input.iterator().next();
+        out.collect(new ItemViewCount(itemId, windowEnd, count));
+      }
+    }
+  
+    // 实现自定义KeyedProcessFunction
+    public static class TopNHotItems extends KeyedProcessFunction<Long, ItemViewCount, String> {
+  
+      // 定义属性， TopN的大小
+      private Integer topSize;
+  
+      // 定义状态列表，保存当前窗口内所有输出的ItemViewCount
+      ListState<ItemViewCount> itemViewCountListState;
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        itemViewCountListState = getRuntimeContext().getListState(
+          new ListStateDescriptor<ItemViewCount>("item-view-count-list", ItemViewCount.class));
+      }
+  
+      //        @Override
+      //        public void close() throws Exception {
+      //            itemViewCountListState.clear();
+      //        }
+  
+      public TopNHotItems(Integer topSize) {
+        this.topSize = topSize;
+      }
+  
+      @Override
+      public void processElement(ItemViewCount value, Context ctx, Collector<String> out) throws Exception {
+        // 每来一条数据，存入List中，并注册定时器
+        itemViewCountListState.add(value);
+        // 模拟等待，所以这里时间设的比较短(1ms)
+        ctx.timerService().registerEventTimeTimer(value.getWindowEnd() + 1);
+      }
+  
+      @Override
+      public void onTimer(long timestamp, OnTimerContext ctx, Collector<String> out) throws Exception {
+        // 定时器触发，当前已收集到所有数据，排序输出
+        ArrayList<ItemViewCount> itemViewCounts = Lists.newArrayList(itemViewCountListState.get().iterator());
+        // 从多到少(越热门越前面)
+        itemViewCounts.sort((a, b) -> -Long.compare(a.getCount(), b.getCount()));
+        StringBuilder resultBuilder = new StringBuilder();
+        resultBuilder.append("============================").append(System.lineSeparator());
+        resultBuilder.append("窗口结束时间：").append(new Timestamp(timestamp - 1)).append(System.lineSeparator());
+  
+        // 遍历列表，取top n输出
+        for (int i = 0; i < Math.min(topSize, itemViewCounts.size()); i++) {
+          ItemViewCount currentItemViewCount = itemViewCounts.get(i);
+          resultBuilder.append("NO ").append(i + 1).append(":")
+            .append(" 商品ID = ").append(currentItemViewCount.getItemId())
+            .append(" 热门度 = ").append(currentItemViewCount.getCount())
+            .append(System.lineSeparator());
+        }
+        resultBuilder.append("===============================").append(System.lineSeparator());
+  
+        // 控制输出频率
+        Thread.sleep(1000L);
+  
+        out.collect(resultBuilder.toString());
+      }
+    }
+  }
+  ```
+
++ 输入文件如下：
+
+  ```shell
+  543462,1715,1464116,pv,1511658000
+  662867,2244074,1575622,pv,1511658000
+  561558,3611281,965809,pv,1511658000
+  894923,3076029,1879194,pv,1511658000
+  834377,4541270,3738615,pv,1511658000
+  ...
+  ```
+
++ 输出如下：
+
+  ```shell
+  ============================
+  窗口结束时间：2017-11-26 10:10:00.0
+  NO 1: 商品ID = 2338453 热门度 = 30
+  NO 2: 商品ID = 812879 热门度 = 18
+  NO 3: 商品ID = 2563440 热门度 = 14
+  NO 4: 商品ID = 138964 热门度 = 12
+  NO 5: 商品ID = 3244134 热门度 = 12
+  ===============================
+  
+  ============================
+  窗口结束时间：2017-11-26 10:15:00.0
+  NO 1: 商品ID = 2338453 热门度 = 33
+  NO 2: 商品ID = 812879 热门度 = 18
+  NO 3: 商品ID = 3244134 热门度 = 13
+  NO 4: 商品ID = 2563440 热门度 = 13
+  NO 5: 商品ID = 2364679 热门度 = 13
+  ===============================
+  
+  ============================
+  窗口结束时间：2017-11-26 10:20:00.0
+  NO 1: 商品ID = 2338453 热门度 = 32
+  NO 2: 商品ID = 812879 热门度 = 18
+  NO 3: 商品ID = 3244134 热门度 = 15
+  NO 4: 商品ID = 4649427 热门度 = 13
+  NO 5: 商品ID = 2364679 热门度 = 12
+  ===============================
+  
+  ...
+  ```
+
+#### 代码2-kafka
+
++ java代码
+
+  ```java
+  // 仅修改 获取数据源的部分
+  
+  // 2. 从csv文件中获取数据
+  //        DataStream<String> inputStream = env.readTextFile("/tmp/UserBehaviorAnalysis/HotItemsAnalysis/src/main/resources/UserBehavior.csv");
+  
+  Properties properties = new Properties();
+  properties.setProperty("bootstrap.servers", "localhost:9092");
+  properties.setProperty("group.id", "consumer");
+  // 下面是一些次要参数
+  properties.setProperty("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+  properties.setProperty("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+  properties.setProperty("auto.offset.reset", "latest");
+  
+  // 2. 从kafka消费数据
+  DataStream<String> inputStream = env.addSource(new FlinkKafkaConsumer<>("hotitems", new SimpleStringSchema(), properties ));
+  
+  
+  ```
+
++ 启动本地kafka里自带的zookeeper
+
+  ```shell
+  $ bin/zookeeper-server-start.sh config/zookeeper.properties
+  ```
+
++ 启动kafka
+
+  ```shell
+  $ bin/kafka-server-start.sh config/server.properties
+  ```
+
++ 启动kafka生产者console
+
+  ```shell
+  $ bin/kafka-console-producer.sh --broker-list localhost:9092  --topic hotitems
+  ```
+
++ 运行Flink程序，输入数据（kafka-console-producer）
+
+  ```shell
+  $ bin/kafka-console-producer.sh --broker-list localhost:9092  --topic hotitems
+  >543462,1715,1464116,pv,1511658000
+  >662867,2244074,1575622,pv,1511658060
+  >561558,3611281,965809,pv,1511658120
+  >894923,1715,1879194,pv,1511658180
+  >834377,2244074,3738615,pv,1511658240
+  >625915,3611281,570735,pv,1511658300
+  >625915,3611281,570735,pv,1511658301
+  ```
+
++ 输出
+
+  ```shell
+  ============================
+  窗口结束时间：2017-11-26 09:05:00.0
+  NO 1: 商品ID = 1715 热门度 = 2
+  NO 2: 商品ID = 2244074 热门度 = 2
+  NO 3: 商品ID = 3611281 热门度 = 1
+  ===============================
+  ```
+
+#### 代码3-kafka批量数据测试
+
++ java代码
+
+  ```java
+  import org.apache.kafka.clients.producer.KafkaProducer;
+  import org.apache.kafka.clients.producer.ProducerRecord;
+  
+  import java.io.BufferedReader;
+  import java.io.BufferedWriter;
+  import java.io.FileReader;
+  import java.util.Properties;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/4 11:53 PM
+   */
+  public class KafkaProducerUtil {
+    public static void main(String[] args) throws Exception {
+      writeToKafka("hotitems");
+    }
+  
+    public static void writeToKafka(String topic)throws Exception{
+      // Kafka配置
+      Properties properties = new Properties();
+      properties.setProperty("bootstrap.servers", "localhost:9092");
+      properties.setProperty("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+      properties.setProperty("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+  
+      // 定义一个Kafka Producer
+      KafkaProducer<String, String> kafkaProducer = new KafkaProducer<String, String>(properties);
+  
+      // 用缓冲方式来读取文本
+      BufferedReader bufferedReader = new BufferedReader(new FileReader("/tmp/UserBehaviorAnalysis/HotItemsAnalysis/src/main/resources/UserBehavior.csv"));
+      String line;
+      while((line = bufferedReader.readLine())!=null){
+        ProducerRecord<String,String> producerRecord = new ProducerRecord<>(topic,line );
+        // 用producer发送数据
+        kafkaProducer.send(producerRecord);
+      }
+      kafkaProducer.close();
+    }
+  }
+  
+  ```
+
++ 启动zookeeper
+
++ 启动kafka服务
+
++ 运行该java程序，之后就可以直接启动HotItems程序，读取本地已有的kafka数据了
+
+#### 代码4-Flink-SQL实现
+
++ java代码
+
+  **下面用最新的Expression写法实现<=新版本推荐的写法**
+
+  ```java
+  import beans.UserBehavior;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.table.api.EnvironmentSettings;
+  import org.apache.flink.table.api.Slide;
+  import org.apache.flink.table.api.Table;
+  import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+  import org.apache.flink.types.Row;
+  
+  import java.util.concurrent.TimeUnit;
+  
+  import static org.apache.flink.table.api.Expressions.$;
+  import static org.apache.flink.table.api.Expressions.lit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/5 12:18 AM
+   */
+  public class HotItemsWithSql {
+    public static void main(String[] args) throws Exception {
+      // 1. 创建执行环境
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 2. 从csv文件中获取数据
+      DataStream<String> inputStream = env.readTextFile("/tmp/UserBehaviorAnalysis/HotItemsAnalysis/src/main/resources/UserBehavior.csv");
+  
+      // 3. 转换成POJO,分配时间戳和watermark
+      DataStream<UserBehavior> userBehaviorDataStream = inputStream.map(line -> {
+        String[] fields = line.split(",");
+        return new UserBehavior(new Long(fields[0]), new Long(fields[1]), new Integer(fields[2]), fields[3], new Long(fields[4]));
+      }).assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+        new BoundedOutOfOrdernessTimestampExtractor<UserBehavior>(Time.of(200, TimeUnit.MILLISECONDS)) {
+          @Override
+          public long extractTimestamp(UserBehavior element) {
+            return element.getTimestamp() * 1000L;
+          }
+        }
+      ));
+  
+      // 4. 创建表执行环境,使用blink版本
+      EnvironmentSettings settings = EnvironmentSettings.newInstance()
+        .useBlinkPlanner()
+        .inStreamingMode()
+        .build();
+      StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env, settings);
+  
+      // 5. 将流转换成表
+      Table dataTable = tableEnv.fromDataStream(userBehaviorDataStream,
+                                                $("itemId"),
+                                                $("behavior"),
+                                                $("timestamp").rowtime().as("ts")
+                                               );
+  
+      // 6. 分组开窗
+      // Table API
+      Table windowAggTable = dataTable
+        .filter($("behavior").isEqual("pv"))
+        .window(Slide.over(lit(1).hours()).every(lit(5).minutes()).on($("ts")).as("w"))
+        .groupBy($("itemId"), $("w"))
+        .select($("itemId"), $("w").end().as("windowEnd"), $("itemId").count().as("cnt"));
+  
+      // 7. 利用开创函数，对count值进行排序，并获取Row number，得到Top N
+      // SQL
+      DataStream<Row> aggStream = tableEnv.toAppendStream(windowAggTable, Row.class);
+      tableEnv.createTemporaryView("agg", aggStream, $("itemId"), $("windowEnd"), $("cnt"));
+  
+      Table resultTable = tableEnv.sqlQuery("select * from " +
+                                            "  ( select *, ROW_NUMBER() over (partition by windowEnd order by cnt desc) as row_num " +
+                                            "  from agg) " +
+                                            " where row_num <= 5 ");
+  
+      // 纯SQL实现
+      tableEnv.createTemporaryView("data_table", userBehaviorDataStream, $("itemId"), $("behavior"), $("timestamp").rowtime().as("ts"));
+      Table resultSqlTable = tableEnv.sqlQuery("select * from " +
+                                               "  ( select *, ROW_NUMBER() over (partition by windowEnd order by cnt desc) as row_num " +
+                                               "  from ( " +
+                                               "    select itemId, count(itemId) as cnt, HOP_END(ts, interval '5' minute, interval '1' hour) as windowEnd " +
+                                               "    from data_table " +
+                                               "    where behavior = 'pv' " +
+                                               "    group by itemId, HOP(ts, interval '5' minute, interval '1' hour)" +
+                                               "    )" +
+                                               "  ) " +
+                                               " where row_num <= 5 ");
+  
+   //   tableEnv.toRetractStream(resultTable, Row.class).print();
+      tableEnv.toRetractStream(resultSqlTable, Row.class).print();
+  
+      env.execute("hot items with sql job");
+    }
+  }
+  ```
+
++ 输出
+
+  ```shell
+  ....
+  (true,2288408,2017-11-26T03:00,15,4)
+  (false,279675,2017-11-26T03:00,14,5)
+  (true,291932,2017-11-26T03:00,15,5)
+  (false,3715112,6,2017-11-26T03:05,1)
+  (true,3244931,7,2017-11-26T03:05,1)
+  (false,710777,6,2017-11-26T03:05,2)
+  (true,3715112,6,2017-11-26T03:05,2)
+  (false,724262,6,2017-11-26T03:05,3)
+  (true,710777,6,2017-11-26T03:05,3)
+  (false,1303734,5,2017-11-26T03:05,4)
+  (true,724262,6,2017-11-26T03:05,4)
+  (false,4622270,5,2017-11-26T03:05,5)
+  (true,1303734,5,2017-11-26T03:05,5)
+  (false,1303734,5,2017-11-26T03:05,5)
+  ....
+  ```
+
+  
+
+  
+
+### 14.3.2 实时流量统计——热门页面
+
++ 基本需求
+  + 从web服务器的日志中，统计实时的热门访问页面
+  + 统计每分钟的ip访问量，取出访问量最大的5个地址，每5秒更新一次
++ 解决思路1
+  + 将apache服务器日志中的时间，转换为时间戳，作为Event Time
+  + 构建滑动窗口，窗口长度为1分钟，滑动距离为5秒
+
+### 14.3.3 实时流量统计——PV和UV
+
++ 基本需求
+  + 从埋点日志中，统计实时的PV和UV
+  + 统计每小时的访问量（PV），并且对用户进行去重（UV）
++ 解决思路
+  + 统计埋点日志中的pv行为，利用Set数据结构进行去重
+  + **对于超大规模的数据，可以考虑用布隆过滤器进行去重**
+
+### 14.3.4 市场营销分析——APP市场推广统计
+
++ 基本需求
+  + 从埋点日志中，统计APP市场推广的数据指标
+  + 按照不同的推广渠道，分别统计数据
++ 解决思路
+  + 通过过滤日志中的用户行为，按照不同的渠道进行统计
+  + 可以用process function处理，得到自定义的输出数据信息
+
+### 14.3.5 市场营销分析——页面广告统计
+
++ 基本需求
+  + 从埋点日志中，统计每小时页面广告的点击量，5秒刷新一次，并按照不同省份进行划分
+  + 对于"刷单"式的频繁点击行为进行过滤，并将该用户加入黑名单
++ 解决思路
+  + 根据省份进行分组，创建长度为1小时、滑动距离为5秒的时间窗口进行统计
+  + 可以用`process function`进行黑名单过滤，检测用户对同一广告的点击量，如果超过上限则将用户信息以侧输出流输出到黑名单中
+
+### 14.3.6 恶意登录监控
+
++ 基本需求
+  + 用户在短时间内频繁登录失败，有程序恶意攻击的可能
+  + 同一用户（可以是不同IP）在2秒内连续两次登录失败，需要报警
++ 解决思路
+  + 将用户的登录失败行为存入ListState，设定定时器2秒后出发，查看ListState中有几次失败登录
+  + 更加精确的检测，可以使用CEP库实现事件流的模式匹配
+
+### 14.3.7 订单支付实时监控
+
++ 基本需求
+  + 用户下单之后，应设置订单失效事件，以提高用户支付的意愿，并降低系统风险
+  + 用户下单后15分钟未支付，则输出监控信息
++ 解决思路
+  + 利用CEP库进行事件流的模式匹配，并设定匹配的时间间隔
+  + 也可以利用状态编程，用process function实现处理逻辑
+
+### 14.3.8 订单支付实时对帐
+
++ 基本需求
+  + 用户下单并支付之后，应查询到账信息，进行实时对帐
+  + 如果有不匹配的支付信息或者到账信息，输出提示信息
++ 解决思路
+  + 从两条流中分别读取订单支付信息和到账信息，合并处理
+  + 用connect连接合并两条流，用coProcessFunction做匹配处理
+
+
 
