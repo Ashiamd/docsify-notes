@@ -8475,8 +8475,6 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
   ===============================
   ```
 
-  
-
 ### 14.3.3 实时流量统计——PV和UV
 
 + 基本需求
@@ -8485,6 +8483,537 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
 + 解决思路
   + 统计埋点日志中的pv行为，利用Set数据结构进行去重
   + **对于超大规模的数据，可以考虑用布隆过滤器进行去重**
+
+#### 代码1-PV统计-基本实现
+
++ java代码
+
+  ```java
+  
+  import beans.UserBehavior;
+  import org.apache.flink.api.common.functions.MapFunction;
+  import org.apache.flink.api.java.tuple.Tuple2;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  
+  import java.net.URL;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/5 3:11 AM
+   */
+  public class PageView {
+    public static void main(String[] args) throws Exception {
+      // 1. 创建执行环境
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      // 设置并行度为1
+      env.setParallelism(1);
+  
+      // 2. 从csv文件中获取数据
+      URL resource = PageView.class.getResource("/UserBehavior.csv");
+      DataStream<String> inputStream = env.readTextFile(resource.getPath());
+  
+      // 3. 转换成POJO,分配时间戳和watermark
+      DataStream<UserBehavior> userBehaviorDataStream = inputStream.map(line -> {
+        String[] fields = line.split(",");
+        return new UserBehavior(new Long(fields[0]), new Long(fields[1]), new Integer(fields[2]), fields[3], new Long(fields[4]));
+      }).assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+        new BoundedOutOfOrdernessTimestampExtractor<UserBehavior>(Time.of(200, TimeUnit.MILLISECONDS)) {
+          @Override
+          public long extractTimestamp(UserBehavior element) {
+            return element.getTimestamp() * 1000L;
+          }
+        }
+      ));
+  
+      // 4. 分组开窗聚合，得到每个窗口内各个商品的count值
+      DataStream<Tuple2<String, Long>> pvResultStream = userBehaviorDataStream
+        // 过滤只保留pv行为
+        .filter(userBehavior -> "pv".equals(userBehavior.getBehavior()))
+        .map(new MapFunction<UserBehavior, Tuple2<String, Long>>() {
+          @Override
+          public Tuple2<String, Long> map(UserBehavior value) throws Exception {
+            return new Tuple2<>("pv", 1L);
+          }
+        })
+        // 按照商品ID分组
+        .keyBy(item -> item.f0)
+        // 1小时滚动窗口
+        .window(TumblingEventTimeWindows.of(Time.hours(1)))
+        .sum(1);
+  
+  
+      pvResultStream.print();
+  
+      env.execute("pv count job");
+    }
+  }
+  
+  ```
+
++ 输出
+
+  ```shell
+  (pv,41890)
+  (pv,48022)
+  (pv,47298)
+  (pv,44499)
+  (pv,48649)
+  (pv,50838)
+  (pv,52296)
+  (pv,52552)
+  (pv,48292)
+  (pv,13)
+  ```
+
+#### 代码2 PV统计-并行和数据倾斜优化
+
++ java代码
+
+  ```java
+  
+  import beans.PageViewCount;
+  import beans.UserBehavior;
+  import org.apache.flink.api.common.functions.AggregateFunction;
+  import org.apache.flink.api.common.functions.MapFunction;
+  import org.apache.flink.api.common.state.ValueState;
+  import org.apache.flink.api.common.state.ValueStateDescriptor;
+  import org.apache.flink.api.java.tuple.Tuple2;
+  import org.apache.flink.configuration.Configuration;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
+  import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  
+  import org.apache.flink.util.Collector;
+  
+  import java.net.URL;
+  import java.util.Random;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/5 3:11 AM
+   */
+  public class PageView {
+    public static void main(String[] args) throws Exception {
+      // 1. 创建执行环境
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      // 设置并行度为4
+      env.setParallelism(4);
+  
+      // 2. 从csv文件中获取数据
+      URL resource = PageView.class.getResource("/UserBehavior.csv");
+      DataStream<String> inputStream = env.readTextFile(resource.getPath());
+  
+      // 3. 转换成POJO,分配时间戳和watermark
+      DataStream<UserBehavior> userBehaviorDataStream = inputStream.map(line -> {
+        String[] fields = line.split(",");
+        return new UserBehavior(new Long(fields[0]), new Long(fields[1]), new Integer(fields[2]), fields[3], new Long(fields[4]));
+      }).assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+        new BoundedOutOfOrdernessTimestampExtractor<UserBehavior>(Time.of(200, TimeUnit.MILLISECONDS)) {
+          @Override
+          public long extractTimestamp(UserBehavior element) {
+            return element.getTimestamp() * 1000L;
+          }
+        }
+      ));
+  
+      // 4. 分组开窗聚合，得到每个窗口内各个商品的count值
+      DataStream<Tuple2<String, Long>> pvResultStream0 = userBehaviorDataStream
+        // 过滤只保留pv行为
+        .filter(userBehavior -> "pv".equals(userBehavior.getBehavior()))
+        .map(new MapFunction<UserBehavior, Tuple2<String, Long>>() {
+          @Override
+          public Tuple2<String, Long> map(UserBehavior value) throws Exception {
+            return new Tuple2<>("pv", 1L);
+          }
+        })
+        // 按照商品ID分组
+        .keyBy(item -> item.f0)
+        // 1小时滚动窗口
+        .window(TumblingEventTimeWindows.of(Time.hours(1)))
+        .sum(1);
+  
+      //  并行任务改进，设计随机key，解决数据倾斜问题
+      SingleOutputStreamOperator<PageViewCount> pvStream = userBehaviorDataStream.filter(data -> "pv".equals(data.getBehavior()))
+        .map(new MapFunction<UserBehavior, Tuple2<Integer, Long>>() {
+          @Override
+          public Tuple2<Integer, Long> map(UserBehavior value) throws Exception {
+            Random random = new Random();
+            return new Tuple2<>(random.nextInt(10), 1L);
+          }
+        })
+        .keyBy(data -> data.f0)
+        .window(TumblingEventTimeWindows.of(Time.hours(1)))
+        .aggregate(new PvCountAgg(), new PvCountResult());
+  
+      // 将各分区数据汇总起来
+      DataStream<PageViewCount> pvResultStream = pvStream
+        .keyBy(PageViewCount::getWindowEnd)
+        .process(new TotalPvCount());
+      //                .sum("count");
+  
+      pvResultStream.print();
+  
+      env.execute("pv count job");
+    }
+  
+    // 实现自定义预聚合函数
+    public static class PvCountAgg implements AggregateFunction<Tuple2<Integer, Long>, Long, Long> {
+      @Override
+      public Long createAccumulator() {
+        return 0L;
+      }
+  
+      @Override
+      public Long add(Tuple2<Integer, Long> value, Long accumulator) {
+        return accumulator + 1;
+      }
+  
+      @Override
+      public Long getResult(Long accumulator) {
+        return accumulator;
+      }
+  
+      @Override
+      public Long merge(Long a, Long b) {
+        return a + b;
+      }
+    }
+  
+    // 实现自定义窗口
+    public static class PvCountResult implements WindowFunction<Long, PageViewCount, Integer, TimeWindow> {
+      @Override
+      public void apply(Integer integer, TimeWindow window, Iterable<Long> input, Collector<PageViewCount> out) throws Exception {
+        out.collect( new PageViewCount(integer.toString(), window.getEnd(), input.iterator().next()) );
+      }
+    }
+  
+    // 实现自定义处理函数，把相同窗口分组统计的count值叠加
+    public static class TotalPvCount extends KeyedProcessFunction<Long, PageViewCount, PageViewCount> {
+      // 定义状态，保存当前的总count值
+      ValueState<Long> totalCountState;
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        totalCountState = getRuntimeContext().getState(new ValueStateDescriptor<Long>("total-count", Long.class));
+      }
+  
+      @Override
+      public void processElement(PageViewCount value, Context ctx, Collector<PageViewCount> out) throws Exception {
+        Long totalCount = totalCountState.value();
+        if(null == totalCount){
+          totalCount = 0L;
+          totalCountState.update(totalCount);
+        }
+        totalCountState.update( totalCount + value.getCount() );
+        ctx.timerService().registerEventTimeTimer(value.getWindowEnd() + 1);
+      }
+  
+      @Override
+      public void onTimer(long timestamp, OnTimerContext ctx, Collector<PageViewCount> out) throws Exception {
+        // 定时器触发，所有分组count值都到齐，直接输出当前的总count数量
+        Long totalCount = totalCountState.value();
+        out.collect(new PageViewCount("pv", ctx.getCurrentKey(), totalCount));
+        // 清空状态
+        totalCountState.clear();
+      }
+    }
+  }
+  
+  ```
+
++ 输出
+
+  ```shell
+  2> PageViewCount{url='pv', windowEnd=1511661600000, count=41890}
+  2> PageViewCount{url='pv', windowEnd=1511679600000, count=50838}
+  1> PageViewCount{url='pv', windowEnd=1511676000000, count=48649}
+  4> PageViewCount{url='pv', windowEnd=1511668800000, count=47298}
+  2> PageViewCount{url='pv', windowEnd=1511686800000, count=52552}
+  4> PageViewCount{url='pv', windowEnd=1511672400000, count=44499}
+  3> PageViewCount{url='pv', windowEnd=1511665200000, count=48022}
+  4> PageViewCount{url='pv', windowEnd=1511683200000, count=52296}
+  2> PageViewCount{url='pv', windowEnd=1511690400000, count=48292}
+  3> PageViewCount{url='pv', windowEnd=1511694000000, count=13}
+  ```
+
+#### 代码3-UV统计-Set去重
+
++ java代码
+
+  ```java
+  import beans.PageViewCount;
+  import beans.UserBehavior;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.functions.windowing.AllWindowFunction;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.Collector;
+  
+  import java.net.URL;
+  import java.util.HashSet;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/5 3:51 AM
+   */
+  public class UniqueVisitor {
+    public static void main(String[] args) throws Exception {
+      // 1. 创建执行环境
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      // 设置并行度为1
+      env.setParallelism(1);
+  
+      // 2. 从csv文件中获取数据
+      URL resource = UniqueVisitor.class.getResource("/UserBehavior.csv");
+      DataStream<String> inputStream = env.readTextFile(resource.getPath());
+  
+      // 3. 转换成POJO,分配时间戳和watermark
+      DataStream<UserBehavior> dataStream = inputStream.map(line -> {
+        String[] fields = line.split(",");
+        return new UserBehavior(new Long(fields[0]), new Long(fields[1]), new Integer(fields[2]), fields[3], new Long(fields[4]));
+      }).assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+        new BoundedOutOfOrdernessTimestampExtractor<UserBehavior>(Time.of(200, TimeUnit.MILLISECONDS)) {
+          @Override
+          public long extractTimestamp(UserBehavior element) {
+            return element.getTimestamp() * 1000L;
+          }
+        }
+      ));
+  
+      // 开窗统计uv值
+      SingleOutputStreamOperator<PageViewCount> uvStream = dataStream.filter(data -> "pv".equals(data.getBehavior()))
+        .timeWindowAll(Time.hours(1))
+        .apply(new UvCountResult());
+  
+      uvStream.print();
+  
+  
+      env.execute("uv count job");
+    }
+  
+    // 实现自定义全窗口函数
+    public static class UvCountResult implements AllWindowFunction<UserBehavior, PageViewCount, TimeWindow> {
+      @Override
+      public void apply(TimeWindow window, Iterable<UserBehavior> values, Collector<PageViewCount> out) throws Exception {
+        // 定义一个Set结构，保存窗口中的所有userId，自动去重
+        HashSet<Long> uidSet = new HashSet<>();
+        for (UserBehavior ub : values) {
+          uidSet.add(ub.getUerId());
+        }
+        out.collect(new PageViewCount("uv", window.getEnd(), (long) uidSet.size()));
+      }
+    }
+  }
+  ```
+
++ 输出
+
+  ```shell
+  PageViewCount{url='uv', windowEnd=1511661600000, count=28196}
+  PageViewCount{url='uv', windowEnd=1511665200000, count=32160}
+  PageViewCount{url='uv', windowEnd=1511668800000, count=32233}
+  PageViewCount{url='uv', windowEnd=1511672400000, count=30615}
+  PageViewCount{url='uv', windowEnd=1511676000000, count=32747}
+  PageViewCount{url='uv', windowEnd=1511679600000, count=33898}
+  PageViewCount{url='uv', windowEnd=1511683200000, count=34631}
+  PageViewCount{url='uv', windowEnd=1511686800000, count=34746}
+  PageViewCount{url='uv', windowEnd=1511690400000, count=32356}
+  PageViewCount{url='uv', windowEnd=1511694000000, count=13}
+  ```
+
+#### 代码4-UV统计-布隆过滤器
+
++ java代码
+
+  ```java
+  import beans.PageViewCount;
+  import beans.UserBehavior;
+  import org.apache.flink.configuration.Configuration;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.functions.windowing.ProcessAllWindowFunction;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.api.windowing.triggers.Trigger;
+  import org.apache.flink.streaming.api.windowing.triggers.TriggerResult;
+  import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.Collector;
+  import redis.clients.jedis.Jedis;
+  
+  import java.net.URL;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/5 4:03 AM
+   */
+  public class UvWithBloomFilter {
+    public static void main(String[] args) throws Exception {
+      // 1. 创建执行环境
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      // 设置并行度为1
+      env.setParallelism(1);
+  
+      // 2. 从csv文件中获取数据
+      URL resource = UniqueVisitor.class.getResource("/UserBehavior.csv");
+      DataStream<String> inputStream = env.readTextFile(resource.getPath());
+  
+      // 3. 转换成POJO,分配时间戳和watermark
+      DataStream<UserBehavior> dataStream = inputStream.map(line -> {
+        String[] fields = line.split(",");
+        return new UserBehavior(new Long(fields[0]), new Long(fields[1]), new Integer(fields[2]), fields[3], new Long(fields[4]));
+      }).assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+        new BoundedOutOfOrdernessTimestampExtractor<UserBehavior>(Time.of(200, TimeUnit.MILLISECONDS)) {
+          @Override
+          public long extractTimestamp(UserBehavior element) {
+            return element.getTimestamp() * 1000L;
+          }
+        }
+      ));
+  
+      // 开窗统计uv值
+      SingleOutputStreamOperator<PageViewCount> uvStream = dataStream
+        .filter(data -> "pv".equals(data.getBehavior()))
+        .timeWindowAll(Time.hours(1))
+        .trigger(new MyTrigger())
+        .process(new UvCountResultWithBloomFliter());
+  
+  
+      uvStream.print();
+  
+      env.execute("uv count with bloom filter job");
+    }
+  
+    // 自定义触发器
+    public static class MyTrigger extends Trigger<UserBehavior, TimeWindow> {
+      @Override
+      public TriggerResult onElement(UserBehavior element, long timestamp, TimeWindow window, TriggerContext ctx) throws Exception {
+        // 每一条数据来到，直接触发窗口计算，并且直接清空窗口
+        return TriggerResult.FIRE_AND_PURGE;
+      }
+  
+      @Override
+      public TriggerResult onProcessingTime(long time, TimeWindow window, TriggerContext ctx) throws Exception {
+        return TriggerResult.CONTINUE;
+      }
+  
+      @Override
+      public TriggerResult onEventTime(long time, TimeWindow window, TriggerContext ctx) throws Exception {
+        return TriggerResult.CONTINUE;
+      }
+  
+      @Override
+      public void clear(TimeWindow window, TriggerContext ctx) throws Exception {
+      }
+    }
+  
+    // 自定义一个布隆过滤器
+    public static class MyBloomFilter {
+      // 定义位图的大小，一般需要定义为2的整次幂
+      private Integer cap;
+  
+      public MyBloomFilter(Integer cap) {
+        this.cap = cap;
+      }
+  
+      // 实现一个hash函数
+      public Long hashCode(String value, Integer seed) {
+        Long result = 0L;
+        for (int i = 0; i < value.length(); i++) {
+          result = result * seed + value.charAt(i);
+        }
+        return result & (cap - 1);
+      }
+    }
+  
+    // 实现自定义的处理函数
+    public static class UvCountResultWithBloomFliter extends ProcessAllWindowFunction<UserBehavior, PageViewCount, TimeWindow> {
+      // 定义jedis连接和布隆过滤器
+      Jedis jedis;
+      MyBloomFilter myBloomFilter;
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        jedis = new Jedis("localhost", 6379);
+        myBloomFilter = new MyBloomFilter(1 << 29);    // 要处理1亿个数据，用64MB大小的位图
+      }
+  
+      @Override
+      public void process(Context context, Iterable<UserBehavior> elements, Collector<PageViewCount> out) throws Exception {
+        // 将位图和窗口count值全部存入redis，用windowEnd作为key
+        Long windowEnd = context.window().getEnd();
+        String bitmapKey = windowEnd.toString();
+        // 把count值存成一张hash表
+        String countHashName = "uv_count";
+        String countKey = windowEnd.toString();
+  
+        // 1. 取当前的userId
+        Long userId = elements.iterator().next().getUerId();
+  
+        // 2. 计算位图中的offset
+        Long offset = myBloomFilter.hashCode(userId.toString(), 61);
+  
+        // 3. 用redis的getbit命令，判断对应位置的值
+        Boolean isExist = jedis.getbit(bitmapKey, offset);
+  
+        if (!isExist) {
+          // 如果不存在，对应位图位置置1
+          jedis.setbit(bitmapKey, offset, true);
+  
+          // 更新redis中保存的count值
+          Long uvCount = 0L;    // 初始count值
+          String uvCountString = jedis.hget(countHashName, countKey);
+          if (uvCountString != null && !"".equals(uvCountString)) {
+            uvCount = Long.valueOf(uvCountString);
+          }
+          jedis.hset(countHashName, countKey, String.valueOf(uvCount + 1));
+  
+          out.collect(new PageViewCount("uv", windowEnd, uvCount + 1));
+        }
+      }
+  
+      @Override
+      public void close() throws Exception {
+        jedis.close();
+      }
+    }
+  }
+  
+  ```
+
++ 输出
+
+  ```shell
+  ....
+  PageViewCount{url='uv', windowEnd=1511661600000, count=7469}
+  PageViewCount{url='uv', windowEnd=1511661600000, count=7470}
+  PageViewCount{url='uv', windowEnd=1511661600000, count=7471}
+  PageViewCount{url='uv', windowEnd=1511661600000, count=7472}
+  PageViewCount{url='uv', windowEnd=1511661600000, count=7473}
+  PageViewCount{url='uv', windowEnd=1511661600000, count=7474}
+  ...
+  ```
 
 ### 14.3.4 市场营销分析——APP市场推广统计
 
