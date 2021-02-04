@@ -4448,6 +4448,11 @@ sensor_1,1547718207,36.3
 
 ## 9.3 侧输出流（SideOutput）
 
++ **一个数据可以被多个window包含，只有其不被任何window包含的时候(包含该数据的所有window都关闭之后)，才会被丢到侧输出流。**
++ **简言之，如果一个数据被丢到侧输出流，那么所有包含该数据的window都由于已经超过了"允许的迟到时间"而关闭了，进而新来的迟到数据只能被丢到侧输出流！**
+
+----
+
 + 大部分的DataStream API 的算子的输出是单一输出，也就是某种数据类型的流。除了split 算子，可以将一条流分成多条流，这些流的数据类型也都相同。
 
 + **processfunction 的side outputs 功能可以产生多条流，并且这些流的数据类型可以不一样。**
@@ -7754,10 +7759,6 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
   ....
   ```
 
-  
-
-  
-
 ### 14.3.2 实时流量统计——热门页面
 
 + 基本需求
@@ -7766,6 +7767,715 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
 + 解决思路1
   + 将apache服务器日志中的时间，转换为时间戳，作为Event Time
   + 构建滑动窗口，窗口长度为1分钟，滑动距离为5秒
+
+#### 代码1-文件
+
++ Java代码
+
+  ```java
+  import beans.ApacheLogEvent;
+  import beans.PageViewCount;
+  import org.apache.commons.compress.utils.Lists;
+  import org.apache.flink.api.common.functions.AggregateFunction;
+  import org.apache.flink.api.common.state.ListState;
+  import org.apache.flink.api.common.state.ListStateDescriptor;
+  import org.apache.flink.configuration.Configuration;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
+  import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.Collector;
+  
+  import java.net.URL;
+  import java.sql.Timestamp;
+  import java.text.SimpleDateFormat;
+  import java.util.ArrayList;
+  import java.util.concurrent.TimeUnit;
+  import java.util.regex.Pattern;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/5 1:27 AM
+   */
+  public class HotPages {
+    public static void main(String[] args) throws Exception {
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 读取文件，转换成POJO
+      URL resource = HotPages.class.getResource("/apache.log");
+      DataStream<String> inputStream = env.readTextFile(resource.getPath());
+  
+      DataStream<ApacheLogEvent> dataStream = inputStream
+        .map(line -> {
+          String[] fields = line.split(" ");
+          SimpleDateFormat simpleDateFormat = new SimpleDateFormat("dd/MM/yyyy:HH:mm:ss");
+          Long timestamp = simpleDateFormat.parse(fields[3]).getTime();
+          return new ApacheLogEvent(fields[0], fields[1], timestamp, fields[5], fields[6]);
+        })
+        .assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+          new BoundedOutOfOrdernessTimestampExtractor<ApacheLogEvent>(Time.of(1, TimeUnit.SECONDS)) {
+            @Override
+            public long extractTimestamp(ApacheLogEvent element) {
+              return element.getTimestamp();
+            }
+          }
+        ));
+  
+      // 分组开窗聚合
+      SingleOutputStreamOperator<PageViewCount> windowAggStream = dataStream
+        // 过滤get请求
+        .filter(data -> "GET".equals(data.getMethod()))
+        .filter(data -> {
+          String regex = "^((?!\\.(css|js|png|ico)$).)*$";
+          return Pattern.matches(regex, data.getUrl());
+        })
+        // 按照url分组
+        .keyBy(ApacheLogEvent::getUrl)
+        .window(SlidingEventTimeWindows.of(Time.minutes(10), Time.seconds(5)))
+        .aggregate(new PageCountAgg(), new PageCountResult());
+  
+  
+      // 收集同一窗口count数据，排序输出
+      DataStream<String> resultStream = windowAggStream
+        .keyBy(PageViewCount::getWindowEnd)
+        .process(new TopNHotPages(3));
+  
+      resultStream.print();
+  
+      env.execute("hot pages job");
+    }
+  
+    // 自定义预聚合函数
+    public static class PageCountAgg implements AggregateFunction<ApacheLogEvent, Long, Long> {
+      @Override
+      public Long createAccumulator() {
+        return 0L;
+      }
+  
+      @Override
+      public Long add(ApacheLogEvent value, Long accumulator) {
+        return accumulator + 1;
+      }
+  
+      @Override
+      public Long getResult(Long accumulator) {
+        return accumulator;
+      }
+  
+      @Override
+      public Long merge(Long a, Long b) {
+        return a + b;
+      }
+    }
+  
+    // 实现自定义的窗口函数
+    public static class PageCountResult implements WindowFunction<Long, PageViewCount, String, TimeWindow> {
+      @Override
+      public void apply(String url, TimeWindow window, Iterable<Long> input, Collector<PageViewCount> out) throws Exception {
+        out.collect(new PageViewCount(url, window.getEnd(), input.iterator().next()));
+      }
+    }
+  
+    // 实现自定义的处理函数
+    public static class TopNHotPages extends KeyedProcessFunction<Long, PageViewCount, String> {
+      private Integer topSize;
+  
+      public TopNHotPages(Integer topSize) {
+        this.topSize = topSize;
+      }
+  
+      // 定义状态，保存当前所有PageViewCount到list中
+      ListState<PageViewCount> pageViewCountListState;
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        pageViewCountListState = getRuntimeContext().getListState(new ListStateDescriptor<PageViewCount>("page-count-list", PageViewCount.class));
+      }
+  
+      @Override
+      public void processElement(PageViewCount value, Context ctx, Collector<String> out) throws Exception {
+        pageViewCountListState.add(value);
+        ctx.timerService().registerEventTimeTimer(value.getWindowEnd() + 1);
+      }
+  
+      @Override
+      public void onTimer(long timestamp, OnTimerContext ctx, Collector<String> out) throws Exception {
+        ArrayList<PageViewCount> pageViewCounts = Lists.newArrayList(pageViewCountListState.get().iterator());
+  
+        pageViewCounts.sort((a, b) -> -Long.compare(a.getCount(), b.getCount()));
+  
+        // 格式化成String输出
+        StringBuilder resultBuilder = new StringBuilder();
+        resultBuilder.append("============================").append(System.lineSeparator());
+        resultBuilder.append("窗口结束时间：").append(new Timestamp(timestamp - 1)).append(System.lineSeparator());
+  
+        // 遍历列表，取top n输出
+        for (int i = 0; i < Math.min(topSize, pageViewCounts.size()); i++) {
+          PageViewCount pageViewCount = pageViewCounts.get(i);
+          resultBuilder.append("NO ").append(i + 1).append(":")
+            .append(" 页面URL = ").append(pageViewCount.getUrl())
+            .append(" 浏览量 = ").append(pageViewCount.getCount())
+            .append(System.lineSeparator());
+        }
+        resultBuilder.append("===============================").append(System.lineSeparator());
+  
+        // 控制输出频率
+        Thread.sleep(1000L);
+  
+        out.collect(resultBuilder.toString());
+      }
+    }
+  }
+  ```
+
++ 输出结果
+
+  ```shell
+  ....
+  
+  ============================
+  窗口结束时间：2015-05-17 10:05:25.0
+  NO 1: 页面URL = /blog/tags/puppet?flav=rss20 浏览量 = 2
+  NO 2: 页面URL = /blog/geekery/eventdb-ideas.html 浏览量 = 1
+  NO 3: 页面URL = /blog/geekery/installing-windows-8-consumer-preview.html 浏览量 = 1
+  ===============================
+  
+  ============================
+  窗口结束时间：2015-05-17 10:05:30.0
+  NO 1: 页面URL = /blog/tags/puppet?flav=rss20 浏览量 = 2
+  NO 2: 页面URL = /blog/geekery/eventdb-ideas.html 浏览量 = 1
+  NO 3: 页面URL = /blog/geekery/installing-windows-8-consumer-preview.html 浏览量 = 1
+  ===============================
+  
+  ============================
+  窗口结束时间：2015-05-17 10:05:35.0
+  NO 1: 页面URL = /blog/tags/puppet?flav=rss20 浏览量 = 2
+  NO 2: 页面URL = /blog/tags/firefox?flav=rss20 浏览量 = 2
+  NO 3: 页面URL = /blog/geekery/eventdb-ideas.html 浏览量 = 1
+  ===============================
+  
+  ....
+  ```
+
+#### 代码2-乱序数据测试
+
++ java代码
+
+  ```java
+  import beans.ApacheLogEvent;
+  import beans.PageViewCount;
+  import org.apache.commons.compress.utils.Lists;
+  import org.apache.flink.api.common.functions.AggregateFunction;
+  import org.apache.flink.api.common.state.ListState;
+  import org.apache.flink.api.common.state.ListStateDescriptor;
+  import org.apache.flink.configuration.Configuration;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
+  import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.Collector;
+  import org.apache.flink.util.OutputTag;
+  
+  import java.net.URL;
+  import java.sql.Timestamp;
+  import java.text.SimpleDateFormat;
+  import java.util.ArrayList;
+  import java.util.concurrent.TimeUnit;
+  import java.util.regex.Pattern;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/5 1:27 AM
+   */
+  public class HotPages {
+    public static void main(String[] args) throws Exception {
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 读取文件，转换成POJO
+      //        URL resource = HotPages.class.getResource("/apache.log");
+      //        DataStream<String> inputStream = env.readTextFile(resource.getPath());
+  
+      // 方便测试，使用本地Socket输入数据
+      DataStream<String> inputStream = env.socketTextStream("localhost", 7777);
+  
+  
+      DataStream<ApacheLogEvent> dataStream = inputStream
+        .map(line -> {
+          String[] fields = line.split(" ");
+          SimpleDateFormat simpleDateFormat = new SimpleDateFormat("dd/MM/yyyy:HH:mm:ss");
+          Long timestamp = simpleDateFormat.parse(fields[3]).getTime();
+          return new ApacheLogEvent(fields[0], fields[1], timestamp, fields[5], fields[6]);
+        })
+        .assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+          new BoundedOutOfOrdernessTimestampExtractor<ApacheLogEvent>(Time.of(1, TimeUnit.SECONDS)) {
+            @Override
+            public long extractTimestamp(ApacheLogEvent element) {
+              return element.getTimestamp();
+            }
+          }
+        ));
+  
+      dataStream.print("data");
+  
+  
+      // 定义一个侧输出流标签
+      OutputTag<ApacheLogEvent> lateTag = new OutputTag<ApacheLogEvent>("late"){};
+  
+      // 分组开窗聚合
+      SingleOutputStreamOperator<PageViewCount> windowAggStream = dataStream
+        // 过滤get请求
+        .filter(data -> "GET".equals(data.getMethod()))
+        .filter(data -> {
+          String regex = "^((?!\\.(css|js|png|ico)$).)*$";
+          return Pattern.matches(regex, data.getUrl());
+        })
+        // 按照url分组
+        .keyBy(ApacheLogEvent::getUrl)
+        .window(SlidingEventTimeWindows.of(Time.minutes(10), Time.seconds(5)))
+        .allowedLateness(Time.minutes(1))
+        .sideOutputLateData(lateTag)
+        .aggregate(new PageCountAgg(), new PageCountResult());
+  
+  
+      windowAggStream.print("agg");
+      windowAggStream.getSideOutput(lateTag).print("late");
+  
+  
+      // 收集同一窗口count数据，排序输出
+      DataStream<String> resultStream = windowAggStream
+        .keyBy(PageViewCount::getWindowEnd)
+        .process(new TopNHotPages(3));
+  
+      resultStream.print();
+  
+      env.execute("hot pages job");
+    }
+  
+    // 自定义预聚合函数
+    public static class PageCountAgg implements AggregateFunction<ApacheLogEvent, Long, Long> {
+      @Override
+      public Long createAccumulator() {
+        return 0L;
+      }
+  
+      @Override
+      public Long add(ApacheLogEvent value, Long accumulator) {
+        return accumulator + 1;
+      }
+  
+      @Override
+      public Long getResult(Long accumulator) {
+        return accumulator;
+      }
+  
+      @Override
+      public Long merge(Long a, Long b) {
+        return a + b;
+      }
+    }
+  
+    // 实现自定义的窗口函数
+    public static class PageCountResult implements WindowFunction<Long, PageViewCount, String, TimeWindow> {
+      @Override
+      public void apply(String url, TimeWindow window, Iterable<Long> input, Collector<PageViewCount> out) throws Exception {
+        out.collect(new PageViewCount(url, window.getEnd(), input.iterator().next()));
+      }
+    }
+  
+    // 实现自定义的处理函数
+    public static class TopNHotPages extends KeyedProcessFunction<Long, PageViewCount, String> {
+      private Integer topSize;
+  
+      public TopNHotPages(Integer topSize) {
+        this.topSize = topSize;
+      }
+  
+      // 定义状态，保存当前所有PageViewCount到list中
+      ListState<PageViewCount> pageViewCountListState;
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        pageViewCountListState = getRuntimeContext().getListState(new ListStateDescriptor<PageViewCount>("page-count-list", PageViewCount.class));
+      }
+  
+      @Override
+      public void processElement(PageViewCount value, Context ctx, Collector<String> out) throws Exception {
+        pageViewCountListState.add(value);
+        ctx.timerService().registerEventTimeTimer(value.getWindowEnd() + 1);
+      }
+  
+      @Override
+      public void onTimer(long timestamp, OnTimerContext ctx, Collector<String> out) throws Exception {
+        ArrayList<PageViewCount> pageViewCounts = Lists.newArrayList(pageViewCountListState.get().iterator());
+  
+        pageViewCounts.sort((a, b) -> -Long.compare(a.getCount(), b.getCount()));
+  
+        // 格式化成String输出
+        StringBuilder resultBuilder = new StringBuilder();
+        resultBuilder.append("============================").append(System.lineSeparator());
+        resultBuilder.append("窗口结束时间：").append(new Timestamp(timestamp - 1)).append(System.lineSeparator());
+  
+        // 遍历列表，取top n输出
+        for (int i = 0; i < Math.min(topSize, pageViewCounts.size()); i++) {
+          PageViewCount pageViewCount = pageViewCounts.get(i);
+          resultBuilder.append("NO ").append(i + 1).append(":")
+            .append(" 页面URL = ").append(pageViewCount.getUrl())
+            .append(" 浏览量 = ").append(pageViewCount.getCount())
+            .append(System.lineSeparator());
+        }
+        resultBuilder.append("===============================").append(System.lineSeparator());
+  
+        // 控制输出频率
+        Thread.sleep(1000L);
+  
+        out.collect(resultBuilder.toString());
+  
+        pageViewCountListState.clear();
+      }
+    }
+  }
+  ```
+
++ 启动本地socket
+
+  ```shell
+  nc -lk 7777
+  ```
+
++ 在本地socket输入数据，查看输出
+
+  + 输入
+
+    ```shell
+    83.149.9.216 - - 17/05/2015:10:25:49 +0000 GET /presentations/
+    83.149.9.216 - - 17/05/2015:10:25:50 +0000 GET /presentations/
+    83.149.9.216 - - 17/05/2015:10:25:51 +0000 GET /presentations/
+    83.149.9.216 - - 17/05/2015:10:25:52 +0000 GET /presentations/
+    83.149.9.216 - - 17/05/2015:10:25:55 +0000 GET /presentations/
+    83.149.9.216 - - 17/05/2015:10:25:56 +0000 GET /presentations/
+    83.149.9.216 - - 17/05/2015:10:25:56 +0000 GET /present
+    83.149.9.216 - - 17/05/2015:10:25:57 +0000 GET /present
+    83.149.9.216 - - 17/05/2015:10:26:01 +0000 GET /
+    83.149.9.216 - - 17/05/2015:10:26:02 +0000 GET /pre
+    83.149.9.216 - - 17/05/2015:10:25:46 +0000 GET /presentations/
+    83.149.9.216 - - 17/05/2015:10:26:02 +0000 GET /pre
+    83.149.9.216 - - 17/05/2015:10:26:03 +0000 GET /pre
+    ```
+
+  + 输出
+
+    *由于`onTimer`简单粗暴直接`pageViewCountListState.clear();`导致前面几次排名信息中丢失第一名以外的数据 => 下面代码3-乱序数据代码改进 中解决问题*
+
+    ```shell
+    data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829549000, method='GET', url='/presentations/'}
+    data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829550000, method='GET', url='/presentations/'}
+    data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829551000, method='GET', url='/presentations/'}
+    data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829552000, method='GET', url='/presentations/'}
+    data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829555000, method='GET', url='/presentations/'}
+    data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829556000, method='GET', url='/presentations/'}
+    data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829556000, method='GET', url='/present'}
+    data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829557000, method='GET', url='/present'}
+    data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829561000, method='GET', url='/'}
+    data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829562000, method='GET', url='/pre'}
+    data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829546000, method='GET', url='/presentations/'}
+    data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829562000, method='GET', url='/pre'}
+    agg> PageViewCount{url='/presentations/', windowEnd=1431829550000, count=2}
+    agg> PageViewCount{url='/presentations/', windowEnd=1431829555000, count=5}
+    agg> PageViewCount{url='/presentations/', windowEnd=1431829560000, count=7}
+    agg> PageViewCount{url='/present', windowEnd=1431829560000, count=2}
+    ============================
+    窗口结束时间：2015-05-17 10:25:50.0
+    NO 1: 页面URL = /presentations/ 浏览量 = 2
+    ===============================
+    
+    ============================
+    窗口结束时间：2015-05-17 10:25:55.0
+    NO 1: 页面URL = /presentations/ 浏览量 = 5
+    ===============================
+    
+    ============================
+    窗口结束时间：2015-05-17 10:26:00.0
+    NO 1: 页面URL = /presentations/ 浏览量 = 7
+    NO 2: 页面URL = /present 浏览量 = 2
+    ===============================
+    ```
+
+#### 代码3-乱序数据-代码改进
+
+**一个数据只有不属于任何窗口了，才会被丢进侧输出流！**
+
+---
+
++ java代码
+
+  ```java
+  import beans.ApacheLogEvent;
+  import beans.PageViewCount;
+  import org.apache.commons.compress.utils.Lists;
+  import org.apache.flink.api.common.functions.AggregateFunction;
+  import org.apache.flink.api.common.state.MapState;
+  import org.apache.flink.api.common.state.MapStateDescriptor;
+  import org.apache.flink.configuration.Configuration;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
+  import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.Collector;
+  import org.apache.flink.util.OutputTag;
+  
+  import java.sql.Timestamp;
+  import java.text.SimpleDateFormat;
+  import java.util.ArrayList;
+  import java.util.Map;
+  import java.util.concurrent.TimeUnit;
+  import java.util.regex.Pattern;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/5 1:27 AM
+   */
+  public class HotPages {
+    public static void main(String[] args) throws Exception {
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 读取文件，转换成POJO
+      //        URL resource = HotPages.class.getResource("/apache.log");
+      //        DataStream<String> inputStream = env.readTextFile(resource.getPath());
+  
+      // 方便测试，使用本地Socket输入数据
+      DataStream<String> inputStream = env.socketTextStream("localhost", 7777);
+  
+  
+      DataStream<ApacheLogEvent> dataStream = inputStream
+        .map(line -> {
+          String[] fields = line.split(" ");
+          SimpleDateFormat simpleDateFormat = new SimpleDateFormat("dd/MM/yyyy:HH:mm:ss");
+          Long timestamp = simpleDateFormat.parse(fields[3]).getTime();
+          return new ApacheLogEvent(fields[0], fields[1], timestamp, fields[5], fields[6]);
+        })
+        .assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+          new BoundedOutOfOrdernessTimestampExtractor<ApacheLogEvent>(Time.of(1, TimeUnit.SECONDS)) {
+            @Override
+            public long extractTimestamp(ApacheLogEvent element) {
+              return element.getTimestamp();
+            }
+          }
+        ));
+  
+      dataStream.print("data");
+  
+  
+      // 定义一个侧输出流标签
+      OutputTag<ApacheLogEvent> lateTag = new OutputTag<ApacheLogEvent>("late") {
+      };
+  
+      // 分组开窗聚合
+      SingleOutputStreamOperator<PageViewCount> windowAggStream = dataStream
+        // 过滤get请求
+        .filter(data -> "GET".equals(data.getMethod()))
+        .filter(data -> {
+          String regex = "^((?!\\.(css|js|png|ico)$).)*$";
+          return Pattern.matches(regex, data.getUrl());
+        })
+        // 按照url分组
+        .keyBy(ApacheLogEvent::getUrl)
+        .window(SlidingEventTimeWindows.of(Time.minutes(10), Time.seconds(5)))
+        .allowedLateness(Time.minutes(1))
+        .sideOutputLateData(lateTag)
+        .aggregate(new PageCountAgg(), new PageCountResult());
+  
+  
+      windowAggStream.print("agg");
+      windowAggStream.getSideOutput(lateTag).print("late");
+  
+  
+      // 收集同一窗口count数据，排序输出
+      DataStream<String> resultStream = windowAggStream
+        .keyBy(PageViewCount::getWindowEnd)
+        .process(new TopNHotPages(3));
+  
+      resultStream.print();
+  
+      env.execute("hot pages job");
+    }
+  
+    // 自定义预聚合函数
+    public static class PageCountAgg implements AggregateFunction<ApacheLogEvent, Long, Long> {
+      @Override
+      public Long createAccumulator() {
+        return 0L;
+      }
+  
+      @Override
+      public Long add(ApacheLogEvent value, Long accumulator) {
+        return accumulator + 1;
+      }
+  
+      @Override
+      public Long getResult(Long accumulator) {
+        return accumulator;
+      }
+  
+      @Override
+      public Long merge(Long a, Long b) {
+        return a + b;
+      }
+    }
+  
+    // 实现自定义的窗口函数
+    public static class PageCountResult implements WindowFunction<Long, PageViewCount, String, TimeWindow> {
+      @Override
+      public void apply(String url, TimeWindow window, Iterable<Long> input, Collector<PageViewCount> out) throws Exception {
+        out.collect(new PageViewCount(url, window.getEnd(), input.iterator().next()));
+      }
+    }
+  
+    // 实现自定义的处理函数
+    public static class TopNHotPages extends KeyedProcessFunction<Long, PageViewCount, String> {
+      private Integer topSize;
+  
+      public TopNHotPages(Integer topSize) {
+        this.topSize = topSize;
+      }
+  
+      // 定义状态，保存当前所有PageViewCount到Map中
+      //        ListState<PageViewCount> pageViewCountListState;
+      MapState<String, Long> pageViewCountMapState;
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        //            pageViewCountListState = getRuntimeContext().getListState(new ListStateDescriptor<PageViewCount>("page-count-list", PageViewCount.class));
+        pageViewCountMapState = getRuntimeContext().getMapState(new MapStateDescriptor<String, Long>("page-count-map", String.class, Long.class));
+      }
+  
+      @Override
+      public void processElement(PageViewCount value, Context ctx, Collector<String> out) throws Exception {
+        //            pageViewCountListState.add(value);
+        pageViewCountMapState.put(value.getUrl(), value.getCount());
+        ctx.timerService().registerEventTimeTimer(value.getWindowEnd() + 1);
+        // 注册一个1分钟之后的定时器，用来清空状态
+        ctx.timerService().registerEventTimeTimer(value.getWindowEnd() + 60 * 1000L);
+      }
+  
+  
+      @Override
+      public void onTimer(long timestamp, OnTimerContext ctx, Collector<String> out) throws Exception {
+        // 先判断是否到了窗口关闭清理时间，如果是，直接清空状态返回
+        if (timestamp == ctx.getCurrentKey() + 60 * 1000L) {
+          pageViewCountMapState.clear();
+          return;
+        }
+  
+  
+        //            ArrayList<PageViewCount> pageViewCounts = Lists.newArrayList(pageViewCountListState.get().iterator());
+        ArrayList<Map.Entry<String, Long>> pageViewCounts = Lists.newArrayList(pageViewCountMapState.entries().iterator());
+  
+        pageViewCounts.sort((a, b) -> -Long.compare(a.getValue(), b.getValue()));
+  
+        // 格式化成String输出
+        StringBuilder resultBuilder = new StringBuilder();
+        resultBuilder.append("============================").append(System.lineSeparator());
+        resultBuilder.append("窗口结束时间：").append(new Timestamp(timestamp - 1)).append(System.lineSeparator());
+  
+        // 遍历列表，取top n输出
+        for (int i = 0; i < Math.min(topSize, pageViewCounts.size()); i++) {
+          //                PageViewCount pageViewCount = pageViewCounts.get(i);
+          Map.Entry<String, Long> pageViewCount = pageViewCounts.get(i);
+          resultBuilder.append("NO ").append(i + 1).append(":")
+            .append(" 页面URL = ").append(pageViewCount.getKey())
+            .append(" 浏览量 = ").append(pageViewCount.getValue())
+            .append(System.lineSeparator());
+        }
+        resultBuilder.append("===============================").append(System.lineSeparator());
+  
+        // 控制输出频率
+        Thread.sleep(1000L);
+  
+        out.collect(resultBuilder.toString());
+  
+  
+        //            pageViewCountListState.clear();
+      }
+    }
+  }
+  
+  ```
+
++ 输入
+
+  ```shell
+  83.149.9.216 - - 17/05/2015:10:25:49 +0000 GET /presentations/
+  83.149.9.216 - - 17/05/2015:10:25:50 +0000 GET /presentations/
+  83.149.9.216 - - 17/05/2015:10:25:51 +0000 GET /presentations/
+  83.149.9.216 - - 17/05/2015:10:25:52 +0000 GET /presentations/
+  83.149.9.216 - - 17/05/2015:10:25:55 +0000 GET /presentations/
+  83.149.9.216 - - 17/05/2015:10:25:56 +0000 GET /presentations/
+  83.149.9.216 - - 17/05/2015:10:25:56 +0000 GET /present
+  83.149.9.216 - - 17/05/2015:10:25:57 +0000 GET /present
+  83.149.9.216 - - 17/05/2015:10:26:01 +0000 GET /
+  83.149.9.216 - - 17/05/2015:10:26:02 +0000 GET /pre
+  83.149.9.216 - - 17/05/2015:10:25:46 +0000 GET /presentations/
+  83.149.9.216 - - 17/05/2015:10:26:03 +0000 GET /pre
+  ```
+
++ 输出
+
+  ```shell
+  data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829549000, method='GET', url='/presentations/'}
+  data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829550000, method='GET', url='/presentations/'}
+  data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829551000, method='GET', url='/presentations/'}
+  data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829552000, method='GET', url='/presentations/'}
+  data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829555000, method='GET', url='/presentations/'}
+  data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829556000, method='GET', url='/presentations/'}
+  data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829556000, method='GET', url='/present'}
+  data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829557000, method='GET', url='/present'}
+  data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829561000, method='GET', url='/'}
+  data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829562000, method='GET', url='/pre'}
+  data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829546000, method='GET', url='/presentations/'}
+  agg> PageViewCount{url='/presentations/', windowEnd=1431829550000, count=2}
+  agg> PageViewCount{url='/presentations/', windowEnd=1431829555000, count=5}
+  agg> PageViewCount{url='/presentations/', windowEnd=1431829560000, count=7}
+  agg> PageViewCount{url='/present', windowEnd=1431829560000, count=2}
+  data> ApacheLogEvent{ip='83.149.9.216', userId='-', timestamp=1431829563000, method='GET', url='/pre'}
+  ============================
+  窗口结束时间：2015-05-17 10:25:50.0
+  NO 1: 页面URL = /presentations/ 浏览量 = 2
+  ===============================
+  
+  ============================
+  窗口结束时间：2015-05-17 10:25:55.0
+  NO 1: 页面URL = /presentations/ 浏览量 = 5
+  ===============================
+  
+  ============================
+  窗口结束时间：2015-05-17 10:26:00.0
+  NO 1: 页面URL = /presentations/ 浏览量 = 7
+  NO 2: 页面URL = /present 浏览量 = 2
+  ===============================
+  ```
+
+  
 
 ### 14.3.3 实时流量统计——PV和UV
 
