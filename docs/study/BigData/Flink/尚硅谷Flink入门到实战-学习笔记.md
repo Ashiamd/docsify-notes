@@ -9827,7 +9827,450 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
   + 将用户的登录失败行为存入ListState，设定定时器2秒后出发，查看ListState中有几次失败登录
   + 更加精确的检测，可以使用CEP库实现事件流的模式匹配
 
+#### POJO
 
++ LoginEvent
+
+  ```java
+  private Long userId;
+  private String ip;
+  private String loginState;
+  private Long timestamp;
+  ```
+
++ LoginFailWarning
+
+  ```java
+  private Long userId;
+  private Long firstFailTime;
+  private Long lastFailTime;
+  private String warningMsg;
+  ```
+
+#### 代码1-简单代码实现
+
++ java代码
+
+  ```java
+  import beans.LoginEvent;
+  import beans.LoginFailWarning;
+  import org.apache.commons.compress.utils.Lists;
+  import org.apache.flink.api.common.state.ListState;
+  import org.apache.flink.api.common.state.ListStateDescriptor;
+  import org.apache.flink.api.common.state.ValueState;
+  import org.apache.flink.api.common.state.ValueStateDescriptor;
+  import org.apache.flink.configuration.Configuration;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.Collector;
+  
+  import java.net.URL;
+  import java.util.ArrayList;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/6 1:49 AM
+   */
+  public class LoginFail {
+    public static void main(String[] args) throws Exception {
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 1. 从文件中读取数据
+      URL resource = LoginFail.class.getResource("/LoginLog.csv");
+      SingleOutputStreamOperator<LoginEvent> loginEventStream = env.readTextFile(resource.getPath())
+        .map(line -> {
+          String[] fields = line.split(",");
+          return new LoginEvent(new Long(fields[0]), fields[1], fields[2], new Long(fields[3]));
+        }).assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+        new BoundedOutOfOrdernessTimestampExtractor<LoginEvent>(Time.of(3, TimeUnit.SECONDS)) {
+          @Override
+          public long extractTimestamp(LoginEvent element) {
+            return element.getTimestamp() * 1000L;
+          }
+        }
+      ));
+      // 自定义处理函数检测连续登录失败事件
+      SingleOutputStreamOperator<LoginFailWarning> warningStream = loginEventStream
+        .keyBy(LoginEvent::getUserId)
+        .process(new LoginFailDetectWarning(1));
+  
+      warningStream.print();
+  
+      env.execute("login fail detect job");
+    }
+  
+    // 实现自定义KeyedProcessFunction
+    public static class LoginFailDetectWarning extends KeyedProcessFunction<Long, LoginEvent, LoginFailWarning> {
+      // 定义属性，最大连续登录失败次数
+      private Integer maxFailTimes;
+  
+      // 定义状态：保存2秒内所有的登录失败事件
+      ListState<LoginEvent> loginFailEventListState;
+      // 定义状态：保存注册的定时器时间戳
+      ValueState<Long> timerTsState;
+  
+      public LoginFailDetectWarning(Integer maxFailTimes) {
+        this.maxFailTimes = maxFailTimes;
+      }
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        loginFailEventListState = getRuntimeContext().getListState(new ListStateDescriptor<LoginEvent>("login-fail-list", LoginEvent.class));
+        timerTsState = getRuntimeContext().getState(new ValueStateDescriptor<Long>("timer-ts", Long.class));
+      }
+  
+      @Override
+      public void onTimer(long timestamp, OnTimerContext ctx, Collector<LoginFailWarning> out) throws Exception {
+        // 定时器触发，说明2秒内没有登录成功，判读ListState中失败的个数
+        ArrayList<LoginEvent> loginFailEvents = Lists.newArrayList(loginFailEventListState.get().iterator());
+        int failTimes = loginFailEvents.size();
+  
+        if (failTimes >= maxFailTimes) {
+          // 如果超出设定的最大失败次数，输出报警
+          out.collect(new LoginFailWarning(ctx.getCurrentKey(),
+                                           loginFailEvents.get(0).getTimestamp(),
+                                           loginFailEvents.get(failTimes - 1).getTimestamp(),
+                                           "login fail in 2s for " + failTimes + " times"));
+        }
+  
+        // 清空状态
+        loginFailEventListState.clear();
+        timerTsState.clear();
+      }
+  
+      @Override
+      public void processElement(LoginEvent value, Context ctx, Collector<LoginFailWarning> out) throws Exception {
+        // 判断当前登录事件类型
+        if ("fail".equals(value.getLoginState())) {
+          // 1. 如果是失败事件，添加到表状态中
+          loginFailEventListState.add(value);
+          // 如果没有定时器，注册一个2秒之后的定时器
+          if (null == timerTsState.value()) {
+            long ts = (value.getTimestamp() + 2) * 1000L;
+            ctx.timerService().registerEventTimeTimer(ts);
+            timerTsState.update(ts);
+          } else {
+            // 2. 如果是登录成功，删除定时器，清空状态，重新开始
+            if (null != timerTsState.value()) {
+              ctx.timerService().deleteEventTimeTimer(timerTsState.value());
+            }
+            loginFailEventListState.clear();
+            timerTsState.clear();
+          }
+        }
+      }
+    }
+  }
+  ```
+
++ 输出
+
+  ```shell
+  LoginFailWarning{userId=23064, firstFailTime=1558430826, lastFailTime=1558430826, warningMsg='login fail in 2s for 1 times'}
+  LoginFailWarning{userId=5692, firstFailTime=1558430833, lastFailTime=1558430833, warningMsg='login fail in 2s for 1 times'}
+  LoginFailWarning{userId=1035, firstFailTime=1558430844, lastFailTime=1558430844, warningMsg='login fail in 2s for 1 times'}
+  LoginFailWarning{userId=76456, firstFailTime=1558430859, lastFailTime=1558430859, warningMsg='login fail in 2s for 1 times'}
+  LoginFailWarning{userId=23565, firstFailTime=1558430862, lastFailTime=1558430862, warningMsg='login fail in 2s for 1 times'}
+  ```
+
+#### 代码2-代码实效性改进
+
++ java代码
+
+  ```java
+  import beans.LoginEvent;
+  import beans.LoginFailWarning;
+  import org.apache.commons.compress.utils.Lists;
+  import org.apache.flink.api.common.state.ListState;
+  import org.apache.flink.api.common.state.ListStateDescriptor;
+  import org.apache.flink.api.common.state.ValueState;
+  import org.apache.flink.api.common.state.ValueStateDescriptor;
+  import org.apache.flink.configuration.Configuration;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.Collector;
+  
+  import java.net.URL;
+  import java.util.ArrayList;
+  import java.util.Iterator;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/6 1:49 AM
+   */
+  public class LoginFail {
+    public static void main(String[] args) throws Exception{
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 1. 从文件中读取数据
+      URL resource = LoginFail.class.getResource("/LoginLog.csv");
+      DataStream<LoginEvent> loginEventStream = env.readTextFile(resource.getPath())
+        .map(line -> {
+          String[] fields = line.split(",");
+          return new LoginEvent(new Long(fields[0]), fields[1], fields[2], new Long(fields[3]));
+        })
+        .assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+          new BoundedOutOfOrdernessTimestampExtractor<LoginEvent>(Time.of(200, TimeUnit.MILLISECONDS)) {
+            @Override
+            public long extractTimestamp(LoginEvent element) {
+              return element.getTimestamp() * 1000L;
+            }
+          }
+        ));
+  
+      // 自定义处理函数检测连续登录失败事件
+      SingleOutputStreamOperator<LoginFailWarning> warningStream = loginEventStream
+        .keyBy(LoginEvent::getUserId)
+        .process(new LoginFailDetectWarning(2));
+  
+      warningStream.print();
+  
+      env.execute("login fail detect job");
+    }
+  
+    // 实现自定义KeyedProcessFunction
+    public static class LoginFailDetectWarning0 extends KeyedProcessFunction<Long, LoginEvent, LoginFailWarning>{
+      // 定义属性，最大连续登录失败次数
+      private Integer maxFailTimes;
+  
+      public LoginFailDetectWarning0(Integer maxFailTimes) {
+        this.maxFailTimes = maxFailTimes;
+      }
+  
+      // 定义状态：保存2秒内所有的登录失败事件
+      ListState<LoginEvent> loginFailEventListState;
+      // 定义状态：保存注册的定时器时间戳
+      ValueState<Long> timerTsState;
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        loginFailEventListState = getRuntimeContext().getListState(new ListStateDescriptor<LoginEvent>("login-fail-list", LoginEvent.class));
+        timerTsState = getRuntimeContext().getState(new ValueStateDescriptor<Long>("timer-ts", Long.class));
+      }
+  
+      @Override
+      public void processElement(LoginEvent value, Context ctx, Collector<LoginFailWarning> out) throws Exception {
+        // 判断当前登录事件类型
+        if( "fail".equals(value.getLoginState()) ){
+          // 1. 如果是失败事件，添加到列表状态中
+          loginFailEventListState.add(value);
+          // 如果没有定时器，注册一个2秒之后的定时器
+          if( timerTsState.value() == null ){
+            Long ts = (value.getTimestamp() + 2) * 1000L;
+            ctx.timerService().registerEventTimeTimer(ts);
+            timerTsState.update(ts);
+          }
+        } else {
+          // 2. 如果是登录成功，删除定时器，清空状态，重新开始
+          if( timerTsState.value() != null )
+            ctx.timerService().deleteEventTimeTimer(timerTsState.value());
+          loginFailEventListState.clear();
+          timerTsState.clear();
+        }
+      }
+  
+      @Override
+      public void onTimer(long timestamp, OnTimerContext ctx, Collector<LoginFailWarning> out) throws Exception {
+        // 定时器触发，说明2秒内没有登录成功来，判断ListState中失败的个数
+        ArrayList<LoginEvent> loginFailEvents = Lists.newArrayList(loginFailEventListState.get().iterator());
+        Integer failTimes = loginFailEvents.size();
+  
+        if( failTimes >= maxFailTimes ){
+          // 如果超出设定的最大失败次数，输出报警
+          out.collect( new LoginFailWarning(ctx.getCurrentKey(),
+                                            loginFailEvents.get(0).getTimestamp(),
+                                            loginFailEvents.get(failTimes - 1).getTimestamp(),
+                                            "login fail in 2s for " + failTimes + " times") );
+        }
+  
+        // 清空状态
+        loginFailEventListState.clear();
+        timerTsState.clear();
+      }
+    }
+  
+    // 实现自定义KeyedProcessFunction
+    public static class LoginFailDetectWarning extends KeyedProcessFunction<Long, LoginEvent, LoginFailWarning> {
+      // 定义属性，最大连续登录失败次数
+      private Integer maxFailTimes;
+  
+      public LoginFailDetectWarning(Integer maxFailTimes) {
+        this.maxFailTimes = maxFailTimes;
+      }
+  
+      // 定义状态：保存2秒内所有的登录失败事件
+      ListState<LoginEvent> loginFailEventListState;
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        loginFailEventListState = getRuntimeContext().getListState(new ListStateDescriptor<LoginEvent>("login-fail-list", LoginEvent.class));
+      }
+  
+      // 以登录事件作为判断报警的触发条件，不再注册定时器
+      @Override
+      public void processElement(LoginEvent value, Context ctx, Collector<LoginFailWarning> out) throws Exception {
+        // 判断当前事件登录状态
+        if( "fail".equals(value.getLoginState()) ){
+          // 1. 如果是登录失败，获取状态中之前的登录失败事件，继续判断是否已有失败事件
+          Iterator<LoginEvent> iterator = loginFailEventListState.get().iterator();
+          if( iterator.hasNext() ){
+            // 1.1 如果已经有登录失败事件，继续判断时间戳是否在2秒之内
+            // 获取已有的登录失败事件
+            LoginEvent firstFailEvent = iterator.next();
+            if( value.getTimestamp() - firstFailEvent.getTimestamp() <= 2 ){
+              // 1.1.1 如果在2秒之内，输出报警
+              out.collect( new LoginFailWarning(value.getUserId(), firstFailEvent.getTimestamp(), value.getTimestamp(), "login fail 2 times in 2s") );
+            }
+  
+            // 不管报不报警，这次都已处理完毕，直接更新状态
+            loginFailEventListState.clear();
+            loginFailEventListState.add(value);
+          } else {
+            // 1.2 如果没有登录失败，直接将当前事件存入ListState
+            loginFailEventListState.add(value);
+          }
+        } else {
+          // 2. 如果是登录成功，直接清空状态
+          loginFailEventListState.clear();
+        }
+      }
+    }
+  }
+  ```
+
++ 输出
+
+  ```shell
+  LoginFailWarning{userId=1035, firstFailTime=1558430842, lastFailTime=1558430843, warningMsg='login fail 2 times in 2s'}
+  LoginFailWarning{userId=1035, firstFailTime=1558430843, lastFailTime=1558430844, warningMsg='login fail 2 times in 2s'}
+  ```
+
+#### 代码3-CEP代码实现
+
++ pom依赖
+
+  CEP编程
+
+  ```xml
+  <dependencies>
+    <dependency>
+      <groupId>org.apache.flink</groupId>
+      <artifactId>flink-cep_${scala.binary.version}</artifactId>
+      <version>${flink.version}</version>
+    </dependency>
+  </dependencies>
+  ```
+
++ java代码
+
+  ```java
+  import beans.LoginEvent;
+  import beans.LoginFailWarning;
+  import org.apache.flink.cep.CEP;
+  import org.apache.flink.cep.PatternSelectFunction;
+  import org.apache.flink.cep.PatternStream;
+  import org.apache.flink.cep.pattern.Pattern;
+  import org.apache.flink.cep.pattern.conditions.SimpleCondition;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  
+  import java.net.URL;
+  import java.util.List;
+  import java.util.Map;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/6 3:41 AM
+   */
+  public class LoginFailWithCep {
+  
+    public static void main(String[] args) throws Exception {
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 1. 从文件中读取数据
+      URL resource = LoginFail.class.getResource("/LoginLog.csv");
+      DataStream<LoginEvent> loginEventStream = env.readTextFile(resource.getPath())
+        .map(line -> {
+          String[] fields = line.split(",");
+          return new LoginEvent(new Long(fields[0]), fields[1], fields[2], new Long(fields[3]));
+        })
+        .assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+          new BoundedOutOfOrdernessTimestampExtractor<LoginEvent>(Time.of(200, TimeUnit.MILLISECONDS)) {
+            @Override
+            public long extractTimestamp(LoginEvent element) {
+              return element.getTimestamp() * 1000L;
+            }
+          }
+        ));
+  
+      // 1. 定义一个匹配模式
+      // firstFail -> secondFail, within 2s
+      Pattern<LoginEvent, LoginEvent> loginFailPattern = Pattern
+        .<LoginEvent>begin("firstFail").where(new SimpleCondition<LoginEvent>() {
+        @Override
+        public boolean filter(LoginEvent value) throws Exception {
+          return "fail".equals(value.getLoginState());
+        }
+      })
+        .next("secondFail").where(new SimpleCondition<LoginEvent>() {
+        @Override
+        public boolean filter(LoginEvent value) throws Exception {
+          return "fail".equals(value.getLoginState());
+        }
+      })
+        .within(Time.seconds(2));
+  
+      // 2. 将匹配模式应用到数据流上，得到一个pattern stream
+      PatternStream<LoginEvent> patternStream = CEP.pattern(loginEventStream.keyBy(LoginEvent::getUserId), loginFailPattern);
+  
+      // 3. 检出符合匹配条件的复杂事件，进行转换处理，得到报警信息
+      SingleOutputStreamOperator<LoginFailWarning> warningStream = patternStream.select(new LoginFailMatchDetectWarning());
+  
+      warningStream.print();
+  
+      env.execute("login fail detect with cep job");
+    }
+  
+    // 实现自定义的PatternSelectFunction
+    public static class LoginFailMatchDetectWarning implements PatternSelectFunction<LoginEvent, LoginFailWarning> {
+      @Override
+      public LoginFailWarning select(Map<String, List<LoginEvent>> pattern) throws Exception {
+        LoginEvent firstFailEvent = pattern.get("firstFail").iterator().next();
+        LoginEvent lastFailEvent = pattern.get("secondFail").get(0);
+        return new LoginFailWarning(firstFailEvent.getUserId(), firstFailEvent.getTimestamp(), lastFailEvent.getTimestamp(), "login fail 2 times");
+      }
+    }
+  }
+  
+  ```
+
++ 输出
+
+  ```java
+  LoginFailWarning{userId=1035, firstFailTime=1558430842, lastFailTime=1558430843, warningMsg='login fail 2 times'}
+  LoginFailWarning{userId=1035, firstFailTime=1558430843, lastFailTime=1558430844, warningMsg='login fail 2 times'}
+  ```
+
+  
 
 ### 14.3.7 订单支付实时监控
 
@@ -9846,6 +10289,224 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
 + 解决思路
   + 从两条流中分别读取订单支付信息和到账信息，合并处理
   + 用connect连接合并两条流，用coProcessFunction做匹配处理
+
+# 15. CEP
+
+> [Flink-复杂事件（CEP）](https://zhuanlan.zhihu.com/p/43448829)
+>
+> [Flink之CEP(复杂时间处理)](https://blog.csdn.net/qq_37135484/article/details/106327567)
+
+## 15.1 基本概念
+
+### 15.1.1 什么是CEP
+
++ 复杂事件处理（Complex Event Processing，CEP）
++ Flink CEP是在Flink中实现的复杂事件处理（CEP）库
++ CEP允许在**无休止的事件流**中检测事件模式，让我们有机会掌握数据中重要的部分
+
++ **一个或多个由简单事件构成的事件流通过一定的规则匹配，然后输出用户想得到的数据——满足规则的复杂事件**
+
+### 15.1.2 CEP特点
+
+![img](https://pic1.zhimg.com/80/v2-1c7057bda8a3ba077a3b8059f35d9bc4_1440w.jpg)
+
++ 目标：从有序的简单事件流中发现一些高阶特征
+
+- 输入：一个或多个由简单事件构成的事件流
+
+- 处理：识别简单事件之间的内在联系，多个符合一定规则的简单事件构成复杂事件
+
+- 输出：满足规则的复杂事件
+
+## 15.2 Pattern API
+
++ 处理事件的规则，被叫做"模式"（Pattern）
+
++ Flink CEP提供了Pattern API，用于对输入流数据进行复杂事件规则定义，用来提取符合规则的时间序列
+
+  ```java
+  DataStream<Event> input = ...
+  // 定义一个Pattern
+  Pattern<Event, Event> pattern = Pattern.<Event>begin("start").where(...)
+    .next("middle").subtype(SubEvent.class).where(...)
+    .followedBy("end").where(...);
+  // 将创建好的Pattern应用到输入事件流上
+  PatternStream<Event> patternStream = CEP.pattern(input,pattern);
+  // 检出匹配事件序列，处理得到结果
+  DataStream<Alert> result = patternStream.select(...);
+  ```
+
+### 个体模式(Individual Patterns)
+
++ 组成复杂规则的每一个单独的模式定义,就是"个体模式"
+
+  ```java
+  start.times(3).where(new SimpleCondition<Event>() {...})
+  ```
+
++ 个体模式可以包括"单例(singleton)模式"和"循环(looping)模式"
++ 单例模式只接收一个事件，而循环模式可以接收多个
+
+---
+
++ 量词（Quantifier）
+
+  可以在一个个体模式后追加量词，也就是指定循环次数
+
+  ```java
+  //匹配出现4次
+  start.times(4)
+  //匹配出现2/3/4次
+  start.time(2,4).greedy
+  //匹配出现0或者4次
+  start.times(4).optional
+  //匹配出现1次或者多次
+  start.oneOrMore
+  //匹配出现2,3,4次
+  start.times(2,4)
+  //匹配出现0次,2次或者多次,并且尽可能多的重复匹配
+  start.timesOrMore(2),optional.greedy
+  ```
+
++ 条件（Condition）
+
+  + **每个模式都需要指定触发条件**，作为模式是否接受事件进入的判断依据
+
+  + CEP中的个体模式主要通过调用`.where()`，`.or()`和`.until()`来指定条件
+
+  + 按不同的调用方式，可以分成以下几类
+
+    + 简单条件（Simple Condition）
+
+      通过`.where()`方法对事件中的字段进行判断筛选，决定是否接受该事件
+
+      ```java
+      start.where(new SimpleCondition<Event>){
+        @Override
+        public boolean filter(Event value) throws Exception{
+          return value.getName.startsWith("foo");
+        }
+      }
+      ```
+
+    + 组合条件（Combining Condition）
+
+      将简单条件进行合并；`.or()`方法表示或逻辑相连，where的直接组合就是AND
+
+      `pattern.where(event => ... /* some condition */).or(event => ... /* or condition */)`
+
+    + 终止条件（Stop Condition）
+
+      如果使用了`oneOrMore`或者`oneOrMore.optional`，建议使用`.until()`作为终止条件，以便清理状态
+
+    + 迭代条件（Iterative Condition）
+
+      能够对模式之前所有接收的事件进行处理
+
+      可以调用`ctx.getEventsForPattern("name")`
+
+      ```java
+      .where(new IterativeCondition<Event>(){...})
+      ```
+
+### 组合模式(Combining Patterns)
+
+组合模式(Combining Patterns)也叫模式序列。
+
++ 很多个体模式组合起来，就形成了整个的模式序列
+
++ 模式序列必须以一个"初始模式"开始
+
+  ```java
+  Pattern<Event, Event> start = Pattern.<Event>begin("start")
+  ```
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20200526221919332.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzM3MTM1NDg0,size_16,color_FFFFFF,t_70)
+
++ 严格近邻(Strict Contiguity)
+  + **所有事件按照严格的顺序出现**，中间没有任何不匹配的事件，由`.next()`指定
+  + 例如对于模式"a next b",事件序列[a,c,b1,b2]没有匹配
++ 宽松近邻(Relaxed Contiguity)
+  + 允许中间出现不匹配的事件,由`.followedBy()`指定
+  + 例如对于模式"a followedBy b",事件序列[a,c,b1,b2]匹配为[a,b1]
+
++ 非确定性宽松近邻(Non-Deterministic Relaxed Contiguity)
+
+  + 进一步放宽条件,之前已经匹配过的事件也可以再次使用，由`.followByAny()`指定
+  + 例如对于模式"a followedAny b",事件序列[a,c,b1,b2]匹配为{a,b1},{a,b2}
+
++ 除了以上模式序列外,还可以定义"不希望出现某种近邻关系":
+
+  + `.notNext()` 不严格近邻
+
+  + `.notFollowedBy()`不在两个事件之间发生
+
+    （eg，a not FollowedBy c，a Followed By b，a希望之后出现b，且不希望ab之间出现c）
+
++ 需要注意：
+
+  +  **所有模式序列必须以`.begin()`开始**
+
+  +  **模式序列不能以`.notFollowedBy()`结束**
+
+  +  **"not "类型的模式不能被optional 所修饰**
+
+  +  此外,还可以为模式指定事件约束，用来<u>要求在多长时间内匹配有效</u>: 
+
+    `next.within(Time.seconds(10))`
+
+### 模式组(Groups of patterns)
+
++ 将一个模式序列作为条件嵌套在个体模式里，成为一组模式
+
+## 15.3 模式的检测
+
+- 指定要查找的模式序列后，就可以将其应用于输入流以检测潜在匹配
+
+- 调用`CEP.pattern()`，给定输入流和模式，就能得到一个PatternStream
+
+  ```java
+  DataStream<Event> input = ...
+  Pattern<Event, Event> pattern = Pattern.<Event>begin("start").where(...)...
+  
+  PatternStream<Event> patternStream = CEP.pattern(input, pattern);
+  ```
+
+## 15.4 匹配事件的提取
+
+- 创建PatternStrean之后，就可以应用select或者flatselect方法，从检测到的事件序列中提取事件了
+
+- `select()`方法需要输入一个select function作为参数,每个成功匹配的事件序列都会调用它
+
+- `select()` 以一个Map<String，List<IN]>> 来接收匹配到的事件序列，其中Key就是每个模式的名称，而value就是所有接收到的事件的List类型
+
+  ```java
+  public OUT select(Map<String, List<IN>> pattern) throws Exception {
+    IN startEvent = pattern.get("start").get(0);
+    IN endEvent = pattern.get("end").get(0);
+    return new OUT(startEvent, endEvent);
+  }
+  ```
+
+## 15.4 超时事件的提取
+
++ **当一个模式通过within关键字定义了检测窗口时间时，部分事件序列可能因为超过窗口长度而被丢弃；为了能够处理这些超时的部分匹配，select和flatSelect API调用允许指定超时处理程序**
+
++ **超时处理程序会接收到目前为止由模式匹配到的所有事件，由一个OutputTag定义接收到的超时事件序列**
+
+  ```java
+  PatternStream<Event> patternStream = CEP.pattern(input, pattern);
+  OutputTag<String> outputTag = new OutputTag<String>("side-output"){};
+  
+  SingleOutputStreamOperator<ComplexEvent> flatResult = 
+    patternStream.flatSelect(
+    outputTag,
+    new PatternFlatTimeoutFunction<Event, TimeoutEvent>() {...},
+    new PatternFlatSelectFunction<Event, ComplexEvent>() {...}
+  );
+  DataStream<TimeoutEvent> timeoutFlatResult = 
+    flatResult.getSideOutput(outputTag);
+  ```
 
 
 
