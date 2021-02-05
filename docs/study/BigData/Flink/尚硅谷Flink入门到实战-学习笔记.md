@@ -7225,6 +7225,28 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20200602184003237.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
 
+#### POJO
+
+需要生成get/set、无参/有参构造函数、toString
+
++ ItemViewCount
+
+  ```java
+  private Long itemId;
+  private Long windowEnd;
+  private Long count;
+  ```
+
++ UserBehavior
+
+  ```java
+  private Long uerId;
+  private Long itemId;
+  private Integer categoryId;
+  private String behavior;
+  private Long timestamp;
+  ```
+
 #### 代码1-文件
 
 + 父pom依赖
@@ -7767,6 +7789,26 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
 + 解决思路1
   + 将apache服务器日志中的时间，转换为时间戳，作为Event Time
   + 构建滑动窗口，窗口长度为1分钟，滑动距离为5秒
+
+#### POJO
+
++ ApacheLogEvent
+
+  ```java
+  private String ip;
+  private String userId;
+  private Long timestamp;
+  private String method;
+  private String url;
+  ```
+
++ PageViewCount
+
+  ```java
+  private String url;
+  private Long windowEnd;
+  private Long count;
+  ```
 
 #### 代码1-文件
 
@@ -8842,6 +8884,18 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
 
 #### 代码4-UV统计-布隆过滤器
 
++ pom依赖
+
+  ```xml
+  <dependencies>
+    <dependency>
+      <groupId>redis.clients</groupId>
+      <artifactId>jedis</artifactId>
+      <version>3.5.1</version>
+    </dependency>
+  </dependencies>
+  ```
+
 + java代码
 
   ```java
@@ -9024,6 +9078,393 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
   + 通过过滤日志中的用户行为，按照不同的渠道进行统计
   + 可以用process function处理，得到自定义的输出数据信息
 
+#### POJO
+
++ MarketingUserBehavior
+
+  ```java
+  private Long userId;
+  private String behavior;
+  private String channel;
+  private Long timestamp;
+  ```
+
++ ChannelPromotionCount
+
+  ```java
+  private String channel;
+  private String behavior;
+  private String windowEnd;
+  private Long count;
+  ```
+
+#### 代码1-自定义测试数据源
+
++ java代码
+
+  ```java
+  import beans.MarketingUserBehavior;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.source.SourceFunction;
+  
+  import java.util.Arrays;
+  import java.util.List;
+  import java.util.Random;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/5 5:32 AM
+   */
+  public class AppMarketingByChannel {
+    public static void main(String[] args) throws Exception {
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 1. 从自定义数据源中读取数据
+      DataStream<MarketingUserBehavior> dataStream = env.addSource(new SimulatedMarketingUserBehaviorSource());
+  
+    }
+  
+    // 实现自定义的模拟市场用户行为数据源
+    public static class SimulatedMarketingUserBehaviorSource implements SourceFunction<MarketingUserBehavior> {
+      // 控制是否正常运行的标识位
+      Boolean running = true;
+  
+      // 定义用户行为和渠道的范围
+      List<String> behaviorList = Arrays.asList("CLICK", "DOWNLOAD", "INSTALL", "UNINSTALL");
+      List<String> channelList = Arrays.asList("app store", "wechat", "weibo");
+  
+      Random random = new Random();
+  
+      @Override
+      public void run(SourceContext<MarketingUserBehavior> ctx) throws Exception {
+        while (running) {
+          // 随机生成所有字段
+          Long id = random.nextLong();
+          String behavior = behaviorList.get(random.nextInt(behaviorList.size()));
+          String channel = channelList.get(random.nextInt(channelList.size()));
+          Long timestamp = System.currentTimeMillis();
+  
+          // 发出数据
+          ctx.collect(new MarketingUserBehavior(id, behavior, channel, timestamp));
+  
+          Thread.sleep(100L);
+        }
+      }
+  
+      @Override
+      public void cancel() {
+        running = false;
+      }
+    }
+  }
+  ```
+
+
+#### 代码2-具体实现
+
++ java代码
+
+  ```java
+  import beans.ChannelPromotionCount;
+  import beans.MarketingUserBehavior;
+  import org.apache.flink.api.common.functions.AggregateFunction;
+  import org.apache.flink.api.java.functions.KeySelector;
+  import org.apache.flink.api.java.tuple.Tuple2;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.source.SourceFunction;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
+  import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+  import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
+  import org.apache.flink.streaming.api.windowing.assigners.TumblingProcessingTimeWindows;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.Collector;
+  
+  import java.sql.Timestamp;
+  import java.util.Arrays;
+  import java.util.List;
+  import java.util.Random;
+  import java.util.concurrent.TimeUnit;
+  
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/5 5:32 AM
+   */
+  public class AppMarketingByChannel {
+    public static void main(String[] args) throws Exception {
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 1. 从自定义数据源中读取数据
+      DataStream<MarketingUserBehavior> dataStream = env.addSource(new SimulatedMarketingUserBehaviorSource())
+        .assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+          new BoundedOutOfOrdernessTimestampExtractor<MarketingUserBehavior>(Time.of(200, TimeUnit.MILLISECONDS)) {
+            @Override
+            public long extractTimestamp(MarketingUserBehavior element) {
+              return element.getTimestamp();
+            }
+          }
+        ));
+  
+      // 2. 分渠道开窗统计
+      DataStream<ChannelPromotionCount> resultStream = dataStream
+        .filter(data -> !"UNINSTALL".equals(data.getBehavior()))
+        .keyBy(new KeySelector<MarketingUserBehavior, Tuple2<String, String>>() {
+          @Override
+          public Tuple2<String, String> getKey(MarketingUserBehavior value) throws Exception {
+            return new Tuple2<>(value.getChannel(), value.getBehavior());
+          }
+        })
+        // 定义滑窗
+        .window(SlidingEventTimeWindows.of(Time.hours(1), Time.seconds(5)))
+        .aggregate(new MarketingCountAgg(), new MarketingCountResult());
+  
+      resultStream.print();
+  
+      env.execute("app marketing by channel job");
+  
+    }
+  
+    // 实现自定义的模拟市场用户行为数据源
+    public static class SimulatedMarketingUserBehaviorSource implements SourceFunction<MarketingUserBehavior> {
+      // 控制是否正常运行的标识位
+      Boolean running = true;
+  
+      // 定义用户行为和渠道的范围
+      List<String> behaviorList = Arrays.asList("CLICK", "DOWNLOAD", "INSTALL", "UNINSTALL");
+      List<String> channelList = Arrays.asList("app store", "wechat", "weibo");
+  
+      Random random = new Random();
+  
+      @Override
+      public void run(SourceContext<MarketingUserBehavior> ctx) throws Exception {
+        while (running) {
+          // 随机生成所有字段
+          Long id = random.nextLong();
+          String behavior = behaviorList.get(random.nextInt(behaviorList.size()));
+          String channel = channelList.get(random.nextInt(channelList.size()));
+          Long timestamp = System.currentTimeMillis();
+  
+          // 发出数据
+          ctx.collect(new MarketingUserBehavior(id, behavior, channel, timestamp));
+  
+          Thread.sleep(100L);
+        }
+      }
+  
+      @Override
+      public void cancel() {
+        running = false;
+      }
+    }
+  
+    // 实现自定义的增量聚合函数
+    public static class MarketingCountAgg implements AggregateFunction<MarketingUserBehavior, Long, Long> {
+  
+      @Override
+      public Long createAccumulator() {
+        return 0L;
+      }
+  
+      @Override
+      public Long add(MarketingUserBehavior value, Long accumulator) {
+        return accumulator + 1;
+      }
+  
+      @Override
+      public Long getResult(Long accumulator) {
+        return accumulator;
+      }
+  
+      @Override
+      public Long merge(Long a, Long b) {
+        return a + b;
+      }
+    }
+  
+    // 实现自定义的全窗口函数
+    public static class MarketingCountResult extends ProcessWindowFunction<Long, ChannelPromotionCount, Tuple2<String, String>, TimeWindow> {
+  
+      @Override
+      public void process(Tuple2<String, String> stringStringTuple2, Context context, Iterable<Long> elements, Collector<ChannelPromotionCount> out) throws Exception {
+        String channel = stringStringTuple2.f0;
+        String behavior = stringStringTuple2.f1;
+        String windowEnd = new Timestamp(context.window().getEnd()).toString();
+        Long count = elements.iterator().next();
+        out.collect(new ChannelPromotionCount(channel, behavior, windowEnd, count));
+      }
+    }
+  }
+  
+  ```
+
++ 输出
+
+  ```shell
+  beans.ChannelPromotionCount{channel='app store', behavior='CLICK', windowEnd='2021-02-05 17:54:40.0', count=4}
+  beans.ChannelPromotionCount{channel='weibo', behavior='DOWNLOAD', windowEnd='2021-02-05 17:54:40.0', count=1}
+  beans.ChannelPromotionCount{channel='weibo', behavior='INSTALL', windowEnd='2021-02-05 17:54:40.0', count=1}
+  beans.ChannelPromotionCount{channel='wechat', behavior='DOWNLOAD', windowEnd='2021-02-05 17:54:40.0', count=1}
+  beans.ChannelPromotionCount{channel='wechat', behavior='INSTALL', windowEnd='2021-02-05 17:54:40.0', count=1}
+  beans.ChannelPromotionCount{channel='weibo', behavior='INSTALL', windowEnd='2021-02-05 17:54:45.0', count=1}
+  beans.ChannelPromotionCount{channel='app store', behavior='DOWNLOAD', windowEnd='2021-02-05 17:54:45.0', count=10}
+  beans.ChannelPromotionCount{channel='weibo', behavior='CLICK', windowEnd='2021-02-05 17:54:45.0', count=2}
+  beans.ChannelPromotionCount{channel='app store', behavior='CLICK', windowEnd='2021-02-05 17:54:45.0', count=9}
+  .....
+  ```
+
+#### 代码3-不分渠道代码实现
+
++ java代码
+
+  ```java
+  import beans.ChannelPromotionCount;
+  import beans.MarketingUserBehavior;
+  import org.apache.flink.api.common.functions.AggregateFunction;
+  import org.apache.flink.api.common.functions.MapFunction;
+  import org.apache.flink.api.java.tuple.Tuple2;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.source.SourceFunction;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
+  import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.Collector;
+  
+  import java.sql.Timestamp;
+  import java.util.Arrays;
+  import java.util.List;
+  import java.util.Random;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/5 6:19 PM
+   */
+  public class AppMarketingStatistics {
+    public static void main(String[] args) throws Exception {
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 1. 从自定义数据源中读取数据
+      DataStream<MarketingUserBehavior> dataStream = env.addSource(new AppMarketingByChannel.SimulatedMarketingUserBehaviorSource())
+        .assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+          new BoundedOutOfOrdernessTimestampExtractor<MarketingUserBehavior>(Time.of(200, TimeUnit.MILLISECONDS)) {
+            @Override
+            public long extractTimestamp(MarketingUserBehavior element) {
+              return element.getTimestamp();
+            }
+          }
+        ));
+  
+      // 2. 开窗统计总量
+      DataStream<ChannelPromotionCount> resultStream = dataStream
+        .filter(data -> !"UNINSTALL".equals(data.getBehavior()))
+        .map(new MapFunction<MarketingUserBehavior, Tuple2<String, Long>>() {
+          @Override
+          public Tuple2<String, Long> map(MarketingUserBehavior value) throws Exception {
+            return new Tuple2<>("total", 1L);
+          }
+        })
+        .keyBy(tuple2 -> tuple2.f0)
+        // 定义滑窗
+        .window(SlidingEventTimeWindows.of(Time.hours(1), Time.seconds(5)))
+        .aggregate(new MarketingStatisticsAgg(), new MarketingStatisticsResult());
+  
+      resultStream.print();
+  
+      env.execute("app marketing by channel job");
+  
+    }
+  
+    // 实现自定义的模拟市场用户行为数据源
+    public static class SimulatedMarketingUserBehaviorSource implements SourceFunction<MarketingUserBehavior> {
+      // 控制是否正常运行的标识位
+      Boolean running = true;
+  
+      // 定义用户行为和渠道的范围
+      List<String> behaviorList = Arrays.asList("CLICK", "DOWNLOAD", "INSTALL", "UNINSTALL");
+      List<String> channelList = Arrays.asList("app store", "wechat", "weibo");
+  
+      Random random = new Random();
+  
+      @Override
+      public void run(SourceContext<MarketingUserBehavior> ctx) throws Exception {
+        while (running) {
+          // 随机生成所有字段
+          Long id = random.nextLong();
+          String behavior = behaviorList.get(random.nextInt(behaviorList.size()));
+          String channel = channelList.get(random.nextInt(channelList.size()));
+          Long timestamp = System.currentTimeMillis();
+  
+          // 发出数据
+          ctx.collect(new MarketingUserBehavior(id, behavior, channel, timestamp));
+  
+          Thread.sleep(100L);
+        }
+      }
+  
+      @Override
+      public void cancel() {
+        running = false;
+      }
+    }
+  
+    // 实现自定义的增量聚合函数
+    public static class MarketingStatisticsAgg implements AggregateFunction<Tuple2<String, Long>, Long, Long> {
+  
+      @Override
+      public Long createAccumulator() {
+        return 0L;
+      }
+  
+      @Override
+      public Long add(Tuple2<String, Long> value, Long accumulator) {
+        return accumulator + 1;
+      }
+  
+      @Override
+      public Long getResult(Long accumulator) {
+        return accumulator;
+      }
+  
+      @Override
+      public Long merge(Long a, Long b) {
+        return a + b;
+      }
+    }
+  
+    // 实现自定义的全窗口函数
+    public static class MarketingStatisticsResult implements WindowFunction<Long, ChannelPromotionCount, String, TimeWindow> {
+  
+      @Override
+      public void apply(String s, TimeWindow window, Iterable<Long> input, Collector<ChannelPromotionCount> out) throws Exception {
+        String windowEnd = new Timestamp(window.getEnd()).toString();
+        Long count = input.iterator().next();
+        out.collect(new ChannelPromotionCount("total", "total", windowEnd, count));
+      }
+    }
+  }
+  ```
+
++ 输出
+
+  ```java
+  beans.ChannelPromotionCount{channel='total', behavior='total', windowEnd='2021-02-05 18:34:15.0', count=40}
+  beans.ChannelPromotionCount{channel='total', behavior='total', windowEnd='2021-02-05 18:34:20.0', count=75}
+  beans.ChannelPromotionCount{channel='total', behavior='total', windowEnd='2021-02-05 18:34:25.0', count=109}
+  ....
+  ```
+
 ### 14.3.5 市场营销分析——页面广告统计
 
 + 基本需求
@@ -9033,6 +9474,350 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
   + 根据省份进行分组，创建长度为1小时、滑动距离为5秒的时间窗口进行统计
   + 可以用`process function`进行黑名单过滤，检测用户对同一广告的点击量，如果超过上限则将用户信息以侧输出流输出到黑名单中
 
+#### POJO
+
++ AdClickEvent
+
+  ```java
+  private Long userId;
+  private Long adId;
+  private String province;
+  private String city;
+  private Long timestamp;
+  ```
+
++ BlackListUserWarning
+
+  ```java
+  private Long userId;
+  private Long adId;
+  private String warningMsg;
+  ```
+
+#### 代码1-基本实现
+
++ java代码
+
+  ```java
+  import beans.AdClickEvent;
+  import beans.AdCountViewByProvince;
+  import org.apache.flink.api.common.functions.AggregateFunction;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
+  import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.Collector;
+  
+  
+  import java.net.URL;
+  import java.sql.Timestamp;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/5 6:41 PM
+   */
+  public class AdStatisticsByProvince {
+  
+    public static void main(String[] args) throws Exception {
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 1. 从文件中读取数据
+      URL resource = AdStatisticsByProvince.class.getResource("/AdClickLog.csv");
+      DataStream<AdClickEvent> adClickEventDataStream = env.readTextFile(resource.getPath())
+        .map(line -> {
+          String[] fields = line.split(",");
+          return new AdClickEvent(new Long(fields[0]), new Long(fields[1]), fields[2], fields[3], new Long(fields[4]));
+        })
+        .assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+          new BoundedOutOfOrdernessTimestampExtractor<AdClickEvent>(Time.of(200, TimeUnit.MILLISECONDS)) {
+            @Override
+            public long extractTimestamp(AdClickEvent element) {
+              return element.getTimestamp() * 1000L;
+            }
+          }
+        ));
+  
+      // 2. 基于省份分组，开窗聚合
+      DataStream<AdCountViewByProvince> adCountStream = adClickEventDataStream
+        .keyBy(AdClickEvent::getProvince)
+        // 定义滑窗,5min输出一次
+        .window(SlidingEventTimeWindows.of(Time.hours(1), Time.minutes(5)))
+        .aggregate(new AdCountAgg(), new AdCountResult());
+  
+  
+      adCountStream.print();
+  
+      env.execute("ad count by province job");
+    }
+  
+    public static class AdCountAgg implements AggregateFunction<AdClickEvent, Long, Long> {
+  
+      @Override
+      public Long createAccumulator() {
+        return 0L;
+      }
+  
+      @Override
+      public Long add(AdClickEvent value, Long accumulator) {
+        return accumulator + 1;
+      }
+  
+      @Override
+      public Long getResult(Long accumulator) {
+        return accumulator;
+      }
+  
+      @Override
+      public Long merge(Long a, Long b) {
+        return a + b;
+      }
+    }
+  
+    public static class AdCountResult implements WindowFunction<Long, AdCountViewByProvince, String, TimeWindow> {
+  
+      @Override
+      public void apply(String province, TimeWindow window, Iterable<Long> input, Collector<AdCountViewByProvince> out) throws Exception {
+        String windowEnd = new Timestamp(window.getEnd()).toString();
+        Long count = input.iterator().next();
+        out.collect(new AdCountViewByProvince(province, windowEnd, count));
+      }
+    }
+  }
+  
+  ```
+
++ 输出
+
+  ```shell
+  beans.AdCountViewByProvince{province='beijing', windowEnd='2017-11-26 09:05:00.0', count=2}
+  beans.AdCountViewByProvince{province='shanghai', windowEnd='2017-11-26 09:05:00.0', count=1}
+  beans.AdCountViewByProvince{province='guangdong', windowEnd='2017-11-26 09:05:00.0', count=2}
+  beans.AdCountViewByProvince{province='guangdong', windowEnd='2017-11-26 09:10:00.0', count=4}
+  beans.AdCountViewByProvince{province='shanghai', windowEnd='2017-11-26 09:10:00.0', count=2}
+  beans.AdCountViewByProvince{province='beijing', windowEnd='2017-11-26 09:10:00.0', count=2}
+  beans.AdCountViewByProvince{province='shanghai', windowEnd='2017-11-26 09:15:00.0', count=2}
+  beans.AdCountViewByProvince{province='beijing', windowEnd='2017-11-26 09:15:00.0', count=2}
+  beans.AdCountViewByProvince{province='guangdong', windowEnd='2017-11-26 09:15:00.0', count=5}
+  beans.AdCountViewByProvince{province='shanghai', windowEnd='2017-11-26 09:20:00.0', count=2}
+  ....
+  ```
+
+#### 代码2-点击异常行为黑名单过滤
+
++ java代码
+
+  ```java
+  import beans.AdClickEvent;
+  import beans.AdCountViewByProvince;
+  import beans.BlackListUserWarning;
+  import org.apache.commons.lang3.time.DateUtils;
+  import org.apache.flink.api.common.functions.AggregateFunction;
+  import org.apache.flink.api.common.state.ValueState;
+  import org.apache.flink.api.common.state.ValueStateDescriptor;
+  import org.apache.flink.api.java.functions.KeySelector;
+  import org.apache.flink.api.java.tuple.Tuple2;
+  import org.apache.flink.configuration.Configuration;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.functions.windowing.WindowFunction;
+  import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.Collector;
+  import org.apache.flink.util.OutputTag;
+  
+  import java.net.URL;
+  import java.sql.Timestamp;
+  import java.util.Date;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/5 6:41 PM
+   */
+  public class AdStatisticsByProvince {
+  
+    public static void main(String[] args) throws Exception {
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 1. 从文件中读取数据
+      URL resource = AdStatisticsByProvince.class.getResource("/AdClickLog.csv");
+      DataStream<AdClickEvent> adClickEventDataStream = env.readTextFile(resource.getPath())
+        .map(line -> {
+          String[] fields = line.split(",");
+          return new AdClickEvent(new Long(fields[0]), new Long(fields[1]), fields[2], fields[3], new Long(fields[4]));
+        })
+        .assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+          new BoundedOutOfOrdernessTimestampExtractor<AdClickEvent>(Time.of(200, TimeUnit.MILLISECONDS)) {
+            @Override
+            public long extractTimestamp(AdClickEvent element) {
+              return element.getTimestamp() * 1000L;
+            }
+          }
+        ));
+  
+      // 2. 对同一个用户点击同一个广告的行为进行检测报警
+      SingleOutputStreamOperator<AdClickEvent> filterAdClickStream = adClickEventDataStream
+        .keyBy(new KeySelector<AdClickEvent, Tuple2<Long, Long>>() {
+          @Override
+          public Tuple2<Long, Long> getKey(AdClickEvent value) throws Exception {
+            return new Tuple2<>(value.getUserId(), value.getAdId());
+          }
+        })
+        .process(new FilterBlackListUser(100));
+  
+      // 3. 基于省份分组，开窗聚合
+      DataStream<AdCountViewByProvince> adCountResultStream = filterAdClickStream
+        .keyBy(AdClickEvent::getProvince)
+        // 定义滑窗,5min输出一次
+        .window(SlidingEventTimeWindows.of(Time.hours(1), Time.minutes(5)))
+        .aggregate(new AdCountAgg(), new AdCountResult());
+  
+  
+      adCountResultStream.print();
+      filterAdClickStream
+        .getSideOutput(new OutputTag<BlackListUserWarning>("blacklist"){})
+        .print("blacklist-user");
+  
+      env.execute("ad count by province job");
+    }
+  
+    public static class AdCountAgg implements AggregateFunction<AdClickEvent, Long, Long> {
+  
+      @Override
+      public Long createAccumulator() {
+        return 0L;
+      }
+  
+      @Override
+      public Long add(AdClickEvent value, Long accumulator) {
+        return accumulator + 1;
+      }
+  
+      @Override
+      public Long getResult(Long accumulator) {
+        return accumulator;
+      }
+  
+      @Override
+      public Long merge(Long a, Long b) {
+        return a + b;
+      }
+    }
+  
+    public static class AdCountResult implements WindowFunction<Long, AdCountViewByProvince, String, TimeWindow> {
+  
+      @Override
+      public void apply(String province, TimeWindow window, Iterable<Long> input, Collector<AdCountViewByProvince> out) throws Exception {
+        String windowEnd = new Timestamp(window.getEnd()).toString();
+        Long count = input.iterator().next();
+        out.collect(new AdCountViewByProvince(province, windowEnd, count));
+      }
+    }
+  
+    // 实现自定义处理函数
+    public static class FilterBlackListUser extends KeyedProcessFunction<Tuple2<Long, Long>, AdClickEvent, AdClickEvent> {
+  
+      // 定义属性：点击次数上线
+      private Integer countUpperBound;
+  
+      public FilterBlackListUser(Integer countUpperBound) {
+        this.countUpperBound = countUpperBound;
+      }
+  
+      // 定义状态，保存当前用户对某一广告的点击次数
+      ValueState<Long> countState;
+      // 定义一个标志状态，保存当前用户是否已经被发送到了黑名单里
+      ValueState<Boolean> isSentState;
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        countState = getRuntimeContext().getState(new ValueStateDescriptor<Long>("ad-count", Long.class));
+        isSentState = getRuntimeContext().getState(new ValueStateDescriptor<Boolean>("is-sent", Boolean.class));
+      }
+  
+      @Override
+      public void onTimer(long timestamp, OnTimerContext ctx, Collector<AdClickEvent> out) throws Exception {
+        // 清空所有状态
+        countState.clear();
+        isSentState.clear();
+      }
+  
+      @Override
+      public void processElement(AdClickEvent value, Context ctx, Collector<AdClickEvent> out) throws Exception {
+        // 判断当前用户对同一广告的点击次数，如果不够上限，该count加1正常输出；
+        // 如果到达上限，直接过滤掉，并侧输出流输出黑名单报警
+  
+        // 首先获取当前count值
+        Long curCount = countState.value();
+  
+        Boolean isSent = isSentState.value();
+  
+        if(null == curCount){
+          curCount = 0L;
+        }
+  
+        if(null == isSent){
+          isSent = false;
+        }
+  
+        // 1. 判断是否是第一个数据，如果是的话，注册一个第二天0点的定时器
+        if (curCount == 0) {
+          long ts = ctx.timerService().currentProcessingTime();
+          long fixedTime = DateUtils.addDays(new Date(ts), 1).getTime();
+          ctx.timerService().registerProcessingTimeTimer(fixedTime);
+        }
+  
+        // 2. 判断是否报警
+        if (curCount >= countUpperBound) {
+          // 判断是否输出到黑名单过，如果没有的话就输出到侧输出流
+          if (!isSent) {
+            isSentState.update(true);
+            ctx.output(new OutputTag<BlackListUserWarning>("blacklist"){},
+                       new BlackListUserWarning(value.getUserId(), value.getAdId(), "click over " + countUpperBound + "times."));
+          }
+          // 不再进行下面操作
+          return;
+        }
+  
+        // 如果没有返回，点击次数加1，更新状态，正常输出当前数据到主流
+        countState.update(curCount + 1);
+        out.collect(value);
+      }
+  
+    }
+  }
+  ```
+
++ 输出
+
+  ```java
+  blacklist-user> beans.BlackListUserWarning{userId=937166, adId=1715, warningMsg='click over 100times.'}
+  beans.AdCountViewByProvince{province='beijing', windowEnd='2017-11-26 09:05:00.0', count=2}
+  beans.AdCountViewByProvince{province='shanghai', windowEnd='2017-11-26 09:05:00.0', count=1}
+  beans.AdCountViewByProvince{province='guangdong', windowEnd='2017-11-26 09:05:00.0', count=2}
+  beans.AdCountViewByProvince{province='guangdong', windowEnd='2017-11-26 09:10:00.0', count=4}
+  beans.AdCountViewByProvince{province='shanghai', windowEnd='2017-11-26 09:10:00.0', count=2}
+  beans.AdCountViewByProvince{province='beijing', windowEnd='2017-11-26 09:10:00.0', count=2}
+  beans.AdCountViewByProvince{province='shanghai', windowEnd='2017-11-26 09:15:00.0', count=2}
+  beans.AdCountViewByProvince{province='beijing', windowEnd='2017-11-26 09:15:00.0', count=2}
+  beans.AdCountViewByProvince{province='guangdong', windowEnd='2017-11-26 09:15:00.0', count=5}
+  beans.AdCountViewByProvince{province='shanghai', windowEnd='2017-11-26 09:20:00.0', count=2}
+  beans.AdCountViewByProvince{province='guangdong', windowEnd='2017-11-26 09:20:00.0', count=5}
+  ....
+  ```
+
 ### 14.3.6 恶意登录监控
 
 + 基本需求
@@ -9041,6 +9826,8 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
 + 解决思路
   + 将用户的登录失败行为存入ListState，设定定时器2秒后出发，查看ListState中有几次失败登录
   + 更加精确的检测，可以使用CEP库实现事件流的模式匹配
+
+
 
 ### 14.3.7 订单支付实时监控
 
