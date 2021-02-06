@@ -2618,6 +2618,163 @@ stream.addSink(new MySink(xxxx))
    10 rows in set (0.00 sec)
    ```
 
+## 5.8 Joining
+
+> [Joining](https://ci.apache.org/projects/flink/flink-docs-release-1.12/zh/dev/stream/operators/joining.html)
+
+### 5.8.1 Window Join
+
+​	A window join joins the elements of two streams that share a common key and lie in the same window. These windows can be defined by using a [window assigner](https://ci.apache.org/projects/flink/flink-docs-release-1.12/zh/dev/stream/operators/windows.html#window-assigners) and are evaluated on elements from both of the streams.
+
+​	The elements from both sides are then passed to a user-defined `JoinFunction` or `FlatJoinFunction` 	where the user can emit results that meet the join criteria.
+
+​	The general usage can be summarized as follows:
+
+```java
+stream.join(otherStream)
+    .where(<KeySelector>)
+    .equalTo(<KeySelector>)
+    .window(<WindowAssigner>)
+    .apply(<JoinFunction>)
+```
+
+#### Tumbling Window Join
+
+​	When performing a tumbling window join, all elements with a common key and a common tumbling window are joined as pairwise combinations and passed on to a `JoinFunction` or `FlatJoinFunction`. Because this behaves like an inner join, elements of one stream that do not have elements from another stream in their tumbling window are not emitted!
+
+![img](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/tumbling-window-join.svg)
+
+​	As illustrated in the figure, we define a tumbling window with the size of 2 milliseconds, which results in windows of the form `[0,1], [2,3], ...`. The image shows the pairwise combinations of all elements in each window which will be passed on to the `JoinFunction`. Note that in the tumbling window `[6,7]` nothing is emitted because no elements exist in the green stream to be joined with the orange elements ⑥ and ⑦.
+
+```java
+import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
+import org.apache.flink.streaming.api.windowing.time.Time;
+ 
+...
+
+DataStream<Integer> orangeStream = ...
+DataStream<Integer> greenStream = ...
+
+orangeStream.join(greenStream)
+    .where(<KeySelector>)
+    .equalTo(<KeySelector>)
+    .window(TumblingEventTimeWindows.of(Time.milliseconds(2)))
+    .apply (new JoinFunction<Integer, Integer, String> (){
+        @Override
+        public String join(Integer first, Integer second) {
+            return first + "," + second;
+        }
+    });
+```
+
+####  Sliding Window Join
+
+​	When performing a sliding window join, all elements with a common key and common sliding window are joined as pairwise combinations and passed on to the `JoinFunction` or `FlatJoinFunction`. Elements of one stream that do not have elements from the other stream in the current sliding window are not emitted! Note that some elements might be joined in one sliding window but not in another!
+
+![img](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/sliding-window-join.svg)
+
+​	In this example we are using sliding windows with a size of two milliseconds and slide them by one millisecond, resulting in the sliding windows `[-1, 0],[0,1],[1,2],[2,3], …`. The joined elements below the x-axis are the ones that are passed to the `JoinFunction` for each sliding window. Here you can also see how for example the orange ② is joined with the green ③ in the window `[2,3]`, but is not joined with anything in the window `[1,2]`.
+
+```java
+import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
+import org.apache.flink.streaming.api.windowing.time.Time;
+
+...
+
+DataStream<Integer> orangeStream = ...
+DataStream<Integer> greenStream = ...
+
+orangeStream.join(greenStream)
+    .where(<KeySelector>)
+    .equalTo(<KeySelector>)
+    .window(SlidingEventTimeWindows.of(Time.milliseconds(2) /* size */, Time.milliseconds(1) /* slide */))
+    .apply (new JoinFunction<Integer, Integer, String> (){
+        @Override
+        public String join(Integer first, Integer second) {
+            return first + "," + second;
+        }
+    });
+```
+
+#### Session Window Join
+
+​	When performing a session window join, all elements with the same key that when *“combined”* fulfill the session criteria are joined in pairwise combinations and passed on to the `JoinFunction` or `FlatJoinFunction`. Again this performs an inner join, so if there is a session window that only contains elements from one stream, no output will be emitted!
+
+![img](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/session-window-join.svg)
+
+​	Here we define a session window join where each session is divided by a gap of at least 1ms. There are three sessions, and in the first two sessions the joined elements from both streams are passed to the `JoinFunction`. In the third session there are no elements in the green stream, so ⑧ and ⑨ are not joined!
+
+```java
+import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.streaming.api.windowing.assigners.EventTimeSessionWindows;
+import org.apache.flink.streaming.api.windowing.time.Time;
+ 
+...
+
+DataStream<Integer> orangeStream = ...
+DataStream<Integer> greenStream = ...
+
+orangeStream.join(greenStream)
+    .where(<KeySelector>)
+    .equalTo(<KeySelector>)
+    .window(EventTimeSessionWindows.withGap(Time.milliseconds(1)))
+    .apply (new JoinFunction<Integer, Integer, String> (){
+        @Override
+        public String join(Integer first, Integer second) {
+            return first + "," + second;
+        }
+    });
+```
+
+### 5.8.2 Interval Join
+
+The interval join joins elements of two streams (we’ll call them A & B for now) with a common key and where elements of stream B have timestamps that lie in a relative time interval to timestamps of elements in stream A.
+
+This can also be expressed more formally as `b.timestamp ∈ [a.timestamp + lowerBound; a.timestamp + upperBound]` or `a.timestamp + lowerBound <= b.timestamp <= a.timestamp + upperBound`
+
+where a and b are elements of A and B that share a common key. Both the lower and upper bound can be either negative or positive as long as as the lower bound is always smaller or equal to the upper bound. The interval join currently only performs inner joins.
+
+When a pair of elements are passed to the `ProcessJoinFunction`, they will be assigned with the larger timestamp (which can be accessed via the `ProcessJoinFunction.Context`) of the two elements.
+
+<u>**Note** The interval join currently only supports event time.</u>
+
+![img](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/interval-join.svg)
+
+In the example above, we join two streams ‘orange’ and ‘green’ with a lower bound of -2 milliseconds and an upper bound of +1 millisecond. Be default, these boundaries are inclusive, but `.lowerBoundExclusive()` and `.upperBoundExclusive` can be applied to change the behaviour.
+
+Using the more formal notation again this will translate to
+
+```
+orangeElem.ts + lowerBound <= greenElem.ts <= orangeElem.ts + upperBound
+```
+
+as indicated by the triangles.
+
+```java
+import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.streaming.api.functions.co.ProcessJoinFunction;
+import org.apache.flink.streaming.api.windowing.time.Time;
+
+...
+
+DataStream<Integer> orangeStream = ...
+DataStream<Integer> greenStream = ...
+
+orangeStream
+    .keyBy(<KeySelector>)
+    .intervalJoin(greenStream.keyBy(<KeySelector>))
+    .between(Time.milliseconds(-2), Time.milliseconds(1))
+    .process (new ProcessJoinFunction<Integer, Integer, String(){
+
+        @Override
+        public void processElement(Integer left, Integer right, Context ctx, Collector<String> out) {
+            out.collect(first + "," + second);
+        }
+    });
+```
+
 # 6. Flink的Window
 
 ## 6.1 Window
@@ -10270,7 +10427,95 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
   LoginFailWarning{userId=1035, firstFailTime=1558430843, lastFailTime=1558430844, warningMsg='login fail 2 times'}
   ```
 
+#### 代码4-CEP利用循环模式优化
+
++ java代码
+
+  ```java
+  import beans.LoginEvent;
+  import beans.LoginFailWarning;
+  import org.apache.flink.cep.CEP;
+  import org.apache.flink.cep.PatternSelectFunction;
+  import org.apache.flink.cep.PatternStream;
+  import org.apache.flink.cep.pattern.Pattern;
+  import org.apache.flink.cep.pattern.conditions.SimpleCondition;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
   
+  import java.net.URL;
+  import java.util.List;
+  import java.util.Map;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/6 3:41 AM
+   */
+  public class LoginFailWithCep {
+  
+    public static void main(String[] args) throws Exception {
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 1. 从文件中读取数据
+      URL resource = LoginFail.class.getResource("/LoginLog.csv");
+      DataStream<LoginEvent> loginEventStream = env.readTextFile(resource.getPath())
+        .map(line -> {
+          String[] fields = line.split(",");
+          return new LoginEvent(new Long(fields[0]), fields[1], fields[2], new Long(fields[3]));
+        })
+        .assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+          new BoundedOutOfOrdernessTimestampExtractor<LoginEvent>(Time.of(200, TimeUnit.MILLISECONDS)) {
+            @Override
+            public long extractTimestamp(LoginEvent element) {
+              return element.getTimestamp() * 1000L;
+            }
+          }
+        ));
+  
+      // 1. 定义一个匹配模式
+      // firstFail -> secondFail, within 2s
+      Pattern<LoginEvent, LoginEvent> loginFailPattern = Pattern
+        .<LoginEvent>begin("failEvents").where(new SimpleCondition<LoginEvent>() {
+        @Override
+        public boolean filter(LoginEvent value) throws Exception {
+          return "fail".equals(value.getLoginState());
+        }
+      }).times(3).consecutive()
+        .within(Time.seconds(5));
+  
+      // 2. 将匹配模式应用到数据流上，得到一个pattern stream
+      PatternStream<LoginEvent> patternStream = CEP.pattern(loginEventStream.keyBy(LoginEvent::getUserId), loginFailPattern);
+  
+      // 3. 检出符合匹配条件的复杂事件，进行转换处理，得到报警信息
+      SingleOutputStreamOperator<LoginFailWarning> warningStream = patternStream.select(new LoginFailMatchDetectWarning());
+  
+      warningStream.print();
+  
+      env.execute("login fail detect with cep job");
+    }
+  
+    // 实现自定义的PatternSelectFunction
+    public static class LoginFailMatchDetectWarning implements PatternSelectFunction<LoginEvent, LoginFailWarning> {
+      @Override
+      public LoginFailWarning select(Map<String, List<LoginEvent>> pattern) throws Exception {
+        LoginEvent firstFailEvent = pattern.get("failEvents").get(0);
+        LoginEvent lastFailEvent = pattern.get("failEvents").get(pattern.get("failEvents").size() - 1);
+        return new LoginFailWarning(firstFailEvent.getUserId(), firstFailEvent.getTimestamp(), lastFailEvent.getTimestamp(), "login fail " + pattern.get("failEvents").size() + " times");
+      }
+    }
+  }
+  ```
+
++ 输出
+
+  ```shell
+  LoginFailWarning{userId=1035, firstFailTime=1558430842, lastFailTime=1558430844, warningMsg='login fail 3 times'}
+  ```
 
 ### 14.3.7 订单支付实时监控
 
@@ -10281,6 +10526,394 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
   + 利用CEP库进行事件流的模式匹配，并设定匹配的时间间隔
   + 也可以利用状态编程，用process function实现处理逻辑
 
+#### POJO
+
++ OrderEvent
+
+  ```java
+  private Long orderId;
+  private String eventType;
+  private String txId;
+  private Long timestamp;
+  ```
+
++ OrderResult
+
+  ```java
+  private Long orderId;
+  private String resultState;
+  ```
+
++ ReceiptEvent
+
+  ```java
+  private String txId;
+  private String payChannel;
+  private Long timestamp;
+  ```
+
+#### 代码1-CEP代码实现
+
++ pom依赖
+
+  ```java
+  <dependencies>
+    <dependency>
+  <groupId>org.apache.flink</groupId>
+    <artifactId>flink-cep_${scala.binary.version}</artifactId>
+    <version>${flink.version}</version>
+    </dependency>
+    </dependencies>
+  ```
+  
+
++ java代码
+
+  （实际如果处理超时订单，应该修改对应的数据库数据，好让下次用户再次操作超时订单时失效）
+
+  ```java
+  import beans.OrderEvent;
+  import beans.OrderResult;
+  import org.apache.flink.cep.CEP;
+  import org.apache.flink.cep.PatternSelectFunction;
+  import org.apache.flink.cep.PatternStream;
+  import org.apache.flink.cep.PatternTimeoutFunction;
+  import org.apache.flink.cep.pattern.Pattern;
+  import org.apache.flink.cep.pattern.conditions.SimpleCondition;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.OutputTag;
+  
+  import java.net.URL;
+  import java.util.List;
+  import java.util.Map;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/6 5:50 AM
+   */
+  public class OrderPayTimeout {
+    public static void main(String[] args) throws Exception {
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 读取数据并转换成POJO类型
+      URL resource = OrderPayTimeout.class.getResource("/OrderLog.csv");
+      DataStream<OrderEvent> orderEventDataStream = env.readTextFile(resource.getPath())
+        .map(line -> {
+          String[] fields = line.split(",");
+          return new OrderEvent(new Long(fields[0]), fields[1], fields[2], new Long(fields[3]));
+        }).assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+        new BoundedOutOfOrdernessTimestampExtractor<OrderEvent>(Time.of(200, TimeUnit.MILLISECONDS)) {
+          @Override
+          public long extractTimestamp(OrderEvent element) {
+            return element.getTimestamp() * 1000L;
+          }
+        }
+      ));
+  
+      // 1. 定义一个待时间限制的模式
+      Pattern<OrderEvent, OrderEvent> orderPayPattern = Pattern.<OrderEvent>begin("create").where(new SimpleCondition<OrderEvent>() {
+        @Override
+        public boolean filter(OrderEvent value) throws Exception {
+          return "create".equals(value.getEventType());
+        }
+      })
+        .followedBy("pay").where(new SimpleCondition<OrderEvent>() {
+        @Override
+        public boolean filter(OrderEvent value) throws Exception {
+          return "pay".equals(value.getEventType());
+        }
+      })
+        .within(Time.minutes(5));
+  
+      // 2. 定义侧输出流标签，用来表示超时事件
+      OutputTag<OrderResult> orderTimeoutTag = new OutputTag<OrderResult>("order-timeout") {
+      };
+  
+      // 3. 将pattern应用到输入数据上，得到pattern stream
+      PatternStream<OrderEvent> patternStream = CEP.pattern(orderEventDataStream.keyBy(OrderEvent::getOrderId), orderPayPattern);
+  
+      // 4. 调用select方法，实现对匹配复杂事件和超时复杂事件的提取和处理
+      SingleOutputStreamOperator<OrderResult> resultStream = patternStream
+        .select(orderTimeoutTag, new OrderTimeoutSelect(), new OrderPaySelect());
+  
+      resultStream.print("payed normally");
+      resultStream.getSideOutput(orderTimeoutTag).print("timeout");
+  
+      env.execute("order timeout detect job");
+  
+    }
+  
+    // 实现自定义的超时事件处理函数
+    public static class OrderTimeoutSelect implements PatternTimeoutFunction<OrderEvent, OrderResult> {
+  
+      @Override
+      public OrderResult timeout(Map<String, List<OrderEvent>> pattern, long timeoutTimestamp) throws Exception {
+        Long timeoutOrderId = pattern.get("create").iterator().next().getOrderId();
+        return new OrderResult(timeoutOrderId, "timeout " + timeoutTimestamp);
+      }
+    }
+  
+    // 实现自定义的正常匹配事件处理函数
+    public static class OrderPaySelect implements PatternSelectFunction<OrderEvent, OrderResult> {
+      @Override
+      public OrderResult select(Map<String, List<OrderEvent>> pattern) throws Exception {
+        Long payedOrderId = pattern.get("pay").iterator().next().getOrderId();
+        return new OrderResult(payedOrderId, "payed");
+      }
+    }
+  }
+  ```
+
++ 输出
+
+  ```shell
+  payed normally> OrderResult{orderId=34729, resultState='payed'}
+  timeout> OrderResult{orderId=34767, resultState='timeout 1558431249000'}
+  payed normally> OrderResult{orderId=34766, resultState='payed'}
+  payed normally> OrderResult{orderId=34765, resultState='payed'}
+  payed normally> OrderResult{orderId=34764, resultState='payed'}
+  payed normally> OrderResult{orderId=34763, resultState='payed'}
+  payed normally> OrderResult{orderId=34762, resultState='payed'}
+  payed normally> OrderResult{orderId=34761, resultState='payed'}
+  payed normally> OrderResult{orderId=34760, resultState='payed'}
+  payed normally> OrderResult{orderId=34759, resultState='payed'}
+  payed normally> OrderResult{orderId=34758, resultState='payed'}
+  payed normally> OrderResult{orderId=34757, resultState='payed'}
+  timeout> OrderResult{orderId=34756, resultState='timeout 1558431213000'}
+  payed normally> OrderResult{orderId=34755, resultState='payed'}
+  payed normally> OrderResult{orderId=34754, resultState='payed'}
+  payed normally> OrderResult{orderId=34753, resultState='payed'}
+  payed normally> OrderResult{orderId=34752, resultState='payed'}
+  payed normally> OrderResult{orderId=34751, resultState='payed'}
+  payed normally> OrderResult{orderId=34750, resultState='payed'}
+  payed normally> OrderResult{orderId=34749, resultState='payed'}
+  payed normally> OrderResult{orderId=34748, resultState='payed'}
+  payed normally> OrderResult{orderId=34747, resultState='payed'}
+  payed normally> OrderResult{orderId=34746, resultState='payed'}
+  payed normally> OrderResult{orderId=34745, resultState='payed'}
+  payed normally> OrderResult{orderId=34744, resultState='payed'}
+  payed normally> OrderResult{orderId=34743, resultState='payed'}
+  payed normally> OrderResult{orderId=34742, resultState='payed'}
+  payed normally> OrderResult{orderId=34741, resultState='payed'}
+  payed normally> OrderResult{orderId=34740, resultState='payed'}
+  payed normally> OrderResult{orderId=34739, resultState='payed'}
+  payed normally> OrderResult{orderId=34738, resultState='payed'}
+  payed normally> OrderResult{orderId=34737, resultState='payed'}
+  payed normally> OrderResult{orderId=34736, resultState='payed'}
+  payed normally> OrderResult{orderId=34735, resultState='payed'}
+  payed normally> OrderResult{orderId=34734, resultState='payed'}
+  payed normally> OrderResult{orderId=34733, resultState='payed'}
+  payed normally> OrderResult{orderId=34732, resultState='payed'}
+  payed normally> OrderResult{orderId=34731, resultState='payed'}
+  payed normally> OrderResult{orderId=34730, resultState='payed'}
+  ```
+
+#### 代码2-ProcessFunction实现
+
+CEP虽然更加简洁，但是ProcessFunction能控制的细节操作更多。
+
+CEP还是比较适合事件之间有复杂联系的场景；
+
+ProcessFunction用来处理每个独立且靠状态就能联系的事件，灵活性更高。
+
++ java代码
+
+  ```java
+  import beans.OrderEvent;
+  import beans.OrderResult;
+  import org.apache.flink.api.common.state.ValueState;
+  import org.apache.flink.api.common.state.ValueStateDescriptor;
+  import org.apache.flink.configuration.Configuration;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.Collector;
+  import org.apache.flink.util.OutputTag;
+  
+  import java.net.URL;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/6 4:59 PM
+   */
+  public class OrderTimeoutWithoutCep {
+  
+    // 定义超时事件的侧输出流标签
+    private final static OutputTag<OrderResult> orderTimeoutTag = new OutputTag<OrderResult>("order-timeout") {
+    };
+  
+    public static void main(String[] args) throws Exception {
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 读取数据并转换成POJO类型
+      URL resource = OrderPayTimeout.class.getResource("/OrderLog.csv");
+      DataStream<OrderEvent> orderEventDataStream = env.readTextFile(resource.getPath())
+        .map(line -> {
+          String[] fields = line.split(",");
+          return new OrderEvent(new Long(fields[0]), fields[1], fields[2], new Long(fields[3]));
+        }).assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+        new BoundedOutOfOrdernessTimestampExtractor<OrderEvent>(Time.of(200, TimeUnit.MILLISECONDS)) {
+          @Override
+          public long extractTimestamp(OrderEvent element) {
+            return element.getTimestamp() * 1000L;
+          }
+        }
+      ));
+  
+      // 定义自定义处理函数，主流输出正常匹配订单事件，侧输出流输出超时报警事件
+      SingleOutputStreamOperator<OrderResult> resultStream = orderEventDataStream.keyBy(OrderEvent::getOrderId)
+        .process(new OrderPayMatchDetect());
+  
+      resultStream.print("pay normally");
+      resultStream.getSideOutput(orderTimeoutTag).print("timeout");
+  
+      env.execute("order timeout detect without cep job");
+    }
+  
+    public static class OrderPayMatchDetect extends KeyedProcessFunction<Long, OrderEvent, OrderResult> {
+      // 定义状态，保存之前点单是否已经来过create、pay的事件
+      ValueState<Boolean> isPayedState;
+      ValueState<Boolean> isCreatedState;
+      // 定义状态，保存定时器时间戳
+      ValueState<Long> timerTsState;
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        isPayedState = getRuntimeContext().getState(new ValueStateDescriptor<Boolean>("is-payed", Boolean.class, false));
+        isCreatedState = getRuntimeContext().getState(new ValueStateDescriptor<Boolean>("is-created", Boolean.class, false));
+        timerTsState = getRuntimeContext().getState(new ValueStateDescriptor<Long>("timer-ts", Long.class));
+      }
+  
+      @Override
+      public void processElement(OrderEvent value, Context ctx, Collector<OrderResult> out) throws Exception {
+        // 先获取当前状态
+        Boolean isPayed = isPayedState.value();
+        Boolean isCreated = isCreatedState.value();
+        Long timerTs = timerTsState.value();
+  
+        // 判断当前事件类型
+        if ("create".equals(value.getEventType())) {
+          // 1. 如果来的是create，要判断是否支付过
+          if (isPayed) {
+            // 1.1 如果已经正常支付，输出正常匹配结果
+            out.collect(new OrderResult(value.getOrderId(), "payed successfully"));
+            // 清空状态，删除定时器
+            isCreatedState.clear();
+            isPayedState.clear();
+            timerTsState.clear();
+            ctx.timerService().deleteEventTimeTimer(timerTs);
+          } else {
+            // 1.2 如果没有支付过，注册15分钟后的定时器，开始等待支付事件
+            Long ts = (value.getTimestamp() + 15 * 60) * 1000L;
+            ctx.timerService().registerEventTimeTimer(ts);
+            // 更新状态
+            timerTsState.update(ts);
+            isCreatedState.update(true);
+          }
+        } else if ("pay".equals(value.getEventType())) {
+          // 2. 如果来的是pay，要判断是否有下单事件来过
+          if (isCreated) {
+            // 2.1 已经有过下单事件，要继续判断支付的时间戳是否超过15分钟
+            if (value.getTimestamp() * 1000L < timerTs) {
+              // 2.1.1 在15分钟内，没有超时，正常匹配输出
+              out.collect(new OrderResult(value.getOrderId(), "payed successfully"));
+            } else {
+              // 2.1.2 已经超时，输出侧输出流报警
+              ctx.output(orderTimeoutTag, new OrderResult(value.getOrderId(), "payed but already timeout"));
+            }
+            // 统一清空状态
+            isCreatedState.clear();
+            isPayedState.clear();
+            timerTsState.clear();
+            ctx.timerService().deleteEventTimeTimer(timerTs);
+          } else {
+            // 2.2 没有下单事件，乱序，注册一个定时器，等待下单事件
+            ctx.timerService().registerEventTimeTimer(value.getTimestamp() * 1000L);
+            // 更新状态
+            timerTsState.update(value.getTimestamp() * 1000L);
+            isPayedState.update(true);
+          }
+        }
+      }
+  
+      @Override
+      public void onTimer(long timestamp, OnTimerContext ctx, Collector<OrderResult> out) throws Exception {
+        // 定时器触发，说明一定有一个事件没来
+        if (isPayedState.value()) {
+          // 如果pay来了，说明create没来
+          ctx.output(orderTimeoutTag, new OrderResult(ctx.getCurrentKey(), "payed but not found created log"));
+        } else {
+          // 如果pay没来，支付超时
+          ctx.output(orderTimeoutTag, new OrderResult(ctx.getCurrentKey(), "timeout"));
+        }
+        // 清空状态
+        isCreatedState.clear();
+        isPayedState.clear();
+        timerTsState.clear();
+      }
+    }
+  }
+  
+  ```
+
++ 输出
+
+  ```shell
+  pay normally> OrderResult{orderId=34729, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34730, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34731, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34732, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34734, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34733, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34735, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34736, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34746, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34738, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34745, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34741, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34747, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34743, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34737, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34744, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34742, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34739, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34740, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34753, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34749, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34755, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34752, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34748, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34751, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34750, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34761, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34759, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34754, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34758, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34760, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34757, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34762, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34763, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34764, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34765, resultState='payed successfully'}
+  pay normally> OrderResult{orderId=34766, resultState='payed successfully'}
+  timeout> OrderResult{orderId=34767, resultState='payed but already timeout'}
+  timeout> OrderResult{orderId=34768, resultState='payed but not found created log'}
+  timeout> OrderResult{orderId=34756, resultState='timeout'}
+  ```
+
 ### 14.3.8 订单支付实时对帐
 
 + 基本需求
@@ -10289,6 +10922,214 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
 + 解决思路
   + 从两条流中分别读取订单支付信息和到账信息，合并处理
   + 用connect连接合并两条流，用coProcessFunction做匹配处理
+
+#### POJO
+
++ ReceiptEvent
+
+  ```java
+  private String txId;
+  private String payChannel;
+  private Long timestamp;
+  ```
+
+#### 代码1-具体实现
+
++ java代码实现
+
+  ```java
+  import beans.OrderEvent;
+  import beans.ReceiptEvent;
+  import org.apache.flink.api.common.state.ValueState;
+  import org.apache.flink.api.common.state.ValueStateDescriptor;
+  import org.apache.flink.api.java.tuple.Tuple2;
+  import org.apache.flink.configuration.Configuration;
+  import org.apache.flink.streaming.api.datastream.DataStream;
+  import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+  import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+  import org.apache.flink.streaming.api.functions.co.CoProcessFunction;
+  import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractor;
+  import org.apache.flink.streaming.api.windowing.time.Time;
+  import org.apache.flink.streaming.runtime.operators.util.AssignerWithPeriodicWatermarksAdapter;
+  import org.apache.flink.util.Collector;
+  import org.apache.flink.util.OutputTag;
+  
+  import java.net.URL;
+  import java.util.concurrent.TimeUnit;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/2/6 5:34 PM
+   */
+  public class TxPayMatch {
+  
+    // 定义侧输出流标签
+    private final static OutputTag<OrderEvent> unmatchedPays = new OutputTag<OrderEvent>("unmatched-pays"){};
+    private final static OutputTag<ReceiptEvent> unmatchedReceipts = new OutputTag<ReceiptEvent>("unmatched-receipts"){};
+  
+    public static void main(String[] args) throws Exception {
+      StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+      env.setParallelism(1);
+  
+      // 读取数据并转换成POJO类型
+      // 读取订单支付事件数据
+      URL orderResource = TxPayMatch.class.getResource("/OrderLog.csv");
+      DataStream<OrderEvent> orderEventStream = env.readTextFile(orderResource.getPath())
+        .map(line -> {
+          String[] fields = line.split(",");
+          return new OrderEvent(new Long(fields[0]), fields[1], fields[2], new Long(fields[3]));
+        })
+        .assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+          new BoundedOutOfOrdernessTimestampExtractor<OrderEvent>(Time.of(200, TimeUnit.MILLISECONDS)) {
+            @Override
+            public long extractTimestamp(OrderEvent element) {
+              return element.getTimestamp() * 1000L;
+            }
+          }
+        ))
+        // 交易id不为空，必须是pay事件
+        .filter(data -> !"".equals(data.getTxId()));
+  
+      // 读取到账事件数据
+      URL receiptResource = TxPayMatch.class.getResource("/ReceiptLog.csv");
+      SingleOutputStreamOperator<ReceiptEvent> receiptEventStream = env.readTextFile(receiptResource.getPath())
+        .map(line -> {
+          String[] fields = line.split(",");
+          return new ReceiptEvent(fields[0], fields[1], new Long(fields[2]));
+        })
+        .assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarksAdapter.Strategy<>(
+          new BoundedOutOfOrdernessTimestampExtractor<ReceiptEvent>(Time.of(200, TimeUnit.MILLISECONDS)) {
+            @Override
+            public long extractTimestamp(ReceiptEvent element) {
+              return element.getTimestamp() * 1000L;
+            }
+          }
+        ));
+  
+      // 将两条流进行连接合并，进行匹配处理，不匹配的事件输出到侧输出流
+      SingleOutputStreamOperator<Tuple2<OrderEvent, ReceiptEvent>> resultStream = orderEventStream.keyBy(OrderEvent::getTxId)
+        .connect(receiptEventStream.keyBy(ReceiptEvent::getTxId))
+        .process(new TxPayMatchDetect());
+  
+      resultStream.print("matched-pays");
+      resultStream.getSideOutput(unmatchedPays).print("unmatched-pays");
+      resultStream.getSideOutput(unmatchedReceipts).print("unmatched-receipts");
+  
+      env.execute("tx match detect job");
+    }
+  
+    // 实现自定义CoProcessFunction
+    public static class TxPayMatchDetect extends CoProcessFunction<OrderEvent, ReceiptEvent, Tuple2<OrderEvent, ReceiptEvent>> {
+      // 定义状态，保存当前已经到来的订单支付事件和到账时间
+      ValueState<OrderEvent> payState;
+      ValueState<ReceiptEvent> receiptState;
+  
+      @Override
+      public void open(Configuration parameters) throws Exception {
+        payState = getRuntimeContext().getState(new ValueStateDescriptor<OrderEvent>("pay", OrderEvent.class));
+        receiptState = getRuntimeContext().getState(new ValueStateDescriptor<ReceiptEvent>("receipt", ReceiptEvent.class));
+      }
+  
+      @Override
+      public void processElement1(OrderEvent pay, Context ctx, Collector<Tuple2<OrderEvent, ReceiptEvent>> out) throws Exception {
+        // 订单支付事件来了，判断是否已经有对应的到账事件
+        ReceiptEvent receipt = receiptState.value();
+        if( receipt != null ){
+          // 如果receipt不为空，说明到账事件已经来过，输出匹配事件，清空状态
+          out.collect( new Tuple2<>(pay, receipt) );
+          payState.clear();
+          receiptState.clear();
+        } else {
+          // 如果receipt没来，注册一个定时器，开始等待
+          ctx.timerService().registerEventTimeTimer( (pay.getTimestamp() + 5) * 1000L );    // 等待5秒钟，具体要看数据
+          // 更新状态
+          payState.update(pay);
+        }
+      }
+  
+      @Override
+      public void processElement2(ReceiptEvent receipt, Context ctx, Collector<Tuple2<OrderEvent, ReceiptEvent>> out) throws Exception {
+        // 到账事件来了，判断是否已经有对应的支付事件
+        OrderEvent pay = payState.value();
+        if( pay != null ){
+          // 如果pay不为空，说明支付事件已经来过，输出匹配事件，清空状态
+          out.collect( new Tuple2<>(pay, receipt) );
+          payState.clear();
+          receiptState.clear();
+        } else {
+          // 如果pay没来，注册一个定时器，开始等待
+          ctx.timerService().registerEventTimeTimer( (receipt.getTimestamp() + 3) * 1000L );    // 等待3秒钟，具体要看数据
+          // 更新状态
+          receiptState.update(receipt);
+        }
+      }
+  
+      @Override
+      public void onTimer(long timestamp, OnTimerContext ctx, Collector<Tuple2<OrderEvent, ReceiptEvent>> out) throws Exception {
+        // 定时器触发，有可能是有一个事件没来，不匹配，也有可能是都来过了，已经输出并清空状态
+        // 判断哪个不为空，那么另一个就没来
+        if( payState.value() != null ){
+          ctx.output(unmatchedPays, payState.value());
+        }
+        if( receiptState.value() != null ){
+          ctx.output(unmatchedReceipts, receiptState.value());
+        }
+        // 清空状态
+        payState.clear();
+        receiptState.clear();
+      }
+    }
+  }
+  ```
+
++ 输出
+
+  ```shell
+  matched-pays> (OrderEvent{orderId=34729, eventType='pay', txId='sd76f87d6', timestamp=1558430844},ReceiptEvent{txId='sd76f87d6', payChannel='wechat', timestamp=1558430847})
+  matched-pays> (OrderEvent{orderId=34730, eventType='pay', txId='3hu3k2432', timestamp=1558430845},ReceiptEvent{txId='3hu3k2432', payChannel='alipay', timestamp=1558430848})
+  matched-pays> (OrderEvent{orderId=34732, eventType='pay', txId='32h3h4b4t', timestamp=1558430861},ReceiptEvent{txId='32h3h4b4t', payChannel='wechat', timestamp=1558430852})
+  matched-pays> (OrderEvent{orderId=34733, eventType='pay', txId='766lk5nk4', timestamp=1558430864},ReceiptEvent{txId='766lk5nk4', payChannel='wechat', timestamp=1558430855})
+  matched-pays> (OrderEvent{orderId=34734, eventType='pay', txId='435kjb45d', timestamp=1558430863},ReceiptEvent{txId='435kjb45d', payChannel='alipay', timestamp=1558430859})
+  matched-pays> (OrderEvent{orderId=34735, eventType='pay', txId='5k432k4n', timestamp=1558430869},ReceiptEvent{txId='5k432k4n', payChannel='wechat', timestamp=1558430862})
+  matched-pays> (OrderEvent{orderId=34736, eventType='pay', txId='435kjb45s', timestamp=1558430875},ReceiptEvent{txId='435kjb45s', payChannel='wechat', timestamp=1558430866})
+  matched-pays> (OrderEvent{orderId=34738, eventType='pay', txId='43jhin3k4', timestamp=1558430896},ReceiptEvent{txId='43jhin3k4', payChannel='wechat', timestamp=1558430871})
+  matched-pays> (OrderEvent{orderId=34741, eventType='pay', txId='88df0wn92', timestamp=1558430896},ReceiptEvent{txId='88df0wn92', payChannel='alipay', timestamp=1558430882})
+  matched-pays> (OrderEvent{orderId=34737, eventType='pay', txId='324jnd45s', timestamp=1558430902},ReceiptEvent{txId='324jnd45s', payChannel='wechat', timestamp=1558430868})
+  matched-pays> (OrderEvent{orderId=34743, eventType='pay', txId='3hefw8jf', timestamp=1558430900},ReceiptEvent{txId='3hefw8jf', payChannel='alipay', timestamp=1558430885})
+  matched-pays> (OrderEvent{orderId=34744, eventType='pay', txId='499dfano2', timestamp=1558430903},ReceiptEvent{txId='499dfano2', payChannel='wechat', timestamp=1558430886})
+  matched-pays> (OrderEvent{orderId=34742, eventType='pay', txId='435kjb4432', timestamp=1558430906},ReceiptEvent{txId='435kjb4432', payChannel='alipay', timestamp=1558430884})
+  matched-pays> (OrderEvent{orderId=34745, eventType='pay', txId='8xz09ddsaf', timestamp=1558430896},ReceiptEvent{txId='8xz09ddsaf', payChannel='wechat', timestamp=1558430889})
+  matched-pays> (OrderEvent{orderId=34739, eventType='pay', txId='98x0f8asd', timestamp=1558430907},ReceiptEvent{txId='98x0f8asd', payChannel='alipay', timestamp=1558430874})
+  matched-pays> (OrderEvent{orderId=34746, eventType='pay', txId='3243hr9h9', timestamp=1558430895},ReceiptEvent{txId='3243hr9h9', payChannel='wechat', timestamp=1558430892})
+  matched-pays> (OrderEvent{orderId=34740, eventType='pay', txId='392094j32', timestamp=1558430913},ReceiptEvent{txId='392094j32', payChannel='wechat', timestamp=1558430877})
+  matched-pays> (OrderEvent{orderId=34747, eventType='pay', txId='329d09f9f', timestamp=1558430893},ReceiptEvent{txId='329d09f9f', payChannel='alipay', timestamp=1558430893})
+  matched-pays> (OrderEvent{orderId=34749, eventType='pay', txId='324n0239', timestamp=1558430916},ReceiptEvent{txId='324n0239', payChannel='wechat', timestamp=1558430899})
+  matched-pays> (OrderEvent{orderId=34748, eventType='pay', txId='809saf0ff', timestamp=1558430934},ReceiptEvent{txId='809saf0ff', payChannel='wechat', timestamp=1558430895})
+  matched-pays> (OrderEvent{orderId=34752, eventType='pay', txId='rnp435rk', timestamp=1558430925},ReceiptEvent{txId='rnp435rk', payChannel='wechat', timestamp=1558430905})
+  matched-pays> (OrderEvent{orderId=34751, eventType='pay', txId='24309dsf', timestamp=1558430941},ReceiptEvent{txId='24309dsf', payChannel='alipay', timestamp=1558430902})
+  matched-pays> (OrderEvent{orderId=34753, eventType='pay', txId='8c6vs8dd', timestamp=1558430913},ReceiptEvent{txId='8c6vs8dd', payChannel='wechat', timestamp=1558430906})
+  matched-pays> (OrderEvent{orderId=34750, eventType='pay', txId='sad90df3', timestamp=1558430941},ReceiptEvent{txId='sad90df3', payChannel='alipay', timestamp=1558430901})
+  matched-pays> (OrderEvent{orderId=34755, eventType='pay', txId='8x0zvy8w3', timestamp=1558430918},ReceiptEvent{txId='8x0zvy8w3', payChannel='alipay', timestamp=1558430911})
+  matched-pays> (OrderEvent{orderId=34754, eventType='pay', txId='3245nbo7', timestamp=1558430950},ReceiptEvent{txId='3245nbo7', payChannel='alipay', timestamp=1558430908})
+  matched-pays> (OrderEvent{orderId=34758, eventType='pay', txId='32499fd9w', timestamp=1558430950},ReceiptEvent{txId='32499fd9w', payChannel='alipay', timestamp=1558430921})
+  matched-pays> (OrderEvent{orderId=34759, eventType='pay', txId='9203kmfn', timestamp=1558430950},ReceiptEvent{txId='9203kmfn', payChannel='alipay', timestamp=1558430922})
+  matched-pays> (OrderEvent{orderId=34760, eventType='pay', txId='390mf2398', timestamp=1558430960},ReceiptEvent{txId='390mf2398', payChannel='alipay', timestamp=1558430926})
+  matched-pays> (OrderEvent{orderId=34757, eventType='pay', txId='d8938034', timestamp=1558430962},ReceiptEvent{txId='d8938034', payChannel='wechat', timestamp=1558430915})
+  matched-pays> (OrderEvent{orderId=34761, eventType='pay', txId='902dsqw45', timestamp=1558430943},ReceiptEvent{txId='902dsqw45', payChannel='wechat', timestamp=1558430927})
+  matched-pays> (OrderEvent{orderId=34762, eventType='pay', txId='84309dw31r', timestamp=1558430983},ReceiptEvent{txId='84309dw31r', payChannel='alipay', timestamp=1558430933})
+  matched-pays> (OrderEvent{orderId=34763, eventType='pay', txId='sddf9809ew', timestamp=1558431068},ReceiptEvent{txId='sddf9809ew', payChannel='alipay', timestamp=1558430936})
+  matched-pays> (OrderEvent{orderId=34764, eventType='pay', txId='832jksmd9', timestamp=1558431079},ReceiptEvent{txId='832jksmd9', payChannel='wechat', timestamp=1558430938})
+  matched-pays> (OrderEvent{orderId=34765, eventType='pay', txId='m23sare32e', timestamp=1558431082},ReceiptEvent{txId='m23sare32e', payChannel='wechat', timestamp=1558430940})
+  matched-pays> (OrderEvent{orderId=34766, eventType='pay', txId='92nr903msa', timestamp=1558431095},ReceiptEvent{txId='92nr903msa', payChannel='wechat', timestamp=1558430944})
+  matched-pays> (OrderEvent{orderId=34767, eventType='pay', txId='sdafen9932', timestamp=1558432021},ReceiptEvent{txId='sdafen9932', payChannel='alipay', timestamp=1558430949})
+  unmatched-receipts> ReceiptEvent{txId='ewr342as4', payChannel='wechat', timestamp=1558430845}
+  unmatched-receipts> ReceiptEvent{txId='8fdsfae83', payChannel='alipay', timestamp=1558430850}
+  unmatched-pays> OrderEvent{orderId=34731, eventType='pay', txId='35jue34we', timestamp=1558430849}
+  unmatched-receipts> ReceiptEvent{txId='9032n4fd2', payChannel='wechat', timestamp=1558430913}
+  unmatched-pays> OrderEvent{orderId=34768, eventType='pay', txId='88snrn932', timestamp=1558430950}
+  ```
+
+
 
 # 15. CEP
 
