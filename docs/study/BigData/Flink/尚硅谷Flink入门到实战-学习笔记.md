@@ -5062,6 +5062,8 @@ sensor_1,1547718207,36.3
 # 11. Table API和Flink SQL
 
 > [Flink-Table API 和 Flink SQL简介 | 新老版本Flink批流处理对比 | 读取文件和Kafka消费数据 | API 和 SQL查询表](https://blog.csdn.net/qq_40180229/article/details/106457648)
+>
+> [flink-Table&sql-碰到的几个问题记录](https://blog.csdn.net/weixin_41956627/article/details/110050094)
 
 ## 11.1 概述
 
@@ -10566,7 +10568,6 @@ case class MyAggTabTemp() extends TableAggregateFunction[(Double, Int), AggTabTe
     </dependencies>
   ```
   
-
 + java代码
 
   （实际如果处理超时订单，应该修改对应的数据库数据，好让下次用户再次操作超时订单时失效）

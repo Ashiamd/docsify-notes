@@ -3,6 +3,16 @@
 > [HBase官方文档-w3cschool](https://www.w3cschool.cn/hbase_doc/)	<=	学习资料来源，下面的笔记大都出自于此，其他来源会标注
 >
 > [Hbase-官方文档](https://hbase.apache.org/book.html)	<=	上面w3cschool的有些明显直接百度翻译的，整理不是很好。这里建议翻译诡异的地方，直接看官方英文文档。
+>
+> ---
+>
+> 安装
+>
+> [Hbase的伪分布式安装](https://www.cnblogs.com/ivictor/p/5906433.html)
+>
+> [Hmaster启动几秒后自动消失的解决方法](https://blog.csdn.net/qq_46548855/article/details/106203616)
+>
+> 启动后访问 [本地WEB页面](http://localhost:16010/master-status)
 
 # Introduction
 
@@ -2164,3 +2174,4 @@ while(iterator.hasNext())
 iterator.close();
 ```
 
+   

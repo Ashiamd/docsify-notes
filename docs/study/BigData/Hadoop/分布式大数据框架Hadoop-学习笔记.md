@@ -1,6 +1,8 @@
 # 分布式大数据框架Hadoop-学习笔记
 
 > [分布式大数据框架Hadoop](https://www.ipieuvre.com/course/311)	<=	下面是根据该课程学习的笔记
+>
+> 启动后访问本地的[yarn web](http://localhost:8088)和[hdfs web](localhost:9870)
 
 # 1. 大数据的发展
 
