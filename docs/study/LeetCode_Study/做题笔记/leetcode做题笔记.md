@@ -946,7 +946,7 @@ class Solution {
 }
 ```
 
-### 二叉搜索树的最小绝对差
+### 530. 二叉搜索树的最小绝对差
 
 > [530. 二叉搜索树的最小绝对差](https://leetcode-cn.com/problems/minimum-absolute-difference-in-bst/)
 
@@ -1639,6 +1639,504 @@ class Solution {
     } while (right < chs.length);
 
     return ans;
+  }
+}
+```
+
+### 47. 全排列 II
+
+> [47. 全排列 II](https://leetcode-cn.com/problems/permutations-ii/)
+
+语言：java
+
+思路：这个感觉还挺复杂的，一时间只想到用传统全排列写法，然后在去重，但是效率太低。建议直接看其他人讲解。
+
+参考代码1（1ms，100%）：
+
+> [47. 全排列 II:【彻底理解排列中的去重问题】详解](https://leetcode-cn.com/problems/permutations-ii/solution/47-quan-pai-lie-iiche-di-li-jie-pai-lie-zhong-de-q/)
+
+```java
+class Solution {
+    //存放结果
+    List<List<Integer>> result = new ArrayList<>();
+    //暂存结果
+    List<Integer> path = new ArrayList<>();
+
+    public List<List<Integer>> permuteUnique(int[] nums) {
+        boolean[] used = new boolean[nums.length];
+        Arrays.fill(used, false);
+        Arrays.sort(nums);
+        backTrack(nums, used);
+        return result;
+    }
+
+    private void backTrack(int[] nums, boolean[] used) {
+        if (path.size() == nums.length) {
+            result.add(new ArrayList<>(path));
+            return;
+        }
+        for (int i = 0; i < nums.length; i++) {
+            // used[i - 1] == true，说明同⼀树⽀nums[i - 1]使⽤过
+            // used[i - 1] == false，说明同⼀树层nums[i - 1]使⽤过
+            // 如果同⼀树层nums[i - 1]使⽤过则直接跳过
+            if (i > 0 && nums[i] == nums[i - 1] && used[i - 1] == false) {
+                continue;
+            }
+            //如果同⼀树⽀nums[i]没使⽤过开始处理
+            if (used[i] == false) {
+                used[i] = true;//标记同⼀树⽀nums[i]使⽤过，防止同一树支重复使用
+                path.add(nums[i]);
+                backTrack(nums, used);
+                path.remove(path.size() - 1);//回溯，说明同⼀树层nums[i]使⽤过，防止下一树层重复
+                used[i] = false;//回溯
+            }
+        }
+    }
+}
+```
+
+参考后重写：
+
+```java
+class Solution {
+  public List<List<Integer>> permuteUnique(int[] nums) {
+    List<List<Integer>> res = new ArrayList<>();
+    Arrays.sort(nums);
+    recall(nums, res, 0, nums.length, new ArrayList<>(), new boolean[nums.length]);
+    return res;
+  }
+
+  public void recall(int[] nums, List<List<Integer>> res, int curDepth, int maxDepth, List<Integer> road, boolean[] used) {
+    if (curDepth == maxDepth) {
+      res.add(new ArrayList<>(road));
+    } else {
+      for (int i = 0; i < nums.length; ++i) {
+        if (i > 0 && nums[i] == nums[i - 1] && !used[i - 1]) {
+          continue;
+        }
+        if (!used[i]) {
+          road.add(nums[i]);
+          used[i] = true;
+          recall(nums, res, curDepth + 1, maxDepth, road, used);
+          used[i] = false;
+          road.remove(road.size() - 1);
+        }
+      }
+    }
+  }
+}
+```
+
+### 17. 电话号码的字母组合
+
+> [17. 电话号码的字母组合](https://leetcode-cn.com/problems/letter-combinations-of-a-phone-number/)
+
+语言：java
+
+思路：类似全排列II，但是需要考虑的是，每个数字按键里面一次只能挑一个字母。全排列是排列问题，这里是组合问题。这里直接DFS大胆遍历所有情况即可。
+
+代码（0ms，100%）：
+
+```java
+class Solution {
+  public List<String> letterCombinations(String digits) {
+    char[][] maps = new char[][]{{}, {}, {'a', 'b', 'c'}, {'d', 'e', 'f'}, {'g', 'h', 'i'}
+                                 , {'j', 'k', 'l'}, {'m', 'n', 'o'}, {'p', 'q', 'r', 's'}, {'t', 'u', 'v'}, {'w', 'x', 'y', 'z'}};
+    List<String> res = new ArrayList<>();
+    int[] nums = new int[digits.length()];
+    for (int i = 0; i < digits.length(); ++i) {
+      nums[i] = digits.charAt(i) - '0';
+    }
+    recall(0,digits.length(),nums,maps,new StringBuilder(), res);
+    return res;
+  }
+
+  public void recall(int curDepth,int maxDepth,int[] digits, char[][] maps,StringBuilder sb, List<String> res) {
+    if(curDepth==maxDepth){
+      //这个if是，输入”“的情况，res必须是[]
+      if(sb.length()>0){
+        res.add(sb.toString());
+      }
+    }else {
+      for(int i = 0;i<maps[digits[curDepth]].length;++i){
+        sb.append(maps[digits[curDepth]][i]);
+        recall(curDepth+1,maxDepth,digits,maps,sb,res);
+        sb.deleteCharAt(sb.length()-1);
+      }
+    }
+  }
+}
+```
+
+### 39. 组合总和
+
+> [39. 组合总和](https://leetcode-cn.com/problems/combination-sum/)
+
+语言：java
+
+思路：还是按照类似全排列的思想去做题，但是这里同样是更暴力的DFS，遍历所有情况。
+
++ 需要排序
++ 暴力的DFS，但是需要用begin记录起始遍历位置=>避免回头路`1112`和`1121`。
+
+代码（3ms，77.35%）：
+
+```java
+class Solution {
+  public List<List<Integer>> combinationSum(int[] candidates, int target) {
+    Arrays.sort(candidates);
+    List<List<Integer>> res = new ArrayList<>();
+    recall(candidates, 0, candidates.length, target, new LinkedList<>(), res);
+    return res;
+  }
+
+  public void recall(int[] candidates, int begin, int length, int target, Deque<Integer> road, List<List<Integer>> res) {
+    if (target == 0) {
+      res.add(new ArrayList<>(road));
+    } else {
+      // begin是避免走回头路，重复组合
+      for (int i = begin; i < length; ++i) {
+        // 如果当前元素大于目标值，没必要再往下DFS，因为再往后遍历的数字更大
+        if (candidates[i] > target) {
+          break;
+        }
+        road.addLast(candidates[i]);
+        recall(candidates, i, length, target - candidates[i], road, res);
+        road.removeLast();
+      }
+    }
+  }
+}
+```
+
+参考代码1（4ms，52.33%）：
+
+> [组合总和--官方解答](https://leetcode-cn.com/problems/combination-sum/solution/zu-he-zong-he-by-leetcode-solution/)
+
+```java
+class Solution {
+  public List<List<Integer>> combinationSum(int[] candidates, int target) {
+    List<List<Integer>> ans = new ArrayList<List<Integer>>();
+    List<Integer> combine = new ArrayList<Integer>();
+    dfs(candidates, target, ans, combine, 0);
+    return ans;
+  }
+
+  public void dfs(int[] candidates, int target, List<List<Integer>> ans, List<Integer> combine, int idx) {
+    if (idx == candidates.length) {
+      return;
+    }
+    if (target == 0) {
+      ans.add(new ArrayList<Integer>(combine));
+      return;
+    }
+    // 直接跳过
+    dfs(candidates, target, ans, combine, idx + 1);
+    // 选择当前数
+    if (target - candidates[idx] >= 0) {
+      combine.add(candidates[idx]);
+      dfs(candidates, target - candidates[idx], ans, combine, idx);
+      combine.remove(combine.size() - 1);
+    }
+  }
+}
+```
+
+### 40. 组合总和 II
+
+> [40. 组合总和 II](https://leetcode-cn.com/problems/combination-sum-ii/)
+
+语言：java
+
+思路：
+
++ 和[39. 组合总和](https://leetcode-cn.com/problems/combination-sum/)不同的是，每个数字只能使用一次。那这里就需要像全排列做题一样，用一个`boolean[]  used`来记录用过的元素。
+
++ 需要像[47. 全排列 II](https://leetcode-cn.com/problems/permutations-ii/)一样，避免DFS递归树同层出现相同数字的情况。
+
+  ```java
+  if(i>0&&candidates[i]==candidates[i-1]&&!used[i-1]){
+    continue;
+  }
+  ```
+
+代码（2ms，99.95%）：
+
+```java
+class Solution {
+  public List<List<Integer>> combinationSum2(int[] candidates, int target) {
+    List<List<Integer>> res = new ArrayList<>();
+    Arrays.sort(candidates);
+    recall(candidates,0,candidates.length,target,new boolean[candidates.length],new LinkedList<>(),res);
+    return res;
+  }
+
+  public void recall(int[] candidates,int begin,int len,int target, boolean[] used, Deque<Integer> road,List<List<Integer>> res){
+    if(target == 0){
+      res.add(new ArrayList<>(road));
+    }else{
+      for(int i = begin;i<len;++i){
+        if(candidates[i]> target){
+          break;
+        }
+        // eg: 避免数组里多个1时，会有重复情况
+        if(i>0&&candidates[i]==candidates[i-1]&&!used[i-1]){
+          continue;
+        }
+        if(!used[i]){
+          road.addLast(candidates[i]);
+          used[i] = true;
+          recall(candidates,i,len,target-candidates[i],used,road,res);
+          used[i] = false;
+          road.removeLast();
+        }
+      }
+    }
+  }
+}
+```
+
+参考代码1（3ms，82.41%）：
+
+> [回溯算法 + 剪枝（Java、Python）](https://leetcode-cn.com/problems/combination-sum-ii/solution/hui-su-suan-fa-jian-zhi-python-dai-ma-java-dai-m-3/)
+
+```java
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Deque;
+import java.util.List;
+
+public class Solution {
+
+  public List<List<Integer>> combinationSum2(int[] candidates, int target) {
+    int len = candidates.length;
+    List<List<Integer>> res = new ArrayList<>();
+    if (len == 0) {
+      return res;
+    }
+
+    // 关键步骤
+    Arrays.sort(candidates);
+
+    Deque<Integer> path = new ArrayDeque<>(len);
+    dfs(candidates, len, 0, target, path, res);
+    return res;
+  }
+
+  /**
+     * @param candidates 候选数组
+     * @param len        冗余变量
+     * @param begin      从候选数组的 begin 位置开始搜索
+     * @param target     表示剩余，这个值一开始等于 target，基于题目中说明的"所有数字（包括目标数）都是正整数"这个条件
+     * @param path       从根结点到叶子结点的路径
+     * @param res
+     */
+  private void dfs(int[] candidates, int len, int begin, int target, Deque<Integer> path, List<List<Integer>> res) {
+    if (target == 0) {
+      res.add(new ArrayList<>(path));
+      return;
+    }
+    for (int i = begin; i < len; i++) {
+      // 大剪枝：减去 candidates[i] 小于 0，减去后面的 candidates[i + 1]、candidates[i + 2] 肯定也小于 0，因此用 break
+      if (target - candidates[i] < 0) {
+        break;
+      }
+
+      // 小剪枝：同一层相同数值的结点，从第 2 个开始，候选数更少，结果一定发生重复，因此跳过，用 continue
+      if (i > begin && candidates[i] == candidates[i - 1]) {
+        continue;
+      }
+
+      path.addLast(candidates[i]);
+      // 调试语句 ①
+      // System.out.println("递归之前 => " + path + "，剩余 = " + (target - candidates[i]));
+
+      // 因为元素不可以重复使用，这里递归传递下去的是 i + 1 而不是 i
+      dfs(candidates, len, i + 1, target - candidates[i], path, res);
+
+      path.removeLast();
+      // 调试语句 ②
+      // System.out.println("递归之后 => " + path + "，剩余 = " + (target - candidates[i]));
+    }
+  }
+
+  public static void main(String[] args) {
+    int[] candidates = new int[]{10, 1, 2, 7, 6, 1, 5};
+    int target = 8;
+    Solution solution = new Solution();
+    List<List<Integer>> res = solution.combinationSum2(candidates, target);
+    System.out.println("输出 => " + res);
+  }
+}
+```
+
+### 51. N皇后
+
+> [51. N 皇后](https://leetcode-cn.com/problems/n-queens/)
+
+语言：java
+
+思路：
+
++ 每次放棋子前，先考虑是否能放。
++ 因为每一行只用取一个值，所以用一维数组够了
++ Main方法里，需要指定第一行的棋子放哪里
+
+代码（14ms，7.32%）：巨慢无比，我估计是打印结果的地方我写的不好。
+
+```java
+class Solution {
+  public List<List<String>> solveNQueens(int n) {
+    List<List<String>> res = new ArrayList<>();
+    int[] map = new int[n];
+    for(int i = 0;i<n;++i){
+      map[0] = i;
+      recall(map,1,n,res);
+    }
+    return res;
+  }
+
+  public void recall(int[] map,int curDepth,int maxDepth,List<List<String>> res){
+    if(curDepth == maxDepth){
+      List<String> oneAnswer = new ArrayList<>();
+      for(int i = 0;i<maxDepth;++i){
+        int col = map[i];
+        String line = String.join("", Collections.nCopies(col, ".")) + "Q" +
+          String.join("", Collections.nCopies(maxDepth - col - 1, "."));
+        oneAnswer.add(line);
+      }
+      res.add(oneAnswer);
+    }else{
+      for(int i = 0;i<maxDepth;++i){
+        if(canSet(map,curDepth,i)){
+          map[curDepth] = i;
+          recall(map,curDepth+1,maxDepth,res);
+        }
+      }
+    }
+  }
+
+  public boolean canSet(int[] map,int row,int col){
+    for(int i = 0;i<row;++i){
+      // 竖直方向
+      if(map[i]==col){
+        return false;
+      }
+      // 撇方向
+      if(map[i] - col == i - row){
+        return false;
+      }
+      // 捺方向
+      if(map[i] - col == row - i){
+        return false;
+      }
+    }
+    return true;
+  }
+}
+```
+
+参考代码1（6ms，43.63%）:
+
+>[N皇后--官方题解](https://leetcode-cn.com/problems/n-queens/solution/nhuang-hou-by-leetcode-solution/)
+
+```java
+class Solution {
+  public List<List<String>> solveNQueens(int n) {
+    List<List<String>> solutions = new ArrayList<List<String>>();
+    int[] queens = new int[n];
+    Arrays.fill(queens, -1);
+    Set<Integer> columns = new HashSet<Integer>();
+    Set<Integer> diagonals1 = new HashSet<Integer>();
+    Set<Integer> diagonals2 = new HashSet<Integer>();
+    backtrack(solutions, queens, n, 0, columns, diagonals1, diagonals2);
+    return solutions;
+  }
+
+  public void backtrack(List<List<String>> solutions, int[] queens, int n, int row, Set<Integer> columns, Set<Integer> diagonals1, Set<Integer> diagonals2) {
+    if (row == n) {
+      List<String> board = generateBoard(queens, n);
+      solutions.add(board);
+    } else {
+      for (int i = 0; i < n; i++) {
+        if (columns.contains(i)) {
+          continue;
+        }
+        int diagonal1 = row - i;
+        if (diagonals1.contains(diagonal1)) {
+          continue;
+        }
+        int diagonal2 = row + i;
+        if (diagonals2.contains(diagonal2)) {
+          continue;
+        }
+        queens[row] = i;
+        columns.add(i);
+        diagonals1.add(diagonal1);
+        diagonals2.add(diagonal2);
+        backtrack(solutions, queens, n, row + 1, columns, diagonals1, diagonals2);
+        queens[row] = -1;
+        columns.remove(i);
+        diagonals1.remove(diagonal1);
+        diagonals2.remove(diagonal2);
+      }
+    }
+  }
+
+  public List<String> generateBoard(int[] queens, int n) {
+    List<String> board = new ArrayList<String>();
+    for (int i = 0; i < n; i++) {
+      char[] row = new char[n];
+      Arrays.fill(row, '.');
+      row[queens[i]] = 'Q';
+      board.add(new String(row));
+    }
+    return board;
+  }
+}
+```
+
+参考代码2（1ms，100.00%）：
+
+> [N皇后--官方题解](https://leetcode-cn.com/problems/n-queens/solution/nhuang-hou-by-leetcode-solution/)
+
+```java
+class Solution {
+  public List<List<String>> solveNQueens(int n) {
+    int[] queens = new int[n];
+    Arrays.fill(queens, -1);
+    List<List<String>> solutions = new ArrayList<List<String>>();
+    solve(solutions, queens, n, 0, 0, 0, 0);
+    return solutions;
+  }
+
+  public void solve(List<List<String>> solutions, int[] queens, int n, int row, int columns, int diagonals1, int diagonals2) {
+    if (row == n) {
+      List<String> board = generateBoard(queens, n);
+      solutions.add(board);
+    } else {
+      int availablePositions = ((1 << n) - 1) & (~(columns | diagonals1 | diagonals2));
+      while (availablePositions != 0) {
+        int position = availablePositions & (-availablePositions);
+        availablePositions = availablePositions & (availablePositions - 1);
+        int column = Integer.bitCount(position - 1);
+        queens[row] = column;
+        solve(solutions, queens, n, row + 1, columns | position, (diagonals1 | position) << 1, (diagonals2 | position) >> 1);
+        queens[row] = -1;
+      }
+    }
+  }
+
+  public List<String> generateBoard(int[] queens, int n) {
+    List<String> board = new ArrayList<String>();
+    for (int i = 0; i < n; i++) {
+      char[] row = new char[n];
+      Arrays.fill(row, '.');
+      row[queens[i]] = 'Q';
+      board.add(new String(row));
+    }
+    return board;
   }
 }
 ```
