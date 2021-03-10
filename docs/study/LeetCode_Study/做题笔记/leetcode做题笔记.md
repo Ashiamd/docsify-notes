@@ -2141,3 +2141,395 @@ class Solution {
 }
 ```
 
+### 416. 分割等和子集
+
+> [416. 分割等和子集](https://leetcode-cn.com/problems/partition-equal-subset-sum/)
+
+语言：java
+
+思路：动态规划，用一维度数组`dp[target+1]`来保存，这里dp表示背包的容量，放进去的数字即是商品价值，同时也是商品重量。
+
+代码（24ms，82.03%）：
+
+```java
+class Solution {
+  public boolean canPartition(int[] nums) {
+    int sum = 0;
+    for (int num : nums) {
+      sum += num;
+    }
+    // 奇数，本身不可能拆分成两个等和数组
+    if ((sum & 1) == 1) {
+      return false;
+    }
+    int target = sum / 2;
+    int[] dp = new int[target + 1];
+    // 遍历物品
+    for (int item = 0; item < nums.length; ++item) {
+      // 背包一开始是有足够容量的，之后拿了东西后就减小，所以倒序遍历
+      // 因为有些容量可以直接浪费掉，所以每次capacity只-1就好了
+      // 如果容量不够了，也不用再遍历了，所以 capacity>=nums[item]
+      for (int capacity = target; capacity >= nums[item]; --capacity) {
+        // 当前背包 两种选择，要么不拿当前的商品，要么拿。
+        dp[capacity] = Math.max(dp[capacity], dp[capacity - nums[item]] + nums[item]);
+      }
+    }
+    // 判断 背包容量为target时，是不是正好装得下target
+    // 之所以能这么判断，是因为如果能够划分数组，那么容量为target的背包能装的价值总量为target的可能有多种情况，但是一定不会超过target。
+    // 毕竟这里 价值 == 重量
+    return dp[target] == target;
+  }
+}
+```
+
+参考代码1（20ms，91.38%）：
+
+> [动态规划（转换为 0-1 背包问题）](https://leetcode-cn.com/problems/partition-equal-subset-sum/solution/0-1-bei-bao-wen-ti-xiang-jie-zhen-dui-ben-ti-de-yo/)
+
+```java
+public class Solution {
+
+  public boolean canPartition(int[] nums) {
+    int len = nums.length;
+    int sum = 0;
+    for (int num : nums) {
+      sum += num;
+    }
+    if ((sum & 1) == 1) {
+      return false;
+    }
+
+    int target = sum / 2;
+    boolean[] dp = new boolean[target + 1];
+    dp[0] = true;
+
+    if (nums[0] <= target) {
+      dp[nums[0]] = true;
+    }
+    for (int i = 1; i < len; i++) {
+      for (int j = target; nums[i] <= j; j--) {
+        if (dp[target]) {
+          return true;
+        }
+        dp[j] = dp[j] || dp[j - nums[i]];
+      }
+    }
+    return dp[target];
+  }
+}
+```
+
+### 474. 一和零
+
+> [474. 一和零](https://leetcode-cn.com/problems/ones-and-zeroes/)
+
+语言：java
+
+思路：
+
++ 看上去可以暴力DFS，也可以动态规划的样子。这里试着用动态规划写写看。
++ `dp[m+1][n+1]`表示能装m个0和n个1的背包最多能放几个子集。
++ 状态转移方程：`dp[m][n] = Math.max(dp[m][n],dp[m-zeroArr[i]][n-oneArr[i]]+1);`
+  + 即要么不把当前元素放到背包
+  + 或者当前元素放背包，对应的剩余容量减小，然后子集数量+1
+  + `dp[0][0] = 0`，因为题目里面所有字符串长度>0，所以`m=0 且 n=0`时，背包必定装不下任何元素
+
+代码（61ms，35.89%）：超级慢，应该是三重for循环的原因
+
+```java
+class Solution {
+  public int findMaxForm(String[] strs, int m, int n) {
+    int strsLen = strs.length;
+    int[] oneArr = new int[strsLen];
+    int[] zeroArr = new int[strsLen];
+    int[][] dp = new int[m+1][n+1];
+    // 统计每个字符串里面的 0 和 1 的个数
+    for(int i = 0;i<strsLen;++i){
+      char[] chars = strs[i].toCharArray();
+      for(char c:chars){
+        if(c=='1'){
+          ++oneArr[i];
+        }else{
+          ++zeroArr[i];
+        }
+      }
+    }
+    // 动态规划 - 状态转移方程
+    for(int item = 0;item<strsLen;++item){
+      for(int i = m;i>=0;--i){
+        for(int j = n;j>=0;--j){
+          if(i>=zeroArr[item]&&j>=oneArr[item]){
+            dp[i][j] = Math.max(dp[i][j],dp[i-zeroArr[item]][j-oneArr[item]]+1);
+          }
+        }
+      }
+    }
+    return dp[m][n];
+  }
+}
+```
+
+参考代码1（41ms，54.92%）：
+
++ 主要是考虑到是**"有限背包"**，所以计算字符串的0和1的个数。可以在遍历字符串数组的时候临时统计，因为只遍历一次，不会重复放入同一个物品。=>而我多了一次for循环用来专门统计，亏时间了。
+
+> [一和零--官方题解](https://leetcode-cn.com/problems/ones-and-zeroes/solution/yi-he-ling-by-leetcode/)
+>
+> **注意由于每个字符串只能使用一次（即有限背包**），因此在更新 `dp(i, j)` 时，`i` 和 `j` 都需要从大到小进行枚举。
+
+```java
+public class Solution {
+  public int findMaxForm(String[] strs, int m, int n) {
+    int[][] dp = new int[m + 1][n + 1];
+    for (String s: strs) {
+      int[] count = countzeroesones(s);
+      for (int zeroes = m; zeroes >= count[0]; zeroes--)
+        for (int ones = n; ones >= count[1]; ones--)
+          dp[zeroes][ones] = Math.max(1 + dp[zeroes - count[0]][ones - count[1]], dp[zeroes][ones]);
+    }
+    return dp[m][n];
+  }
+  public int[] countzeroesones(String s) {
+    int[] c = new int[2];
+    for (int i = 0; i < s.length(); i++) {
+      c[s.charAt(i)-'0']++;
+    }
+    return c;
+  }
+}
+```
+
+参考代码2（40ms，57.51%）：
+
+> [动态规划（转换为 0-1 背包问题）](https://leetcode-cn.com/problems/ones-and-zeroes/solution/dong-tai-gui-hua-zhuan-huan-wei-0-1-bei-bao-wen-ti/)
+>
+> 和官方题解其实差不多，没啥太大区别
+
+```java
+public class Solution {
+
+  public int findMaxForm(String[] strs, int m, int n) {
+    int[][] dp = new int[m + 1][n + 1];
+    dp[0][0] = 0;
+    for (String s : strs) {
+      int[] zeroAndOne = calcZeroAndOne(s);
+      int zeros = zeroAndOne[0];
+      int ones = zeroAndOne[1];
+      for (int i = m; i >= zeros; i--) {
+        for (int j = n; j >= ones; j--) {
+          dp[i][j] = Math.max(dp[i][j], dp[i - zeros][j - ones] + 1);
+        }
+      }
+    }
+    return dp[m][n];
+  }
+
+  private int[] calcZeroAndOne(String str) {
+    int[] res = new int[2];
+    for (char c : str.toCharArray()) {
+      res[c - '0']++;
+    }
+    return res;
+  }
+}
+```
+
+过去提交过的代码（44ms，49.79%）：
+
++ 其实也差不多，主要主要时间差距的地方就是获取每个字符串的0和1个数的代码实现
+
+```java
+class Solution {
+  public int findMaxForm(String[] strs, int m, int n) {
+    int[][] dp = new int[m + 1][n + 1];
+    //        int max = 0;
+    //dp[i][j] = Math.max(dp[i-strs[i].zero][j-str[i].one]+1,dp[i][j]);
+    for (int i = 0; i < strs.length; ++i) {
+      int zeroCount = zeroCount(strs, i);
+      int oneCount = oneCount(strs, i);
+      for (int j = m; j >= zeroCount; --j) {
+        for (int k = n; k >= oneCount; --k) {
+          dp[j][k] = Math.max(dp[j][k], dp[j-zeroCount][k-oneCount]+1);
+        }
+      }
+    }
+    return dp[m][n];
+  }
+
+  public int zeroCount(String[] strs, int index) {
+    int count = 0;
+    for (int i = 0; i < strs[index].length(); ++i) {
+      if (strs[index].charAt(i) == '0') {
+        ++count;
+      }
+    }
+    return count;
+  }
+
+  public int oneCount(String[] strs, int index) {
+    int count = 0;
+    for (int i = 0; i < strs[index].length(); ++i) {
+      if (strs[index].charAt(i) == '1') {
+        ++count;
+      }
+    }
+    return count;
+  }
+}
+```
+
+### 494. 目标和
+
+> [494. 目标和](https://leetcode-cn.com/problems/target-sum/)
+
+语言：java
+
+思路：可以用暴力DFS，也可以用动态规划。这里尝试动态规划
+
++ 这个题目有个烦人点就是+-号问题。
++ 假设准备取正的集合和为Z，准备取负的集合和为F，目标值S，nums数组原本的和为sum
+  + `Z-F = S` => `Z-F+F = S + F` => `Z + Z = S + Z + F` => `2Z = S + sum`
+  + 所以到头来，我们只要考虑正数情况，不需要考虑负数
++ `dp[i]`表示目标和到i的方式有几种。
+  + `dp[0]=1`，数组非空，全部元素都必须用上，即一定会用到`dp[0]`，每次用到`dp[0]`说明找到一种情况，+1。
+
+代码（3ms，89.22%）：
+
+```java
+class Solution {
+  public int findTargetSumWays(int[] nums, int S) {
+    // `Z-F = S` => `Z-F+F = S + F` => `Z + Z = S + Z + F` => `2Z = S + sum`
+    int sum = 0;
+    for (int num : nums) {
+      sum += num;
+    }
+    // S + sum 必须 == 2Z，即不能是奇数
+    if (S > sum || ((S + sum) & 1) == 1) {
+      return 0;
+    }
+    // 实际 target，我们只考虑 正数和 计算
+    int target = (S + sum) / 2;
+    int[] dp = new int[target + 1];
+    dp[0] = 1;
+    for (int num : nums) {
+      for (int j = target; j >= num; --j) {
+        dp[j] += dp[j - num];
+      }
+    }
+    return dp[target];
+  }
+}
+```
+
+过去提交过的代码（可能是参考代码？2ms，99.98%）：整体差不多
+
+```java
+class Solution {
+  public int findTargetSumWays(int[] nums, int S) {
+    // S(p) - S(n) = S
+    // 2 * S(p)  = S + sum
+
+    int sum = 0;
+
+    for(int num:nums){
+      sum += num;
+    }
+
+    if(sum<S||(sum+S)%2==1){
+      return 0;
+    }
+
+    sum = (sum+S)/2;
+
+    int[] dp = new int[sum+1];
+    dp[0] = 1;
+
+    for(int num:nums){
+      for(int j = sum;j>=num;--j){
+        dp[j] += dp[j-num];
+      }
+    }
+    return dp[sum];
+  }
+}
+```
+
+### 1025. 除数博弈
+
+> [1025. 除数博弈](https://leetcode-cn.com/problems/divisor-game/)
+
+语言：java
+
+思路：这里主要需要思考的是，"两个玩家都以最佳状态参与游戏"，怎么样是最佳。
+
++ 先找规律试试，根据题目的提示，可以得知，如果为2，直接就是true，为3则false。
++ 这里`N-x`替换原本的`N`，也算是一种提示，暗示可以用动态规划=>当前状态依赖过去的计算
++ `dp[i]`表示数字为i时，爱丽丝是否能赢
++ `dp[2] = true; d[3] = false` => 题目给出的
++ `dp[1] = false`，因为爱丽丝此时无法操作
++ 纸上发现规律，基本只要考虑-1，-2，-3的情况，而实际上只要是偶数就赢了
+
+代码1（0ms，100%）：
+
+```java
+class Solution {
+  public boolean divisorGame(int N) {
+    return N%2==0;
+  }
+}
+```
+
+代码2（0ms，100%）：只考虑-1，-2，-3的情况
+
+```java
+class Solution {
+  public boolean divisorGame(int N) {
+    boolean[] dp = new boolean[N+2];
+    dp[2] = true;
+    for(int i = 4;i<=N;++i){
+      if(i%2==0){
+        dp[i] = !dp[i-2];
+      }
+      if(!dp[i] && i%3==0){
+        dp[i] = !dp[i-3];
+      }
+      if(!dp[i]){
+        dp[i] = !dp[i-1];
+      }
+    }
+    return dp[N];
+  }
+}
+```
+
+### 112. 路径总和
+
+> [112. 路径总和](https://leetcode-cn.com/problems/path-sum/)
+
+语言：java
+
+思路：暴力DFS，遍历所有情况
+
++ 必须是根到叶子结点，所以节点数量至少2个
++ **targetSum本来就可以是0**
+
+代码（0ms，100%）：看着简单题，结果没想到还错了几次
+
+```java
+class Solution {
+  public boolean hasPathSum(TreeNode root, int targetSum) {
+    return root != null && recur(root, targetSum);
+  }
+
+  public boolean recur(TreeNode root, int targetSum) {
+    if(root == null){
+      return false;
+    }
+    if(root.left==null&&root.right==null){
+      return targetSum - root.val == 0;
+    }
+    return recur(root.left, targetSum-root.val) || recur(root.right,targetSum-root.val);
+  }
+}
+```
+
