@@ -2533,3 +2533,140 @@ class Solution {
 }
 ```
 
+### 面试题 01.04. 回文排列
+
+> [面试题 01.04. 回文排列](https://leetcode-cn.com/problems/palindrome-permutation-lcci/)
+
+语言：java
+
+思路：感觉这题就是脑经急转弯，字符串里的字母类别中，至多只有一个字母出现次数为单数即true。
+
++ 为方便计算同一个字母次数，先对s字符串里的字母排序
+
+代码（0ms，100.00%）：
+
+```java
+class Solution {
+  public boolean canPermutePalindrome(String s) {
+    char[] chars = s.toCharArray();
+    int len = chars.length;
+    Arrays.sort(chars);
+    int oddCount = 0;// 同一个字符个数为奇数的 字符类别总数
+    for (int left = 0, right = 0; right < len; ) {
+      while (right < len && chars[left] == chars[right]) {
+        ++right;
+      }
+      if ((right - left) % 2 == 1) {
+        ++oddCount;
+      }
+      left = right;
+    }
+    return oddCount <= 1;
+  }
+}
+```
+
+### 647. 回文子串
+
+> [647. 回文子串](https://leetcode-cn.com/problems/palindromic-substrings/)
+
+语言：java
+
+思路：暴力双层for循环，效率超级慢。直接每个子串都判断回文。
+
+代码（582ms，5.02%）：感觉自己对"字符串处理"相关的题目不是很熟练。
+
+```java
+class Solution {
+  public int countSubstrings(String s) {
+    int count = 0;
+    int len = s.length();
+    for(int left = 0;left<len;++left){
+      for(int right = left;right<len;++right){
+        if(is(s,left,right)){
+          ++count;
+        }
+      }
+    }
+    return count;
+  }
+
+  public boolean is(String s ,int left,int right){
+    while(left<right){
+      if(s.charAt(left)!=s.charAt(right)){
+        return false;
+      }
+      ++left;
+      --right;
+    }
+    return true;
+  }
+}
+```
+
+参考代码1（4ms，78.15%）：
+
+> [回文子串--官方题解](https://leetcode-cn.com/problems/palindromic-substrings/solution/hui-wen-zi-chuan-by-leetcode-solution/)
+>
+> 2*n，主要是为了统一长度为偶数和奇数的情况
+>
+> 需要纸上找规律， 把回文左右边界的计算规律总结出公式
+
+```java
+class Solution {
+  public int countSubstrings(String s) {
+    int n = s.length(), ans = 0;
+    for (int i = 0; i < 2 * n - 1; ++i) {
+      int l = i / 2, r = i / 2 + i % 2;
+      while (l >= 0 && r < n && s.charAt(l) == s.charAt(r)) {
+        --l;
+        ++r;
+        ++ans;
+      }
+    }
+    return ans;
+  }
+}
+```
+
+参考代码2：
+
+> [回文子串--官方题解](https://leetcode-cn.com/problems/palindromic-substrings/solution/hui-wen-zi-chuan-by-leetcode-solution/)
+>
+> Manacher 算法 => 有点复杂。
+
+```java
+class Solution {
+  public int countSubstrings(String s) {
+    int n = s.length();
+    StringBuffer t = new StringBuffer("$#");
+    for (int i = 0; i < n; ++i) {
+      t.append(s.charAt(i));
+      t.append('#');
+    }
+    n = t.length();
+    t.append('!');
+
+    int[] f = new int[n];
+    int iMax = 0, rMax = 0, ans = 0;
+    for (int i = 1; i < n; ++i) {
+      // 初始化 f[i]
+      f[i] = i <= rMax ? Math.min(rMax - i + 1, f[2 * iMax - i]) : 1;
+      // 中心拓展
+      while (t.charAt(i + f[i]) == t.charAt(i - f[i])) {
+        ++f[i];
+      }
+      // 动态维护 iMax 和 rMax
+      if (i + f[i] - 1 > rMax) {
+        iMax = i;
+        rMax = i + f[i] - 1;
+      }
+      // 统计答案, 当前贡献为 (f[i] - 1) / 2 上取整
+      ans += f[i] / 2;
+    }
+
+    return ans;
+  }
+}
+```
+
