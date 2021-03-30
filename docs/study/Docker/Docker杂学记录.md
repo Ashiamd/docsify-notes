@@ -808,3 +808,22 @@ spring:
 
 > [Docker 大势已去，Podman 万岁](https://blog.csdn.net/alex_yangchuansheng/article/details/102618128)
 
+## 7. docker和虚拟机
+
+> [docker容器与虚拟机有什么区别？](https://www.zhihu.com/question/48174633)	<=	以下图文出至该文章
+>
+> 说了这么多Docker的优势，大家也没有必要完全否定**虚拟机**技术，因为两者有不同的使用场景。
+>
+> + **虚拟机**更擅长于彻底<u>隔离整个运行环境</u>。例如，云服务提供商通常采用虚拟机技术隔离不同的用户。
+> + **Docker**通常用于<u>隔离不同的应用</u>，例如**前端**，**后端**以及**数据库**。
+>
+> 因此，我们需要根据不同的应用场景和需求采用不同的方式使用Docker技术或使用服务器虚拟化技术。例如一个典型的Docker应用场景是当主机上的Docker实例属于单一用户的情况下，在保证安全的同时可以充分发挥Docker的技术优势。
+>
+> **虚拟机是为提供系统环境而生的，容器是为提供应用环境而生的，各有各的标地。**
+
+![img](https://pic1.zhimg.com/80/v2-ee27d299f5e38ed460218ac087518bba_1440w.jpg?source=1940ef5c)
+
+![img](https://pic2.zhimg.com/80/v2-0d67e01d75d19e227fb44104eca28f43_1440w.jpg?source=1940ef5c)
+
+![img](https://pic1.zhimg.com/80/v2-0063a244295c22dc45ed92e412dbfc15_1440w.jpg?source=1940ef5c)
+
