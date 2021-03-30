@@ -609,3 +609,8 @@ public class ByteBufTest {
 ## 10. protobuf
 
 > [Protobuf原理分析小结](https://www.jianshu.com/p/522f13206ba1)
+>
+> [深入 ProtoBuf - 简介](https://www.jianshu.com/p/a24c88c0526a)
+>
+> [深入 ProtoBuf - 编码](https://www.jianshu.com/p/73c9ed3a4877)
+
