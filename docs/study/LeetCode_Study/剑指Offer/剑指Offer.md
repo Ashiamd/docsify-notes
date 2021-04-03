@@ -4723,7 +4723,7 @@ class Solution {
 
 
 
-## 数据结构
+## 算法与数据结构
 
 ### 1. 快速排序-java
 
@@ -5124,5 +5124,103 @@ public class MergeSort{
 ```none
 原数组：[15, 435, 43, 543, 1, 24, 46, 12, 1, 234, 84, 68, 1321, 231, 2, 846, 2, 0, 4, 453, 2, 14, 8, 453, 123, 48, 468, 453, 132, 48, 3, 15, 48, 23, 132, 45, 46, 2, 18, 7, 123, 487, 53, 378, 3, 24, 87, 6, 4, 47, 8, 123, 435, 87, 12, 45, 86, 12, 45, 44, 8, 124, 684, 8653, 46, 8, 34, 234, 2321, 4, 8, 533, 453, 7, 5, 4, 11, 3, 8, 71, 2, 6, 5, 7, 7, 9, 4, 1, 23, 1, 5, 5, 9, 3, 5, 7, 1, 1, 23, 5, 4, 7, 8, 21, 2, 85, 2, 6, 6, 2, 3, 6, 8, 5, 1, 2, 2, 0, 1, 4, 5, 8, 6, 2, 4, 88, 52, 2, 0]
 归并排序后：[0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 11, 12, 12, 12, 14, 15, 15, 18, 21, 23, 23, 23, 24, 24, 34, 43, 44, 45, 45, 45, 46, 46, 46, 47, 48, 48, 48, 52, 53, 68, 71, 84, 85, 86, 87, 87, 88, 123, 123, 123, 124, 132, 132, 231, 234, 234, 378, 435, 435, 453, 453, 453, 453, 468, 487, 533, 543, 684, 846, 1321, 2321, 8653]
+```
+
+### 4. KMP算法
+
+> 根据[B站视频](https://www.bilibili.com/video/BV1hW411a7ys/)复习KMP算法，简单用Java实现了一下。
+
+```java
+public class KMP {
+
+  /**
+     * 获取前缀表
+     *
+     * @param pattern
+     */
+  public static int[] prefix_table(String pattern) {
+    int n = pattern.length();
+    int[] prefix = new int[n];
+    // 这里len为匹配到的前后缀相同部分的长度
+    int len = 0;
+    for (int i = 1; i < n; ) {
+      if (pattern.charAt(i) == pattern.charAt(len)) {
+        ++len;
+        prefix[i] = len;
+        ++i;
+      } else {
+        // 之前已经匹配过一部分后(len > 0)，如果当前不匹配，则回溯上一个匹配时的长度
+        // 由于匹配过一部分了，所以当前的len = 之前匹配过的长度+1，取上次匹配长度就是prefix[len-1]
+        if (len > 0) {
+          len = prefix[len - 1];
+        } else {
+          // 如果连第一个字符都不匹配，那么直接找下一个位置
+          ++i;
+        }
+      }
+    }
+    return prefix;
+  }
+
+  /**
+     * 右移一位前缀表，第一位置-1，方便后续KMP计算
+     *
+     * @param prefix
+     */
+  public static void move_prefix_table(int[] prefix) {
+    if (prefix.length - 1 >= 0) {
+      System.arraycopy(prefix, 0, prefix, 1, prefix.length - 1);
+    }
+    prefix[0] = -1;
+  }
+
+  /**
+     * KMP查询子串，返回所有子串的位置(开头匹配的下标位置)
+     *
+     * @param text
+     * @param pattern
+     */
+  public static List<Integer> kmp_search(String text, String pattern) {
+    List<Integer> kmpResList = new ArrayList<>();
+    int[] prefix = prefix_table(pattern);
+    move_prefix_table(prefix);
+    int lenText = text.length();
+    int lenPattern = pattern.length();
+    for (int i = 0, j = 0; i < lenText; ) {
+      if (pattern.charAt(j) == text.charAt(i)) {
+        ++i;
+        ++j;
+        // 匹配到一个完整子串后，再到下一个可能匹配的位置
+        // 这里相当于子串在 prefix[lenPattern-1]之前的都是和当前text的i前面一串匹配上了，所以只需要看这往后的字符
+        if (j == lenPattern) {
+          kmpResList.add(i - j);
+          j = prefix[lenPattern - 1];
+        }
+      } else {
+        j = prefix[j];
+        if (j == -1) {
+          ++i;
+          j = 0;
+        }
+      }
+    }
+    return kmpResList;
+  }
+
+  public static void main(String[] args) {
+    String pattern = "ABABCABAA";
+    String text = "ABABABCABAABABABAB";
+    List<Integer> resList = kmp_search(text, pattern);
+    for (Integer index : resList) {
+      System.out.println(index);
+    }
+  }
+}
+```
+
+输出结果
+
+```shell
+2
 ```
 
