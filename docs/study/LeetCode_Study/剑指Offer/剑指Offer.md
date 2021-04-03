@@ -5128,93 +5128,149 @@ public class MergeSort{
 
 ### 4. KMP算法
 
-> 根据[B站视频](https://www.bilibili.com/video/BV1hW411a7ys/)复习KMP算法，简单用Java实现了一下。
+> 根据B站视频复习KMP算法，简单用Java实现了一下。
 
 ```java
 public class KMP {
 
-  /**
-     * 获取前缀表
-     *
+
+    /**
+     * 获取前缀表prefix(方法一)
+     * 根据这个B站视频学习后编写 => KMP字符串匹配算法2 https://www.bilibili.com/video/BV1hW411a7ys/
      * @param pattern
      */
-  public static int[] prefix_table(String pattern) {
-    int n = pattern.length();
-    int[] prefix = new int[n];
-    // 这里len为匹配到的前后缀相同部分的长度
-    int len = 0;
-    for (int i = 1; i < n; ) {
-      if (pattern.charAt(i) == pattern.charAt(len)) {
-        ++len;
-        prefix[i] = len;
-        ++i;
-      } else {
-        // 之前已经匹配过一部分后(len > 0)，如果当前不匹配，则回溯上一个匹配时的长度
-        // 由于匹配过一部分了，所以当前的len = 之前匹配过的长度+1，取上次匹配长度就是prefix[len-1]
-        if (len > 0) {
-          len = prefix[len - 1];
-        } else {
-          // 如果连第一个字符都不匹配，那么直接找下一个位置
-          ++i;
+    public static int[] prefix_table(String pattern) {
+        int n = pattern.length();
+        int[] prefix = new int[n];
+        // 这里len为匹配到的前后缀相同部分的长度
+        int len = 0;
+        for (int i = 1; i < n; ) {
+            if (pattern.charAt(i) == pattern.charAt(len)) {
+                ++len;
+                prefix[i] = len;
+                ++i;
+            } else {
+                // 之前已经匹配过一部分后(len > 0)，如果当前不匹配，则回溯上一个匹配时的长度
+                // 由于匹配过一部分了，所以当前的len = 之前匹配过的长度+1，取上次匹配长度就是prefix[len-1]
+                if (len > 0) {
+                    len = prefix[len - 1];
+                } else {
+                    // 如果连第一个字符都不匹配，那么直接找下一个位置
+                    ++i;
+                }
+            }
         }
-      }
+        return prefix;
     }
-    return prefix;
-  }
 
-  /**
+    /**
      * 右移一位前缀表，第一位置-1，方便后续KMP计算
      *
      * @param prefix
      */
-  public static void move_prefix_table(int[] prefix) {
-    if (prefix.length - 1 >= 0) {
-      System.arraycopy(prefix, 0, prefix, 1, prefix.length - 1);
+    public static void move_prefix_table(int[] prefix) {
+        if (prefix.length - 1 >= 0) {
+            System.arraycopy(prefix, 0, prefix, 1, prefix.length - 1);
+        }
+        prefix[0] = -1;
     }
-    prefix[0] = -1;
-  }
 
-  /**
+    /**
      * KMP查询子串，返回所有子串的位置(开头匹配的下标位置)
      *
      * @param text
      * @param pattern
      */
-  public static List<Integer> kmp_search(String text, String pattern) {
-    List<Integer> kmpResList = new ArrayList<>();
-    int[] prefix = prefix_table(pattern);
-    move_prefix_table(prefix);
-    int lenText = text.length();
-    int lenPattern = pattern.length();
-    for (int i = 0, j = 0; i < lenText; ) {
-      if (pattern.charAt(j) == text.charAt(i)) {
-        ++i;
-        ++j;
-        // 匹配到一个完整子串后，再到下一个可能匹配的位置
-        // 这里相当于子串在 prefix[lenPattern-1]之前的都是和当前text的i前面一串匹配上了，所以只需要看这往后的字符
-        if (j == lenPattern) {
-          kmpResList.add(i - j);
-          j = prefix[lenPattern - 1];
+    public static List<Integer> kmp_search(String text, String pattern) {
+        List<Integer> kmpResList = new ArrayList<>();
+        int[] prefix = prefix_table(pattern);
+        move_prefix_table(prefix);
+        int lenText = text.length();
+        int lenPattern = pattern.length();
+        for (int i = 0, j = 0; i < lenText; ) {
+            if (pattern.charAt(j) == text.charAt(i)) {
+                ++i;
+                ++j;
+                // 匹配到一个完整子串后，再到下一个可能匹配的位置
+                // 这里相当于子串在 prefix[lenPattern-1]之前的都是和当前text的i前面一串匹配上了，所以只需要看这往后的字符
+                if (j == lenPattern) {
+                    kmpResList.add(i - j);
+                    j = prefix[lenPattern - 1];
+                }
+            } else {
+                j = prefix[j];
+                if (j == -1) {
+                    ++i;
+                    j = 0;
+                }
+            }
         }
-      } else {
-        j = prefix[j];
-        if (j == -1) {
-          ++i;
-          j = 0;
-        }
-      }
+        return kmpResList;
     }
-    return kmpResList;
-  }
 
-  public static void main(String[] args) {
-    String pattern = "ABABCABAA";
-    String text = "ABABABCABAABABABAB";
-    List<Integer> resList = kmp_search(text, pattern);
-    for (Integer index : resList) {
-      System.out.println(index);
+
+    /**
+     * 获取next数组(方法二)
+     * @param pattern
+     * 根据B站视频学习后编写 => 帮你把KMP算法学个通透！（求next数组代码篇） https://www.bilibili.com/video/BV1M5411j7Xx/
+     */
+    public static int[] next(String pattern){
+        int n = pattern.length();
+        int[] next = new int[n];
+        // i指向后缀的最后一个位置;
+        // j指向前缀的最后一个位置
+        int i = 1,j=0;
+        for(;i<n;++i){
+            while(j>0 && pattern.charAt(i)!=pattern.charAt(j)){
+                // 没有匹配上，则j回溯到上一个位置
+                j = next[j-1];
+            }
+            if(pattern.charAt(i)==pattern.charAt(j)){
+                next[i] = ++j;
+            }
+        }
+        return next;
     }
-  }
+
+    /**
+     * 使用next数组完成KMP算法
+     * @param text
+     * @param pattern
+     * @return
+     */
+    public static List<Integer> kmp_search2(String text, String pattern){
+        List<Integer> resList = new ArrayList<>();
+        int[] next = next(pattern);
+        int textLen = text.length();
+        int patternLen = pattern.length();
+        for(int i = 0,j = 0;i<textLen;){
+            if(text.charAt(i) == pattern.charAt(j)){
+                ++i;
+                ++j;
+                if(j == patternLen){
+                    resList.add(i-j);
+                    j = next[patternLen-1];
+                }
+            }else{
+                if(j>0){
+                    j = next[j-1];
+                }else{
+                    ++i;
+                }
+            }
+        }
+        return resList;
+    }
+
+    public static void main(String[] args) {
+        String pattern = "ABABCABAA";
+        String text = "ABABABCABAABABABAB";
+//        List<Integer> resList = kmp_search(text, pattern);
+        List<Integer> resList = kmp_search2(text, pattern);
+        for (Integer index : resList) {
+            System.out.println(index);
+        }
+    }
 }
 ```
 
