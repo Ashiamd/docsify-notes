@@ -2670,4 +2670,91 @@ class Solution {
 }
 ```
 
-### 
+### 1392. 最长快乐前缀
+
+> [最长快乐前缀](https://leetcode-cn.com/problems/longest-happy-prefix/)
+
+语言：java
+
+思路：KMP算法，利用里面求next数组的思想，进行求解
+
+代码（11ms，66.30%）：
+
+```java
+class Solution {
+  public String longestPrefix(String s) {
+    int n = s.length();
+    int[] prefix = new int[n];
+    int len = 0;
+    for (int i = 1; i < n;) {
+      if(s.charAt(i) == s.charAt(len)){
+        ++len;
+        prefix[i] = len;
+        ++i;
+      }else{
+        if(len > 0){
+          len = prefix[len-1];
+        }else{
+          ++i;
+        }
+      }
+    }
+    return s.substring(0, prefix[n-1]);
+  }
+}
+```
+
+参考代码1（6ms，100%）：
+
+```java
+class Solution {
+  public String longestPrefix(String s) {
+    if (s == null || s.length() < 2) return "";
+    char[] chs = s.toCharArray();
+    int len = s.length();
+    int[] next = new int[len + 1];
+    next[0] = -1;
+    // next[1] = 0;
+    for (int l = 0, r = 1; r < len;) {
+      if (chs[l] == chs[r]) {
+        next[++r] = ++l;
+      } else if (l > 0) {
+        l = next[l];
+      } else {
+        r++;
+      }
+    }
+    return s.substring(0, next[len]);
+  }
+}
+```
+
+参考代码2（7ms，97.24%）：
+
+> [利用KMP算法中的next数组求法解答，时间超100%](https://leetcode-cn.com/problems/longest-happy-prefix/solution/li-yong-kmpsuan-fa-zhong-de-nextshu-zu-q-57a7/)
+
+```java
+class Solution {
+  public String longestPrefix(String s) {
+    if (s == null || s.length() < 2) return "";
+    char[] sChars = s.toCharArray();
+    int[] nexts = new int[s.length() + 1];
+    nexts[0] = -1;
+    nexts[1] = 0;
+    int cur = 2;
+    int preNext = 0;
+    while (cur < nexts.length) {
+      if (sChars[cur - 1] == sChars[preNext]) {
+        nexts[cur++] = ++preNext;
+      } else if (preNext > 0) {
+        preNext = nexts[preNext];
+      } else {
+        nexts[cur++] = 0;
+      }
+    }
+    return s.substring(0, nexts[nexts.length - 1]);
+  }
+}
+```
+
+# 
