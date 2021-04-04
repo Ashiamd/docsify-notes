@@ -3170,3 +3170,82 @@ class Solution {
 }
 ```
 
+### 781. 森林中的兔子
+
+>[781. 森林中的兔子](https://leetcode-cn.com/problems/rabbits-in-forest/)
+
+语言：java
+
+思路：
+
++ 每个兔子喊的数字n，最后能容纳n+1只。比如兔子喊2，那么最多和他一组的还有2个，也就是这个小组里最多3个兔子（2+1）。
++ 如果一个组满人了，出现同样大小的组，就等于另外开一个新的。每次加入一个，就把原本的key对应的value减一，如果到0，下次就是新建一个组。（HashMap存储）
++ 最后兔子总数 = 数组内元素 + 每个组最后剩余空间。
+
+代码（3ms，68.18%）：
+
+```java
+class Solution {
+  public int numRabbits(int[] answers) {
+    int len = answers.length;
+    // 至少有len只兔子
+    int res = len;
+    HashMap<Integer, Integer> map = new HashMap<>();
+    for (int num : answers) {
+      Integer groupCount = map.get(num);
+      if (groupCount != null) {
+        groupCount = groupCount > 0 ? groupCount - 1 : num;
+        map.put(num,groupCount);
+      }else{
+        map.put(num,num);
+      }
+    }
+    for(int num : map.values()){
+      res+=num;
+    }
+    return res;
+  }
+}
+```
+
+参考代码1（3ms，68.18%）：
+
+> [森林中的兔子--官方题解](https://leetcode-cn.com/problems/rabbits-in-forest/solution/sen-lin-zhong-de-tu-zi-by-leetcode-solut-kvla/)
+
+```java
+class Solution {
+  public int numRabbits(int[] answers) {
+    Map<Integer, Integer> count = new HashMap<Integer, Integer>();
+    for (int y : answers) {
+      count.put(y, count.getOrDefault(y, 0) + 1);
+    }
+    int ans = 0;
+    for (Map.Entry<Integer, Integer> entry : count.entrySet()) {
+      int y = entry.getKey(), x = entry.getValue();
+      ans += (x + y) / (y + 1) * (y + 1);
+    }
+    return ans;
+  }
+}
+```
+
+参考代码2（0ms）：思路其实没有什么太大区别，用的数组（主要题目有限定了出现的数字范围）
+
+```java
+class Solution {
+  public int numRabbits(int[] answers) {
+    int res = 0;
+    int[] count = new int[1000];
+    for(int temp:answers){
+      if(count[temp]==0){
+        res += (temp+1);
+        count[temp] = temp;
+      }else{
+        count[temp] = count[temp]-1;
+      }
+    }
+    return res;
+  }
+}
+```
+
