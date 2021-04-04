@@ -3041,4 +3041,132 @@ class Solution {
 }
 ```
 
-# 
+### 1143. 最长公共子序列
+
+> [1143. 最长公共子序列](https://leetcode-cn.com/problems/longest-common-subsequence/)
+
+语言：java
+
+思路：本来想暴力求解，但是发现暴力求解其实也不好写。
+
+参考代码1（11ms，81.36%）：好吧，居然要动态规划。
+
+> [最长公共子序列--官方题解](https://leetcode-cn.com/problems/longest-common-subsequence/solution/zui-chang-gong-gong-zi-xu-lie-by-leetcod-y7u0/)
+
+```java
+class Solution {
+  public int longestCommonSubsequence(String text1, String text2) {
+    int m = text1.length(), n = text2.length();
+    int[][] dp = new int[m + 1][n + 1];
+    for (int i = 1; i <= m; i++) {
+      char c1 = text1.charAt(i - 1);
+      for (int j = 1; j <= n; j++) {
+        char c2 = text2.charAt(j - 1);
+        if (c1 == c2) {
+          dp[i][j] = dp[i - 1][j - 1] + 1;
+        } else {
+          dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+        }
+      }
+    }
+    return dp[m][n];
+  }
+}
+```
+
+参考后重写（12ms，78.55%）：我这个用的index，而不是len，写得好丑，再改一下。
+
+```java
+class Solution {
+  public int longestCommonSubsequence(String text1, String text2) {
+    int text1Len = text1.length();
+    int text2Len = text2.length();
+    int[][] dp = new int[text1Len][text2Len];
+    for(int i = 0;i<text1Len;++i){
+      for(int j = 0;j<text2Len;++j){
+        if(text1.charAt(i) == text2.charAt(j)){
+          if(i==0||j==0){
+            dp[i][j] = 1;
+          }else{
+            dp[i][j] = dp[i-1][j-1]+1;
+          }
+        }else{
+          if(i!=0&&j!=0){
+            dp[i][j] = Math.max(dp[i-1][j],dp[i][j-1]);
+          }
+          else if(i==0&&j==0){
+            continue;
+          }
+          else if(i==0){
+            dp[i][j] = dp[i][j-1];
+          }else if(j==0){
+            dp[i][j] = dp[i-1][j];
+          }
+        }
+      }
+    }
+    return dp[text1Len-1][text2Len-1];
+  }
+}
+```
+
+重写（以len的形式，而不是用index，9ms，86.25%）：
+
+```java
+class Solution {
+  public int longestCommonSubsequence(String text1, String text2) {
+    int text1Len = text1.length();
+    int text2Len = text2.length();
+    int[][] dp = new int[text1Len+1][text2Len+1];
+    for(int i = 1;i<=text1Len;++i){
+      char c1 = text1.charAt(i-1);
+      for(int j = 1;j<=text2Len;++j){
+        char c2 = text2.charAt(j-1);
+        if(c1==c2){
+          dp[i][j] = dp[i-1][j-1] + 1;
+        }else{
+          dp[i][j] = Math.max(dp[i-1][j],dp[i][j-1]);
+        }
+      }
+    }
+    return dp[text1Len][text2Len];
+  }
+}
+```
+
+### 剑指 Offer 48. 最长不含重复字符的子字符串
+
+>[剑指 Offer 48. 最长不含重复字符的子字符串](https://leetcode-cn.com/problems/zui-chang-bu-han-zhong-fu-zi-fu-de-zi-zi-fu-chuan-lcof/)
+
+语言：java
+
+思路：一开始感觉可以用动态规划dp，dp[i\][j\]表示下标i到家的无重复字符串的最长子串。但是一看到s的长度可以到达5*10^4这个数量级，就感觉这样子不行。
+
+后面想想可以维护一个大小变动的滑动窗口，然后HashMap记录用到的字符和对应的下标。
+
+代码（7ms，79.40%）：
+
+```java
+class Solution {
+  public int lengthOfLongestSubstring(String s) {
+    char[] chars = s.toCharArray();
+    int len = chars.length;
+    int left = 0, right = 0;
+    int max = 0;
+    HashMap<Character, Integer> map = new HashMap<>();
+    while (right < len) {
+      char cur = chars[right];
+      Integer last = map.get(cur);
+      map.put(cur, right);
+      if (last != null && last >= left) {
+        left = last + 1;
+      }else{
+        max = Math.max(max,right-left+1);
+      }
+      ++right;
+    }
+    return max;
+  }
+}
+```
+
