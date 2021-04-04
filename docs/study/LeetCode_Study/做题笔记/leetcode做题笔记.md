@@ -2757,3 +2757,288 @@ class Solution {
 }
 ```
 
+参考后重写（10ms，71.82%）：
+
+```java
+class Solution {
+  public String longestPrefix(String s) {
+    int len = s.length();
+    // 这里len+1，之后使用的时候，从下标1开始使用
+    int[] next = new int[len + 1];
+    for (int left = 0, right = 1; right < len; ) {
+      if (s.charAt(right) == s.charAt(left)) {
+        next[++right] = ++left;
+      } else if (left > 0) {
+        left = next[left];
+      } else {
+        ++right;
+      }
+    }
+    return s.substring(0, next[len]);
+  }
+}
+```
+
+### 572. 另一个树的子树
+
+> [572. 另一个树的子树](https://leetcode-cn.com/problems/subtree-of-another-tree/)
+
+语言：java
+
+思路：最容易想到的，感觉就是DFS判断了，这里试一下这种粗暴方法。
+
++ 判断当前节点是不是就是和子树一模一样；
++ 如果当前子树不是，那就判断左右子树是不是可能含有目标子树（用或||）
+
+代码（13ms，6.77%）：巨慢。
+
+```java
+/**
+ * Definition for a binary tree node.
+ * public class TreeNode {
+ *     int val;
+ *     TreeNode left;
+ *     TreeNode right;
+ *     TreeNode() {}
+ *     TreeNode(int val) { this.val = val; }
+ *     TreeNode(int val, TreeNode left, TreeNode right) {
+ *         this.val = val;
+ *         this.left = left;
+ *         this.right = right;
+ *     }
+ * }
+ */
+class Solution {
+  public boolean isSubtree(TreeNode s, TreeNode t) {
+    if (s == null && t == null) {
+      return true;
+    }
+    if (s == null || t == null) {
+      return false;
+    }
+    return dfs(s,t);
+  }
+
+  public boolean dfs(TreeNode s,TreeNode t ){
+    if(s == null){
+      return false;
+    }
+    return judge(s,t) || dfs(s.left,t) || dfs(s.right,t);
+  }
+
+  public boolean judge(TreeNode s, TreeNode t){
+    if(s == null && t == null){
+      return true;
+    }
+    if(s == null || t == null || s.val != t.val){
+      return false;
+    }
+    return judge(s.left,t.left) && judge(s.right, t.right);
+  }
+}
+```
+
+参考代码1：同样也是DFS，但是却快了6ms
+
+>[另一个树的子树--官方题解](https://leetcode-cn.com/problems/subtree-of-another-tree/solution/ling-yi-ge-shu-de-zi-shu-by-leetcode-solution/)
+
+```java
+class Solution {
+  public boolean isSubtree(TreeNode s, TreeNode t) {
+    return dfs(s, t);
+  }
+
+  public boolean dfs(TreeNode s, TreeNode t) {
+    if (s == null) {
+      return false;
+    }
+    return check(s, t) || dfs(s.left, t) || dfs(s.right, t);
+  }
+
+  public boolean check(TreeNode s, TreeNode t) {
+    if (s == null && t == null) {
+      return true;
+    }
+    if (s == null || t == null || s.val != t.val) {
+      return false;
+    }
+    return check(s.left, t.left) && check(s.right, t.right);
+  }
+}
+```
+
+参考代码2（5ms，86.0%）：先序遍历+KMP判断，感觉很奇特的解法。
+
+>[另一个树的子树--官方题解](https://leetcode-cn.com/problems/subtree-of-another-tree/solution/ling-yi-ge-shu-de-zi-shu-by-leetcode-solution/)
+
+```java
+class Solution {
+  List<Integer> sOrder = new ArrayList<Integer>();
+  List<Integer> tOrder = new ArrayList<Integer>();
+  int maxElement, lNull, rNull;
+
+  public boolean isSubtree(TreeNode s, TreeNode t) {
+    maxElement = Integer.MIN_VALUE;
+    getMaxElement(s);
+    getMaxElement(t);
+    lNull = maxElement + 1;
+    rNull = maxElement + 2;
+
+    getDfsOrder(s, sOrder);
+    getDfsOrder(t, tOrder);
+
+    return kmp();
+  }
+
+  public void getMaxElement(TreeNode t) {
+    if (t == null) {
+      return;
+    }
+    maxElement = Math.max(maxElement, t.val);
+    getMaxElement(t.left);
+    getMaxElement(t.right);
+  }
+
+  public void getDfsOrder(TreeNode t, List<Integer> tar) {
+    if (t == null) {
+      return;
+    }
+    tar.add(t.val);
+    if (t.left != null) {
+      getDfsOrder(t.left, tar);
+    } else {
+      tar.add(lNull);
+    }
+    if (t.right != null) {
+      getDfsOrder(t.right, tar);
+    } else {
+      tar.add(rNull);
+    }
+  }
+
+  public boolean kmp() {
+    int sLen = sOrder.size(), tLen = tOrder.size();
+    int[] fail = new int[tOrder.size()];
+    Arrays.fill(fail, -1);
+    for (int i = 1, j = -1; i < tLen; ++i) {
+      while (j != -1 && !(tOrder.get(i).equals(tOrder.get(j + 1)))) {
+        j = fail[j];
+      }
+      if (tOrder.get(i).equals(tOrder.get(j + 1))) {
+        ++j;
+      }
+      fail[i] = j;
+    }
+    for (int i = 0, j = -1; i < sLen; ++i) {
+      while (j != -1 && !(sOrder.get(i).equals(tOrder.get(j + 1)))) {
+        j = fail[j];
+      }
+      if (sOrder.get(i).equals(tOrder.get(j + 1))) {
+        ++j;
+      }
+      if (j == tLen - 1) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+```
+
+参考KMP解法后，重写（6ms，82.05%）：
+
+```java
+/**
+ * Definition for a binary tree node.
+ * public class TreeNode {
+ *     int val;
+ *     TreeNode left;
+ *     TreeNode right;
+ *     TreeNode() {}
+ *     TreeNode(int val) { this.val = val; }
+ *     TreeNode(int val, TreeNode left, TreeNode right) {
+ *         this.val = val;
+ *         this.left = left;
+ *         this.right = right;
+ *     }
+ * }
+ */
+class Solution {
+  List<Integer> sPreList, tPreList;
+  int maxNum = Integer.MIN_VALUE, leftNull, rightNull;
+
+  public boolean isSubtree(TreeNode s, TreeNode t) {
+    sPreList = new ArrayList<>();
+    tPreList = new ArrayList<>();
+    getMaxNum(s);
+    getMaxNum(t);
+    leftNull = maxNum + 1;
+    rightNull = maxNum + 2;
+    preOrder(s, sPreList);
+    preOrder(t, tPreList);
+    return kmp(sPreList,tPreList);
+  }
+
+  public void getMaxNum(TreeNode root) {
+    if (root == null) {
+      return;
+    }
+    maxNum = Math.max(root.val, maxNum);
+    getMaxNum(root.left);
+    getMaxNum(root.right);
+  }
+
+  public void preOrder(TreeNode root, List<Integer> tree) {
+    if (root == null) {
+      return;
+    }
+    tree.add(root.val);
+    if (root.left == null) {
+      tree.add(leftNull);
+    }else{
+      preOrder(root.left, tree);
+    }
+    if (root.right == null) {
+      tree.add(rightNull);
+    }else{
+      preOrder(root.right, tree);
+    }
+  }
+
+  public boolean kmp(List<Integer> s,List<Integer> t){
+    int sSize = s.size();
+    int tSize = t.size();
+    if(sSize<tSize){
+      return false;
+    }
+    int[] next = new int[tSize+1];
+    // 求next数组
+    for(int i = 1,j=0;i<tSize;){
+      if(t.get(i).equals(t.get(j))){
+        next[++i] = ++j;
+      }else if(j>0){
+        j = next[j];
+      }else{
+        ++i;
+      }
+    }
+    // kmp匹配
+    for(int i = 0,j=0;i<sSize;){
+      if(s.get(i).equals(t.get(j))){
+        ++i;
+        ++j;
+        if(j==tSize){
+          return true;
+        }
+      }else if(j>0){
+        j = next[j];
+      }else{
+        ++i;
+      }
+    }
+    return false;
+  }
+}
+```
+
+# 
