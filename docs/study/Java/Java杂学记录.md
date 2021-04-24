@@ -289,7 +289,11 @@ duration = 5322789201
 duration = 5342706955
 ```
 
+## 15. 中断
 
+> [JAVA多线程之中断机制(如何处理中断？)](https://www.cnblogs.com/hapjin/p/5450779.html)
+>
+> [并发基础（八） java线程的中断机制](https://www.cnblogs.com/jinggod/p/8486096.html)
 
 
 

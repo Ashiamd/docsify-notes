@@ -3417,3 +3417,100 @@ class Solution {
 }
 ```
 
+### 264. 丑数 II
+
+>[264. 丑数 II](https://leetcode-cn.com/problems/ugly-number-ii/)
+
+语言：java
+
+思路：遇到过类似的题目，但是还是错了，卑微。
+
+参考代码1（65ms，19.33%）：每次从最小堆里面取最小的数据，然后再把取出来的值\*2，\*3，\*5，放入最小堆中。需要保证没有重复元素。
+
+> [丑数 II--官方题解](https://leetcode-cn.com/problems/ugly-number-ii/solution/chou-shu-ii-by-leetcode-solution-uoqd/)
+
+```java
+class Solution {
+    public int nthUglyNumber(int n) {
+        int[] factors = {2, 3, 5};
+        Set<Long> seen = new HashSet<Long>();
+        PriorityQueue<Long> heap = new PriorityQueue<Long>();
+        seen.add(1L);
+        heap.offer(1L);
+        int ugly = 0;
+        for (int i = 0; i < n; i++) {
+            long curr = heap.poll();
+            ugly = (int) curr;
+            for (int factor : factors) {
+                long next = curr * factor;
+                if (seen.add(next)) {
+                    heap.offer(next);
+                }
+            }
+        }
+        return ugly;
+    }
+}
+```
+
+参考代码2（3ms，81.63%）：动态规划DP，dp[i\]表示第i个丑数
+
+> [丑数 II--官方题解](https://leetcode-cn.com/problems/ugly-number-ii/solution/chou-shu-ii-by-leetcode-solution-uoqd/)
+
+```java
+class Solution {
+  public int nthUglyNumber(int n) {
+    int[] dp = new int[n + 1];
+    dp[1] = 1;
+    int p2 = 1, p3 = 1, p5 = 1;
+    for (int i = 2; i <= n; i++) {
+      int num2 = dp[p2] * 2, num3 = dp[p3] * 3, num5 = dp[p5] * 5;
+      dp[i] = Math.min(Math.min(num2, num3), num5);
+      if (dp[i] == num2) {
+        p2++;
+      }
+      if (dp[i] == num3) {
+        p3++;
+      }
+      if (dp[i] == num5) {
+        p5++;
+      }
+    }
+    return dp[n];
+  }
+}
+```
+
+参考后重写（4ms，45.20%）：
+
+主要就是乘2，乘3，乘5，必须是对上一次最小的数进行计算。而动态规划最擅长的就是依赖之前状态的值进行计算了。
+
+这里用到3个指针，表明分别该用哪个数来乘2、乘3和乘5
+
+```java
+class Solution {
+  public int nthUglyNumber(int n) {
+    int index = 1, min = 1, twoIndex = 0, threeIndex = 0, fiveIndex = 0;
+    int[] dp = new int[n];
+    dp[0] = 1;
+    while (index < n) {
+      int twoNum = dp[twoIndex] * 2;
+      int threeNum = dp[threeIndex] * 3;
+      int fiveNum = dp[fiveIndex] * 5;
+      dp[index] = Math.min(twoNum,Math.min(threeNum,fiveNum));
+      if(dp[index] == twoNum){
+        ++twoIndex;
+      }
+      if(dp[index] == threeNum){
+        ++threeIndex;
+      }
+      if(dp[index] == fiveNum){
+        ++fiveIndex;
+      }
+      ++index;
+    }
+    return dp[n-1];
+  }
+}
+```
+
