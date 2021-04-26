@@ -12,6 +12,7 @@
 * [LeetCode](https://ashiamd.github.io/docsify-notes/#/study/LeetCode_Study/README.md)
 * [React](https://ashiamd.github.io/docsify-notes/#/study/React/README.md)
 * [Vue](https://ashiamd.github.io/docsify-notes/#/study/Vue/README.md)
+* [GoLang](https://ashiamd.github.io/docsify-notes/#/study/GoLang/README.md)
 * [Java](https://ashiamd.github.io/docsify-notes/#/study/Java/README.md)
 * [Python](https://ashiamd.github.io/docsify-notes/#/study/Python/README.md)
 * [Scala](https://ashiamd.github.io/docsify-notes/#/study/Scala/README.md)

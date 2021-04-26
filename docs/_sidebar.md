@@ -3,6 +3,7 @@
     * [**LeetCode**](/study/LeetCode_Study/README)
     * [**React**](/study/React/README)
     * [**Vue**](/study/Vue/README)
+    * [**GoLang**](/study/GoLang/README)
     * [**Java**](/study/Java/README)
     * [**Python**](/study/Python/README)
     * [**Scala**](/study/Scala/README.md)
