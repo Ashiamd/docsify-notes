@@ -1889,9 +1889,214 @@ Go 语言提供了以下几种类型循环处理语句：
 | [for 循环](https://www.runoob.com/go/go-for-loop.html)     | 重复执行语句块                       |
 | [循环嵌套](https://www.runoob.com/go/go-nested-loops.html) | 在 for 循环中嵌套一个或多个 for 循环 |
 
-### for 循环
+## for 循环
 
+for 循环是一个循环控制结构，可以执行指定次数的循环。
 
+**语法**
+
+Go 语言的 For 循环有 3 种形式，只有其中的一种使用分号。
+
+和 C 语言的 for 一样：
+
+```go
+for init; condition; post { }
+```
+
+和 C 的 while 一样：
+
+```go
+for condition { }
+```
+
+和 C 的 for(;;) 一样：
+
+```go
+for { }
+```
+
+- init： 一般为赋值表达式，给控制变量赋初值；
+- condition： 关系表达式或逻辑表达式，循环控制条件；
+- post： 一般为赋值表达式，给控制变量增量或减量。
+
+for语句执行过程如下：
+
+- 1、先对表达式 1 赋初值；
+- 2、判别赋值表达式 init 是否满足给定条件，若其值为真，满足循环条件，则执行循环体内语句，然后执行 post，进入第二次循环，再判别 condition；否则判断 condition 的值为假，不满足条件，就终止for循环，执行循环体外语句。
+
+**for 循环的 range 格式可以对 slice、map、数组、字符串等进行迭代循环**。格式如下：
+
+```go
+for key, value := range oldMap {
+    newMap[key] = value
+}
+```
+
+for 语句语法流程如下图所示：
+
+![img](https://www.runoob.com/wp-content/uploads/2015/06/PVFUw4TZATYSimWQ.png)
+
+计算 1 到 10 的数字之和：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+        sum := 0
+        for i := 0; i <= 10; i++ {
+                sum += i
+        }
+        fmt.Println(sum)
+}
+```
+
+输出结果为：
+
+```
+55
+```
+
+init 和 post 参数是可选的，我们可以直接省略它，类似 While 语句。
+
+以下实例在 sum 小于 10 的时候计算 sum 自相加后的值：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+        sum := 1
+        for ; sum <= 10; {
+                sum += sum
+        }
+        fmt.Println(sum)
+
+        // 这样写也可以，更像 While 语句形式
+        for sum <= 10{
+                sum += sum
+        }
+        fmt.Println(sum)
+}
+```
+
+输出结果为：
+
+```
+16
+16
+```
+
+无限循环:
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+        sum := 0
+        for {
+            sum++ // 无限循环下去
+        }
+        fmt.Println(sum) // 无法输出
+}
+```
+
+要停止无限循环，可以在命令窗口按下**ctrl-c** 。
+
+### For-each range 循环
+
+这种格式的循环可以对字符串、数组、切片等进行迭代输出元素。
+
+```go
+package main
+import "fmt"
+
+func main() {
+  strings := []string{"google", "runoob"}
+  for i, s := range strings {
+    fmt.Println(i, s)
+  }
+  numbers := [6]int{1, 2, 3, 5}
+  for i,x:= range numbers {
+    fmt.Printf("第 %d 位 x 的值 = %d\n", i,x)
+  }  
+}
+```
+
+以上实例运行输出结果为:
+
+```shell
+0 google
+1 runoob
+第 0 位 x 的值 = 1
+第 1 位 x 的值 = 2
+第 2 位 x 的值 = 3
+第 3 位 x 的值 = 5
+第 4 位 x 的值 = 0
+第 5 位 x 的值 = 0
+```
+
+## Go 语言循环嵌套
+
+Go 语言允许用户在循环内使用循环。接下来我们将为大家介绍嵌套循环的使用。
+
+**语法**
+
+以下为 Go 语言嵌套循环的格式：
+
+```go
+for [condition |  ( init; condition; increment ) | Range]
+{
+   for [condition |  ( init; condition; increment ) | Range]
+   {
+      statement(s);
+   }
+   statement(s);
+}
+```
+
+以下实例使用循环嵌套来输出 2 到 100 间的素数：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   /* 定义局部变量 */
+   var i, j int
+
+   for i=2; i < 100; i++ {
+      for j=2; j <= (i/j); j++ {
+         if(i%j==0) {
+            break; // 如果发现因子，则不是素数
+         }
+      }
+      if(j > (i/j)) {
+         fmt.Printf("%d  是素数\n", i);
+      }
+   }  
+}
+```
+
+以上实例运行输出结果为:
+
+```shell
+2  是素数
+3  是素数
+5  是素数
+7  是素数
+11  是素数
+13  是素数
+...
+83  是素数
+89  是素数
+97  是素数
+```
 
 ## 10.1 循环控制语句
 
@@ -1904,6 +2109,287 @@ GO 语言支持以下几种循环控制语句：
 | [break 语句](https://www.runoob.com/go/go-break-statement.html) | 经常用于中断当前 for 循环或跳出 switch 语句      |
 | [continue 语句](https://www.runoob.com/go/go-continue-statement.html) | 跳过当前循环的剩余语句，然后继续进行下一轮循环。 |
 | [goto 语句](https://www.runoob.com/go/go-goto-statement.html) | 将控制转移到被标记的语句。                       |
+
+### break 语句
+
+Go 语言中 break 语句用于以下两方面：
+
+- 用于循环语句中跳出循环，并开始执行循环之后的语句。
+- break 在 switch（开关语句）中在执行一条 case 后跳出语句的作用。（swtich里的case默认最后会有一个break。）
+- **在多重循环中，可以用标号 label 标出想 break 的循环**。
+
+**语法**
+
+break 语法格式如下：
+
+```
+break;
+```
+
+break 语句流程图如下：
+
+![img](https://www.runoob.com/wp-content/uploads/2015/06/6AGB5nw0d43KcDJg.png)
+
+**实例**
+
+在变量 a 大于 15 的时候跳出循环：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   /* 定义局部变量 */
+   var a int = 10
+
+   /* for 循环 */
+   for a < 20 {
+      fmt.Printf("a 的值为 : %d\n", a);
+      a++;
+      if a > 15 {
+         /* 使用 break 语句跳出循环 */
+         break;
+      }
+   }
+}
+```
+
+以上实例执行结果为：
+
+```
+a 的值为 : 10
+a 的值为 : 11
+a 的值为 : 12
+a 的值为 : 13
+a 的值为 : 14
+a 的值为 : 15
+```
+
+以下实例有多重循环，演示了使用标记和不使用标记的区别：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+
+    // 不使用标记
+    fmt.Println("---- break ----")
+    for i := 1; i <= 3; i++ {
+        fmt.Printf("i: %d\n", i)
+                for i2 := 11; i2 <= 13; i2++ {
+                        fmt.Printf("i2: %d\n", i2)
+                        break
+                }
+        }
+
+    // 使用标记
+    fmt.Println("---- break label ----")
+    re:
+        for i := 1; i <= 3; i++ {
+            fmt.Printf("i: %d\n", i)
+            for i2 := 11; i2 <= 13; i2++ {
+                fmt.Printf("i2: %d\n", i2)
+                break re
+            }
+        }
+}
+```
+
+以上实例执行结果为：
+
+```
+---- break ----
+i: 1
+i2: 11
+i: 2
+i2: 11
+i: 3
+i2: 11
+---- break label ----
+i: 1
+i2: 11    
+```
+
+### continue 语句
+
+Go 语言的 continue 语句 有点像 break 语句。但是 continue 不是跳出循环，而是跳过当前循环执行下一次循环语句。
+
+for 循环中，执行 continue 语句会触发 for 增量语句的执行。
+
+在多重循环中，可以用标号 label 标出想 continue 的循环。
+
+**语法**
+
+continue 语法格式如下：
+
+```
+continue;
+```
+
+continue 语句流程图如下：
+
+![img](https://www.runoob.com/wp-content/uploads/2015/06/6djaDcRMhzS6XCT0.png)
+
+**实例**
+
+在变量 a 等于 15 的时候跳过本次循环执行下一次循环：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   /* 定义局部变量 */
+   var a int = 10
+
+   /* for 循环 */
+   for a < 20 {
+      if a == 15 {
+         /* 跳过此次循环 */
+         a = a + 1;
+         continue;
+      }
+      fmt.Printf("a 的值为 : %d\n", a);
+      a++;    
+   }  
+}
+```
+
+以上实例执行结果为：
+
+```
+a 的值为 : 10
+a 的值为 : 11
+a 的值为 : 12
+a 的值为 : 13
+a 的值为 : 14
+a 的值为 : 16
+a 的值为 : 17
+a 的值为 : 18
+a 的值为 : 19
+```
+
+以下实例有多重循环，演示了使用标记和不使用标记的区别：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+
+    // 不使用标记
+    fmt.Println("---- continue ---- ")
+    for i := 1; i <= 3; i++ {
+        fmt.Printf("i: %d\n", i)
+            for i2 := 11; i2 <= 13; i2++ {
+                fmt.Printf("i2: %d\n", i2)
+                continue
+            }
+    }
+
+    // 使用标记
+    fmt.Println("---- continue label ----")
+    re:
+        for i := 1; i <= 3; i++ {
+            fmt.Printf("i: %d\n", i)
+                for i2 := 11; i2 <= 13; i2++ {
+                    fmt.Printf("i2: %d\n", i2)
+                    continue re
+                }
+        }
+}
+```
+
+以上实例执行结果为：
+
+```
+---- continue ---- 
+i: 1
+i2: 11
+i2: 12
+i2: 13
+i: 2
+i2: 11
+i2: 12
+i2: 13
+i: 3
+i2: 11
+i2: 12
+i2: 13
+---- continue label ----
+i: 1
+i2: 11
+i: 2
+i2: 11
+i: 3
+i2: 11
+```
+
+### goto 语句
+
+**Go 语言的 goto 语句可以无条件地转移到过程中指定的行**。
+
+goto 语句通常与条件语句配合使用。可用来实现条件转移， 构成循环，跳出循环体等功能。
+
+**但是，在结构化程序设计中一般不主张使用 goto 语句， 以免造成程序流程的混乱，使理解和调试程序都产生困难。**
+
+**语法**
+
+goto 语法格式如下：
+
+```
+goto label;
+..
+.
+label: statement;
+```
+
+goto 语句流程图如下：
+
+![img](https://www.runoob.com/wp-content/uploads/2015/06/xsTjcmiTVayxBjYe.png)
+
+在变量 a 等于 15 的时候跳过本次循环并回到循环的开始语句 LOOP 处：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   /* 定义局部变量 */
+   var a int = 10
+
+   /* 循环 */
+   LOOP: for a < 20 {
+      if a == 15 {
+         /* 跳过迭代 */
+         a = a + 1
+         goto LOOP
+      }
+      fmt.Printf("a的值为 : %d\n", a)
+      a++    
+   }  
+}
+```
+
+以上实例执行结果为：
+
+```
+a的值为 : 10
+a的值为 : 11
+a的值为 : 12
+a的值为 : 13
+a的值为 : 14
+a的值为 : 16
+a的值为 : 17
+a的值为 : 18
+a的值为 : 19
+```
 
 ## 10.2 无限循环
 
@@ -1920,4 +2406,832 @@ func main() {
     }
 }
 ```
+
+# 11. Go 语言函数
+
+函数是基本的代码块，用于执行一个任务。
+
+Go 语言最少有个 main() 函数。
+
+你可以通过函数来划分不同功能，逻辑上每个函数执行的是指定的任务。
+
+函数声明告诉了编译器函数的名称，返回类型，和参数。
+
+Go 语言标准库提供了多种可动用的内置的函数。例如，len() 函数可以接受不同类型参数并返回该类型的长度。如果我们传入的是字符串则返回字符串的长度，如果传入的是数组，则返回数组中包含的元素个数。
+
+## 11.1 函数定义
+
+Go 语言函数定义格式如下：
+
+```go
+func function_name( [parameter list] ) [return_types] {
+   函数体
+}
+```
+
+函数定义解析：
+
+- func：函数由 func 开始声明
+- function_name：函数名称，函数名和参数列表一起构成了函数签名。
+- parameter list：参数列表，参数就像一个占位符，当函数被调用时，你可以将值传递给参数，这个值被称为实际参数。参数列表指定的是参数类型、顺序、及参数个数。参数是可选的，也就是说函数也可以不包含参数。
+- return_types：返回类型，函数返回一列值。return_types 是该列值的数据类型。有些功能不需要返回值，这种情况下 return_types 不是必须的。
+- 函数体：函数定义的代码集合。
+
+**实例**
+
+以下实例为 max() 函数的代码，该函数传入两个整型参数 num1 和 num2，并返回这两个参数的最大值：
+
+```go
+/* 函数返回两个数的最大值 */
+func max(num1, num2 int) int {
+   /* 声明局部变量 */
+   var result int
+
+   if (num1 > num2) {
+      result = num1
+   } else {
+      result = num2
+   }
+   return result
+}
+```
+
+## 11.2 函数调用
+
+当创建函数时，你定义了函数需要做什么，通过调用该函数来执行指定任务。
+
+调用函数，向函数传递参数，并返回值，例如：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   /* 定义局部变量 */
+   var a int = 100
+   var b int = 200
+   var ret int
+
+   /* 调用函数并返回最大值 */
+   ret = max(a, b)
+
+   fmt.Printf( "最大值是 : %d\n", ret )
+}
+
+/* 函数返回两个数的最大值 */
+func max(num1, num2 int) int {
+   /* 定义局部变量 */
+   var result int
+
+   if (num1 > num2) {
+      result = num1
+   } else {
+      result = num2
+   }
+   return result
+}
+```
+
+以上实例在 main() 函数中调用 max（）函数，执行结果为：
+
+```
+最大值是 : 200
+```
+
+## 11.3 函数返回多个值
+
+```go
+package main
+
+import "fmt"
+
+func swap(x, y string) (string, string) {
+   return y, x
+}
+
+func main() {
+   a, b := swap("Google", "Runoob")
+   fmt.Println(a, b)
+}
+```
+
+以上实例执行结果为：
+
+```
+Runoob Google
+```
+
+## 11.4 函数参数
+
+函数如果使用参数，该变量可称为函数的形参。
+
+形参就像定义在函数体内的局部变量。
+
+调用函数，可以通过两种方式来传递参数：
+
+| 传递类型                                                     | 描述                                                         |
+| :----------------------------------------------------------- | :----------------------------------------------------------- |
+| [值传递](https://www.runoob.com/go/go-function-call-by-value.html) | 值传递是指在调用函数时将实际参数复制一份传递到函数中，这样在函数中如果对参数进行修改，将不会影响到实际参数。 |
+| [引用传递](https://www.runoob.com/go/go-function-call-by-reference.html) | 引用传递是指在调用函数时将实际参数的地址传递到函数中，那么在函数中对参数所进行的修改，将影响到实际参数。 |
+
+默认情况下，Go 语言使用的是值传递，即在调用过程中不会影响到实际参数。
+
+### 函数值传递值
+
+传递是指在调用函数时将实际参数复制一份传递到函数中，这样在函数中如果对参数进行修改，将不会影响到实际参数。
+
+默认情况下，Go 语言使用的是值传递，即在调用过程中不会影响到实际参数。
+
+以下定义了 swap() 函数：
+
+```go
+/* 定义相互交换值的函数 */
+func swap(x, y int) int {
+   var temp int
+
+   temp = x /* 保存 x 的值 */
+   x = y    /* 将 y 值赋给 x */
+   y = temp /* 将 temp 值赋给 y*/
+
+   return temp;
+}
+```
+
+接下来，让我们使用值传递来调用 swap() 函数：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   /* 定义局部变量 */
+   var a int = 100
+   var b int = 200
+
+   fmt.Printf("交换前 a 的值为 : %d\n", a )
+   fmt.Printf("交换前 b 的值为 : %d\n", b )
+
+   /* 通过调用函数来交换值 */
+   swap(a, b)
+
+   fmt.Printf("交换后 a 的值 : %d\n", a )
+   fmt.Printf("交换后 b 的值 : %d\n", b )
+}
+
+/* 定义相互交换值的函数 */
+func swap(x, y int) int {
+   var temp int
+
+   temp = x /* 保存 x 的值 */
+   x = y    /* 将 y 值赋给 x */
+   y = temp /* 将 temp 值赋给 y*/
+
+   return temp;
+}
+```
+
+以上代码执行结果为：
+
+```
+交换前 a 的值为 : 100
+交换前 b 的值为 : 200
+交换后 a 的值 : 100
+交换后 b 的值 : 200
+```
+
+> 下方评论留言：
+>
+> 交换值可以这么写：（前面介绍过的**初始化赋值**）
+>
+> ```
+> a := 100
+> b := 200
+> a, b = b, a
+> // a == 200
+> // b == 100
+> ```
+
+### 函数引用传递值
+
+引用传递是指在调用函数时将实际参数的**地址**传递到函数中，那么在函数中对参数所进行的修改，将影响到实际参数。
+
+引用传递指针参数传递到函数内，以下是交换函数 swap() 使用了引用传递：
+
+```go
+/* 定义交换值函数*/
+func swap(x *int, y *int) {
+   var temp int
+   temp = *x    /* 保持 x 地址上的值 */
+   *x = *y      /* 将 y 值赋给 x */
+   *y = temp    /* 将 temp 值赋给 y */
+}
+```
+
+以下我们通过使用引用传递来调用 swap() 函数：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   /* 定义局部变量 */
+   var a int = 100
+   var b int= 200
+
+   fmt.Printf("交换前，a 的值 : %d\n", a )
+   fmt.Printf("交换前，b 的值 : %d\n", b )
+
+   /* 调用 swap() 函数
+   * &a 指向 a 指针，a 变量的地址
+   * &b 指向 b 指针，b 变量的地址
+   */
+   swap(&a, &b)
+
+   fmt.Printf("交换后，a 的值 : %d\n", a )
+   fmt.Printf("交换后，b 的值 : %d\n", b )
+}
+
+func swap(x *int, y *int) {
+   var temp int
+   temp = *x    /* 保存 x 地址上的值 */
+   *x = *y      /* 将 y 值赋给 x */
+   *y = temp    /* 将 temp 值赋给 y */
+}
+```
+
+以上代码执行结果为：
+
+```
+交换前，a 的值 : 100
+交换前，b 的值 : 200
+交换后，a 的值 : 200
+交换后，b 的值 : 100
+```
+
+## 11.5 函数用法
+
+| 函数用法                                                     | 描述                                     |
+| :----------------------------------------------------------- | :--------------------------------------- |
+| [函数作为另外一个函数的实参](https://www.runoob.com/go/go-function-as-values.html) | 函数定义后可作为另外一个函数的实参数传入 |
+| [闭包](https://www.runoob.com/go/go-function-closures.html)  | **闭包是匿名函数，可在动态编程中使用**   |
+| [方法](https://www.runoob.com/go/go-method.html)             | 方法就是一个包含了接受者的函数           |
+
+### 函数作为另一个函数的实参
+
+Go 语言可以很灵活的创建函数，并作为另外一个函数的实参。以下实例中我们在定义的函数中初始化一个变量，该函数仅仅是为了使用内置函数 **math.sqrt()**，实例为：
+
+```go
+package main
+
+import (
+   "fmt"
+   "math"
+)
+
+func main(){
+   /* 声明函数变量 */
+   getSquareRoot := func(x float64) float64 {
+      return math.Sqrt(x)
+   }
+
+   /* 使用函数 */
+   fmt.Println(getSquareRoot(9))
+
+}
+```
+
+以上代码执行结果为：
+
+```
+3
+```
+
+> 下方评论区留言
+>
+> 函数作为参数传递，实现回调。
+>
+> ```go
+> package main
+> import "fmt"
+> 
+> // 声明一个函数类型
+> type cb func(int) int
+> 
+> func main() {
+>     testCallBack(1, callBack)
+>     testCallBack(2, func(x int) int {
+>         fmt.Printf("我是回调，x：%d\n", x)
+>         return x
+>     })
+> }
+> 
+> func testCallBack(x int, f cb) {
+>     f(x)
+> }
+> 
+> func callBack(x int) int {
+>     fmt.Printf("我是回调，x：%d\n", x)
+>     return x
+> }
+> ```
+
+### 函数闭包
+
+Go 语言支持匿名函数，可作为闭包。匿名函数是一个"内联"语句或表达式。匿名函数的优越性在于可以直接使用函数内的变量，不必申明。
+
+以下实例中，我们创建了函数 getSequence() ，返回另外一个函数。该函数的目的是在闭包中递增 i 变量，代码如下：
+
+```go
+package main
+
+import "fmt"
+
+func getSequence() func() int {
+   i:=0
+   return func() int {
+      i+=1
+     return i  
+   }
+}
+
+func main(){
+   /* nextNumber 为一个函数，函数 i 为 0 */
+   nextNumber := getSequence()  
+
+   /* 调用 nextNumber 函数，i 变量自增 1 并返回 */
+   fmt.Println(nextNumber())
+   fmt.Println(nextNumber())
+   fmt.Println(nextNumber())
+   
+   /* 创建新的函数 nextNumber1，并查看结果 */
+   nextNumber1 := getSequence()  
+   fmt.Println(nextNumber1())
+   fmt.Println(nextNumber1())
+}
+```
+
+以上代码执行结果为：
+
+```
+1
+2
+3
+1
+2
+```
+
+> 下方评论区的留言
+>
+> + 带参数的闭包函数调用
+>
+>   ```go
+>   package main
+>   
+>   import "fmt"
+>   func main() {
+>       add_func := add(1,2)
+>       fmt.Println(add_func())
+>       fmt.Println(add_func())
+>       fmt.Println(add_func())
+>   }
+>   
+>   // 闭包使用方法
+>   func add(x1, x2 int) func()(int,int)  {
+>       i := 0
+>       return func() (int,int){
+>           i++
+>           return i,x1+x2
+>       }
+>   }
+>   ```
+>
+> + 闭包带参数补充
+>
+>   ```go
+>   package main
+>   import "fmt"
+>   func main() {
+>       add_func := add(1,2)
+>       fmt.Println(add_func(1,1))
+>       fmt.Println(add_func(0,0))
+>       fmt.Println(add_func(2,2))
+>   } 
+>   // 闭包使用方法
+>   func add(x1, x2 int) func(x3 int,x4 int)(int,int,int)  {
+>       i := 0
+>       return func(x3 int,x4 int) (int,int,int){ 
+>          i++
+>          return i,x1+x2,x3+x4
+>       }
+>   }
+>   ```
+>
+> + 闭包带参考继承补充
+>
+>   ```go
+>   package main
+>   
+>   import "fmt"
+>   
+>   // 闭包使用方法，函数声明中的返回值(闭包函数)不用写具体的形参名称
+>   func add(x1, x2 int) func(int, int) (int, int, int) {
+>     i := 0
+>     return func(x3, x4 int) (int, int, int) {
+>       i += 1
+>       return i, x1 + x2, x3 + x4
+>     }
+>   }
+>   
+>   func main() {
+>     add_func := add(1, 2)
+>     fmt.Println(add_func(4, 5))
+>     fmt.Println(add_func(1, 3))
+>     fmt.Println(add_func(2, 2)) 
+>   }
+>   ```
+
+### 方法
+
+Go 语言中同时有函数和方法。
+
+**一个方法就是一个包含了接受者的函数，接受者可以是命名类型或者结构体类型的一个值或者是一个指针**。
+
+所有给定类型的方法属于该类型的方法集。语法格式如下：
+
+```go
+func (variable_name variable_data_type) function_name() [return_type]{
+   /* 函数体*/
+}
+```
+
+下面定义一个结构体类型和该类型的一个方法：
+
+```go
+package main
+
+import (
+   "fmt"  
+)
+
+/* 定义结构体 */
+type Circle struct {
+  radius float64
+}
+
+func main() {
+  var c1 Circle
+  c1.radius = 10.00
+  fmt.Println("圆的面积 = ", c1.getArea())
+}
+
+//该 method 属于 Circle 类型对象中的方法
+func (c Circle) getArea() float64 {
+  //c.radius 即为 Circle 类型对象中的属性
+  return 3.14 * c.radius * c.radius
+}
+```
+
+以上代码执行结果为：
+
+```
+圆的面积 =  314
+```
+
+> 下方评论区留言：
+>
+> + Go 没有面向对象，而我们知道常见的 Java。
+>
+>   C++ 等语言中，实现类的方法做法都是编译器隐式的给函数加一个 this 指针，而在 Go 里，这个 this 指针需要明确的申明出来，其实和其它 OO 语言并没有很大的区别。
+>
+>   在 C++ 中是这样的:
+>
+>   ```c++
+>   class Circle {
+>     public:
+>       float getArea() {
+>          return 3.14 * radius * radius;
+>       }
+>     private:
+>       float radius;
+>   }
+>
+>   // 其中 getArea 经过编译器处理大致变为
+>   float getArea(Circle *const c) {
+>     ...
+>   }
+>   ```
+>
+>   在 Go 中则是如下:
+>
+>   ```go
+>   func (c Circle) getArea() float64 {
+>     //c.radius 即为 Circle 类型对象中的属性
+>     return 3.14 * c.radius * c.radius
+>   }
+>   ```
+>
+> + 关于值和指针，如果想在方法中改变结构体类型的属性，需要对方法传递指针，体会如下对结构体类型改变的方法 changRadius() 和普通的函数 change() 中的指针操作:
+>
+>   ```go
+>   package main
+>
+>   import (
+>      "fmt"  
+>   )
+>
+>   /* 定义结构体 */
+>   type Circle struct {
+>     radius float64
+>   }
+>   ```
+>
+>
+>   func main()  { 
+>      var c Circle
+>      fmt.Println(c.radius)
+>      c.radius = 10.00
+>      fmt.Println(c.getArea())
+>      c.changeRadius(20)
+>      fmt.Println(c.radius)
+>      change(&c, 30)
+>      fmt.Println(c.radius)
+>   }
+>   func (c Circle) getArea() float64  {
+>      return c.radius * c.radius
+>   }
+>   // 注意如果想要更改成功c的值，这里需要传指针
+>   func (c *Circle) changeRadius(radius float64)  {
+>      c.radius = radius
+>   }
+>
+>   // 以下操作将不生效
+>   //func (c Circle) changeRadius(radius float64)  {
+>   //   c.radius = radius
+>   //}
+>   // 引用类型要想改变值需要传指针
+>   func change(c *Circle, radius float64)  {
+>      c.radius = radius
+>   }
+>   ```
+> 
+>   输出为：
+> 
+>   ```
+>   0
+>   100
+>   20
+>   30
+>
+>   ```
+> 
+>   ```
+
+# 12. Go 语言变量作用域
+
+作用域为已声明标识符所表示的常量、类型、变量、函数或包在源代码中的作用范围。
+
+Go 语言中变量可以在三个地方声明：
+
+- **函数内定义的变量称为局部变量**
+- **函数外定义的变量称为全局变量**
+- **函数定义中的变量称为形式参数**
+
+接下来让我们具体了解局部变量、全局变量和形式参数。
+
+## 12.1 局部变量
+
+在函数体内声明的变量称之为局部变量，它们的作用域只在函数体内，参数和返回值变量也是局部变量。
+
+以下实例中 main() 函数使用了局部变量 a, b, c：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   /* 声明局部变量 */
+   var a, b, c int
+
+   /* 初始化参数 */
+   a = 10
+   b = 20
+   c = a + b
+
+   fmt.Printf ("结果： a = %d, b = %d and c = %d\n", a, b, c)
+}
+```
+
+以上实例执行输出结果为：
+
+```
+结果： a = 10, b = 20 and c = 30
+```
+
+> 下方评论区留言：
+>
+> + 可通过花括号来控制变量的作用域，花括号中的变量是单独的作用域，同名变量会覆盖外层。
+>
+>   **1.**
+>
+>   ```go
+>   a := 5
+>   {
+>       a := 3
+>       fmt.Println("in a = ", a)
+>   }
+>   fmt.Println("out a = ", a)
+>   ```
+>
+>   输出:
+>
+>   ```
+>   in a = 3
+>   out a = 5
+>   ```
+>
+>   **2.**
+>
+>   ```go
+>   a := 5
+>   {
+>       fmt.Println("in a = ", a)
+>   }
+>   fmt.Println("out a = ", a)
+>   ```
+>
+>   输出:
+>
+>   ```
+>   in a = 5
+>   out a = 5
+>   ```
+>
+>   **3.**
+>
+>   ```go
+>   a := 5
+>   {
+>       a := 3    
+>       fmt.Println("a = ", a)
+>   }
+>   ```
+>
+>   输出:
+>
+>   ```
+>   a declared and not used
+>   ```
+
+## 12.2 全局变量
+
+在函数体外声明的变量称之为全局变量，**全局变量可以在整个包甚至外部包（被导出后）使用**。
+
+全局变量可以在任何函数中使用，以下实例演示了如何使用全局变量：
+
+```go
+package main
+
+import "fmt"
+
+/* 声明全局变量 */
+var g int
+
+func main() {
+
+   /* 声明局部变量 */
+   var a, b int
+
+   /* 初始化参数 */
+   a = 10
+   b = 20
+   g = a + b
+
+   fmt.Printf("结果： a = %d, b = %d and g = %d\n", a, b, g)
+}
+```
+
+以上实例执行输出结果为：
+
+```
+结果： a = 10, b = 20 and g = 30
+```
+
+Go 语言程序中全局变量与局部变量名称可以相同，但是函数内的局部变量会被优先考虑。实例如下：
+
+```go
+package main
+
+import "fmt"
+
+/* 声明全局变量 */
+var g int = 20
+
+func main() {
+   /* 声明局部变量 */
+   var g int = 10
+
+   fmt.Printf ("结果： g = %d\n",  g)
+}
+```
+
+以上实例执行输出结果为：
+
+```
+结果： g = 10
+```
+
+> 下方评论区留言：
+>
+> + 全局变量可以在整个包甚至外部包（被导出后）使用。
+>
+>   下述代码在 test.go 中定义了全局变量 Total_sum，然后在 hello.go 中引用。
+>
+>   **test.go:**
+>
+>   ```go
+>   package main
+>   import "fmt"
+>   var Total_sum int = 0
+>   func Sum_test(a int, b int) int {
+>       fmt.Printf("%d + %d = %d\n", a, b, a+b)
+>       Total_sum += (a + b)
+>       fmt.Printf("Total_sum: %d\n", Total_sum)
+>       return a+b
+>   }
+>   ```
+>   
+>    **hello.go：**
+>   
+>   ```go
+>   package main
+>   
+>   import (
+>       "fmt"
+>   )
+>   
+>   func main() {
+>       var sum int
+>       sum = Sum_test(2, 3)
+>       fmt.Printf("sum: %d; Total_sum: %d\n", sum, Total_sum)
+>   }
+>   ```
+>
+
+
+## 12.3 形式参数
+
+形式参数会作为函数的局部变量来使用。实例如下：
+
+```go
+package main
+
+import "fmt"
+
+/* 声明全局变量 */
+var a int = 20;
+
+func main() {
+   /* main 函数中声明局部变量 */
+   var a int = 10
+   var b int = 20
+   var c int = 0
+
+   fmt.Printf("main()函数中 a = %d\n",  a);
+   c = sum( a, b);
+   fmt.Printf("main()函数中 c = %d\n",  c);
+}
+
+/* 函数定义-两数相加 */
+func sum(a, b int) int {
+   fmt.Printf("sum() 函数中 a = %d\n",  a);
+   fmt.Printf("sum() 函数中 b = %d\n",  b);
+
+   return a + b;
+}
+```
+
+以上实例执行输出结果为：
+
+```
+main()函数中 a = 10
+sum() 函数中 a = 10
+sum() 函数中 b = 20
+main()函数中 c = 30
+```
+
+## 12.4 初始化局部和全局变量
+
+不同类型的局部和全局变量默认值为：
+
+| 数据类型    | 初始化默认值 |
+| :---------- | :----------- |
+| int         | 0            |
+| float32     | 0            |
+| **pointer** | **nil**      |
+
+# 13. Go 语言数组
 
