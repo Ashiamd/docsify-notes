@@ -2740,6 +2740,10 @@ func main(){
 
 ### 函数闭包
 
+> [golang 闭包是分配在堆上还是栈上？](https://www.cnblogs.com/peteremperor/p/14595769.html)
+>
+> **闭包环境中引用的变量是不能够在栈上分配的，而是在堆上分配**。因为如果引用的变量在栈上分配，那么该变量会跟随函数f返回之后回收，那么闭包函数就不可能访问未分配的一个变量，即未声明的变量，之所以能够再堆上分配，而不是在栈上分配，是Go的一个语言特性----**escape analyze（能够自动分析出变量的作用范围，是否将变量分配堆上）**。
+
 Go 语言支持匿名函数，可作为闭包。匿名函数是一个"内联"语句或表达式。匿名函数的优越性在于可以直接使用函数内的变量，不必申明。
 
 以下实例中，我们创建了函数 getSequence() ，返回另外一个函数。该函数的目的是在闭包中递增 i 变量，代码如下：
@@ -3234,4 +3238,3044 @@ main()函数中 c = 30
 | **pointer** | **nil**      |
 
 # 13. Go 语言数组
+
+Go 语言提供了数组类型的数据结构。
+
+数组是具有相同唯一类型的一组已编号且**长度固定**的数据项序列，这种类型可以是任意的原始类型例如整型、字符串或者自定义类型。
+
+相对于去声明 **number0, number1, ..., number99** 的变量，使用数组形式 **numbers[0], numbers[1] ..., numbers[99]** 更加方便且易于扩展。
+
+数组元素可以通过索引（位置）来读取（或者修改），索引从 0 开始，第一个元素索引为 0，第二个索引为 1，以此类推。
+
+![img](https://www.runoob.com/wp-content/uploads/2015/06/goarray.png)
+
+## 13.1 声明数组
+
+Go 语言数组声明需要指定元素类型及元素个数，语法格式如下：
+
+```go
+var variable_name [SIZE] variable_type
+```
+
+以上为一维数组的定义方式。例如以下定义了数组 balance 长度为 10 类型为 float32：
+
+```go
+var balance [10] float32
+```
+
+## 13.2 初始化数组
+
+以下演示了数组初始化：
+
+```go
+var balance = [5]float32{1000.0, 2.0, 3.4, 7.0, 50.0}
+```
+
+我们也可以通过字面量在声明数组的同时快速初始化数组：
+
+```go
+balance := [5]float32{1000.0, 2.0, 3.4, 7.0, 50.0}
+```
+
+**如果数组长度不确定，可以使用 ... 代替数组的长度**，编译器会根据元素个数自行推断数组的长度：
+
+```go
+var balance = [...]float32{1000.0, 2.0, 3.4, 7.0, 50.0}
+或
+balance := [...]float32{1000.0, 2.0, 3.4, 7.0, 50.0}
+```
+
+如果设置了数组的长度，我们还可以通过指定下标来初始化元素：
+
+```go
+//  将索引为 1 和 3 的元素初始化
+balance := [5]float32{1:2.0,3:7.0}
+```
+
+初始化数组中 **{}** 中的元素个数不能大于 **[]** 中的数字。
+
+**如果忽略 [] 中的数字不设置数组大小，Go 语言会根据元素的个数来设置数组的大小**：
+
+```go
+ balance[4] = 50.0
+```
+
+以上实例读取了第五个元素。数组元素可以通过索引（位置）来读取（或者修改），索引从 0 开始，第一个元素索引为 0，第二个索引为 1，以此类推。
+
+![img](https://www.runoob.com/wp-content/uploads/2015/06/array_presentation.jpg)
+
+## 13.3 访问数组元素
+
+数组元素可以通过索引（位置）来读取。格式为数组名后加中括号，中括号中为索引的值。例如：
+
+```
+var salary float32 = balance[9]
+```
+
+以上实例读取了数组 balance 第 10 个元素的值。
+
+以下演示了数组完整操作（声明、赋值、访问）的实例：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   var n [10]int /* n 是一个长度为 10 的数组 */
+   var i,j int
+
+   /* 为数组 n 初始化元素 */        
+   for i = 0; i < 10; i++ {
+      n[i] = i + 100 /* 设置元素为 i + 100 */
+   }
+
+   /* 输出每个数组元素的值 */
+   for j = 0; j < 10; j++ {
+      fmt.Printf("Element[%d] = %d\n", j, n[j] )
+   }
+}
+```
+
+以上实例执行结果如下：
+
+```
+Element[0] = 100
+Element[1] = 101
+Element[2] = 102
+Element[3] = 103
+Element[4] = 104
+Element[5] = 105
+Element[6] = 106
+Element[7] = 107
+Element[8] = 108
+Element[9] = 109
+```
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   var i,j,k int
+   // 声明数组的同时快速初始化数组
+   balance := [5]float32{1000.0, 2.0, 3.4, 7.0, 50.0}
+
+   /* 输出数组元素 */         ...
+   for i = 0; i < 5; i++ {
+      fmt.Printf("balance[%d] = %f\n", i, balance[i] )
+   }
+   
+   balance2 := [...]float32{1000.0, 2.0, 3.4, 7.0, 50.0}
+   /* 输出每个数组元素的值 */
+   for j = 0; j < 5; j++ {
+      fmt.Printf("balance2[%d] = %f\n", j, balance2[j] )
+   }
+
+   //  将索引为 1 和 3 的元素初始化
+   balance3 := [5]float32{1:2.0,3:7.0}  
+   for k = 0; k < 5; k++ {
+      fmt.Printf("balance3[%d] = %f\n", k, balance3[k] )
+   }
+}
+```
+
+执行结果如下：
+
+```shell
+以上实例执行结果如下：
+
+balance[0] = 1000.000000
+balance[1] = 2.000000
+balance[2] = 3.400000
+balance[3] = 7.000000
+balance[4] = 50.000000
+balance2[0] = 1000.000000
+balance2[1] = 2.000000
+balance2[2] = 3.400000
+balance2[3] = 7.000000
+balance2[4] = 50.000000
+balance3[0] = 0.000000
+balance3[1] = 2.000000
+balance3[2] = 0.000000
+balance3[3] = 7.000000
+balance3[4] = 0.000000
+```
+
+> 下方评论区留言：
+>
+> + **使用数组来打印杨辉三角**
+>
+>   根据上一行的内容，来获取下一行的内容并打印出来。
+>
+>   ```go
+>   package main
+>   import "fmt"
+>   func GetYangHuiTriangleNextLine(inArr []int) []int {
+>       var out []int
+>       var i int
+>       arrLen := len(inArr)
+>       out = append(out, 1)
+>       if 0 == arrLen {
+>           return out
+>       }
+>       for i = 0; i < arrLen-1; i++ {
+>           out = append(out, inArr[i]+inArr[i+1])
+>       }
+>       out = append(out, 1)
+>       return out
+>   }
+>   func main() {
+>       nums := []int{}
+>       var i int
+>       for i = 0; i < 10; i++ {
+>           nums = GetYangHuiTriangleNextLine(nums)
+>           fmt.Println(nums)
+>       }
+>   }
+>   ```
+>
+>   输出结果为：
+>
+>   ```
+>   [1]
+>   [1 1]
+>   [1 2 1]
+>   [1 3 3 1]
+>   [1 4 6 4 1]
+>   [1 5 10 10 5 1]
+>   [1 6 15 20 15 6 1]
+>   [1 7 21 35 35 21 7 1]
+>   [1 8 28 56 70 56 28 8 1]
+>   [1 9 36 84 126 126 84 36 9 1]
+>   ```
+>
+> + **数组初始化**
+>
+>   初始化数组的初始化有多种形式。
+>
+>   ```
+>   [5] int {1,2,3,4,5}
+>   ```
+>
+>   长度为5的数组，其元素值依次为：1，2，3，4，5。
+>
+>   ```
+>   [5] int {1,2}
+>   ```
+>
+>   长度为 5 的数组，其元素值依次为：1，2，0，0，0 。
+>
+>   在初始化时没有指定初值的元素将会赋值为其元素类型 int 的默认值0，string 的默认值是 ""。
+>
+>   ```
+>   [...] int {1,2,3,4,5}
+>   ```
+>
+>   长度为 5 的数组，其长度是根据初始化时指定的元素个数决定的。
+>
+>   ```
+>   [5] int { 2:1,3:2,4:3}
+>   ```
+>
+>   长度为 5 的数组，key:value，其元素值依次为：0，0，1，2，3。在初始化时指定了 2，3，4 索引中对应的值：1，2，3
+>
+>   ```
+>   [...] int {2:1,4:3}
+>   ```
+>
+>   长度为5的数组，起元素值依次为：0，0，1，0，3。由于指定了最大索引 4 对应的值 3，根据初始化的元素个 数确定其长度为5赋值与使用。
+>
+>   **切片的初始化**
+>
+>   切片可以通过数组来初始化，也可以通过内置函数 make() 初始化。
+>
+>   初始化时 len=cap，在追加元素时如果容量 cap 不足时将按 len 的 2 倍扩容。
+>
+>   **s :=[] int {1,2,3 }** 直接初始化切片，[] 表示是切片类型，{1,2,3} 初始化值依次是 1,2,3。其 cap=len=3。
+>
+>   **s := arr[:]** 初始化切片 s，是数组 arr 的引用。
+>
+>   **s := arr[startIndex:endIndex]** 将 arr 中从下标 startIndex 到 endIndex-1 下的元素创建为一个新的切片。
+>
+>   **s := arr[startIndex:]** 缺省 endIndex 时将表示一直到 arr 的最后一个元素。
+>
+>   **s := arr[:endIndex]** 缺省 startIndex 时将表示从 arr 的第一个元素开始。
+>
+>   **s1 := s[startIndex:endIndex]** 通过切片 s 初始化切片 s1
+>
+>   **s :=make([]int,len,cap)** 通过内置函数 make() 初始化切片 s,[]int 标识为其元素类型为 int 的切片。
+
+## 13.3 更多内容
+
+数组对 Go 语言来说是非常重要的，以下我们将介绍数组更多的内容：
+
+| 内容                                                         | 描述                                            |
+| :----------------------------------------------------------- | :---------------------------------------------- |
+| [多维数组](https://www.runoob.com/go/go-multi-dimensional-arrays.html) | Go 语言支持多维数组，最简单的多维数组是二维数组 |
+| [向函数传递数组](https://www.runoob.com/go/go-passing-arrays-to-functions.html) | 你可以向函数传递数组参数                        |
+
+### 多维数组
+
+Go 语言支持多维数组，以下为常用的多维数组声明方式：
+
+```go
+var variable_name [SIZE1][SIZE2]...[SIZEN] variable_type
+```
+
+以下实例声明了三维的整型数组：
+
+```go
+var threedim [5][10][4]int
+```
+
+#### 二维数组
+
+二维数组是最简单的多维数组，二维数组本质上是由一维数组组成的。二维数组定义方式如下：
+
+```
+var arrayName [ x ][ y ] variable_type
+```
+
+variable_type 为 Go 语言的数据类型，arrayName 为数组名，二维数组可认为是一个表格，x 为行，y 为列，下图演示了一个二维数组 a 为三行四列：
+
+![img](https://www.runoob.com/wp-content/uploads/2015/06/go-array-2021-01-19.png)
+
+二维数组中的元素可通过 **a\[ i ]\[ j ]** 来访问。
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+    // Step 1: 创建数组
+    values := [][]int{}
+
+    // Step 2: 使用 appped() 函数向空的二维数组添加两行一维数组
+    row1 := []int{1, 2, 3}
+    row2 := []int{4, 5, 6}
+    values = append(values, row1)
+    values = append(values, row2)
+
+    // Step 3: 显示两行数据
+    fmt.Println("Row 1")
+    fmt.Println(values[0])
+    fmt.Println("Row 2")
+    fmt.Println(values[1])
+
+    // Step 4: 访问第一个元素
+    fmt.Println("第一个元素为：")
+    fmt.Println(values[0][0])
+}
+```
+
+以上实例运行输出结果为：
+
+```shell
+Row 1
+[1 2 3]
+Row 2
+[4 5 6]
+第一个元素为：
+1
+```
+
+#### 初始化二维数组
+
+多维数组可通过大括号来初始值。以下实例为一个 3 行 4 列的二维数组：
+
+```go
+a := [3][4]int{  
+ {0, 1, 2, 3} ,   /*  第一行索引为 0 */
+ {4, 5, 6, 7} ,   /*  第二行索引为 1 */
+ {8, 9, 10, 11},   /* 第三行索引为 2 */
+}
+```
+
+> **注意：**以上代码中倒数第二行的 **}** 必须要有逗号，因为最后一行的 **}** 不能单独一行，也可以写成这样：
+>
+> ```go
+> a := [3][4]int{  
+>  {0, 1, 2, 3} ,   /*  第一行索引为 0 */
+>  {4, 5, 6, 7} ,   /*  第二行索引为 1 */
+>  {8, 9, 10, 11}}   /* 第三行索引为 2 */
+> ```
+
+以下实例初始化一个 2 行 2 列 的二维数组：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+    // 创建二维数组
+    sites := [2][2]string{}
+
+    // 向二维数组添加元素
+    sites[0][0] = "Google"
+    sites[0][1] = "Runoob"
+    sites[1][0] = "Taobao"
+    sites[1][1] = "Weibo"
+
+    // 显示结果
+    fmt.Println(sites)
+}
+```
+
+以上实例运行输出结果为：
+
+```shell
+[[Google Runoob] [Taobao Weibo]]
+```
+
+#### 访问二维数组
+
+二维数组通过指定坐标来访问。如数组中的行索引与列索引，例如：
+
+```go
+val := a[2][3]
+或
+var value int = a[2][3]
+```
+
+以上实例访问了二维数组 val 第三行的第四个元素。
+
+二维数组可以使用循环嵌套来输出元素：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   /* 数组 - 5 行 2 列*/
+   var a = [5][2]int{ {0,0}, {1,2}, {2,4}, {3,6},{4,8}}
+   var i, j int
+
+   /* 输出数组元素 */
+   for  i = 0; i < 5; i++ {
+      for j = 0; j < 2; j++ {
+         fmt.Printf("a[%d][%d] = %d\n", i,j, a[i][j] )
+      }
+   }
+}
+```
+
+以上实例运行输出结果为：
+
+```shell
+a[0][0] = 0
+a[0][1] = 0
+a[1][0] = 1
+a[1][1] = 2
+a[2][0] = 2
+a[2][1] = 4
+a[3][0] = 3
+a[3][1] = 6
+a[4][0] = 4
+a[4][1] = 8
+```
+
+以下实例创建各个维度元素数量不一致的多维数组：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+    // 创建空的二维数组
+    animals := [][]string{}
+
+    // 创建三一维数组，各数组长度不同
+    row1 := []string{"fish", "shark", "eel"}
+    row2 := []string{"bird"}
+    row3 := []string{"lizard", "salamander"}
+
+    // 使用 append() 函数将一维数组添加到二维数组中
+    animals = append(animals, row1)
+    animals = append(animals, row2)
+    animals = append(animals, row3)
+
+    // 循环输出
+    for i := range animals {
+        fmt.Printf("Row: %v\n", i)
+        fmt.Println(animals[i])
+    }
+}
+```
+
+以上实例运行输出结果为：
+
+```shell
+Row: 0
+[fish shark eel]
+Row: 1
+[bird]
+Row: 2
+[lizard salamander]
+```
+
+### 向函数传递数组
+
+如果你想向函数传递数组参数，你需要在函数定义时，声明形参为数组，我们可以通过以下两种方式来声明：
+
+**方法一**
+
+**形参设定数组大小**：
+
+```go
+void myFunction(param [10]int)
+{
+.
+.
+.
+}
+```
+
+**方法二**
+
+形参未设定数组大小：
+
+```go
+void myFunction(param []int)
+{
+.
+.
+.
+}
+```
+
+让我们看下以下实例，实例中函数接收整型数组参数，另一个参数指定了数组元素的个数，并返回平均值：
+
+```go
+func getAverage(arr []int, size int) float32
+{
+   var i int
+   var avg, sum float32  
+
+   for i = 0; i < size; ++i {
+      sum += arr[i]
+   }
+
+   avg = sum / size
+
+   return avg;
+}
+```
+
+接下来我们来调用这个函数：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   /* 数组长度为 5 */
+   var  balance = [5]int {1000, 2, 3, 17, 50}
+   var avg float32
+
+   /* 数组作为参数传递给函数 */
+   avg = getAverage( balance, 5 ) ;
+
+   /* 输出返回的平均值 */
+   fmt.Printf( "平均值为: %f ", avg );
+}
+func getAverage(arr [5]int, size int) float32 {
+   var i,sum int
+   var avg float32  
+
+   for i = 0; i < size;i++ {
+      sum += arr[i]
+   }
+
+   avg = float32(sum) / float32(size)
+
+   return avg;
+}
+```
+
+以上实例执行输出结果为：
+
+```
+平均值为: 214.399994
+```
+
+浮点数计算输出有一定的偏差，你也可以转整型来设置精度。
+
+```go
+package main
+import (
+    "fmt"
+)
+func main() {
+    a := 1.69
+    b := 1.7
+    c := a * b      // 结果应该是2.873
+    fmt.Println(c)  // 输出的是2.8729999999999998
+}
+```
+
+设置固定精度：
+
+```go
+package main
+import (
+    "fmt"
+)
+func main() {
+    a := 1690           // 表示1.69
+    b := 1700           // 表示1.70
+    c := a * b          // 结果应该是2873000表示 2.873
+    fmt.Println(c)      // 内部编码
+    fmt.Println(float64(c) / 1000000) // 显示
+}
+```
+
+> 下方评论区留言：
+>
+> + 我觉得这个解说有点模糊，因为没有区分数组和切片:
+>
+>   声明数组：
+>
+>   ```go
+>   nums := [3]int{1,2,3,}
+>   ```
+>
+>   声明切片：
+>
+>   ```go
+>   nums := []int{1,2,3}
+>   ```
+>
+>   **没有所谓没有声明长度的数组存在**。
+>
+> + **与 c 语言不同，go 的数组作为函数参数传递的是副本，函数内修改数组并不改变原来的数组。**
+>
+>   ```go
+>   package main
+>   import "fmt"
+>   // 这里 如果写成 nums[] int 会报错
+>   func change(nums[3] int){
+>      nums[0]=100
+>   }
+>   func main() {
+>       var nums=[3]int{1,2,3}   
+>       change(nums)   //nums并未被改变   
+>       fmt.Println(nums[0])   
+>       return
+>   }
+>   ```
+>
+> + 这里没有区分**数组**与**切片**
+>
+>   - Go 语言的数组是值，其**长度是其类型的一部分**，作为函数参数时，是**值传递**，函数中的修改对调用者不可见
+>
+>   - Go 语言中对数组的处理，一般采用**切片**的方式，**切片包含对底层数组内容的引用**，作为函数参数时，类似于**指针传递**，函数中的修改对调用者可见
+>
+>   ```go
+>   // 数组
+>   b := [...]int{2, 3, 5, 7, 11, 13}
+>   
+>   func boo(tt [6]int) {
+>       tt[0], tt[len(tt)-1] = tt[len(tt)-1], tt[0]
+>   }
+>   
+>   boo(b)
+>   fmt.Println(b) // [2 3 5 7 11 13]
+>   // 切片
+>   p := []int{2, 3, 5, 7, 11, 13}
+>   
+>   func poo(tt []int) {
+>       tt[0], tt[len(tt)-1] = tt[len(tt)-1], tt[0]
+>   }
+>   poo(p)
+>   fmt.Println(p)  // [13 3 5 7 11 2]
+>   ```
+>
+> + 函数里面的数组改动对定义类型为切片的数组外部数据也会有影响：
+>
+>   ```go
+>   func main(){
+>       var slice1 = []int{1,2,3,4,5,6,7,8}
+>       var array = [8]int{1,2,3,4,5,6,7,8}
+>       change_arr1(slice1)
+>       change_arr2(array)
+>       fmt.Println("slice1 = ", slice1) //[10,2,3,4,5,6,7,8]
+>       fmt.Println("array = ", array) //[1,2,3,4,5,6,7,8]
+>   }
+>   
+>   func change_arr1(arr []int) {
+>       arr[0] = 10
+>       fmt.Println("arr = ", arr) //[10,2,3,4,5,6,7,8]
+>   }
+>   func change_arr2(arr [8]int) {
+>       arr[0] = 10
+>       fmt.Println("arr = ", arr) //[10,2,3,4,5,6,7,8]
+>   }
+>   ```
+
+# 14. Go 语言指针
+
+Go 语言中指针是很容易学习的，Go 语言中使用指针可以更简单的执行一些任务。
+
+接下来让我们来一步步学习 Go 语言指针。
+
+我们都知道，变量是一种使用方便的占位符，用于引用计算机内存地址。
+
+**Go 语言的取地址符是 &**，放到一个变量前使用就会返回相应变量的内存地址。
+
+以下实例演示了变量在内存中地址：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   var a int = 10  
+
+   fmt.Printf("变量的地址: %x\n", &a  )
+}
+```
+
+执行以上代码输出结果为：
+
+```
+变量的地址: 20818a220
+```
+
+现在我们已经了解了什么是内存地址和如何去访问它。接下来我们将具体介绍指针。
+
+## 14.1 什么是指针
+
+一个指针变量指向了一个值的内存地址。
+
+类似于变量和常量，在使用指针前你需要声明指针。指针声明格式如下：
+
+```go
+var var_name *var-type
+```
+
+var-type 为指针类型，var_name 为指针变量名，* 号用于指定变量是作为一个指针。以下是有效的指针声明：
+
+```go
+var ip *int        /* 指向整型*/
+var fp *float32    /* 指向浮点型 */
+```
+
+本例中这是一个指向 int 和 float32 的指针。
+
+## 14.2 如何使用指针
+
+指针使用流程：
+
+- 定义指针变量。
+- 为指针变量赋值。
+- 访问指针变量中指向地址的值。
+
+**在指针类型前面加上 * 号（前缀）来获取指针所指向的内容**。
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   var a int= 20   /* 声明实际变量 */
+   var ip *int        /* 声明指针变量 */
+
+   ip = &a  /* 指针变量的存储地址 */
+
+   fmt.Printf("a 变量的地址是: %x\n", &a  )
+
+   /* 指针变量的存储地址 */
+   fmt.Printf("ip 变量储存的指针地址: %x\n", ip )
+
+   /* 使用指针访问值 */
+   fmt.Printf("*ip 变量的值: %d\n", *ip )
+}
+```
+
+以上实例执行输出结果为：
+
+```shell
+a 变量的地址是: 20818a220
+ip 变量储存的指针地址: 20818a220
+*ip 变量的值: 20
+```
+
+## 14.3 Go 空指针
+
+**当一个指针被定义后没有分配到任何变量时，它的值为 nil**。
+
+nil 指针也称为空指针。
+
+nil在概念上和其它语言的null、None、nil、NULL一样，都指代零值或空值。
+
+一个指针变量通常缩写为 ptr。
+
+查看以下实例：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   var  ptr *int
+
+   fmt.Printf("ptr 的值为 : %x\n", ptr  )
+}
+```
+
+以上实例输出结果为：
+
+```shell
+ptr 的值为 : 0
+```
+
+空指针判断：
+
+```shell
+if(ptr != nil)     /* ptr 不是空指针 */
+if(ptr == nil)    /* ptr 是空指针 */
+```
+
+## 14.4 更多内容
+
+接下来我们将为大家介绍Go语言中更多的指针应用：
+
+| 内容                                                         | 描述                                         |
+| :----------------------------------------------------------- | :------------------------------------------- |
+| [Go 指针数组](https://www.runoob.com/go/go-array-of-pointers.html) | 你可以定义一个指针数组来存储地址             |
+| [Go 指向指针的指针](https://www.runoob.com/go/go-pointer-to-pointer.html) | Go 支持指向指针的指针                        |
+| [Go 向函数传递指针参数](https://www.runoob.com/go/go-passing-pointers-to-functions.html) | 通过引用或地址传参，在函数调用时可以改变其值 |
+
+### Go 指针数组
+
+在我们了解指针数组前，先看个实例，定义了长度为 3 的整型数组：
+
+```go
+package main
+
+import "fmt"
+
+const MAX int = 3
+
+func main() {
+
+   a := []int{10,100,200}
+   var i int
+
+   for i = 0; i < MAX; i++ {
+      fmt.Printf("a[%d] = %d\n", i, a[i] )
+   }
+}
+```
+
+以上代码执行输出结果为：
+
+```shell
+a[0] = 10
+a[1] = 100
+a[2] = 200
+```
+
+有一种情况，我们可能需要保存数组，这样我们就需要使用到指针。
+
+以下声明了整型指针数组：
+
+```shell
+var ptr [MAX]*int;
+```
+
+ptr 为整型指针数组。因此每个元素都指向了一个值。以下实例的三个整数将存储在指针数组中：
+
+```go
+package main
+
+import "fmt"
+
+const MAX int = 3
+
+func main() {
+   a := []int{10,100,200}
+   var i int
+   var ptr [MAX]*int;
+
+   for  i = 0; i < MAX; i++ {
+      ptr[i] = &a[i] /* 整数地址赋值给指针数组 */
+   }
+
+   for  i = 0; i < MAX; i++ {
+      fmt.Printf("a[%d] = %d\n", i,*ptr[i] )
+   }
+}
+```
+
+以上代码执行输出结果为：
+
+```shell
+a[0] = 10
+a[1] = 100
+a[2] = 200
+```
+
+> 下方评论区留言：
+>
+> + 创建指针数组的时候，不适合用 **range** 循环。
+>
+>   > [Go range实现原理及性能优化剖析](https://blog.csdn.net/weixin_33910137/article/details/91699614)
+>
+>   错误代码:
+>
+>   ```
+>   const max = 3
+>   
+>   func main() {
+>       number := [max]int{5, 6, 7}
+>       var ptrs [max]*int //指针数组
+>       //将number数组的值的地址赋给ptrs
+>       for i, x := range &number {
+>           ptrs[i] = &x
+>       }
+>       for i, x := range ptrs {
+>           fmt.Printf("指针数组：索引:%d 值:%d 值的内存地址:%d\n", i, *x, x)
+>       }
+>   }
+>   ```
+>
+>   输出结果为：
+>
+>   ```
+>   指针数组：索引:0 值:7 值的内存地址:824634204304
+>   指针数组：索引:1 值:7 值的内存地址:824634204304
+>   指针数组：索引:2 值:7 值的内存地址:824634204304
+>   ```
+>
+>   从结果中我们发现内存地址都一样，而且值也一样。怎么回事？
+>
+>   这个问题是range循环的实现逻辑引起的。跟for循环不一样的地方在于range循环中的x变量是临时变量。range循环只是将值拷贝到x变量中。因此内存地址都是一样的。
+>
+>   正确代码如下：
+>
+>   ```
+>   const max = 3
+>   
+>   func main() {
+>       number := [max]int{5, 6, 7}
+>       var ptrs [max]*int //指针数组
+>       //将number数组的值的地址赋给ptrs
+>       for i := 0; i < max; i++ {
+>           ptrs[i] = &number[i]
+>       }
+>       for i, x := range ptrs {
+>           fmt.Printf("指针数组：索引:%d 值:%d 值的内存地址:%d\n", i,*x, x)
+>       }
+>   }
+>   ```
+>
+>   输出结果为：
+>
+>   ```
+>   指针数组：索引:0 值:5 值的内存地址:824634212672
+>   指针数组：索引:1 值:6 值的内存地址:824634212680
+>   指针数组：索引:2 值:7 值的内存地址:824634212688
+>   ```
+>
+>   从结果中可以看出内存地址都不一样。
+>
+> + 关于楼上的创建指针数组的时候，说的不适合用 range 循环。
+>
+>   其实不是不能用 range 循环，只是楼主不会用而已。
+>
+>   这是楼主的原始代码：
+>
+>   ```go
+>   const max = 3
+>   
+>   func main() {
+>       number := [max]int{5, 6, 7}
+>       var ptrs [max]*int //指针数组
+>       //将number数组的值的地址赋给ptrs
+>       for i, x := range &number {
+>           ptrs[i] = &x
+>       }
+>       for i, x := range ptrs {
+>           fmt.Printf("指针数组：索引:%d 值:%d 值的内存地址:%d\n", i, *x, x)
+>       }
+>   }
+>   ```
+>
+>   这样是使用 range 的正确用法，两个地方改动：**range &number** 改成 **range number**，**ptrs[i] = &x** 改成 **ptrs[i]=&number[i]**：
+>
+>   ```go
+>   const max = 3
+>   
+>   func main() {
+>       number := [max]int{5, 6, 7}
+>       var ptrs [max]*int //指针数组
+>       //将number数组的值的地址赋给ptrs
+>       for i := range number {
+>           ptrs[i] = &number[i]
+>       }
+>       for i, x := range ptrs {
+>           fmt.Printf("指针数组：索引:%d 值:%d 值的内存地址:%d\n", i, *x, x)
+>       }
+>   }
+>   ```
+>
+> + **flying81621** 的方法与**青云刀歌**的方法并无区别，flying81621 的 for range 方法也只是用于遍历数组，并没用使用 range 方法的临时变量。真正赋值的地方只有一次，for 的 body 内 ，青云刀歌真正原因在于，**x临时变量仅被声明一次，此后都是将迭代 number 出的值赋值给 x ， x 变量的内存地址始终未变，这样再将 x 的地址发送给 ptrs 数组，自然也是相同的。**
+>
+>   原代码：
+>
+>   ```go
+>   for i, x := range &number {
+>       ptrs[i] = &x
+>   }
+>   ```
+>
+>   输出结果：
+>
+>   ```
+>   指针数组：索引:0 值:7 值的内存地址:824633794712
+>   指针数组：索引:1 值:7 值的内存地址:824633794712
+>   指针数组：索引:2 值:7 值的内存地址:824633794712
+>   ```
+>
+>   "正确"使用应增加一个临时变量（其实这种做法不对，和原意不一致）
+>
+>   ```go
+>   for i, x := range &number {
+>       temp := x
+>       ptrs[i] = &temp
+>   }
+>   ```
+>
+>   输出结果
+>
+>   ```
+>   指针数组：索引:0 值:5 值的内存地址:824633794712
+>   指针数组：索引:1 值:6 值的内存地址:824633794736
+>   指针数组：索引:2 值:7 值的内存地址:824633794744
+>   ```
+>
+> + 楼上的代码只是把临时变量 temp 的地址赋给了指针数组。
+>
+>   ```go
+>   var arr [3]int
+>   var parr [3]*int
+>   for k, v := range arr {
+>       temp := v
+>       parr[k] = &temp;
+>   }
+>   
+>   // 输出地址比对
+>   for i := 0; i < 3; i+=1 {
+>       fmt.Println(&arr[i], parr[i]);
+>   }
+>   ```
+>
+>   可以发现两组地址是不同的：
+>
+>   ```
+>   0xc00011c140 0xc00011e068
+>   0xc00011c148 0xc00011e080
+>   0xc00011c150 0xc00011e088
+>   ```
+>
+>   ***\*清云刀歌\**** 的是没有问题的，还可以直接用一个数组指针。
+>
+>   ```go
+>   var arr [3]int
+>   var parr [3]*int // 指针数组
+>   var p *[3]int = &arr // 数组指针
+>   for k, _ := range arr {
+>       parr[k] = &arr[k];
+>   }
+>   
+>   // 输出地址比对
+>   for i := 0; i < 3; i+=1 {
+>       fmt.Println(&arr[i], parr[i], &(*p)[i]);
+>   }
+>   ```
+>
+>   输出结果：
+>
+>   ```shell
+>   0xc00000a420 0xc00000a420 0xc00000a420
+>   0xc00000a428 0xc00000a428 0xc00000a428
+>   0xc00000a430 0xc00000a430 0xc00000a430
+>   ```
+
+### Go 指向指针的指针
+
+如果一个指针变量存放的又是另一个指针变量的地址，则称这个指针变量为指向指针的指针变量。
+
+当定义一个指向指针的指针变量时，第一个指针存放第二个指针的地址，第二个指针存放变量的地址：
+
+![img](https://www.runoob.com/wp-content/uploads/2015/06/pointer_to_pointer.jpg)
+
+指向指针的指针变量声明格式如下：
+
+```go
+var ptr **int;
+```
+
+以上指向指针的指针变量为整型。
+
+访问指向指针的指针变量值需要使用两个 * 号，如下所示：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+
+   var a int
+   var ptr *int
+   var pptr **int
+
+   a = 3000
+
+   /* 指针 ptr 地址 */
+   ptr = &a
+
+   /* 指向指针 ptr 地址 */
+   pptr = &ptr
+
+   /* 获取 pptr 的值 */
+   fmt.Printf("变量 a = %d\n", a )
+   fmt.Printf("指针变量 *ptr = %d\n", *ptr )
+   fmt.Printf("指向指针的指针变量 **pptr = %d\n", **pptr)
+}
+```
+
+以上实例执行输出结果为：
+
+```shell
+变量 a = 3000
+指针变量 *ptr = 3000
+指向指针的指针变量 **pptr = 3000
+```
+
+### Go 指针作为函数参数
+
+Go 语言允许向函数传递指针，只需要在函数定义的参数上设置为指针类型即可。
+
+以下实例演示了如何向函数传递指针，并在函数调用后修改函数内的值：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   /* 定义局部变量 */
+   var a int = 100
+   var b int= 200
+
+   fmt.Printf("交换前 a 的值 : %d\n", a )
+   fmt.Printf("交换前 b 的值 : %d\n", b )
+
+   /* 调用函数用于交换值
+   * &a 指向 a 变量的地址
+   * &b 指向 b 变量的地址
+   */
+   swap(&a, &b);
+
+   fmt.Printf("交换后 a 的值 : %d\n", a )
+   fmt.Printf("交换后 b 的值 : %d\n", b )
+}
+
+func swap(x *int, y *int) {
+   var temp int
+   temp = *x    /* 保存 x 地址的值 */
+   *x = *y      /* 将 y 赋值给 x */
+   *y = temp    /* 将 temp 赋值给 y */
+}
+```
+
+以上实例允许输出结果为：
+
+```shell
+交换前 a 的值 : 100
+交换前 b 的值 : 200
+交换后 a 的值 : 200
+交换后 b 的值 : 100
+```
+
+> 下方评论区留言：
+>
+> 以下是一个更简洁的变量交换实例：
+>
+> ```go
+> package main
+> 
+> import "fmt"
+> 
+> func main() {
+>     /* 定义局部变量 */
+>    var a int = 100
+>    var b int= 200
+>    swap(&a, &b);
+> 
+>    fmt.Printf("交换后 a 的值 : %d\n", a )
+>    fmt.Printf("交换后 b 的值 : %d\n", b )
+> }
+> 
+> /* 交换函数这样写更加简洁，也是 go 语言的特性，可以用下，c++ 和 c# 是不能这么干的 */
+>  
+> func swap(x *int, y *int){
+>     *x, *y = *y, *x
+> }
+> ```
+
+# 15. Go 语言结构体
+
+Go 语言中数组可以存储同一类型的数据，但在结构体中我们可以为不同项定义不同的数据类型。
+
+结构体是由一系列具有相同类型或不同类型的数据构成的数据集合。
+
+结构体表示一项记录，比如保存图书馆的书籍记录，每本书有以下属性：
+
+- Title ：标题
+- Author ： 作者
+- Subject：学科
+- ID：书籍ID
+
+## 15.1 定义结构体
+
+结构体定义需要使用 type 和 struct 语句。struct 语句定义一个新的数据类型，结构体中有一个或多个成员。type 语句设定了结构体的名称。结构体的格式如下：
+
+```go
+type struct_variable_type struct {
+   member definition
+   member definition
+   ...
+   member definition
+}
+```
+
+一旦定义了结构体类型，它就能用于变量的声明，语法格式如下：
+
+```go
+variable_name := structure_variable_type {value1, value2...valuen}
+或
+variable_name := structure_variable_type { key1: value1, key2: value2..., keyn: valuen}
+```
+
+实例如下：
+
+```go
+package main
+
+import "fmt"
+
+type Books struct {
+   title string
+   author string
+   subject string
+   book_id int
+}
+
+
+func main() {
+
+    // 创建一个新的结构体
+    fmt.Println(Books{"Go 语言", "www.runoob.com", "Go 语言教程", 6495407})
+
+    // 也可以使用 key => value 格式
+    fmt.Println(Books{title: "Go 语言", author: "www.runoob.com", subject: "Go 语言教程", book_id: 6495407})
+
+    // 忽略的字段为 0 或 空
+   fmt.Println(Books{title: "Go 语言", author: "www.runoob.com"})
+}
+```
+
+输出结果为：
+
+```shell
+{Go 语言 www.runoob.com Go 语言教程 6495407}
+{Go 语言 www.runoob.com Go 语言教程 6495407}
+{Go 语言 www.runoob.com  0}
+```
+
+## 15.2 访问结构体成员
+
+如果要访问结构体成员，需要使用点号 **.** 操作符，格式为：
+
+```
+结构体.成员名
+```
+
+结构体类型变量使用 struct 关键字定义，实例如下：
+
+```go
+package main
+
+import "fmt"
+
+type Books struct {
+   title string
+   author string
+   subject string
+   book_id int
+}
+
+func main() {
+   var Book1 Books        /* 声明 Book1 为 Books 类型 */
+   var Book2 Books        /* 声明 Book2 为 Books 类型 */
+
+   /* book 1 描述 */
+   Book1.title = "Go 语言"
+   Book1.author = "www.runoob.com"
+   Book1.subject = "Go 语言教程"
+   Book1.book_id = 6495407
+
+   /* book 2 描述 */
+   Book2.title = "Python 教程"
+   Book2.author = "www.runoob.com"
+   Book2.subject = "Python 语言教程"
+   Book2.book_id = 6495700
+
+   /* 打印 Book1 信息 */
+   fmt.Printf( "Book 1 title : %s\n", Book1.title)
+   fmt.Printf( "Book 1 author : %s\n", Book1.author)
+   fmt.Printf( "Book 1 subject : %s\n", Book1.subject)
+   fmt.Printf( "Book 1 book_id : %d\n", Book1.book_id)
+
+   /* 打印 Book2 信息 */
+   fmt.Printf( "Book 2 title : %s\n", Book2.title)
+   fmt.Printf( "Book 2 author : %s\n", Book2.author)
+   fmt.Printf( "Book 2 subject : %s\n", Book2.subject)
+   fmt.Printf( "Book 2 book_id : %d\n", Book2.book_id)
+}
+```
+
+以上实例执行运行结果为：
+
+```
+Book 1 title : Go 语言
+Book 1 author : www.runoob.com
+Book 1 subject : Go 语言教程
+Book 1 book_id : 6495407
+Book 2 title : Python 教程
+Book 2 author : www.runoob.com
+Book 2 subject : Python 语言教程
+Book 2 book_id : 6495700
+```
+
+## 15.3 结构体作为函数参数
+
+你可以像其他数据类型一样将结构体类型作为参数传递给函数。并以以上实例的方式访问结构体变量：
+
+```go
+package main
+
+import "fmt"
+
+type Books struct {
+   title string
+   author string
+   subject string
+   book_id int
+}
+
+func main() {
+   var Book1 Books        /* 声明 Book1 为 Books 类型 */
+   var Book2 Books        /* 声明 Book2 为 Books 类型 */
+
+   /* book 1 描述 */
+   Book1.title = "Go 语言"
+   Book1.author = "www.runoob.com"
+   Book1.subject = "Go 语言教程"
+   Book1.book_id = 6495407
+
+   /* book 2 描述 */
+   Book2.title = "Python 教程"
+   Book2.author = "www.runoob.com"
+   Book2.subject = "Python 语言教程"
+   Book2.book_id = 6495700
+
+   /* 打印 Book1 信息 */
+   printBook(Book1)
+
+   /* 打印 Book2 信息 */
+   printBook(Book2)
+}
+
+func printBook( book Books ) {
+   fmt.Printf( "Book title : %s\n", book.title)
+   fmt.Printf( "Book author : %s\n", book.author)
+   fmt.Printf( "Book subject : %s\n", book.subject)
+   fmt.Printf( "Book book_id : %d\n", book.book_id)
+}
+```
+
+以上实例执行运行结果为：
+
+```
+Book title : Go 语言
+Book author : www.runoob.com
+Book subject : Go 语言教程
+Book book_id : 6495407
+Book title : Python 教程
+Book author : www.runoob.com
+Book subject : Python 语言教程
+Book book_id : 6495700
+```
+
+## 15.4 结构体指针
+
+你可以定义指向结构体的指针类似于其他指针变量，格式如下：
+
+```
+var struct_pointer *Books
+```
+
+以上定义的指针变量可以存储结构体变量的地址。查看结构体变量地址，可以将 & 符号放置于结构体变量前：
+
+```
+struct_pointer = &Book1
+```
+
+使用结构体指针访问结构体成员，使用 "." 操作符：
+
+```
+struct_pointer.title
+```
+
+接下来让我们使用结构体指针重写以上实例，代码如下：
+
+```go
+package main
+
+import "fmt"
+
+type Books struct {
+   title string
+   author string
+   subject string
+   book_id int
+}
+
+func main() {
+   var Book1 Books        /* 声明 Book1 为 Books 类型 */
+   var Book2 Books        /* 声明 Book2 为 Books 类型 */
+
+   /* book 1 描述 */
+   Book1.title = "Go 语言"
+   Book1.author = "www.runoob.com"
+   Book1.subject = "Go 语言教程"
+   Book1.book_id = 6495407
+
+   /* book 2 描述 */
+   Book2.title = "Python 教程"
+   Book2.author = "www.runoob.com"
+   Book2.subject = "Python 语言教程"
+   Book2.book_id = 6495700
+
+   /* 打印 Book1 信息 */
+   printBook(&Book1)
+
+   /* 打印 Book2 信息 */
+   printBook(&Book2)
+}
+func printBook( book *Books ) {
+   fmt.Printf( "Book title : %s\n", book.title)
+   fmt.Printf( "Book author : %s\n", book.author)
+   fmt.Printf( "Book subject : %s\n", book.subject)
+   fmt.Printf( "Book book_id : %d\n", book.book_id)
+}
+```
+
+以上实例执行运行结果为：
+
+```
+Book title : Go 语言
+Book author : www.runoob.com
+Book subject : Go 语言教程
+Book book_id : 6495407
+Book title : Python 教程
+Book author : www.runoob.com
+Book subject : Python 语言教程
+Book book_id : 6495700
+```
+
+> 下方评论留言：
+>
+> + **结构体是作为参数的值传递**：
+>
+>   ```go
+>   package main
+>
+>   import "fmt"
+>
+>   type Books struct {
+>       title string
+>       author string
+>       subject string
+>       book_id int
+>   }
+>
+>   func changeBook(book Books) {
+>       book.title = "book1_change"
+>   }
+>
+>   func main() {
+>       var book1 Books
+>       book1.title = "book1"
+>       book1.author = "zuozhe"
+>       book1.book_id = 1
+>       changeBook(book1)
+>       fmt.Println(book1)
+>   }
+>   ```
+>
+>   结果为：
+>
+>   ```shell
+>   {book1 zuozhe  1}
+>   ```
+>
+>   **如果想在函数里面改变结果体数据内容，需要传入指针**：
+>
+>   ```go
+>   package main
+>
+>   import "fmt"
+>
+>   type Books struct {
+>       title string
+>       author string
+>       subject string
+>       book_id int
+>   }
+>
+>   func changeBook(book *Books) {
+>       book.title = "book1_change"
+>   }
+>
+>   func main() {
+>       var book1 Books
+>       book1.title = "book1"
+>       book1.author = "zuozhe"
+>       book1.book_id = 1
+>       changeBook(&book1)
+>       fmt.Println(book1)
+>   }
+>   ```
+>
+>   结果为：
+>
+>   ```shell
+>   {book1_change zuozhe  1}
+>   ```
+>
+> + **结构体中属性的首字母大小写问题**
+>
+>   -  首字母大写相当于 public。
+>   -  首字母小写相当于 protected。
+>
+>   **注意:** 这个 public 和 private 是相对于包（go 文件首行的 package 后面跟的包名）来说的。
+>
+>   **敲黑板，划重点**
+>
+>   当要将结构体对象转换为 JSON 时，对象中的属性首字母必须是大写，才能正常转换为 JSON。
+>
+>   示例一：
+>
+>   ```go
+>   type Person struct {
+>   　　　Name string　　　　　　//Name字段首字母大写
+>   　　　age int               //age字段首字母小写
+>   }
+>   
+>   func main() {
+>   　　person:=Person{"小明",18}
+>   　　if result,err:=json.Marshal(&person);err==nil{  //json.Marshal 将对象转换为json字符串
+>   　　　　fmt.Println(string(result))
+>   　　}
+>   }
+>   ```
+>
+>   控制台输出：
+>
+>   ```
+>   {"Name":"小明"}    //只有Name，没有age
+>   ```
+>
+>   示例二：
+>
+>   ```go
+>   type Person  struct{
+>      　　Name  string      //都是大写
+>      　　Age    int               
+>   }
+>   ```
+>
+>   控制台输出：
+>
+>   ```
+>   {"Name":"小明","Age":18}   //两个字段都有
+>   ```
+>
+>   那这样 JSON 字符串以后就只能是大写了么？ 当然不是，可以使用 tag 标记要返回的字段名。
+>
+>   示例三：
+>
+>   ```go
+>   type Person  struct{
+>      　　Name  string   `json:"name"`　  //标记json名字为name　　　
+>      　　Age    int     `json:"age"`
+>      　　Time int64    `json:"-"`        // 标记忽略该字段
+>   
+>   }
+>   
+>   func main(){
+>   　　person:=Person{"小明",18, time.Now().Unix()}
+>   　　if result,err:=json.Marshal(&person);err==nil{
+>   　　　fmt.Println(string(result))
+>   　　}
+>   }
+>   ```
+>
+>   控制台输出：
+>
+>   ```
+>   {"name":"小明","age":18}
+>   ```
+
+# 16. Go 语言切片(Slice)
+
+**Go 语言切片是对数组的抽象**。
+
+Go 数组的长度不可改变，在特定场景中这样的集合就不太适用，Go 中提供了一种灵活，功能强悍的内置类型切片("动态数组")，与数组相比切片的长度是不固定的，可以追加元素，在追加时可能使切片的容量增大。
+
+## 16.1 定义切片
+
+你可以声明一个未指定大小的数组来定义切片：
+
+```go
+var identifier []type
+```
+
+**切片不需要说明长度**。
+
+或使用 **make()** 函数来创建切片:
+
+```go
+var slice1 []type = make([]type, len)
+
+也可以简写为
+
+slice1 := make([]type, len)
+```
+
+也可以指定容量，其中 **capacity** 为可选参数。
+
+```go
+make([]T, length, capacity)
+```
+
+这里 len 是数组的长度并且也是切片的初始长度。
+
+### 切片初始化
+
+```go
+s :=[] int {1,2,3 } 
+```
+
+直接初始化切片，**[]** 表示是切片类型，**{1,2,3}** 初始化值依次是 **1,2,3**，其 **cap=len=3**。
+
+```go
+s := arr[:] 
+```
+
+初始化切片 **s**，是数组 arr 的引用。
+
+```go
+s := arr[startIndex:endIndex] 
+```
+
+将 arr 中从下标 startIndex 到 endIndex-1 下的元素创建为一个新的切片。
+
+```go
+s := arr[startIndex:] 
+```
+
+默认 endIndex 时将表示一直到arr的最后一个元素。
+
+```go
+s := arr[:endIndex] 
+```
+
+默认 startIndex 时将表示从 arr 的第一个元素开始。
+
+```go
+s1 := s[startIndex:endIndex] 
+```
+
+通过切片 s 初始化切片 s1。
+
+```go
+s :=make([]int,len,cap) 
+```
+
+通过内置函数 **make()** 初始化切片**s**，**[]int** 标识为其元素类型为 int 的切片。
+
+## 16.2 len() 和 cap() 函数
+
+切片是可索引的，并且可以由 len() 方法获取长度。
+
+切片提供了计算容量的方法 cap() 可以测量切片最长可以达到多少。
+
+以下为具体实例：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   var numbers = make([]int,3,5)
+
+   printSlice(numbers)
+}
+
+func printSlice(x []int){
+   fmt.Printf("len=%d cap=%d slice=%v\n",len(x),cap(x),x)
+}
+```
+
+以上实例运行输出结果为:
+
+```shell
+len=3 cap=5 slice=[0 0 0]
+```
+
+## 16.3 空(nil)切片
+
+**一个切片在未初始化之前默认为 nil，长度为 0**，实例如下：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   var numbers []int
+
+   printSlice(numbers)
+
+   if(numbers == nil){
+      fmt.Printf("切片是空的")
+   }
+}
+
+func printSlice(x []int){
+   fmt.Printf("len=%d cap=%d slice=%v\n",len(x),cap(x),x)
+}
+```
+
+以上实例运行输出结果为:
+
+```shell
+len=0 cap=0 slice=[]
+切片是空的
+```
+
+## 16.4 切片截取
+
+可以通过设置下限及上限来设置截取切片 *`[lower-bound:upper-bound]`*，实例如下：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   /* 创建切片 */
+   numbers := []int{0,1,2,3,4,5,6,7,8}  
+   printSlice(numbers)
+
+   /* 打印原始切片 */
+   fmt.Println("numbers ==", numbers)
+
+   /* 打印子切片从索引1(包含) 到索引4(不包含)*/
+   fmt.Println("numbers[1:4] ==", numbers[1:4])
+
+   /* 默认下限为 0*/
+   fmt.Println("numbers[:3] ==", numbers[:3])
+
+   /* 默认上限为 len(s)*/
+   fmt.Println("numbers[4:] ==", numbers[4:])
+
+   numbers1 := make([]int,0,5)
+   printSlice(numbers1)
+
+   /* 打印子切片从索引  0(包含) 到索引 2(不包含) */
+   number2 := numbers[:2]
+   printSlice(number2)
+
+   /* 打印子切片从索引 2(包含) 到索引 5(不包含) */
+   number3 := numbers[2:5]
+   printSlice(number3)
+
+}
+
+func printSlice(x []int){
+   fmt.Printf("len=%d cap=%d slice=%v\n",len(x),cap(x),x)
+}
+```
+
+执行以上代码输出结果为：
+
+```shell
+len=9 cap=9 slice=[0 1 2 3 4 5 6 7 8]
+numbers == [0 1 2 3 4 5 6 7 8]
+numbers[1:4] == [1 2 3]
+numbers[:3] == [0 1 2]
+numbers[4:] == [4 5 6 7 8]
+len=0 cap=5 slice=[]
+len=2 cap=9 slice=[0 1]
+len=3 cap=7 slice=[2 3 4]
+```
+
+## 16.4 append() 和 copy() 函数
+
+如果想增加切片的容量，我们必须创建一个新的更大的切片并把原分片的内容都拷贝过来。
+
+下面的代码描述了从拷贝切片的 copy 方法和向切片追加新元素的 append 方法。
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   var numbers []int
+   printSlice(numbers)
+
+   /* 允许追加空切片 */
+   numbers = append(numbers, 0)
+   printSlice(numbers)
+
+   /* 向切片添加一个元素 */
+   numbers = append(numbers, 1)
+   printSlice(numbers)
+
+   /* 同时添加多个元素 */
+   numbers = append(numbers, 2,3,4)
+   printSlice(numbers)
+
+   /* 创建切片 numbers1 是之前切片的两倍容量*/
+   numbers1 := make([]int, len(numbers), (cap(numbers))*2)
+
+   /* 拷贝 numbers 的内容到 numbers1 */
+   copy(numbers1,numbers)
+   printSlice(numbers1)  
+}
+
+func printSlice(x []int){
+   fmt.Printf("len=%d cap=%d slice=%v\n",len(x),cap(x),x)
+}
+```
+
+以上代码执行输出结果为：
+
+```shell
+len=0 cap=0 slice=[]
+len=1 cap=1 slice=[0]
+len=2 cap=2 slice=[0 1]
+len=5 cap=6 slice=[0 1 2 3 4]
+len=5 cap=12 slice=[0 1 2 3 4]
+```
+
+> 下方评论留言：
+>
+> + ```
+>   numbers := []int{0,1,2,3,4,5,6,7,8}
+>   number3 := numbers[2:5]
+>   printSlice(number3)
+>   ```
+>
+>   结果为:
+>
+>   ```
+>   len=3 cap=7 slice=[2 3 4]
+>   ```
+>
+>   capacity 为 7 是因为 number3 的 ptr 指向第三个元素， 后面还剩 2,3,4,5,6,7,8, 所以 cap=7。
+>
+>   如：
+>
+>   ```
+>   number4 := numbers[5:]
+>   printSlice(number4)
+>   ```
+>
+>   结果为：
+>
+>   ```
+>   len=4 cap=4 slice=[5 6 7 8]
+>   ```
+>
+>   capacity 为 4 是因为 number4 的 ptr 指向第六个元素， 后面还剩 5,6,7,8 所以 cap=4。
+>
+> + 当append(list, [params])，先判断 list 的 cap 长度是否大于等于 **len(list) + len([params])**，如果大于那么 cap 不变，否则 cap = **2 \*** **max{cap(list), cap[params]}**，所以当 append(numbers, 2, 3, 4) cap 从 2 变成 6。
+>
+>   前面已有相关详解，很可惜关键部分把“2 * ”给漏了，在此补充。
+>
+> + **可以通过查看$GOROOT/src/runtime/slice.go源码，其中扩容相关代码如下：**
+>
+>   ```
+>   newcap := old.cap
+>   doublecap := newcap + newcap
+>   if cap > doublecap {
+>       newcap = cap
+>   } else {
+>       if old.len < 1024 {
+>           newcap = doublecap
+>       } else {
+>           // Check 0 < newcap to detect overflow
+>           // and prevent an infinite loop.
+>           for 0 < newcap && newcap < cap {
+>               newcap += newcap / 4
+>           }
+>           // Set newcap to the requested cap when
+>           // the newcap calculation overflowed.
+>           if newcap <= 0 {
+>               newcap = cap
+>           }
+>       }
+>   }
+>   ```
+>
+>   **从上面的代码可以看出以下内容：**
+>
+>   - **首先判断，如果新申请容量（cap）大于2倍的旧容量（old.cap），最终容量（newcap）就是新申请的容量（cap）。**
+>   - **否则判断，如果旧切片的长度小于1024，则最终容量(newcap)就是旧容量(old.cap)的两倍，即（newcap=doublecap），**
+>   - **否则判断，如果旧切片长度大于等于1024，则最终容量（newcap）从旧容量（old.cap）开始循环增加原来的1/4，即（newcap=old.cap,for {newcap += newcap/4}）直到最终容量（newcap）大于等于新申请的容量(cap)，即（newcap >= cap）**
+>   - **如果最终容量（cap）计算值溢出，则最终容量（cap）就是新申请容量（cap）。**
+>
+>   **需要注意的是，切片扩容还会根据切片中元素的类型不同而做不同的处理，比如`int`和`string`类型的处理方式就不一样。**
+
+# 17. Go 语言范围(Range)
+
+Go 语言中 range 关键字用于 for 循环中迭代数组(array)、切片(slice)、**通道(channel)**或集合(map)的元素。在数组和切片中它返回元素的索引和索引对应的值，在集合中返回 key-value 对。
+
+```go
+package main
+import "fmt"
+func main() {
+    //这是我们使用range去求一个slice的和。使用数组跟这个很类似
+    nums := []int{2, 3, 4}
+    sum := 0
+    for _, num := range nums {
+        sum += num
+    }
+    fmt.Println("sum:", sum)
+    //在数组上使用range将传入index和值两个变量。上面那个例子我们不需要使用该元素的序号，所以我们使用空白符"_"省略了。有时侯我们确实需要知道它的索引。
+    for i, num := range nums {
+        if num == 3 {
+            fmt.Println("index:", i)
+        }
+    }
+    //range也可以用在map的键值对上。
+    kvs := map[string]string{"a": "apple", "b": "banana"}
+    for k, v := range kvs {
+        fmt.Printf("%s -> %s\n", k, v)
+    }
+    //range也可以用来枚举Unicode字符串。第一个参数是字符的索引，第二个是字符（Unicode的值）本身。
+    for i, c := range "go" {
+        fmt.Println(i, c)
+    }
+}
+```
+
+以上实例运行输出结果为：
+
+```shell
+sum: 9
+index: 1
+a -> apple
+b -> banana
+0 103
+1 111
+```
+
+# 18. Go 语言Map(集合)
+
+Map 是一种无序的键值对的集合。Map 最重要的一点是通过 key 来快速检索数据，key 类似于索引，指向数据的值。
+
+Map 是一种集合，所以我们可以像迭代数组和切片那样迭代它。不过，Map 是无序的，我们无法决定它的返回顺序，这是因为 **Map 是使用 hash 表来实现的**。
+
+## 18.1 定义 Map
+
+可以使用内建函数 make 也可以使用 map 关键字来定义 Map:
+
+```go s
+/* 声明变量，默认 map 是 nil */
+var map_variable map[key_data_type]value_data_type
+
+/* 使用 make 函数 */
+map_variable := make(map[key_data_type]value_data_type)
+```
+
+如果不初始化 map，那么就会创建一个 nil map。nil map 不能用来存放键值对
+
+下面实例演示了创建和使用map:
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+    var countryCapitalMap map[string]string /*创建集合 */
+    countryCapitalMap = make(map[string]string)
+
+    /* map插入key - value对,各个国家对应的首都 */
+    countryCapitalMap [ "France" ] = "巴黎"
+    countryCapitalMap [ "Italy" ] = "罗马"
+    countryCapitalMap [ "Japan" ] = "东京"
+    countryCapitalMap [ "India " ] = "新德里"
+
+    /*使用键输出地图值 */
+    for country := range countryCapitalMap {
+        fmt.Println(country, "首都是", countryCapitalMap [country])
+    }
+
+    /*查看元素在集合中是否存在 */
+    capital, ok := countryCapitalMap [ "American" ] /*如果确定是真实的,则存在,否则不存在 */
+    /*fmt.Println(capital) */
+    /*fmt.Println(ok) */
+    if (ok) {
+        fmt.Println("American 的首都是", capital)
+    } else {
+        fmt.Println("American 的首都不存在")
+    }
+}
+```
+
+以上实例运行结果为：
+
+```shell
+France 首都是 巴黎
+Italy 首都是 罗马
+Japan 首都是 东京
+India  首都是 新德里
+American 的首都不存在
+```
+
+## 18.2 delete() 函数
+
+delete() 函数用于删除集合的元素, 参数为 map 和其对应的 key。实例如下：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+        /* 创建map */
+        countryCapitalMap := map[string]string{"France": "Paris", "Italy": "Rome", "Japan": "Tokyo", "India": "New delhi"}
+
+        fmt.Println("原始地图")
+
+        /* 打印地图 */
+        for country := range countryCapitalMap {
+                fmt.Println(country, "首都是", countryCapitalMap [ country ])
+        }
+
+        /*删除元素*/ delete(countryCapitalMap, "France")
+        fmt.Println("法国条目被删除")
+
+        fmt.Println("删除元素后地图")
+
+        /*打印地图*/
+        for country := range countryCapitalMap {
+                fmt.Println(country, "首都是", countryCapitalMap [ country ])
+        }
+}
+```
+
+以上实例运行结果为：
+
+```shell
+原始地图
+India 首都是 New delhi
+France 首都是 Paris
+Italy 首都是 Rome
+Japan 首都是 Tokyo
+法国条目被删除
+删除元素后地图
+Italy 首都是 Rome
+Japan 首都是 Tokyo
+India 首都是 New delhi
+```
+
+> 下方评论留言：
+>
+> + 基于 go 实现简单 HashMap，暂未做 key 值的校验。
+>
+>   ```go
+>   package main
+>   
+>   import (
+>       "fmt"
+>   )
+>   
+>   type HashMap struct {
+>       key string
+>       value string
+>       hashCode int
+>       next *HashMap
+>   }
+>   
+>   var table [16](*HashMap)
+>   
+>   func initTable() {
+>       for i := range table{
+>           table[i] = &HashMap{"","",i,nil}
+>       }
+>   }
+>   
+>   func getInstance() [16](*HashMap){
+>       if(table[0] == nil){
+>           initTable()
+>       }
+>       return table
+>   }
+>   
+>   func genHashCode(k string) int{
+>       if len(k) == 0{
+>           return 0
+>       }
+>       var hashCode int = 0
+>       var lastIndex int = len(k) - 1
+>       for i := range k {
+>           if i == lastIndex {
+>               hashCode += int(k[i])
+>               break
+>           }
+>           hashCode += (hashCode + int(k[i]))*31
+>       }
+>       return hashCode
+>   }
+>   
+>   func indexTable(hashCode int) int{
+>       return hashCode%16
+>   }
+>   
+>   func indexNode(hashCode int) int {
+>       return hashCode>>4
+>   }
+>   
+>   func put(k string, v string) string {
+>       var hashCode = genHashCode(k)
+>       var thisNode = HashMap{k,v,hashCode,nil}
+>   
+>       var tableIndex = indexTable(hashCode)
+>       var nodeIndex = indexNode(hashCode)
+>   
+>       var headPtr [16](*HashMap) = getInstance()
+>       var headNode = headPtr[tableIndex]
+>   
+>       if (*headNode).key == "" {
+>           *headNode = thisNode
+>           return ""
+>       }
+>   
+>       var lastNode *HashMap = headNode
+>       var nextNode *HashMap = (*headNode).next
+>   
+>       for nextNode != nil && (indexNode((*nextNode).hashCode) < nodeIndex){
+>           lastNode = nextNode
+>           nextNode = (*nextNode).next
+>       }
+>       if (*lastNode).hashCode == thisNode.hashCode {
+>           var oldValue string = lastNode.value
+>           lastNode.value = thisNode.value
+>           return oldValue
+>       }
+>       if lastNode.hashCode < thisNode.hashCode {
+>           lastNode.next = &thisNode
+>       }
+>       if nextNode != nil {
+>           thisNode.next = nextNode
+>       }
+>       return ""
+>   }
+>   
+>   func get(k string) string {
+>       var hashCode = genHashCode(k)
+>       var tableIndex = indexTable(hashCode)
+>   
+>       var headPtr [16](*HashMap) = getInstance()
+>       var node *HashMap = headPtr[tableIndex]
+>   
+>       if (*node).key == k{
+>           return (*node).value
+>       }
+>   
+>       for (*node).next != nil {
+>           if k == (*node).key {
+>               return (*node).value
+>           }
+>           node = (*node).next
+>       }
+>       return ""
+>   }
+>   
+>   //examples 
+>   func main() {
+>       getInstance()
+>       put("a","a_put")
+>       put("b","b_put")
+>       fmt.Println(get("a"))
+>       fmt.Println(get("b"))
+>       put("p","p_put")
+>       fmt.Println(get("p"))
+>   }
+>   ```
+
+# 19. Go 语言递归函数
+
+递归，就是在运行的过程中调用自己。
+
+语法格式如下：
+
+```go
+func recursion() {
+   recursion() /* 函数调用自身 */
+}
+
+func main() {
+   recursion()
+}
+```
+
+Go 语言支持递归。但我们在使用递归时，开发者需要设置退出条件，否则递归将陷入无限循环中。
+
+递归函数对于解决数学上的问题是非常有用的，就像计算阶乘，生成斐波那契数列等。
+
+## 19.1 阶乘
+
+以下实例通过 Go 语言的递归函数实例阶乘：
+
+```go
+package main
+
+import "fmt"
+
+func Factorial(n uint64)(result uint64) {
+    if (n > 0) {
+        result = n * Factorial(n-1)
+        return result
+    }
+    return 1
+}
+
+func main() {  
+    var i int = 15
+    fmt.Printf("%d 的阶乘是 %d\n", i, Factorial(uint64(i)))
+}
+```
+
+以上实例执行输出结果为：
+
+```shell
+15 的阶乘是 1307674368000
+```
+
+## 19.2 斐波那契数列
+
+```go
+package main
+
+import "fmt"
+
+func fibonacci(n int) int {
+  if n < 2 {
+   return n
+  }
+  return fibonacci(n-2) + fibonacci(n-1)
+}
+
+func main() {
+    var i int
+    for i = 0; i < 10; i++ {
+       fmt.Printf("%d\t", fibonacci(i))
+    }
+}
+```
+
+以上实例执行输出结果为：
+
+```
+0    1    1    2    3    5    8    13    21    34
+```
+
+# 20. Go 语言类型转换
+
+类型转换用于将一种数据类型的变量转换为另外一种类型的变量。Go 语言类型转换基本格式如下：
+
+```go
+type_name(expression)
+```
+
+type_name 为类型，expression 为表达式。
+
+以下实例中将整型转化为浮点型，并计算结果，将结果赋值给浮点型变量：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+   var sum int = 17
+   var count int = 5
+   var mean float32
+   
+   mean = float32(sum)/float32(count)
+   fmt.Printf("mean 的值为: %f\n",mean)
+}
+```
+
+以上实例执行输出结果为：
+
+```shell
+mean 的值为: 3.400000
+```
+
+> 下方评论留言：
+>
+> go 不支持隐式转换类型，比如 :
+>
+> ```go
+> package main
+> import "fmt"
+> 
+> func main() {  
+>     var a int64 = 3
+>     var b int32
+>     b = a
+>     fmt.Printf("b 为 : %d", b)
+> }
+> ```
+>
+> 此时会报错
+>
+> ```shell
+> cannot use a (type int64) as type int32 in assignment
+> cannot use b (type int32) as type string in argument to fmt.Printf
+> ```
+>
+> 但是如果改成 **b = int32(a)** 就不会报错了:
+>
+> ```go
+> package main
+> import "fmt"
+> 
+> func main() {  
+>     var a int64 = 3
+>     var b int32
+>     b = int32(a)
+>     fmt.Printf("b 为 : %d", b)
+> }
+> ```
+
+# 21. Go 语言接口
+
+Go 语言提供了另外一种数据类型即接口，它把所有的具有共性的方法定义在一起，**任何其他类型只要实现了这些方法就是实现了这个接口。**
+
+```go
+/* 定义接口 */
+type interface_name interface {
+   method_name1 [return_type]
+   method_name2 [return_type]
+   method_name3 [return_type]
+   ...
+   method_namen [return_type]
+}
+
+/* 定义结构体 */
+type struct_name struct {
+   /* variables */
+}
+
+/* 实现接口方法 */
+func (struct_name_variable struct_name) method_name1() [return_type] {
+   /* 方法实现 */
+}
+...
+func (struct_name_variable struct_name) method_namen() [return_type] {
+   /* 方法实现*/
+}
+```
+
+实例
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+type Phone interface {
+    call()
+}
+
+type NokiaPhone struct {
+}
+
+func (nokiaPhone NokiaPhone) call() {
+    fmt.Println("I am Nokia, I can call you!")
+}
+
+type IPhone struct {
+}
+
+func (iPhone IPhone) call() {
+    fmt.Println("I am iPhone, I can call you!")
+}
+
+func main() {
+    var phone Phone
+
+    phone = new(NokiaPhone)
+    phone.call()
+
+    phone = new(IPhone)
+    phone.call()
+
+}
+```
+
+在上面的例子中，我们定义了一个接口Phone，接口里面有一个方法call()。然后我们在main函数里面定义了一个Phone类型变量，并分别为之赋值为NokiaPhone和IPhone。然后调用call()方法，输出结果如下：
+
+```shell
+I am Nokia, I can call you!
+I am iPhone, I can call you!
+```
+
+> 下方评论留言：
+>
+> + 如果想要通过接口方法修改属性，需要在传入指针的结构体才行，具体代码入下的 [1][2] 处：
+>
+>   ```go
+>   type fruit interface{
+>       getName() string   
+>       setName(name string)
+>   }
+>   type apple struct{   
+>       name string
+>   }
+>   //[1]
+>   func (a *apple) getName() string{   
+>       return a.name
+>   }
+>   //[2]
+>   func (a *apple) setName(name string) {
+>      a.name = name
+>   }
+>   func testInterface(){   
+>       a:=apple{"红富士"}   
+>       fmt.Print(a.getName())   
+>       a.setName("树顶红")   
+>       fmt.Print(a.getName())
+>   }
+>   ```
+
+# 22. Go 错误处理
+
+**Go 语言通过内置的错误接口提供了非常简单的错误处理机制**。
+
+**error类型是一个接口类型**，这是它的定义：
+
+```go
+type error interface {
+    Error() string
+}
+```
+
+我们可以在编码中通过实现 error 接口类型来生成错误信息。
+
+函数通常在最后的返回值中返回错误信息。使用errors.New 可返回一个错误信息：
+
+```go
+func Sqrt(f float64) (float64, error) {
+    if f < 0 {
+        return 0, errors.New("math: square root of negative number")
+    }
+    // 实现
+}
+```
+
+在下面的例子中，我们在调用Sqrt的时候传递的一个负数，然后就得到了non-nil的error对象，将此对象与nil比较，结果为true，所以fmt.Println(fmt包在处理error时会调用Error方法)被调用，以输出错误，请看下面调用的示例代码：
+
+```go
+result, err:= Sqrt(-1)
+
+if err != nil {
+   fmt.Println(err)
+}
+```
+
+实例
+
+```go
+package main
+
+import (
+    "fmt"
+)
+
+// 定义一个 DivideError 结构
+type DivideError struct {
+    dividee int
+    divider int
+}
+
+// 实现 `error` 接口
+func (de *DivideError) Error() string {
+    strFormat := `
+    Cannot proceed, the divider is zero.
+    dividee: %d
+    divider: 0
+`
+    return fmt.Sprintf(strFormat, de.dividee)
+}
+
+// 定义 `int` 类型除法运算的函数
+func Divide(varDividee int, varDivider int) (result int, errorMsg string) {
+    if varDivider == 0 {
+            dData := DivideError{
+                    dividee: varDividee,
+                    divider: varDivider,
+            }
+            errorMsg = dData.Error()
+            return
+    } else {
+            return varDividee / varDivider, ""
+    }
+
+}
+
+func main() {
+
+    // 正常情况
+    if result, errorMsg := Divide(100, 10); errorMsg == "" {
+            fmt.Println("100/10 = ", result)
+    }
+    // 当除数为零的时候会返回错误信息
+    if _, errorMsg := Divide(100, 0); errorMsg != "" {
+            fmt.Println("errorMsg is: ", errorMsg)
+    }
+
+}
+```
+
+执行以上程序，输出结果为：
+
+```shell
+100/10 =  10
+errorMsg is:  
+    Cannot proceed, the divider is zero.
+    dividee: 100
+    divider: 0
+```
+
+> 下方评论留言：
+>
+> - <u>这里应该介绍一下 panic 与 recover,一个用于**主动抛出错误**，一个用于**捕获panic抛出的错误**。</u>
+>
+>   **概念**
+>
+>   panic 与 recover 是 Go 的两个内置函数，这两个内置函数用于处理 Go 运行时的错误，**panic 用于主动抛出错误，recover 用来捕获 panic 抛出的错误**。
+>
+>   ![img](https://www.runoob.com/wp-content/uploads/2019/01/99459110.jpg)
+>
+>   - 引发`panic`有两种情况，一是程序主动调用，二是程序产生运行时错误，由运行时检测并退出。
+>   - 发生`panic`后，程序会从调用`panic`的函数位置或发生`panic`的地方立即返回，逐层向上执行函数的`defer`语句，然后逐层打印函数调用堆栈，直到被`recover`捕获或运行到最外层函数。
+>   - `panic`不但可以在函数正常流程中抛出，在`defer`逻辑里也可以再次调用`panic`或抛出`panic`。`defer`里面的`panic`能够被后续执行的`defer`捕获。
+>   - `recover`用来捕获`panic`，阻止`panic`继续向上传递。`recover()`和`defer`一起使用，但是`defer`只有在后面的函数体内直接被掉用才能捕获`panic`来终止异常，否则返回`nil`，异常继续向外传递。
+>
+>   例子1
+>
+>   ```go
+>   //以下捕获失败
+>   defer recover()
+>   defer fmt.Prinntln(recover)
+>   defer func(){
+>       func(){
+>           recover() //无效，嵌套两层
+>       }()
+>   }()
+>   
+>   //以下捕获有效
+>   defer func(){
+>       recover()
+>   }()
+>   
+>   func except(){
+>       recover()
+>   }
+>   func test(){
+>       defer except()
+>       panic("runtime error")
+>   }
+>   ```
+>
+>   例子2
+>
+>   多个panic只会捕捉最后一个：
+>
+>   ```go
+>   package main
+>   import "fmt"
+>   func main(){
+>       defer func(){
+>           if err := recover() ; err != nil {
+>               fmt.Println(err)
+>           }
+>       }()
+>       defer func(){
+>           panic("three")
+>       }()
+>       defer func(){
+>           panic("two")
+>       }()
+>       panic("one")
+>   }
+>   // 输出 three
+>   ```
+>
+>   **使用场景**
+>
+>   一般情况下有两种情况用到：
+>
+>   -  程序遇到无法执行下去的错误时，抛出错误，主动结束运行。
+>   -  在调试程序时，通过 panic 来打印堆栈，方便定位错误。
+>
+> - fmt.Println 打印结构体的时候，会把其中的 error 的返回的信息打印出来。
+>
+>   ```go
+>   type User struct {
+>      username string
+>      password string
+>   }
+>   
+>   func (p *User) init(username string ,password string) (*User,string)  {
+>      if ""==username || ""==password {
+>         return p,p.Error()
+>      }
+>      p.username = username
+>      p.password = password
+>      return p,""}
+>   
+>   func (p *User) Error() string {
+>         return "Usernam or password shouldn't be empty!"}
+>   }
+>   
+>   func main() {
+>      var user User
+>      user1, _ :=user.init("","");
+>      fmt.Println(user1)
+>   }
+>   ```
+>
+>   结果：
+>
+>   ```shell
+>   Usernam or password shouldn't be empty!
+>   ```
+
+# 23. Go 并发
+
+Go 语言支持并发，我们只需要通过 go 关键字来开启 goroutine 即可。
+
+**goroutine 是轻量级线程**，goroutine 的调度是由 Golang 运行时进行管理的。
+
+goroutine 语法格式：
+
+```go
+go 函数名( 参数列表 )
+```
+
+例如：
+
+```go
+go f(x, y, z)
+```
+
+开启一个新的 goroutine:
+
+```go
+f(x, y, z)
+```
+
+Go 允许使用 go 语句开启一个新的运行期线程， 即 goroutine，以一个不同的、新创建的 goroutine 来执行一个函数。 **同一个程序中的所有 goroutine 共享同一个地址空间**。
+
+```go
+package main
+
+import (
+        "fmt"
+        "time"
+)
+
+func say(s string) {
+        for i := 0; i < 5; i++ {
+                time.Sleep(100 * time.Millisecond)
+                fmt.Println(s)
+        }
+}
+
+func main() {
+        go say("world")
+        say("hello")
+}
+```
+
+执行以上代码，你会看到输出的 hello 和 world 是没有固定先后顺序。因为它们是两个 goroutine 在执行：
+
+```shell
+world
+hello
+hello
+world
+world
+hello
+hello
+world
+world
+hello
+```
+
+## 23.1 通道（channel）
+
+**通道（channel）是用来传递数据的一个数据结构。**
+
+通道可用于**两个 goroutine 之间**通过传递一个指定类型的值来同步运行和通讯。
+
+**操作符 `<-` 用于指定通道的方向，发送或接收**。
+
+**如果未指定方向，则为双向通道**。
+
+```
+ch <- v    // 把 v 发送到通道 ch
+v := <-ch  // 从 ch 接收数据
+           // 并把值赋给 v
+```
+
+声明一个通道很简单，我们使用**chan关键字**即可，通道在使用前必须先创建：
+
+```
+ch := make(chan int)
+```
+
+**注意**：**默认情况下，通道是不带缓冲区的**。<u>发送端发送数据，同时必须有接收端相应的接收数据</u>。
+
+以下实例通过两个 goroutine 来计算数字之和，在 goroutine 完成计算后，它会计算两个结果的和：
+
+```go
+package main
+
+import "fmt"
+
+func sum(s []int, c chan int) {
+        sum := 0
+        for _, v := range s {
+                sum += v
+        }
+        c <- sum // 把 sum 发送到通道 c
+}
+
+func main() {
+        s := []int{7, 2, 8, -9, 4, 0}
+
+        c := make(chan int)
+        go sum(s[:len(s)/2], c)
+        go sum(s[len(s)/2:], c)
+        x, y := <-c, <-c // 从通道 c 中接收
+
+        fmt.Println(x, y, x+y)
+}
+```
+
+输出结果为：
+
+```shell
+-5 17 12
+```
+
+### 通道缓冲区
+
+通道可以设置缓冲区，通过 make 的第二个参数指定缓冲区大小：
+
+```go
+ch := make(chan int, 100)
+```
+
+**带缓冲区的通道允许发送端的数据发送和接收端的数据获取处于异步状态，就是说发送端发送的数据可以放在缓冲区里面，可以等待接收端去获取数据，而不是立刻需要接收端去获取数据。**
+
+不过由于缓冲区的大小是有限的，所以还是必须有接收端来接收数据的，否则缓冲区一满，数据发送端就无法再发送数据了。
+
+**注意**：
+
++ **如果通道不带缓冲，发送方会阻塞直到接收方从通道中接收了值**。
++ **如果通道带缓冲，发送方则会阻塞直到发送的值被拷贝到缓冲区内**；
++ **如果缓冲区已满，则意味着需要等待直到某个接收方获取到一个值**。
++ **接收方在有值可以接收之前会一直阻塞**。
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+    // 这里我们定义了一个可以存储整数类型的带缓冲通道
+        // 缓冲区大小为2
+        ch := make(chan int, 2)
+
+        // 因为 ch 是带缓冲的通道，我们可以同时发送两个数据
+        // 而不用立刻需要去同步读取数据
+        ch <- 1
+        ch <- 2
+
+        // 获取这两个数据
+        fmt.Println(<-ch)
+        fmt.Println(<-ch)
+}
+```
+
+执行输出结果为：
+
+```shell
+1
+2
+```
+
+### Go 遍历通道与关闭通道
+
+Go 通过 range 关键字来实现遍历读取到的数据，类似于与数组或切片。格式如下：
+
+```go
+v, ok := <-ch
+```
+
+**如果通道接收不到数据后 ok 就为 false**，这时通道就可以使用 **close()** 函数来关闭。
+
+```go
+package main
+
+import (
+        "fmt"
+)
+
+func fibonacci(n int, c chan int) {
+        x, y := 0, 1
+        for i := 0; i < n; i++ {
+                c <- x
+                x, y = y, x+y
+        }
+        close(c)
+}
+
+func main() {
+        c := make(chan int, 10)
+        go fibonacci(cap(c), c)
+        // range 函数遍历每个从通道接收到的数据，因为 c 在发送完 10 个
+        // 数据之后就关闭了通道，所以这里我们 range 函数在接收到 10 个数据
+        // 之后就结束了。如果上面的 c 通道不关闭，那么 range 函数就不
+        // 会结束，从而在接收第 11 个数据的时候就阻塞了。
+        for i := range c {
+                fmt.Println(i)
+        }
+}
+```
+
+执行输出结果为：
+
+```shell
+0
+1
+1
+2
+3
+5
+8
+13
+21
+34
+```
+
+> 下方评论区留言：
+>
+> + goroutine 是 golang 中在语言级别实现的轻量级线程，仅仅利用 go 就能立刻起一个新线程。多线程会引入线程之间的同步问题，在 golang 中可以使用 channel 作为同步的工具。
+>
+>   通过 channel 可以实现两个 goroutine 之间的通信。
+>
+>   创建一个 channel， make(chan TYPE {, NUM}) TYPE 指的是 channel 中传输的数据类型，第二个参数是可选的，指的是 channel 的容量大小。
+>
+>   向 channel 传入数据， CHAN <- DATA ， CHAN 指的是目的 channel 即收集数据的一方， DATA 则是要传的数据。
+>
+>   从 channel 读取数据， DATA := <-CHAN ，和向 channel 传入数据相反，在数据输送箭头的右侧的是 channel，形象地展现了数据从隧道流出到变量里。
+>
+> + 我们单独写一个 say2 函数来跑 goroutine，并且 Sleep 时间设置长一点，150 毫秒，看看会发生什么：
+>
+>   ```go
+>   package main
+>   import (
+>       "fmt"
+>       "time"
+>   )
+>   func say(s string) {
+>       for i := 0; i < 5; i++ {
+>           time.Sleep(100 * time.Millisecond)
+>           fmt.Println(s, (i+1)*100)
+>       }
+>   }
+>   func say2(s string) {
+>       for i := 0; i < 5; i++ {
+>           time.Sleep(150 * time.Millisecond)
+>           fmt.Println(s, (i+1)*150)
+>       }
+>   }
+>   func main() {
+>       go say2("world")
+>       say("hello")
+>   }
+>   ```
+>
+>   输出结果：
+>
+>   ```shell
+>   hello 100
+>   world 150
+>   hello 200
+>   hello 300
+>   world 300
+>   hello 400
+>   world 450
+>   hello 500
+>
+>   [Done] exited with code=0 in 2.066 seconds
+>   ```
+>
+>   问题来了，say2 只执行了 3 次，而不是设想的 5 次，为什么呢？
+>
+>   原来，**在 goroutine 还没来得及跑完 5 次的时候，主函数已经退出了**。
+>
+>   我们要想办法阻止主函数的结束，要等待 goroutine 执行完成之后，再退出主函数：
+>
+>   ```go
+>   package main
+>
+>   import (
+>       "fmt"
+>       "time"
+>   )
+>
+>   func say(s string) {
+>       for i := 0; i < 5; i++ {
+>           time.Sleep(100 * time.Millisecond)
+>           fmt.Println(s, (i+1)*100)
+>       }
+>   }
+>   func say2(s string, ch chan int) {
+>       for i := 0; i < 5; i++ {
+>           time.Sleep(150 * time.Millisecond)
+>           fmt.Println(s, (i+1)*150)
+>       }
+>       ch <- 0
+>       close(ch)
+>   }
+>
+>   func main() {
+>       ch := make(chan int)
+>       go say2("world", ch)
+>       say("hello")
+>       fmt.Println(<-ch)
+>   }
+>   ```
+>
+>   输出如下：
+>
+>   ```shell
+>   hello 100
+>   world 150
+>   hello 200
+>   world 300
+>   hello 300
+>   hello 400
+>   world 450
+>   hello 500
+>   world 600
+>   world 750
+>   0
+>   ```
+>
+>   我们引入一个信道，默认的，信道的存消息和取消息都是阻塞的，在 goroutine 中执行完成后给信道一个值 0，则主函数会一直等待信道中的值，一旦信道有值，主函数才会结束。
+>
+> + 关闭通道并不会丢失里面的数据，只是让读取通道数据的时候不会读完之后一直阻塞等待新数据写入
+>
+> + **Channel 是可以控制读写权限的**。具体如下:
+>
+>   ```go
+>   go func(c chan int) { //读写均可的channel c } (a)
+>   go func(c <- chan int) { //只读的Channel } (a)
+>   go func(c chan <- int) {  //只写的Channel } (a)
+>   ```
+>
+> + ```shell
+>   package main
+>   
+>   import "fmt"
+>   
+>   func main() {
+>       ch := make(chan int, 2)
+>   
+>       ch <- 1
+>       a := <-ch
+>       ch <- 2
+>       ch <- 3
+>   
+>       fmt.Println(<-ch)
+>       fmt.Println(<-ch)
+>       fmt.Println(a)
+>   }
+>   ```
+>
+>   **通道遵循先进先出原则**。
+>
+>   不带缓冲区的通道在向通道发送值时，必须及时接收，且必须一次接收完成。
+>
+>   而带缓冲区的通道则会以缓冲区满而阻塞，直到先塞发送到通道的值被从通道中接收才可以继续往通道传值。就像往水管里推小钢珠一样，如果钢珠塞满没有从另一头放出，那么这一头就没法再往里塞，是一个道理。例如上面的例子，最多只能让同时在通道中停放2个值，想多传值，就需要把前面的值提前从通道中接收出去。
+>
+>   因此，上面的输出结果为：
+>
+>   ```
+>   2
+>   3
+>   1
+>   ```
+
+# 24. Go 语言开发工具
+
+1. GoLand
+2. LiteIDE
+3. Eclipse
 
