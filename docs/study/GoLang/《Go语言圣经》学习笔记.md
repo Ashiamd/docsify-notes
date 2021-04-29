@@ -1237,7 +1237,7 @@ func f() int { return c + 1 }
 
 **控制流标号，就是break、continue或goto语句后面跟着的那种标号，则是函数级的作用域**。
 
-**一个程序可能包含多个同名的声明，只要它们在不同的词法域就没有关系**。例如，你可以声明一个局部变量，和包级的变量同名。或者是像2.3.3节的例子那样，你可以将一个函数参数的名字声明为new，虽然内置的new是全局作用域的。但是物极必反，如果滥用不同词法域可重名的特性的话，可能导致程序很难阅读。
+**一个程序可能包含多个同名的声明，只要它们在不同的词法域就没有关系**。例如，你可以声明一个局部变量，和包级的变量同名。或者是像2.3.3节的例子那样，你可以将一个函数参数的名字声明为new，虽然**内置的new是全局作用域的**。但是物极必反，如果滥用不同词法域可重名的特性的话，可能导致程序很难阅读。
 
 下面的例子同样有三个不同的x变量，每个声明在不同的词法域，一个在函数体词法域，一个在for隐式的初始化词法域，一个在for循环体词法域；只有两个块是显式创建的：
 
@@ -3164,4 +3164,1189 @@ func hasEdge(from, to string) bool {
 其中addEdge函数**惰性初始化map是一个惯用方式**，也就是说在每个值首次作为key时才初始化。addEdge函数显示了如何让map的零值也能正常工作；即使from到to的边不存在，graph\[from]\[to]依然可以返回一个有意义的结果。
 
 ## 4.4 结构体
+
+结构体是一种**聚合的数据类型**，是由**零个或多个任意类型的值聚合成的实体**。每个值称为结构体的成员。用结构体的经典案例是处理公司的员工信息，每个员工信息包含一个唯一的员工编号、员工的名字、家庭住址、出生日期、工作岗位、薪资、上级领导等等。所有的这些信息都需要绑定到一个实体中，可以作为一个整体单元被复制，作为函数的参数或返回值，或者是被存储到数组中，等等。
+
+下面两个语句声明了一个叫Employee的命名的结构体类型，并且声明了一个Employee类型的变量dilbert：
+
+```Go
+type Employee struct {
+    ID        int
+    Name      string
+    Address   string
+    DoB       time.Time
+    Position  string
+    Salary    int
+    ManagerID int
+}
+
+var dilbert Employee
+```
+
+dilbert结构体变量的成员可以通过点操作符访问，比如dilbert.Name和dilbert.DoB。因为dilbert是一个变量，它所有的成员也同样是变量，我们可以直接对每个成员赋值：
+
+```Go
+dilbert.Salary -= 5000 // demoted, for writing too few lines of code
+```
+
+或者是**对成员取地址，然后通过指针访问**：
+
+```Go
+position := &dilbert.Position
+*position = "Senior " + *position // promoted, for outsourcing to Elbonia
+```
+
+**点操作符也可以和指向结构体的指针一起工作**：
+
+```Go
+var employeeOfTheMonth *Employee = &dilbert
+employeeOfTheMonth.Position += " (proactive team player)"
+```
+
+相当于下面语句
+
+```Go
+(*employeeOfTheMonth).Position += " (proactive team player)"
+```
+
+下面的EmployeeByID函数将根据给定的员工ID返回对应的员工信息结构体的指针。我们可以使用点操作符来访问它里面的成员：
+
+```Go
+func EmployeeByID(id int) *Employee { /* ... */ }
+
+fmt.Println(EmployeeByID(dilbert.ManagerID).Position) // "Pointy-haired boss"
+
+id := dilbert.ID
+EmployeeByID(id).Salary = 0 // fired for... no real reason
+```
+
+后面的语句通过EmployeeByID返回的结构体指针更新了Employee结构体的成员。
+
+**如果将EmployeeByID函数的返回值从`*Employee`指针类型改为Employee值类型，那么更新语句将不能编译通过，因为在赋值语句的左边并不确定是一个变量（译注：调用函数返回的是值，并不是一个可取地址的变量）**。
+
+通常一行对应一个结构体成员，成员的名字在前类型在后，不过如果<u>相邻的成员类型如果相同的话可以被合并到一行</u>，就像下面的Name和Address成员那样：
+
+```Go
+type Employee struct {
+    ID            int
+    Name, Address string
+    DoB           time.Time
+    Position      string
+    Salary        int
+    ManagerID     int
+}
+```
+
+**结构体成员的输入顺序也有重要的意义**。
+
++ **我们也可以将Position成员合并（因为也是字符串类型），或者是交换Name和Address出现的先后顺序，那样的话就是定义了不同的结构体类型**。
++ 通常，我们只是将相关的成员写到一起。
+
+如果结构体成员名字是以大写字母开头的，那么该成员就是导出的；这是Go语言导出规则决定的。
+
+**一个结构体可能同时包含导出和未导出的成员**。
+
+结构体类型往往是冗长的，因为它的每个成员可能都会占一行。虽然我们每次都可以重写整个结构体成员，但是重复会令人厌烦。因此，完整的结构体写法通常只在类型声明语句的地方出现，就像Employee类型声明语句那样。
+
+**一个命名为S的结构体类型将不能再包含S类型的成员：因为一个聚合的值不能包含它自身。（该限制同样适用于数组。）但是S类型的结构体可以包含`*S`指针类型的成员，这可以让我们创建递归的数据结构，比如链表和树结构等。**
+
+在下面的代码中，我们使用一个二叉树来实现一个插入排序：
+
+*gopl.io/ch4/treesort*
+
+```Go
+type tree struct {
+    value       int
+    left, right *tree
+}
+
+// Sort sorts values in place.
+func Sort(values []int) {
+    var root *tree
+    for _, v := range values {
+        root = add(root, v)
+    }
+    appendValues(values[:0], root)
+}
+
+// appendValues appends the elements of t to values in order
+// and returns the resulting slice.
+func appendValues(values []int, t *tree) []int {
+    if t != nil {
+        values = appendValues(values, t.left)
+        values = append(values, t.value)
+        values = appendValues(values, t.right)
+    }
+    return values
+}
+
+func add(t *tree, value int) *tree {
+    if t == nil {
+        // Equivalent to return &tree{value: value}.
+        t = new(tree)
+        t.value = value
+        return t
+    }
+    if value < t.value {
+        t.left = add(t.left, value)
+    } else {
+        t.right = add(t.right, value)
+    }
+    return t
+}
+```
+
+**结构体类型的零值是每个成员都是零值。通常会将零值作为最合理的默认值**。
+
+例如，对于bytes.Buffer类型，结构体初始值就是一个随时可用的空缓存，还有在第9章将会讲到的sync.Mutex的零值也是有效的未锁定状态。有时候这种零值可用的特性是自然获得的，但是也有些类型需要一些额外的工作。
+
+**如果结构体没有任何成员的话就是空结构体，写作struct{}**。它的大小为0，也不包含任何信息，但是有时候依然是有价值的。
+
+<u>有些Go语言程序员用map来模拟set数据结构时，用它来代替map中布尔类型的value，只是强调key的重要性，但是因为节约的空间有限，而且语法比较复杂，所以我们通常会避免这样的用法</u>。
+
+```Go
+seen := make(map[string]struct{}) // set of strings
+// ...
+if _, ok := seen[s]; !ok {
+    seen[s] = struct{}{}
+    // ...first time seeing s...
+}
+```
+
+### 4.4.1 结构体字面值
+
+结构体值也可以用结构体字面值表示，结构体字面值可以指定每个成员的值。
+
+```Go
+type Point struct{ X, Y int }
+
+p := Point{1, 2}
+```
+
+这里有两种形式的结构体字面值语法，<u>上面的是第一种写法，要求以结构体成员定义的顺序为每个结构体成员指定一个字面值</u>。它要求写代码和读代码的人要记住结构体的每个成员的类型和顺序，不过结构体成员有细微的调整就可能导致上述代码不能编译。因此，上述的语法一般只在定义结构体的包内部使用，或者是在较小的结构体中使用，这些结构体的成员排列比较规则，比如image.Point{x, y}或color.RGBA{red, green, blue, alpha}。
+
+<u>其实更常用的是第二种写法，以成员名字和相应的值来初始化，可以包含部分或全部的成员</u>，如1.4节的Lissajous程序的写法：
+
+```Go
+anim := gif.GIF{LoopCount: nframes}
+```
+
+<u>在这种形式的结构体字面值写法中，如果成员被忽略的话将默认用零值</u>。因为提供了成员的名字，所以成员出现的顺序并不重要。
+
+<u>两种不同形式的写法不能混合使用</u>。而且，**你不能企图在外部包中用第一种顺序赋值的技巧来偷偷地初始化结构体中未导出的成员**。
+
+```Go
+package p
+type T struct{ a, b int } // a and b are not exported
+
+package q
+import "p"
+var _ = p.T{a: 1, b: 2} // compile error: can't reference a, b
+var _ = p.T{1, 2}       // compile error: can't reference a, b
+```
+
+虽然上面最后一行代码的编译错误信息中并没有显式提到未导出的成员，但是这样企图隐式使用未导出成员的行为也是不允许的。
+
+**结构体可以作为函数的参数和返回值**。例如，这个Scale函数将Point类型的值缩放后返回：
+
+```Go
+func Scale(p Point, factor int) Point {
+    return Point{p.X * factor, p.Y * factor}
+}
+
+fmt.Println(Scale(Point{1, 2}, 5)) // "{5 10}"
+```
+
+<u>如果考虑效率的话，较大的结构体通常会用指针的方式传入和返回</u>，
+
+```Go
+func Bonus(e *Employee, percent int) int {
+    return e.Salary * percent / 100
+}
+```
+
+**如果要在函数内部修改结构体成员的话，用指针传入是必须的；**
+
+**因为在Go语言中，所有的函数参数都是值拷贝传入的，函数参数将不再是函数调用时的原始变量**。
+
+```Go
+func AwardAnnualRaise(e *Employee) {
+    e.Salary = e.Salary * 105 / 100
+}
+```
+
+因为结构体通常通过指针处理，可以用下面的写法来创建并初始化一个结构体变量，并返回结构体的地址：
+
+```Go
+pp := &Point{1, 2}
+```
+
+它和下面的语句是等价的
+
+```Go
+pp := new(Point)
+*pp = Point{1, 2}
+```
+
+不过**&Point{1, 2}写法可以直接在表达式中使用，比如一个函数调用**。
+
+### 4.4.2 结构体比较
+
+**如果结构体的全部成员都是可以比较的，那么结构体也是可以比较的，那样的话两个结构体将可以使用\==或!=运算符进行比较**。
+
+相等比较运算符\==将比较两个结构体的每个成员，因此下面两个比较的表达式是等价的：
+
+```Go
+type Point struct{ X, Y int }
+
+p := Point{1, 2}
+q := Point{2, 1}
+fmt.Println(p.X == q.X && p.Y == q.Y) // "false"
+fmt.Println(p == q)                   // "false"
+```
+
+**可比较的结构体类型和其他可比较的类型一样，可以用于map的key类型**。
+
+```Go
+type address struct {
+    hostname string
+    port     int
+}
+
+hits := make(map[address]int)
+hits[address{"golang.org", 443}]++
+```
+
+### 4.4.3 结构体嵌入和匿名成员
+
+在本节中，我们将看到如何使用Go语言提供的不同寻常的结构体嵌入机制让一个命名的结构体包含另一个结构体类型的匿名成员，这样就可以通过简单的点运算符x.f来访问匿名成员链中嵌套的x.d.e.f成员。
+
+考虑一个二维的绘图程序，提供了一个各种图形的库，例如矩形、椭圆形、星形和轮形等几何形状。这里是其中两个的定义：
+
+```Go
+type Circle struct {
+    X, Y, Radius int
+}
+
+type Wheel struct {
+    X, Y, Radius, Spokes int
+}
+```
+
+一个Circle代表的圆形类型包含了标准圆心的X和Y坐标信息，和一个Radius表示的半径信息。一个Wheel轮形除了包含Circle类型所有的全部成员外，还增加了Spokes表示径向辐条的数量。我们可以这样创建一个wheel变量：
+
+```Go
+var w Wheel
+w.X = 8
+w.Y = 8
+w.Radius = 5
+w.Spokes = 20
+```
+
+随着库中几何形状数量的增多，我们一定会注意到它们之间的相似和重复之处，所以我们可能为了便于维护而将相同的属性独立出来：
+
+```Go
+type Point struct {
+    X, Y int
+}
+
+type Circle struct {
+    Center Point
+    Radius int
+}
+
+type Wheel struct {
+    Circle Circle
+    Spokes int
+}
+```
+
+这样改动之后结构体类型变的清晰了，但是这种修改同时也导致了访问每个成员变得繁琐：
+
+```Go
+var w Wheel
+w.Circle.Center.X = 8
+w.Circle.Center.Y = 8
+w.Circle.Radius = 5
+w.Spokes = 20
+```
+
+**Go语言有一个特性让我们只声明一个成员对应的数据类型而不指名成员的名字；这类成员就叫匿名成员。**
+
+**匿名成员的数据类型必须是命名的类型或指向一个命名的类型的指针**。
+
+下面的代码中，Circle和Wheel各自都有一个匿名成员。我们可以说Point类型被嵌入到了Circle结构体，同时Circle类型被嵌入到了Wheel结构体。
+
+```Go
+type Circle struct {
+    Point
+    Radius int
+}
+
+type Wheel struct {
+    Circle
+    Spokes int
+}
+```
+
+得益于匿名嵌入的特性，我们可以直接访问叶子属性而不需要给出完整的路径：
+
+```Go
+var w Wheel
+w.X = 8            // equivalent to w.Circle.Point.X = 8
+w.Y = 8            // equivalent to w.Circle.Point.Y = 8
+w.Radius = 5       // equivalent to w.Circle.Radius = 5
+w.Spokes = 20
+```
+
+在右边的注释中给出的显式形式访问这些叶子成员的语法依然有效，因此<u>匿名成员并不是真的无法访问了</u>。
+
+其中**匿名成员Circle和Point都有自己的名字——就是命名的类型名字——但是这些名字在点操作符中是可选的。我们在访问子成员的时候可以忽略任何匿名成员部分**。
+
+<u>不幸的是，结构体字面值并没有简短表示匿名成员的语法， 因此下面的语句都不能编译通过</u>：
+
+```Go
+w = Wheel{8, 8, 5, 20}                       // compile error: unknown fields
+w = Wheel{X: 8, Y: 8, Radius: 5, Spokes: 20} // compile error: unknown fields
+```
+
+**结构体字面值必须遵循形状类型声明时的结构**，所以我们只能用下面的两种语法，它们彼此是等价的：
+
+*gopl.io/ch4/embed*
+
+```Go
+w = Wheel{Circle{Point{8, 8}, 5}, 20}
+
+w = Wheel{
+    Circle: Circle{
+        Point:  Point{X: 8, Y: 8},
+        Radius: 5,
+    },
+    Spokes: 20, // NOTE: trailing comma necessary here (and at Radius)
+}
+
+fmt.Printf("%#v\n", w)
+// Output:
+// Wheel{Circle:Circle{Point:Point{X:8, Y:8}, Radius:5}, Spokes:20}
+
+w.X = 42
+
+fmt.Printf("%#v\n", w)
+// Output:
+// Wheel{Circle:Circle{Point:Point{X:42, Y:8}, Radius:5}, Spokes:20}
+```
+
+**需要注意的是Printf函数中%v参数包含的#副词，它表示用和Go语言类似的语法打印值。对于结构体类型来说，将包含每个成员的名字**。
+
++ **因为匿名成员也有一个隐式的名字，因此不能同时包含两个类型相同的匿名成员，这会导致名字冲突**。
++ **同时，因为成员的名字是由其类型隐式地决定的，所以匿名成员也有可见性的规则约束**。在上面的例子中，Point和Circle匿名成员都是导出的。即使它们不导出（比如改成小写字母开头的point和circle），我们依然可以用简短形式访问匿名成员嵌套的成员
+
+```Go
+w.X = 8 // equivalent to w.circle.point.X = 8
+```
+
+<u>但是在包外部，因为circle和point没有导出，不能访问它们的成员，因此简短的匿名成员访问语法也是禁止的</u>。
+
+到目前为止，我们看到匿名成员特性只是对访问嵌套成员的点运算符提供了简短的语法糖。稍后，我们将会看到匿名成员并不要求是结构体类型；**其实任何命名的类型都可以作为结构体的匿名成员**。但是为什么要嵌入一个没有任何子成员类型的匿名成员类型呢？
+
+答案是**匿名类型的方法集**。简短的点运算符语法可以用于选择匿名成员嵌套的成员，也可以用于访问它们的方法。实际上，外层的结构体不仅仅是获得了匿名成员类型的所有成员，而且也获得了该类型导出的全部的方法。**这个机制可以用于将一些有简单行为的对象组合成有复杂行为的对象。组合是Go语言中面向对象编程的核心**，我们将在6.3节中专门讨论。
+
+## 4.5 JSON
+
+JavaScript对象表示法（JSON）是一种用于发送和接收结构化信息的标准协议。在类似的协议中，JSON并不是唯一的一个标准协议。 XML（§7.14）、ASN.1和Google的Protocol Buffers都是类似的协议，并且有各自的特色，但是由于简洁性、可读性和流行程度等原因，JSON是应用最广泛的一个。
+
+Go语言对于这些标准格式的编码和解码都有良好的支持，由标准库中的encoding/json、encoding/xml、encoding/asn1等包提供支持（译注：Protocol Buffers的支持由 github.com/golang/protobuf 包提供），并且这类包都有着相似的API接口。本节，我们将对重要的encoding/json包的用法做个概述。
+
+JSON是对JavaScript中各种类型的值——字符串、数字、布尔值和对象——Unicode本文编码。它可以用有效可读的方式表示第三章的基础数据类型和本章的数组、slice、结构体和map等聚合数据类型。
+
+基本的JSON类型有数字（十进制或科学记数法）、布尔值（true或false）、字符串，其中**字符串是以双引号包含的Unicode字符序列，支持和Go语言类似的反斜杠转义特性，不过JSON使用的是`\Uhhhh`转义数字来表示一个UTF-16编码**（译注：UTF-16和UTF-8一样是一种变长的编码，有些Unicode码点较大的字符需要用4个字节表示；而且UTF-16还有大端和小端的问题），**而不是Go语言的rune类型**。
+
+这些基础类型可以通过JSON的数组和对象类型进行递归组合。一个JSON数组是一个有序的值序列，写在一个方括号中并以逗号分隔；一个JSON数组可以用于编码Go语言的数组和slice。一个JSON对象是一个字符串到值的映射，写成一系列的name:value对形式，用花括号包含并以逗号分隔；**JSON的对象类型可以用于编码Go语言的map类型（key类型是字符串）和结构体**。例如：
+
+```
+boolean         true
+number          -273.15
+string          "She said \"Hello, BF\""
+array           ["gold", "silver", "bronze"]
+object          {"year": 1980,
+                 "event": "archery",
+                 "medals": ["gold", "silver", "bronze"]}
+```
+
+考虑一个应用程序，该程序负责收集各种电影评论并提供反馈功能。它的Movie数据类型和一个典型的表示电影的值列表如下所示。（在结构体声明中，Year和Color成员后面的字符串面值是结构体成员Tag；我们稍后会解释它的作用。）
+
+*gopl.io/ch4/movie*
+
+```Go
+type Movie struct {
+    Title  string
+    Year   int  `json:"released"`
+    Color  bool `json:"color,omitempty"`
+    Actors []string
+}
+
+var movies = []Movie{
+    {Title: "Casablanca", Year: 1942, Color: false,
+        Actors: []string{"Humphrey Bogart", "Ingrid Bergman"}},
+    {Title: "Cool Hand Luke", Year: 1967, Color: true,
+        Actors: []string{"Paul Newman"}},
+    {Title: "Bullitt", Year: 1968, Color: true,
+        Actors: []string{"Steve McQueen", "Jacqueline Bisset"}},
+    // ...
+}
+```
+
+这样的数据结构特别适合JSON格式，并且在两者之间相互转换也很容易。
+
+**将一个Go语言中类似movies的结构体slice转为JSON的过程叫编组（marshaling）**。
+
+编组通过调用json.Marshal函数完成：
+
+```Go
+data, err := json.Marshal(movies)
+if err != nil {
+    log.Fatalf("JSON marshaling failed: %s", err)
+}
+fmt.Printf("%s\n", data)
+```
+
+Marshal函数返回一个编码后的字节slice，包含很长的字符串，并且没有空白缩进；我们将它折行以便于显示：
+
+```
+[{"Title":"Casablanca","released":1942,"Actors":["Humphrey Bogart","Ingr
+id Bergman"]},{"Title":"Cool Hand Luke","released":1967,"color":true,"Ac
+tors":["Paul Newman"]},{"Title":"Bullitt","released":1968,"color":true,"
+Actors":["Steve McQueen","Jacqueline Bisset"]}]
+```
+
+这种紧凑的表示形式虽然包含了全部的信息，但是很难阅读。为了生成便于阅读的格式，另一个json.MarshalIndent函数将产生整齐缩进的输出。该函数有两个额外的字符串参数用于表示每一行输出的前缀和每一个层级的缩进：
+
+```Go
+data, err := json.MarshalIndent(movies, "", "    ")
+if err != nil {
+    log.Fatalf("JSON marshaling failed: %s", err)
+}
+fmt.Printf("%s\n", data)
+```
+
+上面的代码将产生这样的输出（译注：在最后一个成员或元素后面并没有逗号分隔符）：
+
+```Json
+[
+    {
+        "Title": "Casablanca",
+        "released": 1942,
+        "Actors": [
+            "Humphrey Bogart",
+            "Ingrid Bergman"
+        ]
+    },
+    {
+        "Title": "Cool Hand Luke",
+        "released": 1967,
+        "color": true,
+        "Actors": [
+            "Paul Newman"
+        ]
+    },
+    {
+        "Title": "Bullitt",
+        "released": 1968,
+        "color": true,
+        "Actors": [
+            "Steve McQueen",
+            "Jacqueline Bisset"
+        ]
+    }
+]
+```
+
+**在编码时，默认使用Go语言结构体的成员名字作为JSON的对象**（通过reflect反射技术，我们将在12.6节讨论）。**只有导出的结构体成员才会被编码**，这也就是我们为什么选择用大写字母开头的成员名称。
+
+细心的读者可能已经注意到，其中Year名字的成员在编码后变成了released，还有Color成员编码后变成了小写字母开头的color。这是因为结构体成员Tag所导致的。
+
+**一个结构体成员Tag是和在编译阶段关联到该成员的元信息字符串**：
+
+```
+Year  int  `json:"released"`
+Color bool `json:"color,omitempty"`
+```
+
++ **结构体的成员Tag可以是任意的字符串面值，但是通常是一系列用空格分隔的key:"value"键值对序列；**
++ **因为值中含有双引号字符，因此成员Tag一般用原生字符串面值的形式书写**。
+
+json开头键名对应的值用于控制encoding/json包的编码和解码的行为，并且encoding/...下面其它的包也遵循这个约定。成员Tag中json对应值的第一部分用于指定JSON对象的名字，比如将Go语言中的TotalCount成员对应到JSON中的total_count对象。**Color成员的Tag还带了一个额外的omitempty选项，表示当Go语言结构体成员为空或零值时不生成该JSON对象（这里false为零值）**。果然，Casablanca是一个黑白电影，并没有输出Color成员。
+
+**编码的逆操作是解码，对应将JSON数据解码为Go语言的数据结构，Go语言中一般叫unmarshaling，通过json.Unmarshal函数完成**。
+
+<u>下面的代码将JSON格式的电影数据解码为一个结构体slice，结构体中只有Title成员。通过定义合适的Go语言数据结构，我们可以选择性地解码JSON中感兴趣的成员。当Unmarshal函数调用返回，slice将被只含有Title信息的值填充，其它JSON成员将被忽略</u>。
+
+```Go
+var titles []struct{ Title string }
+if err := json.Unmarshal(data, &titles); err != nil {
+    log.Fatalf("JSON unmarshaling failed: %s", err)
+}
+fmt.Println(titles) // "[{Casablanca} {Cool Hand Luke} {Bullitt}]"
+```
+
+许多web服务都提供JSON接口，通过HTTP接口发送JSON格式请求并返回JSON格式的信息。为了说明这一点，我们通过Github的issue查询服务来演示类似的用法。首先，我们要定义合适的类型和常量：
+
+*gopl.io/ch4/github*
+
+```Go
+// Package github provides a Go API for the GitHub issue tracker.
+// See https://developer.github.com/v3/search/#search-issues.
+package github
+
+import "time"
+
+const IssuesURL = "https://api.github.com/search/issues"
+
+type IssuesSearchResult struct {
+    TotalCount int `json:"total_count"`
+    Items          []*Issue
+}
+
+type Issue struct {
+    Number    int
+    HTMLURL   string `json:"html_url"`
+    Title     string
+    State     string
+    User      *User
+    CreatedAt time.Time `json:"created_at"`
+    Body      string    // in Markdown format
+}
+
+type User struct {
+    Login   string
+    HTMLURL string `json:"html_url"`
+}
+```
+
+和前面一样，即使对应的JSON对象名是小写字母，每个结构体的成员名也是声明为大写字母开头的。因为有些JSON成员名字和Go结构体成员名字并不相同，因此需要Go语言结构体成员Tag来指定对应的JSON名字。同样，在解码的时候也需要做同样的处理，GitHub服务返回的信息比我们定义的要多很多。
+
+SearchIssues函数发出一个HTTP请求，然后解码返回的JSON格式的结果。
+
+**因为用户提供的查询条件可能包含类似`?`和`&`之类的特殊字符，为了避免对URL造成冲突，我们用url.QueryEscape来对查询中的特殊字符进行转义操作**。
+
+*gopl.io/ch4/github*
+
+```Go
+package github
+
+import (
+    "encoding/json"
+    "fmt"
+    "net/http"
+    "net/url"
+    "strings"
+)
+
+// SearchIssues queries the GitHub issue tracker.
+func SearchIssues(terms []string) (*IssuesSearchResult, error) {
+    q := url.QueryEscape(strings.Join(terms, " "))
+    resp, err := http.Get(IssuesURL + "?q=" + q)
+    if err != nil {
+        return nil, err
+    }
+
+    // We must close resp.Body on all execution paths.
+    // (Chapter 5 presents 'defer', which makes this simpler.)
+    if resp.StatusCode != http.StatusOK {
+        resp.Body.Close()
+        return nil, fmt.Errorf("search query failed: %s", resp.Status)
+    }
+
+    var result IssuesSearchResult
+    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+        resp.Body.Close()
+        return nil, err
+    }
+    resp.Body.Close()
+    return &result, nil
+}
+```
+
+在早些的例子中，我们使用了json.Unmarshal函数来将JSON格式的字符串解码为字节slice。但是这个例子中，我们使用了基于流式的解码器json.Decoder，它可以从一个输入流解码JSON数据，尽管这不是必须的。如您所料，还有一个针对输出流的json.Encoder编码对象。
+
+我们调用Decode方法来填充变量。这里有多种方法可以格式化结构。下面是最简单的一种，以一个固定宽度打印每个issue，但是在下一节我们将看到如何利用模板来输出复杂的格式。
+
+*gopl.io/ch4/issues*
+
+```Go
+// Issues prints a table of GitHub issues matching the search terms.
+package main
+
+import (
+    "fmt"
+    "log"
+    "os"
+
+    "gopl.io/ch4/github"
+)
+
+func main() {
+    result, err := github.SearchIssues(os.Args[1:])
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("%d issues:\n", result.TotalCount)
+    for _, item := range result.Items {
+        fmt.Printf("#%-5d %9.9s %.55s\n",
+            item.Number, item.User.Login, item.Title)
+    }
+}
+```
+
+通过命令行参数指定检索条件。下面的命令是查询Go语言项目中和JSON解码相关的问题，还有查询返回的结果：
+
+```
+$ go build gopl.io/ch4/issues
+$ ./issues repo:golang/go is:open json decoder
+13 issues:
+#5680    eaigner encoding/json: set key converter on en/decoder
+#6050  gopherbot encoding/json: provide tokenizer
+#8658  gopherbot encoding/json: use bufio
+#8462  kortschak encoding/json: UnmarshalText confuses json.Unmarshal
+#5901        rsc encoding/json: allow override type marshaling
+#9812  klauspost encoding/json: string tag not symmetric
+#7872  extempora encoding/json: Encoder internally buffers full output
+#9650    cespare encoding/json: Decoding gives errPhase when unmarshalin
+#6716  gopherbot encoding/json: include field name in unmarshal error me
+#6901  lukescott encoding/json, encoding/xml: option to treat unknown fi
+#6384    joeshaw encoding/json: encode precise floating point integers u
+#6647    btracey x/tools/cmd/godoc: display type kind of each named type
+#4237  gjemiller encoding/base64: URLEncoding padding is optional
+```
+
+GitHub的Web服务接口 https://developer.github.com/v3/ 包含了更多的特性。
+
+## 4.6 文本和HTML模版
+
+前面的例子，只是最简单的格式化，使用Printf是完全足够的。但是有时候会需要复杂的打印格式，这时候一般需要将格式化代码分离出来以便更安全地修改。<u>这些功能是由text/template和html/template等模板包提供的，它们提供了一个将变量值填充到一个文本或HTML格式的模板的机制。</u>
+
+**一个模板是一个字符串或一个文件，里面包含了一个或多个由双花括号包含的`{{action}}`对象**。大部分的字符串只是按字面值打印，但是对于actions部分将触发其它的行为。每个actions都包含了一个用模板语言书写的表达式，一个action虽然简短但是可以输出复杂的打印值，模板语言包含通过选择结构体的成员、调用函数或方法、表达式控制流if-else语句和range循环语句，还有其它实例化模板等诸多特性。下面是一个简单的模板字符串：
+
+*gopl.io/ch4/issuesreport*
+
+```Go
+const templ = `{{.TotalCount}} issues:
+{{range .Items}}----------------------------------------
+Number: {{.Number}}
+User:   {{.User.Login}}
+Title:  {{.Title | printf "%.64s"}}
+Age:    {{.CreatedAt | daysAgo}} days
+{{end}}`
+```
+
+这个模板先打印匹配到的issue总数，然后打印每个issue的编号、创建用户、标题还有存在的时间。
+
+**对于每一个action，都有一个当前值的概念，对应点操作符，写作“.”**。
+
+<u>当前值“.”最初被初始化为调用模板时的参数，在当前例子中对应github.IssuesSearchResult类型的变量。模板中`{{.TotalCount}}`对应action将展开为结构体中TotalCount成员以默认的方式打印的值。**模板中`{{range .Items}}`和`{{end}}`对应一个循环action**，因此它们之间的内容可能会被展开多次，循环每次迭代的当前值对应当前的Items元素的值</u>。
+
+**在一个action中，`|`操作符表示将前一个表达式的结果作为后一个函数的输入**，**类似于UNIX中管道的概念**。在Title这一行的action中，第二个操作是一个printf函数，是一个基于fmt.Sprintf实现的内置函数，所有模板都可以直接使用。对于Age部分，第二个动作是一个叫daysAgo的函数，通过time.Since函数将CreatedAt成员转换为过去的时间长度：
+
+```Go
+func daysAgo(t time.Time) int {
+    return int(time.Since(t).Hours() / 24)
+}
+```
+
+需要注意的是CreatedAt的参数类型是time.Time，并不是字符串。以同样的方式，我们可以通过定义一些方法来控制字符串的格式化（§2.5），一个类型同样可以定制自己的JSON编码和解码行为。**time.Time类型对应的JSON值是一个标准时间格式的字符串**。
+
+**生成模板的输出需要两个处理步骤。第一步是要分析模板并转为内部表示，然后基于指定的输入执行模板。**
+
+分析模板部分一般只需要执行一次。下面的代码创建并分析上面定义的模板templ。注意方法调用链的顺序：<u>template.New先创建并返回一个模板；Funcs方法将daysAgo等自定义函数注册到模板中，并返回模板；最后调用Parse函数分析模板。</u>
+
+```Go
+report, err := template.New("report").
+    Funcs(template.FuncMap{"daysAgo": daysAgo}).
+    Parse(templ)
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+**因为模板通常在编译时就测试好了，如果模板解析失败将是一个致命的错误**。
+
+<u>template.Must辅助函数可以简化这个致命错误的处理：它接受一个模板和一个error类型的参数，检测error是否为nil（如果不是nil则发出panic异常），然后返回传入的模板</u>。
+
+我们将在5.9节再讨论这个话题。
+
+一旦模板已经创建、注册了daysAgo函数、并通过分析和检测，我们就可以使用github.IssuesSearchResult作为输入源、os.Stdout作为输出源来执行模板：
+
+```Go
+var report = template.Must(template.New("issuelist").
+    Funcs(template.FuncMap{"daysAgo": daysAgo}).
+    Parse(templ))
+
+func main() {
+    result, err := github.SearchIssues(os.Args[1:])
+    if err != nil {
+        log.Fatal(err)
+    }
+    if err := report.Execute(os.Stdout, result); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+程序输出一个纯文本报告：
+
+```shell
+$ go build gopl.io/ch4/issuesreport
+$ ./issuesreport repo:golang/go is:open json decoder
+13 issues:
+----------------------------------------
+Number: 5680
+User:      eaigner
+Title:     encoding/json: set key converter on en/decoder
+Age:       750 days
+----------------------------------------
+Number: 6050
+User:      gopherbot
+Title:     encoding/json: provide tokenizer
+Age:       695 days
+----------------------------------------
+...
+```
+
+**现在让我们转到html/template模板包**。**它使用和text/template包相同的API和模板语言，但是增加了一个将字符串自动转义特性，这可以避免输入字符串和HTML、JavaScript、CSS或URL语法产生冲突的问题**。**这个特性还可以避免一些长期存在的安全问题，比如通过生成HTML注入攻击，通过构造一个含有恶意代码的问题标题，这些都可能让模板输出错误的输出，从而让他们控制页面**。
+
+下面的模板以HTML格式输出issue列表。注意import语句的不同：
+
+*gopl.io/ch4/issueshtml*
+
+```Go
+import "html/template"
+
+var issueList = template.Must(template.New("issuelist").Parse(`
+<h1>{{.TotalCount}} issues</h1>
+<table>
+<tr style='text-align: left'>
+  <th>#</th>
+  <th>State</th>
+  <th>User</th>
+  <th>Title</th>
+</tr>
+{{range .Items}}
+<tr>
+  <td><a href='{{.HTMLURL}}'>{{.Number}}</a></td>
+  <td>{{.State}}</td>
+  <td><a href='{{.User.HTMLURL}}'>{{.User.Login}}</a></td>
+  <td><a href='{{.HTMLURL}}'>{{.Title}}</a></td>
+</tr>
+{{end}}
+</table>
+`))
+```
+
+下面的命令将在新的模板上执行一个稍微不同的查询：
+
+```
+$ go build gopl.io/ch4/issueshtml
+$ ./issueshtml repo:golang/go commenter:gopherbot json encoder >issues.html
+```
+
+图4.4显示了在web浏览器中的效果图。每个issue包含到Github对应页面的链接。
+
+![img](http://books.studygolang.com/gopl-zh/images/ch4-04.png)
+
+图4.4中issue没有包含会对HTML格式产生冲突的特殊字符，但是我们马上将看到标题中含有`&`和`<`字符的issue。下面的命令选择了两个这样的issue：
+
+```
+$ ./issueshtml repo:golang/go 3133 10535 >issues2.html
+```
+
+图4.5显示了该查询的结果。注意，**html/template包已经自动将特殊字符转义**，因此我们依然可以看到正确的字面值。如果我们使用text/template包的话，这2个issue将会产生错误，其中“&lt;”四个字符将会被当作小于字符“<”处理，同时“\<link>”字符串将会被当作一个链接元素处理，它们都会导致HTML文档结构的改变，从而导致有未知的风险。
+
+<u>我们也可以通过对信任的HTML字符串使用template.HTML类型来抑制这种自动转义的行为。还有很多采用类型命名的字符串类型分别对应信任的JavaScript、CSS和URL</u>。下面的程序演示了两个使用不同类型的相同字符串产生的不同结果：A是一个普通字符串，B是一个信任的template.HTML字符串类型。
+
+![img](http://books.studygolang.com/gopl-zh/images/ch4-05.png)
+
+*gopl.io/ch4/autoescape*
+
+```Go
+func main() {
+    const templ = `<p>A: {{.A}}</p><p>B: {{.B}}</p>`
+    t := template.Must(template.New("escape").Parse(templ))
+    var data struct {
+        A string        // untrusted plain text
+        B template.HTML // trusted HTML
+    }
+    data.A = "<b>Hello!</b>"
+    data.B = "<b>Hello!</b>"
+    if err := t.Execute(os.Stdout, data); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+图4.6显示了出现在浏览器中的模板输出。我们看到A的黑体标记被转义失效了，但是B没有。
+
+![img](http://books.studygolang.com/gopl-zh/images/ch4-06.png)
+
+我们这里只讲述了模板系统中最基本的特性。一如既往，如果想了解更多的信息，请自己查看包文档：
+
+```shell
+$ go doc text/template
+$ go doc html/template
+```
+
+# 5. 函数
+
+函数可以让我们将一个语句序列打包为一个单元，然后可以从程序中其它地方多次调用。函数的机制可以让我们将一个大的工作分解为小的任务，这样的小任务可以让不同程序员在不同时间、不同地方独立完成。一个函数同时对用户隐藏了其实现细节。由于这些因素，对于任何编程语言来说，函数都是一个至关重要的部分。
+
+我们已经见过许多函数了。现在，让我们多花一点时间来彻底地讨论函数特性。本章的运行示例是一个网络蜘蛛，也就是web搜索引擎中负责抓取网页部分的组件，它们根据抓取网页中的链接继续抓取链接指向的页面。一个网络蜘蛛的例子给我们足够的机会去探索递归函数、匿名函数、错误处理和函数其它的很多特性。
+
+## 5.1 函数声明
+
+函数声明包括：
+
++ 函数名
++ 形式参数列表
++ 返回值列表（可省略）
++ 函数体
+
+```Go
+func name(parameter-list) (result-list) {
+    body
+}
+```
+
+形式参数列表描述了函数的参数名以及参数类型。这些参数作为局部变量，其值由参数调用者提供。返回值列表描述了函数返回值的变量名以及类型。如果函数返回一个无名变量或者没有返回值，返回值列表的括号是可以省略的。如果一个函数声明不包括返回值列表，那么函数体执行完毕后，不会返回任何值。在hypot函数中：
+
+```Go
+func hypot(x, y float64) float64 {
+    return math.Sqrt(x*x + y*y)
+}
+fmt.Println(hypot(3,4)) // "5"
+```
+
+x和y是形参名，3和4是调用时的传入的实参，函数返回了一个float64类型的值。 返回值也可以像形式参数一样被命名。在这种情况下，每个返回值被声明成一个局部变量，并根据该返回值的类型，将其初始化为该类型的零值。 **如果一个函数在声明时，包含返回值列表，该函数必须以 return语句结尾，除非函数明显无法运行到结尾处。例如函数在结尾时调用了panic异常或函数中存在无限循环。**
+
+正如hypot一样，<u>如果一组形参或返回值有相同的类型，我们不必为每个形参都写出参数类型</u>。下面2个声明是等价的：
+
+```Go
+func f(i, j, k int, s, t string)                 { /* ... */ }
+func f(i int, j int, k int,  s string, t string) { /* ... */ }
+```
+
+下面，我们给出4种方法声明拥有2个int型参数和1个int型返回值的函数.blank identifier(译者注：即下文的_符号)可以强调某个参数未被使用。
+
+```Go
+func add(x int, y int) int   {return x + y}
+func sub(x, y int) (z int)   { z = x - y; return}
+func first(x int, _ int) int { return x }
+func zero(int, int) int      { return 0 }
+
+fmt.Printf("%T\n", add)   // "func(int, int) int"
+fmt.Printf("%T\n", sub)   // "func(int, int) int"
+fmt.Printf("%T\n", first) // "func(int, int) int"
+fmt.Printf("%T\n", zero)  // "func(int, int) int"
+```
+
+**函数的类型被称为函数的签名**。
+
+<u>如果两个函数形式参数列表和返回值列表中的变量类型一一对应，那么这两个函数被认为有相同的类型或签名</u>。形参和返回值的变量名不影响函数签名，也不影响它们是否可以以省略参数类型的形式表示。
+
+每一次函数调用都必须按照声明顺序为所有参数提供实参（参数值）。
+
+**在函数调用时，Go语言没有默认参数值，也没有任何方法可以通过参数名指定形参，因此形参和返回值的变量名对于函数调用者而言没有意义**。
+
+**在函数体中，函数的形参作为局部变量，被初始化为调用者提供的值**。函数的形参和有名返回值作为函数最外层的局部变量，被存储在相同的词法块中。
+
+**实参通过值的方式传递，因此函数的形参是实参的拷贝**。**对形参进行修改不会影响实参**。
+
+<u>但是，如果实参包括引用类型，如指针，slice(切片)、map、function、channel等类型，实参可能会由于函数的间接引用被修改</u>。
+
+**你可能会偶尔遇到没有函数体的函数声明，这表示该函数不是以Go实现的。这样的声明定义了函数签名**。
+
+```Go
+package math
+
+func Sin(x float64) float //implemented in assembly language
+```
+
+## 5.2 递归
+
+函数可以是递归的，这意味着函数可以直接或间接的调用自身。对许多问题而言，递归是一种强有力的技术，例如处理递归的数据结构。在4.4节，我们通过遍历二叉树来实现简单的插入排序，在本章节，我们再次使用它来处理HTML文件。
+
+下文的示例代码使用了非标准包 golang.org/x/net/html ，解析HTML。golang.org/x/... 目录下存储了一些由Go团队设计、维护，对网络编程、国际化文件处理、移动平台、图像处理、加密解密、开发者工具提供支持的扩展包。未将这些扩展包加入到标准库原因有二，一是部分包仍在开发中，二是对大多数Go语言的开发者而言，扩展包提供的功能很少被使用。
+
+例子中调用golang.org/x/net/html的部分api如下所示。html.Parse函数读入一组bytes解析后，返回html.Node类型的HTML页面树状结构根节点。HTML拥有很多类型的结点如text（文本）、commnets（注释）类型，在下面的例子中，我们 只关注< name key='value' >形式的结点。
+
+*golang.org/x/net/html*
+
+```Go
+package html
+
+type Node struct {
+    Type                    NodeType
+    Data                    string
+    Attr                    []Attribute
+    FirstChild, NextSibling *Node
+}
+
+type NodeType int32
+
+const (
+    ErrorNode NodeType = iota
+    TextNode
+    DocumentNode
+    ElementNode
+    CommentNode
+    DoctypeNode
+)
+
+type Attribute struct {
+    Key, Val string
+}
+
+func Parse(r io.Reader) (*Node, error)
+```
+
+main函数解析HTML标准输入，通过递归函数visit获得links（链接），并打印出这些links：
+
+*gopl.io/ch5/findlinks1*
+
+```Go
+// Findlinks1 prints the links in an HTML document read from standard input.
+package main
+
+import (
+    "fmt"
+    "os"
+
+    "golang.org/x/net/html"
+)
+
+func main() {
+    doc, err := html.Parse(os.Stdin)
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "findlinks1: %v\n", err)
+        os.Exit(1)
+    }
+    for _, link := range visit(nil, doc) {
+        fmt.Println(link)
+    }
+}
+```
+
+visit函数遍历HTML的节点树，从每一个anchor元素的href属性获得link,将这些links存入字符串数组中，并返回这个字符串数组。
+
+```Go
+// visit appends to links each link found in n and returns the result.
+func visit(links []string, n *html.Node) []string {
+    if n.Type == html.ElementNode && n.Data == "a" {
+        for _, a := range n.Attr {
+            if a.Key == "href" {
+                links = append(links, a.Val)
+            }
+        }
+    }
+    for c := n.FirstChild; c != nil; c = c.NextSibling {
+        links = visit(links, c)
+    }
+    return links
+}
+```
+
+为了遍历结点n的所有后代结点，每次遇到n的孩子结点时，visit递归的调用自身。这些孩子结点存放在FirstChild链表中。
+
+让我们以Go的主页（golang.org）作为目标，运行findlinks。我们以fetch（1.5章）的输出作为findlinks的输入。下面的输出做了简化处理。
+
+```
+$ go build gopl.io/ch1/fetch
+$ go build gopl.io/ch5/findlinks1
+$ ./fetch https://golang.org | ./findlinks1
+#
+/doc/
+/pkg/
+/help/
+/blog/
+http://play.golang.org/
+//tour.golang.org/
+https://golang.org/dl/
+//blog.golang.org/
+/LICENSE
+/doc/tos.html
+http://www.google.com/intl/en/policies/privacy/
+```
+
+注意在页面中出现的链接格式，在之后我们会介绍如何将这些链接，根据根路径（ [https://golang.org](https://golang.org/) ）生成可以直接访问的url。
+
+在函数outline中，我们通过递归的方式遍历整个HTML结点树，并输出树的结构。在outline内部，每遇到一个HTML元素标签，就将其入栈，并输出。
+
+*gopl.io/ch5/outline*
+
+```Go
+func main() {
+    doc, err := html.Parse(os.Stdin)
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "outline: %v\n", err)
+        os.Exit(1)
+    }
+    outline(nil, doc)
+}
+func outline(stack []string, n *html.Node) {
+    if n.Type == html.ElementNode {
+        stack = append(stack, n.Data) // push tag
+        fmt.Println(stack)
+    }
+    for c := n.FirstChild; c != nil; c = c.NextSibling {
+        outline(stack, c)
+    }
+}
+```
+
+<u>有一点值得注意：outline有入栈操作，但没有相对应的出栈操作。当outline调用自身时，被调用者接收的是stack的拷贝。被调用者对stack的元素追加操作，修改的是stack的拷贝，其可能会修改slice底层的数组甚至是申请一块新的内存空间进行扩容；但这个过程并不会修改调用方的stack。因此当函数返回时，调用方的stack与其调用自身之前完全一致</u>。
+
+下面是 [https://golang.org](https://golang.org/) 页面的简要结构:
+
+```
+$ go build gopl.io/ch5/outline
+$ ./fetch https://golang.org | ./outline
+[html]
+[html head]
+[html head meta]
+[html head title]
+[html head link]
+[html body]
+[html body div]
+[html body div]
+[html body div div]
+[html body div div form]
+[html body div div form div]
+[html body div div form div a]
+...
+```
+
+正如你在上面实验中所见，大部分HTML页面只需几层递归就能被处理，但仍然有些页面需要深层次的递归。
+
+**大部分编程语言使用固定大小的函数调用栈，常见的大小从64KB到2MB不等。固定大小栈会限制递归的深度，当你用递归处理大量数据时，需要避免栈溢出；除此之外，还会导致安全性问题**。
+
+**与此相反，Go语言使用可变栈，栈的大小按需增加（初始时很小）。这使得我们使用递归时不必考虑溢出和安全问题**。
+
+## 5.3 多返回值
+
+**在Go中，一个函数可以返回多个值**。我们已经在之前例子中看到，许多标准库中的函数返回2个值，一个是期望得到的返回值，另一个是函数出错时的错误信息。下面的例子会展示如何编写多返回值的函数。
+
+下面的程序是findlinks的改进版本。修改后的findlinks可以自己发起HTTP请求，这样我们就不必再运行fetch。因为HTTP请求和解析操作可能会失败，因此findlinks声明了2个返回值：链接列表和错误信息。**一般而言，HTML的解析器可以处理HTML页面的错误结点，构造出HTML页面结构，所以解析HTML很少失败**。<u>这意味着如果findlinks函数失败了，很可能是由于I/O的错误导致的</u>。
+
+*gopl.io/ch5/findlinks2*
+
+```Go
+func main() {
+    for _, url := range os.Args[1:] {
+        links, err := findLinks(url)
+        if err != nil {
+            fmt.Fprintf(os.Stderr, "findlinks2: %v\n", err)
+            continue
+        }
+        for _, link := range links {
+            fmt.Println(link)
+        }
+    }
+}
+
+// findLinks performs an HTTP GET request for url, parses the
+// response as HTML, and extracts and returns the links.
+func findLinks(url string) ([]string, error) {
+    resp, err := http.Get(url)
+    if err != nil {
+        return nil, err
+    }
+    if resp.StatusCode != http.StatusOK {
+        resp.Body.Close()
+        return nil, fmt.Errorf("getting %s: %s", url, resp.Status)
+    }
+    doc, err := html.Parse(resp.Body)
+    resp.Body.Close()
+    if err != nil {
+        return nil, fmt.Errorf("parsing %s as HTML: %v", url, err)
+    }
+    return visit(nil, doc), nil
+}
+```
+
+在findlinks中，有4处return语句，每一处return都返回了一组值。前三处return，将http和html包中的错误信息传递给findlinks的调用者。第一处return直接返回错误信息，其他两处通过fmt.Errorf（§7.8）输出详细的错误信息。如果findlinks成功结束，最后的return语句将一组解析获得的连接返回给用户。
+
+<u>在findlinks中，我们必须确保resp.Body被关闭，释放网络资源</u>。
+
+**虽然Go的垃圾回收机制会回收不被使用的内存，但是这不包括操作系统层面的资源，比如打开的文件、网络连接。因此我们必须显式的释放这些资源**。
+
+调用多返回值函数时，返回给调用者的是一组值，调用者必须显式的将这些值分配给变量:
+
+```Go
+links, err := findLinks(url)
+```
+
+如果某个值不被使用，可以将其分配给blank identifier:
+
+```Go
+links, _ := findLinks(url) // errors ignored
+```
+
+一个函数内部可以将另一个有多返回值的函数调用作为返回值，下面的例子展示了与findLinks有相同功能的函数，两者的区别在于下面的例子先输出参数：
+
+```Go
+func findLinksLog(url string) ([]string, error) {
+    log.Printf("findLinks %s", url)
+    return findLinks(url)
+}
+```
+
+**当你调用接受多参数的函数时，可以将一个返回多参数的函数调用作为该函数的参数**。
+
+<u>虽然这很少出现在实际生产代码中，但这个特性在debug时很方便，我们只需要一条语句就可以输出所有的返回值</u>。下面的代码是等价的：
+
+```Go
+log.Println(findLinks(url))
+links, err := findLinks(url)
+log.Println(links, err)
+```
+
+**准确的变量名可以传达函数返回值的含义。尤其在返回值的类型都相同时**，就像下面这样：
+
+```Go
+func Size(rect image.Rectangle) (width, height int)
+func Split(path string) (dir, file string)
+func HourMinSec(t time.Time) (hour, minute, second int)
+```
+
+<u>虽然良好的命名很重要，但你也不必为每一个返回值都取一个适当的名字。比如，按照惯例，函数的最后一个bool类型的返回值表示函数是否运行成功，error类型的返回值代表函数的错误信息，对于这些类似的惯例，我们不必思考合适的命名，它们都无需解释</u>。
+
+**如果一个函数所有的返回值都有显式的变量名，那么该函数的return语句可以省略操作数。这称之为bare return。**
+
+```Go
+// CountWordsAndImages does an HTTP GET request for the HTML
+// document url and returns the number of words and images in it.
+func CountWordsAndImages(url string) (words, images int, err error) {
+    resp, err := http.Get(url)
+    if err != nil {
+        return
+    }
+    doc, err := html.Parse(resp.Body)
+    resp.Body.Close()
+    if err != nil {
+        err = fmt.Errorf("parsing HTML: %s", err)
+        return
+    }
+    words, images = countWordsAndImages(doc)
+    return
+}
+func countWordsAndImages(n *html.Node) (words, images int) { /* ... */ }
+```
+
+按照返回值列表的次序，返回所有的返回值，在上面的例子中，每一个return语句等价于：
+
+```Go
+return words, images, err
+```
+
+**当一个函数有多处return语句以及许多返回值时，bare return 可以减少代码的重复，但是使得代码难以被理解**。举个例子，如果你没有仔细的审查代码，很难发现前2处return等价于 return 0,0,err（Go会将返回值 words和images在函数体的开始处，根据它们的类型，将其初始化为0），最后一处return等价于 return words, image, nil。<u>基于以上原因，不宜过度使用bare return</u>。
+
+## 5.4 错误
 
