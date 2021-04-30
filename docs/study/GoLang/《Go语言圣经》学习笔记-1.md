@@ -5278,3 +5278,212 @@ func fetch(url string) (filename string, n int64, err error) {
 
 ## 5.9 Panic异常
 
+**Go的类型系统会在编译时捕获很多错误，但有些错误只能在运行时检查，如数组访问越界、空指针引用等。这些运行时错误会引起painc异常**。
+
+**一般而言，当panic异常发生时，程序会中断运行，并立即执行在该goroutine（可以先理解成线程，在第8章会详细介绍）中被延迟的函数（defer 机制）**。随后，程序崩溃并输出日志信息。日志信息包括panic value和函数调用的堆栈跟踪信息。panic value通常是某种错误信息。<u>对于每个goroutine，日志信息中都会有与之相对的，发生panic时的函数调用堆栈跟踪信息</u>。通常，我们不需要再次运行程序去定位问题，日志信息已经提供了足够的诊断依据。因此，<u>在我们填写问题报告时，一般会将panic异常和日志信息一并记录</u>。
+
+**不是所有的panic异常都来自运行时，直接调用内置的panic函数也会引发panic异常；panic函数接受任何值作为参数**。当某些不应该发生的场景发生时，我们就应该调用panic。比如，当程序到达了某条逻辑上不可能到达的路径：
+
+```Go
+switch s := suit(drawCard()); s {
+case "Spades":                                // ...
+case "Hearts":                                // ...
+case "Diamonds":                              // ...
+case "Clubs":                                 // ...
+default:
+    panic(fmt.Sprintf("invalid suit %q", s)) // Joker?
+}
+```
+
+<u>断言函数必须满足的前置条件是明智的做法，但这很容易被滥用。除非你能提供更多的错误信息，或者能更快速的发现错误，否则不需要使用断言，编译器在运行时会帮你检查代码</u>。
+
+```Go
+func Reset(x *Buffer) {
+    if x == nil {
+        panic("x is nil") // unnecessary!
+    }
+    x.elements = nil
+}
+```
+
+虽然Go的panic机制类似于其他语言的异常，但panic的适用场景有一些不同。
+
+**由于panic会引起程序的崩溃，因此panic一般用于严重错误，如程序内部的逻辑不一致**。
+
+**勤奋的程序员认为任何崩溃都表明代码中存在漏洞，所以对于大部分漏洞，我们应该使用Go提供的错误机制，而不是panic，尽量避免程序的崩溃。在健壮的程序中，任何可以预料到的错误，如不正确的输入、错误的配置或是失败的I/O操作都应该被优雅的处理，最好的处理方式，就是使用Go的错误机制**。
+
+考虑regexp.Compile函数，该函数将正则表达式编译成有效的可匹配格式。当输入的正则表达式不合法时，该函数会返回一个错误。当调用者明确的知道正确的输入不会引起函数错误时，要求调用者检查这个错误是不必要和累赘的。<u>我们应该假设函数的输入一直合法，就如前面的断言一样：当调用者输入了不应该出现的输入时，触发panic异常</u>。
+
+在程序源码中，大多数正则表达式是字符串字面值（string literals），因此**regexp包提供了包装函数regexp.MustCompile检查输入的合法性**。
+
+```Go
+package regexp
+func Compile(expr string) (*Regexp, error) { /* ... */ }
+func MustCompile(expr string) *Regexp {
+    re, err := Compile(expr)
+    if err != nil {
+        panic(err)
+    }
+    return re
+}
+```
+
+包装函数使得调用者可以便捷的用一个编译后的正则表达式为包级别的变量赋值：
+
+```Go
+var httpSchemeRE = regexp.MustCompile(`^https?:`) //"http:" or "https:"
+```
+
+显然，MustCompile不能接收不合法的输入。函数名中的Must前缀是一种针对此类函数的命名约定，比如template.Must（4.6节）
+
+```Go
+func main() {
+    f(3)
+}
+func f(x int) {
+    fmt.Printf("f(%d)\n", x+0/x) // panics if x == 0
+    defer fmt.Printf("defer %d\n", x)
+    f(x - 1)
+}
+```
+
+上例中的运行输出如下：
+
+```
+f(3)
+f(2)
+f(1)
+defer 1
+defer 2
+defer 3
+```
+
+当f(0)被调用时，发生panic异常，之前被延迟执行的3个fmt.Printf被调用。程序中断执行后，panic信息和堆栈信息会被输出（下面是简化的输出）：
+
+```
+panic: runtime error: integer divide by zero
+main.f(0)
+src/gopl.io/ch5/defer1/defer.go:14
+main.f(1)
+src/gopl.io/ch5/defer1/defer.go:16
+main.f(2)
+src/gopl.io/ch5/defer1/defer.go:16
+main.f(3)
+src/gopl.io/ch5/defer1/defer.go:16
+main.main()
+src/gopl.io/ch5/defer1/defer.go:10
+```
+
+我们在下一节将看到，如何使程序从panic异常中恢复，阻止程序的崩溃。
+
+**为了方便诊断问题，runtime包允许程序员输出堆栈信息**。
+
+**在下面的例子中，我们通过在main函数中延迟调用printStack输出堆栈信息**。
+
+*gopl.io/ch5/defer2*
+
+```Go
+func main() {
+    defer printStack()
+    f(3)
+}
+func printStack() {
+    var buf [4096]byte
+    n := runtime.Stack(buf[:], false)
+    os.Stdout.Write(buf[:n])
+}
+```
+
+printStack的简化输出如下（下面只是printStack的输出，不包括panic的日志信息）：
+
+```
+goroutine 1 [running]:
+main.printStack()
+src/gopl.io/ch5/defer2/defer.go:20
+main.f(0)
+src/gopl.io/ch5/defer2/defer.go:27
+main.f(1)
+src/gopl.io/ch5/defer2/defer.go:29
+main.f(2)
+src/gopl.io/ch5/defer2/defer.go:29
+main.f(3)
+src/gopl.io/ch5/defer2/defer.go:29
+main.main()
+src/gopl.io/ch5/defer2/defer.go:15
+```
+
+将panic机制类比其他语言异常机制的读者可能会惊讶，runtime.Stack为何能输出已经被释放函数的信息？**在Go的panic机制中，延迟函数的调用在释放堆栈信息之前**。
+
+## 5.10 Recover捕获异常
+
+通常来说，不应该对panic异常做任何处理，但有时，也许我们可以从异常中恢复，至少我们可以在程序崩溃前，做一些操作。**举个例子，当web服务器遇到不可预料的严重问题时，在崩溃前应该将所有的连接关闭；如果不做任何处理，会使得客户端一直处于等待状态。如果web服务器还在开发阶段，服务器甚至可以将异常信息反馈到客户端，帮助调试**。
+
++ **如果在deferred函数中调用了内置函数recover，并且定义该defer语句的函数发生了panic异常，recover会使程序从panic中恢复，并返回panic value**。
+  + **导致panic异常的函数不会继续运行，但能正常返回**。
+  + **在未发生panic时调用recover，recover会返回nil**。
+
+让我们以语言解析器为例，说明recover的使用场景。考虑到语言解析器的复杂性，即使某个语言解析器目前工作正常，也无法肯定它没有漏洞。因此，当某个异常出现时，我们不会选择让解析器崩溃，而是会将panic异常当作普通的解析错误，并附加额外信息提醒用户报告此错误。
+
+```Go
+func Parse(input string) (s *Syntax, err error) {
+    defer func() {
+        if p := recover(); p != nil {
+            err = fmt.Errorf("internal error: %v", p)
+        }
+    }()
+    // ...parser...
+}
+```
+
+deferred函数帮助Parse从panic中恢复。在deferred函数内部，panic value被附加到错误信息中；并用err变量接收错误信息，返回给调用者。我们也可以通过调用runtime.Stack往错误信息中添加完整的堆栈调用信息。
+
+**不加区分的恢复所有的panic异常，不是可取的做法；因为在panic之后，无法保证包级变量的状态仍然和我们预期一致**。<u>比如，对数据结构的一次重要更新没有被完整完成、文件或者网络连接没有被关闭、获得的锁没有被释放。此外，如果写日志时产生的panic被不加区分的恢复，可能会导致漏洞被忽略</u>。
+
+虽然把对panic的处理都集中在一个包下，有助于简化对复杂和不可以预料问题的处理，但**作为被广泛遵守的规范，你不应该试图去恢复其他包引起的panic**。
+
+**公有的API应该将函数的运行失败作为error返回，而不是panic**。
+
+<u>同样的，你也不应该恢复一个由他人开发的函数引起的panic，比如说调用者传入的回调函数，因为你无法确保这样做是安全的</u>。
+
+<u>有时我们很难完全遵循规范，举个例子，net/http包中提供了一个web服务器，将收到的请求分发给用户提供的处理函数。很显然，我们不能因为某个处理函数引发的panic异常，杀掉整个进程；web服务器遇到处理函数导致的panic时会调用recover，输出堆栈信息，继续运行。这样的做法在实践中很便捷，但也会引起资源泄漏，或是因为recover操作，导致其他问题</u>。
+
+基于以上原因，安全的做法是有选择性的recover。换句话说，只恢复应该被恢复的panic异常，此外，这些异常所占的比例应该尽可能的低。**为了标识某个panic是否应该被恢复，我们可以将panic value设置成特殊类型。在recover时对panic value进行检查，如果发现panic value是特殊类型，就将这个panic作为error处理，如果不是，则按照正常的panic进行处理**（在下面的例子中，我们会看到这种方式）。
+
+下面的例子是title函数的变形，如果HTML页面包含多个`<title>`，该函数会给调用者返回一个错误（error）。在soleTitle内部处理时，如果检测到有多个`<title>`，会调用panic，阻止函数继续递归，并将特殊类型bailout作为panic的参数。
+
+```Go
+// soleTitle returns the text of the first non-empty title element
+// in doc, and an error if there was not exactly one.
+func soleTitle(doc *html.Node) (title string, err error) {
+    type bailout struct{}
+    defer func() {
+        switch p := recover(); p {
+        case nil:       // no panic
+        case bailout{}: // "expected" panic
+            err = fmt.Errorf("multiple title elements")
+        default:
+            panic(p) // unexpected panic; carry on panicking
+        }
+    }()
+    // Bail out of recursion if we find more than one nonempty title.
+    forEachNode(doc, func(n *html.Node) {
+        if n.Type == html.ElementNode && n.Data == "title" &&
+            n.FirstChild != nil {
+            if title != "" {
+                panic(bailout{}) // multiple titleelements
+            }
+            title = n.FirstChild.Data
+        }
+    }, nil)
+    if title == "" {
+        return "", fmt.Errorf("no title element")
+    }
+    return title, nil
+}
+```
+
+在上例中，deferred函数调用recover，并检查panic value。当panic value是bailout{}类型时，deferred函数生成一个error返回给调用者。**当panic value是其他non-nil值时，表示发生了未知的panic异常，deferred函数将调用panic函数并将当前的panic value作为参数传入；此时，等同于recover没有做任何操作**。
+
+（**请注意：在例子中，对可预期的错误采用了panic，这违反了之前的建议，我们在此只是想向读者演示这种机制。**）
+
+**有些情况下，我们无法恢复。某些致命错误会导致Go在运行时终止程序，如内存不足**。
