@@ -1449,3 +1449,465 @@ f(buf) // OK
 
 ## 7.6 sort.Interface接口
 
+排序操作和字符串格式化一样是很多程序经常使用的操作。尽管一个最短的快排程序只要15行就可以搞定，但是一个健壮的实现需要更多的代码，并且我们不希望每次我们需要的时候都重写或者拷贝这些代码。
+
+幸运的是，sort包内置的提供了根据一些排序函数来对任何序列排序的功能。它的设计非常独到。在很多语言中，排序算法都是和序列数据类型关联，同时排序函数和具体类型元素关联。<u>相比之下，Go语言的sort.Sort函数不会对具体的序列和它的元素做任何假设。相反，它使用了一个接口类型sort.Interface来指定通用的排序算法和可能被排序到的序列类型之间的约定。这个接口的实现由序列的具体表示和它希望排序的元素决定，序列的表示经常是一个切片</u>。
+
+**一个内置的排序算法需要知道三个东西：**
+
++ **序列的长度**
++ **表示两个元素比较的结果**
++ **一种交换两个元素的方式**
+
+这就是sort.Interface的三个方法：
+
+```go
+package sort
+
+type Interface interface {
+    Len() int
+    Less(i, j int) bool // i, j are indices of sequence elements
+    Swap(i, j int)
+}
+```
+
+为了对序列进行排序，我们需要定义一个实现了这三个方法的类型，然后对这个类型的一个实例应用sort.Sort函数。思考对一个字符串切片进行排序，这可能是最简单的例子了。下面是这个新的类型StringSlice和它的Len，Less和Swap方法
+
+```go
+type StringSlice []string
+func (p StringSlice) Len() int           { return len(p) }
+func (p StringSlice) Less(i, j int) bool { return p[i] < p[j] }
+func (p StringSlice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+```
+
+现在我们可以通过像下面这样将一个切片转换为一个StringSlice类型来进行排序：
+
+```go
+sort.Sort(StringSlice(names))
+```
+
+这个转换得到一个相同长度，容量，和基于names数组的切片值；并且这个切片值的类型有三个排序需要的方法。
+
+**对字符串切片的排序是很常用的需要，所以sort包提供了StringSlice类型，也提供了Strings函数能让上面这些调用简化成sort.Strings(names)**。
+
+这里用到的技术很容易适用到其它排序序列中，例如我们可以忽略大小写或者含有的特殊字符。（本书使用Go程序对索引词和页码进行排序也用到了这个技术，对罗马数字做了额外逻辑处理。）对于更复杂的排序，我们使用相同的方法，但是会用更复杂的数据结构和更复杂地实现sort.Interface的方法。
+
+我们会运行上面的例子来对一个表格中的音乐播放列表进行排序。每个track都是单独的一行，每一列都是这个track的属性像艺术家，标题，和运行时间。想象一个图形用户界面来呈现这个表格，并且点击一个属性的顶部会使这个列表按照这个属性进行排序；再一次点击相同属性的顶部会进行逆向排序。让我们看下每个点击会发生什么响应。
+
+下面的变量tracks包含了一个播放列表。（One of the authors apologizes for the other author’s musical tastes.）每个元素都不是Track本身而是指向它的指针。尽管我们在下面的代码中直接存储Tracks也可以工作，sort函数会交换很多对元素，所以如果每个元素都是指针而不是Track类型会更快，指针是一个机器字码长度而Track类型可能是八个或更多。
+
+*gopl.io/ch7/sorting*
+
+```go
+type Track struct {
+    Title  string
+    Artist string
+    Album  string
+    Year   int
+    Length time.Duration
+}
+
+var tracks = []*Track{
+    {"Go", "Delilah", "From the Roots Up", 2012, length("3m38s")},
+    {"Go", "Moby", "Moby", 1992, length("3m37s")},
+    {"Go Ahead", "Alicia Keys", "As I Am", 2007, length("4m36s")},
+    {"Ready 2 Go", "Martin Solveig", "Smash", 2011, length("4m24s")},
+}
+
+func length(s string) time.Duration {
+    d, err := time.ParseDuration(s)
+    if err != nil {
+        panic(s)
+    }
+    return d
+}
+```
+
+printTracks函数将播放列表打印成一个表格。一个图形化的展示可能会更好点，但是这个小程序使用text/tabwriter包来生成一个列整齐对齐和隔开的表格，像下面展示的这样。注意到`*tabwriter.Writer`是满足io.Writer接口的。它会收集每一片写向它的数据；它的Flush方法会格式化整个表格并且将它写向os.Stdout（标准输出）。
+
+```go
+func printTracks(tracks []*Track) {
+    const format = "%v\t%v\t%v\t%v\t%v\t\n"
+    tw := new(tabwriter.Writer).Init(os.Stdout, 0, 8, 2, ' ', 0)
+    fmt.Fprintf(tw, format, "Title", "Artist", "Album", "Year", "Length")
+    fmt.Fprintf(tw, format, "-----", "------", "-----", "----", "------")
+    for _, t := range tracks {
+        fmt.Fprintf(tw, format, t.Title, t.Artist, t.Album, t.Year, t.Length)
+    }
+    tw.Flush() // calculate column widths and print table
+}
+```
+
+为了能按照Artist字段对播放列表进行排序，我们会像对StringSlice那样定义一个新的带有必须的Len，Less和Swap方法的切片类型。
+
+```go
+type byArtist []*Track
+func (x byArtist) Len() int           { return len(x) }
+func (x byArtist) Less(i, j int) bool { return x[i].Artist < x[j].Artist }
+func (x byArtist) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }
+```
+
+为了调用通用的排序程序，我们必须先将tracks转换为新的byArtist类型，它定义了具体的排序：
+
+```go
+sort.Sort(byArtist(tracks))
+```
+
+在按照artist对这个切片进行排序后，printTrack的输出如下
+
+```
+Title       Artist          Album               Year Length
+-----       ------          -----               ---- ------
+Go Ahead    Alicia Keys     As I Am             2007 4m36s
+Go          Delilah         From the Roots Up   2012 3m38s
+Ready 2 Go  Martin Solveig  Smash               2011 4m24s
+Go          Moby            Moby                1992 3m37s
+```
+
+如果用户第二次请求“按照artist排序”，我们会对tracks进行逆向排序。然而我们不需要定义一个有颠倒Less方法的新类型byReverseArtist，因为sort包中提供了Reverse函数将排序顺序转换成逆序。
+
+```go
+sort.Sort(sort.Reverse(byArtist(tracks)))
+```
+
+在按照artist对这个切片进行逆向排序后，printTrack的输出如下
+
+```
+Title       Artist          Album               Year Length
+-----       ------          -----               ---- ------
+Go          Moby            Moby                1992 3m37s
+Ready 2 Go  Martin Solveig  Smash               2011 4m24s
+Go          Delilah         From the Roots Up   2012 3m38s
+Go Ahead    Alicia Keys     As I Am             2007 4m36s
+```
+
+sort.Reverse函数值得进行更近一步的学习，因为它使用了（§6.3）章中的组合，这是一个重要的思路。sort包定义了一个不公开的struct类型reverse，它嵌入了一个sort.Interface。reverse的Less方法调用了内嵌的sort.Interface值的Less方法，但是通过交换索引的方式使排序结果变成逆序。
+
+```go
+package sort
+
+type reverse struct{ Interface } // that is, sort.Interface
+
+func (r reverse) Less(i, j int) bool { return r.Interface.Less(j, i) }
+
+func Reverse(data Interface) Interface { return reverse{data} }
+```
+
+reverse的另外两个方法Len和Swap隐式地由原有内嵌的sort.Interface提供。因为reverse是一个不公开的类型，所以导出函数Reverse返回一个包含原有sort.Interface值的reverse类型实例。
+
+为了可以按照不同的列进行排序，我们必须定义一个新的类型例如byYear：
+
+```go
+type byYear []*Track
+func (x byYear) Len() int           { return len(x) }
+func (x byYear) Less(i, j int) bool { return x[i].Year < x[j].Year }
+func (x byYear) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }
+```
+
+在使用sort.Sort(byYear(tracks))按照年对tracks进行排序后，printTrack展示了一个按时间先后顺序的列表：
+
+```
+Title       Artist          Album               Year Length
+-----       ------          -----               ---- ------
+Go          Moby            Moby                1992 3m37s
+Go Ahead    Alicia Keys     As I Am             2007 4m36s
+Ready 2 Go  Martin Solveig  Smash               2011 4m24s
+Go          Delilah         From the Roots Up   2012 3m38s
+```
+
+对于我们需要的每个切片元素类型和每个排序函数，我们需要定义一个新的sort.Interface实现。如你所见，Len和Swap方法对于所有的切片类型都有相同的定义。下个例子，具体的类型customSort会将一个切片和函数结合，使我们只需要写比较函数就可以定义一个新的排序。顺便说下，<u>实现了sort.Interface的具体类型不一定是切片类型；customSort是一个结构体类型</u>。
+
+```go
+type customSort struct {
+    t    []*Track
+    less func(x, y *Track) bool
+}
+
+func (x customSort) Len() int           { return len(x.t) }
+func (x customSort) Less(i, j int) bool { return x.less(x.t[i], x.t[j]) }
+func (x customSort) Swap(i, j int)    { x.t[i], x.t[j] = x.t[j], x.t[i] }
+```
+
+让我们定义一个多层的排序函数，它主要的排序键是标题，第二个键是年，第三个键是运行时间Length。下面是该排序的调用，其中这个排序使用了匿名排序函数：
+
+```go
+sort.Sort(customSort{tracks, func(x, y *Track) bool {
+    if x.Title != y.Title {
+        return x.Title < y.Title
+    }
+    if x.Year != y.Year {
+        return x.Year < y.Year
+    }
+    if x.Length != y.Length {
+        return x.Length < y.Length
+    }
+    return false
+}})
+```
+
+这下面是排序的结果。注意到两个标题是“Go”的track按照标题排序是相同的顺序，但是在按照year排序上更久的那个track优先。
+
+```
+Title       Artist          Album               Year Length
+-----       ------          -----               ---- ------
+Go          Moby            Moby                1992 3m37s
+Go          Delilah         From the Roots Up   2012 3m38s
+Go Ahead    Alicia Keys     As I Am             2007 4m36s
+Ready 2 Go  Martin Solveig  Smash               2011 4m24s
+```
+
+尽管对长度为n的序列排序需要 O(n log n)次比较操作，检查一个序列是否已经有序至少需要n-1次比较。sort包中的IsSorted函数帮我们做这样的检查。像sort.Sort一样，它也使用sort.Interface对这个序列和它的排序函数进行抽象，但是它从不会调用Swap方法：这段代码示范了IntsAreSorted和Ints函数在IntSlice类型上的使用：
+
+```go
+values := []int{3, 1, 4, 1}
+fmt.Println(sort.IntsAreSorted(values)) // "false"
+sort.Ints(values)
+fmt.Println(values)                     // "[1 1 3 4]"
+fmt.Println(sort.IntsAreSorted(values)) // "true"
+sort.Sort(sort.Reverse(sort.IntSlice(values)))
+fmt.Println(values)                     // "[4 3 1 1]"
+fmt.Println(sort.IntsAreSorted(values)) // "false"
+```
+
+**为了使用方便，sort包为[]int、[]string和[]float64的正常排序提供了特定版本的函数和类型。对于其他类型，例如[]int64或者[]uint，尽管路径也很简单，还是依赖我们自己实现**。
+
+## 7.7 http.Handler接口
+
+### 注意点-函数类型转换
+
+该章节涉及"函数类型"的转换！
+
++ **语句http.HandlerFunc(db.list)是一个<u>转换</u>而非一个函数调用，因为http.HandlerFunc是一个类型。**（<u>这句在下面文章中有出现</u>）
+
+回顾一下前面5.5 函数值的章节的例子，进行修改
+
++ ```go
+  package main
+  
+  import "fmt"
+  
+  func square(n int) int     { return n * n }
+  func negative(n int) int   { return -n }
+  
+  type myFunc func(a int) int
+  
+  func main() {
+  	f := square
+  	fmt.Println(f(3)) // "9"
+  	f = negative
+  	fmt.Println(f(3))     // "-3"
+  	fmt.Printf("%T\n", f) // "func(int) int"
+  	t := negative
+  	fmt.Println(t(3)) // -3
+  	t = func(int )int(square)
+  	fmt.Println(t(3)) // 9
+  	t = myFunc(negative)
+  	fmt.Println(t(3)) // -3
+  	fmt.Printf("%T\n", t) // "func(int) int"
+  }
+  ```
+
+  
+
+---
+
+在第一章中，我们粗略的了解了怎么用net/http包去实现网络客户端（§1.5）和服务器（§1.7）。在这个小节中，我们会对那些基于http.Handler接口的服务器API做更进一步的学习：
+
+*net/http*
+
+```go
+package http
+
+type Handler interface {
+    ServeHTTP(w ResponseWriter, r *Request)
+}
+
+func ListenAndServe(address string, h Handler) error
+```
+
+ListenAndServe函数需要一个例如“localhost:8000”的服务器地址，和一个所有请求都可以分派的Handler接口实例。它会一直运行，直到这个服务因为一个错误而失败（或者启动失败），它的返回值一定是一个非空的错误。
+
+想象一个电子商务网站，为了销售，将数据库中物品的价格映射成美元。下面这个程序可能是能想到的最简单的实现了。它将库存清单模型化为一个命名为database的map类型，我们给这个类型一个ServeHttp方法，这样它可以满足http.Handler接口。这个handler会遍历整个map并输出物品信息。
+
+*gopl.io/ch7/http1*
+
+```go
+func main() {
+    db := database{"shoes": 50, "socks": 5}
+    log.Fatal(http.ListenAndServe("localhost:8000", db))
+}
+
+type dollars float32
+
+func (d dollars) String() string { return fmt.Sprintf("$%.2f", d) }
+
+type database map[string]dollars
+
+func (db database) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+    for item, price := range db {
+        fmt.Fprintf(w, "%s: %s\n", item, price)
+    }
+}
+```
+
+如果我们启动这个服务，
+
+```
+$ go build gopl.io/ch7/http1
+$ ./http1 &
+```
+
+然后用1.5节中的获取程序（如果你更喜欢可以使用web浏览器）来连接服务器，我们得到下面的输出：
+
+```
+$ go build gopl.io/ch1/fetch
+$ ./fetch http://localhost:8000
+shoes: $50.00
+socks: $5.00
+```
+
+目前为止，这个服务器不考虑URL，只能为每个请求列出它全部的库存清单。更真实的服务器会定义多个不同的URL，每一个都会触发一个不同的行为。让我们使用/list来调用已经存在的这个行为并且增加另一个/price调用表明单个货品的价格，像这样/price?item=socks来指定一个请求参数。
+
+*gopl.io/ch7/http2*
+
+```go
+func (db database) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+    switch req.URL.Path {
+    case "/list":
+        for item, price := range db {
+            fmt.Fprintf(w, "%s: %s\n", item, price)
+        }
+    case "/price":
+        item := req.URL.Query().Get("item")
+        price, ok := db[item]
+        if !ok {
+            w.WriteHeader(http.StatusNotFound) // 404
+            fmt.Fprintf(w, "no such item: %q\n", item)
+            return
+        }
+        fmt.Fprintf(w, "%s\n", price)
+    default:
+        w.WriteHeader(http.StatusNotFound) // 404
+        fmt.Fprintf(w, "no such page: %s\n", req.URL)
+    }
+}
+```
+
+现在handler基于URL的路径部分（req.URL.Path）来决定执行什么逻辑。如果这个handler不能识别这个路径，它会通过调用w.WriteHeader(http.StatusNotFound)返回客户端一个HTTP错误；这个检查应该在向w写入任何值前完成。（顺便提一下，http.ResponseWriter是另一个接口。它在io.Writer上增加了发送HTTP相应头的方法。）等效地，我们可以使用实用的http.Error函数：
+
+```go
+msg := fmt.Sprintf("no such page: %s\n", req.URL)
+http.Error(w, msg, http.StatusNotFound) // 404
+```
+
+/price的case会调用URL的Query方法来将HTTP请求参数解析为一个map，或者更准确地说一个net/url包中url.Values(§6.2.1)类型的多重映射。然后找到第一个item参数并查找它的价格。如果这个货品没有找到会返回一个错误。
+
+这里是一个和新服务器会话的例子：
+
+```
+$ go build gopl.io/ch7/http2
+$ go build gopl.io/ch1/fetch
+$ ./http2 &
+$ ./fetch http://localhost:8000/list
+shoes: $50.00
+socks: $5.00
+$ ./fetch http://localhost:8000/price?item=socks
+$5.00
+$ ./fetch http://localhost:8000/price?item=shoes
+$50.00
+$ ./fetch http://localhost:8000/price?item=hat
+no such item: "hat"
+$ ./fetch http://localhost:8000/help
+no such page: /help
+```
+
+显然我们可以继续向ServeHTTP方法中添加case，但在一个实际的应用中，将每个case中的逻辑定义到一个分开的方法或函数中会很实用。此外，相近的URL可能需要相似的逻辑；例如几个图片文件可能有形如/images/*.png的URL。因为这些原因，net/http包提供了一个请求多路器ServeMux来简化URL和handlers的联系。一个ServeMux将一批http.Handler聚集到一个单一的http.Handler中。再一次，我们可以看到满足同一接口的不同类型是可替换的：web服务器将请求指派给任意的http.Handler 而不需要考虑它后面的具体类型。
+
+<u>对于更复杂的应用，一些ServeMux可以通过组合来处理更加错综复杂的路由需求。Go语言目前没有一个权威的web框架，就像Ruby语言有Rails和python有Django。这并不是说这样的框架不存在，而是Go语言标准库中的构建模块就已经非常灵活以至于这些框架都是不必要的。此外，尽管在一个项目早期使用框架是非常方便的，但是它们带来额外的复杂度会使长期的维护更加困难</u>。
+
+在下面的程序中，我们创建一个ServeMux并且使用它将URL和相应处理/list和/price操作的handler联系起来，这些操作逻辑都已经被分到不同的方法中。然后我们在调用ListenAndServe函数中使用ServeMux为主要的handler。
+
+*gopl.io/ch7/http3*
+
+```go
+func main() {
+    db := database{"shoes": 50, "socks": 5}
+    mux := http.NewServeMux()
+    mux.Handle("/list", http.HandlerFunc(db.list))
+    mux.Handle("/price", http.HandlerFunc(db.price))
+    log.Fatal(http.ListenAndServe("localhost:8000", mux))
+}
+
+type database map[string]dollars
+
+func (db database) list(w http.ResponseWriter, req *http.Request) {
+    for item, price := range db {
+        fmt.Fprintf(w, "%s: %s\n", item, price)
+    }
+}
+
+func (db database) price(w http.ResponseWriter, req *http.Request) {
+    item := req.URL.Query().Get("item")
+    price, ok := db[item]
+    if !ok {
+        w.WriteHeader(http.StatusNotFound) // 404
+        fmt.Fprintf(w, "no such item: %q\n", item)
+        return
+    }
+    fmt.Fprintf(w, "%s\n", price)
+}
+```
+
+让我们关注这两个注册到handlers上的调用。第一个db.list是一个方法值（§6.4），它是下面这个类型的值。
+
+```go
+func(w http.ResponseWriter, req *http.Request)
+```
+
+也就是说db.list的调用会援引一个接收者是db的database.list方法。所以db.list是一个实现了handler类似行为的函数，但是因为它没有方法（理解：该方法没有它自己的方法），所以它不满足http.Handler接口并且不能直接传给mux.Handle。
+
+**语句http.HandlerFunc(db.list)是一个<u>转换</u>而非一个函数调用，因为http.HandlerFunc是一个类型。**它有如下的定义：
+
+*net/http*
+
+```go
+package http
+
+type HandlerFunc func(w ResponseWriter, r *Request)
+
+func (f HandlerFunc) ServeHTTP(w ResponseWriter, r *Request) {
+    f(w, r)
+}
+```
+
+<u>HandlerFunc显示了在Go语言接口机制中一些不同寻常的特点。**这是一个实现了接口http.Handler的方法的函数类型。ServeHTTP方法的行为是调用了它的函数本身**。</u>
+
+<u>因此**HandlerFunc是一个让函数值满足一个接口的适配器**，这里函数和这个接口仅有的方法有相同的函数签名。实际上，这个技巧让一个单一的类型例如database以多种方式满足http.Handler接口：一种通过它的list方法，一种通过它的price方法等等</u>。
+
+**因为handler通过这种方式注册非常普遍，ServeMux有一个方便的HandleFunc方法，它帮我们简化handler注册代码成这样**：
+
+*gopl.io/ch7/http3a*
+
+```go
+mux.HandleFunc("/list", db.list)
+mux.HandleFunc("/price", db.price)
+```
+
+从上面的代码很容易看出应该怎么构建一个程序：由两个不同的web服务器监听不同的端口，并且定义不同的URL将它们指派到不同的handler。我们只要构建另外一个ServeMux并且再调用一次ListenAndServe（可能并行的）。但是在大多数程序中，一个web服务器就足够了。此外，在一个应用程序的多个文件中定义HTTP handler也是非常典型的，如果它们必须全部都显式地注册到这个应用的ServeMux实例上会比较麻烦。
+
+**所以为了方便，net/http包提供了一个全局的ServeMux实例DefaultServerMux和包级别的http.Handle和http.HandleFunc函数。现在，为了使用DefaultServeMux作为服务器的主handler，我们不需要将它传给ListenAndServe函数；nil值就可以工作**。
+
+然后服务器的主函数可以简化成：
+
+*gopl.io/ch7/http4*
+
+```go
+func main() {
+    db := database{"shoes": 50, "socks": 5}
+    http.HandleFunc("/list", db.list)
+    http.HandleFunc("/price", db.price)
+    log.Fatal(http.ListenAndServe("localhost:8000", nil))
+}
+```
+
+最后，一个重要的提示：就像我们在1.7节中提到的，**web服务器在一个新的协程中调用每一个handler，所以当handler获取其它协程或者这个handler本身的其它请求也可以访问到变量时，一定要使用预防措施，比如锁机制**。我们后面的两章中将讲到并发相关的知识。
