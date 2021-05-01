@@ -1911,3 +1911,887 @@ func main() {
 ```
 
 最后，一个重要的提示：就像我们在1.7节中提到的，**web服务器在一个新的协程中调用每一个handler，所以当handler获取其它协程或者这个handler本身的其它请求也可以访问到变量时，一定要使用预防措施，比如锁机制**。我们后面的两章中将讲到并发相关的知识。
+
+## 7.8 error接口
+
+**从本书的开始，我们就已经创建和使用过神秘的预定义error类型，而且没有解释它究竟是什么。实际上它就是interface类型，这个类型有一个返回错误信息的单一方法**：
+
+```go
+type error interface {
+    Error() string
+}
+```
+
+创建一个error最简单的方法就是调用errors.New函数，它会根据传入的错误信息返回一个新的error。整个errors包仅只有4行：
+
+```go
+package errors
+
+func New(text string) error { return &errorString{text} }
+
+type errorString struct { text string }
+
+func (e *errorString) Error() string { return e.text }
+```
+
+**承载errorString的类型是一个结构体而非一个字符串，这是为了保护它表示的错误避免粗心（或有意）的更新**。并且因为是指针类型`*errorString`满足error接口而非errorString类型，所以每个New函数的调用都分配了一个独特的和其他错误不相同的实例。我们也不想要重要的error例如io.EOF和一个刚好有相同错误消息的error比较后相等。
+
+```go
+fmt.Println(errors.New("EOF") == errors.New("EOF")) // "false"
+```
+
+**调用errors.New函数是非常稀少的，因为有一个方便的封装函数fmt.Errorf，它还会处理字符串格式化**。我们曾多次在第5章中用到它。
+
+```go
+package fmt
+
+import "errors"
+
+func Errorf(format string, args ...interface{}) error {
+    return errors.New(Sprintf(format, args...))
+}
+```
+
+**虽然`*errorString`可能是最简单的错误类型，但远非只有它一个。例如，syscall包提供了Go语言底层系统调用API。在多个平台上，它定义一个实现error接口的数字类型Errno，并且在Unix平台上，Errno的Error方法会从一个字符串表中查找错误消息**，如下面展示的这样：
+
+```go
+package syscall
+
+type Errno uintptr // operating system error code
+
+var errors = [...]string{
+    1:   "operation not permitted",   // EPERM
+    2:   "no such file or directory", // ENOENT
+    3:   "no such process",           // ESRCH
+    // ...
+}
+
+func (e Errno) Error() string {
+    if 0 <= int(e) && int(e) < len(errors) {
+        return errors[e]
+    }
+    return fmt.Sprintf("errno %d", e)
+}
+```
+
+下面的语句创建了一个持有Errno值为2的接口值，表示POSIX ENOENT状况：
+
+```go
+var err error = syscall.Errno(2)
+fmt.Println(err.Error()) // "no such file or directory"
+fmt.Println(err)         // "no such file or directory"
+```
+
+err的值图形化的呈现在图7.6中。
+
+![img](http://books.studygolang.com/gopl-zh/images/ch7-06.png)
+
+**Errno是一个系统调用错误的高效表示方式，它通过一个有限的集合进行描述，并且它满足标准的错误接口**。我们会在第7.11节了解到其它满足这个接口的类型。
+
+## 7.9 示例: 表达式求值
+
+在本节中，我们会构建一个简单算术表达式的求值器。我们将使用一个接口Expr来表示Go语言中任意的表达式。现在这个接口不需要有方法，但是我们后面会为它增加一些。
+
+```go
+// An Expr is an arithmetic expression.
+type Expr interface{}
+```
+
+我们的表达式语言由浮点数符号（小数点）；二元操作符+，-，*， 和/；一元操作符-x和+x；调用pow(x,y)，sin(x)，和sqrt(x)的函数；例如x和pi的变量；当然也有括号和标准的优先级运算符。所有的值都是float64类型。这下面是一些表达式的例子：
+
+```go
+sqrt(A / pi)
+pow(x, 3) + pow(y, 3)
+(F - 32) * 5 / 9
+```
+
+下面的五个具体类型表示了具体的表达式类型。Var类型表示对一个变量的引用。（我们很快会知道为什么它可以被输出。）literal类型表示一个浮点型常量。unary和binary类型表示有一到两个运算对象的运算符表达式，这些操作数可以是任意的Expr类型。call类型表示对一个函数的调用；我们限制它的fn字段只能是pow，sin或者sqrt。
+
+*gopl.io/ch7/eval*
+
+```go
+// A Var identifies a variable, e.g., x.
+type Var string
+
+// A literal is a numeric constant, e.g., 3.141.
+type literal float64
+
+// A unary represents a unary operator expression, e.g., -x.
+type unary struct {
+    op rune // one of '+', '-'
+    x  Expr
+}
+
+// A binary represents a binary operator expression, e.g., x+y.
+type binary struct {
+    op   rune // one of '+', '-', '*', '/'
+    x, y Expr
+}
+
+// A call represents a function call expression, e.g., sin(x).
+type call struct {
+    fn   string // one of "pow", "sin", "sqrt"
+    args []Expr
+}
+```
+
+为了计算一个包含变量的表达式，我们需要一个environment变量将变量的名字映射成对应的值：
+
+```go
+type Env map[Var]float64
+```
+
+我们也需要每个表达式去定义一个Eval方法，这个方法会根据给定的environment变量返回表达式的值。因为每个表达式都必须提供这个方法，我们将它加入到Expr接口中。这个包只会对外公开Expr，Env，和Var类型。调用方不需要获取其它的表达式类型就可以使用这个求值器。
+
+```go
+type Expr interface {
+    // Eval returns the value of this Expr in the environment env.
+    Eval(env Env) float64
+}
+```
+
+下面给大家展示一个具体的Eval方法。Var类型的这个方法对一个environment变量进行查找，如果这个变量没有在environment中定义过这个方法会返回一个零值，literal类型的这个方法简单的返回它真实的值。
+
+```go
+func (v Var) Eval(env Env) float64 {
+    return env[v]
+}
+
+func (l literal) Eval(_ Env) float64 {
+    return float64(l)
+}
+```
+
+unary和binary的Eval方法会递归的计算它的运算对象，然后将运算符op作用到它们上。我们不将被零或无穷数除作为一个错误，因为它们都会产生一个固定的结果——无限。最后，call的这个方法会计算对于pow，sin，或者sqrt函数的参数值，然后调用对应在math包中的函数。
+
+```go
+func (u unary) Eval(env Env) float64 {
+    switch u.op {
+    case '+':
+        return +u.x.Eval(env)
+    case '-':
+        return -u.x.Eval(env)
+    }
+    panic(fmt.Sprintf("unsupported unary operator: %q", u.op))
+}
+
+func (b binary) Eval(env Env) float64 {
+    switch b.op {
+    case '+':
+        return b.x.Eval(env) + b.y.Eval(env)
+    case '-':
+        return b.x.Eval(env) - b.y.Eval(env)
+    case '*':
+        return b.x.Eval(env) * b.y.Eval(env)
+    case '/':
+        return b.x.Eval(env) / b.y.Eval(env)
+    }
+    panic(fmt.Sprintf("unsupported binary operator: %q", b.op))
+}
+
+func (c call) Eval(env Env) float64 {
+    switch c.fn {
+    case "pow":
+        return math.Pow(c.args[0].Eval(env), c.args[1].Eval(env))
+    case "sin":
+        return math.Sin(c.args[0].Eval(env))
+    case "sqrt":
+        return math.Sqrt(c.args[0].Eval(env))
+    }
+    panic(fmt.Sprintf("unsupported function call: %s", c.fn))
+}
+```
+
+<u>一些方法会失败。例如，一个call表达式可能有未知的函数或者错误的参数个数。用一个无效的运算符如!或者<去构建一个unary或者binary表达式也是可能会发生的（尽管下面提到的Parse函数不会这样做）。这些错误会让Eval方法panic</u>。其它的错误，像计算一个没有在environment变量中出现过的Var，只会让Eval方法返回一个错误的结果。所有的这些错误都可以通过在计算前检查Expr来发现。这是我们接下来要讲的Check方法的工作，但是让我们先测试Eval方法。
+
+下面的TestEval函数是对evaluator的一个测试。它使用了我们会在第11章讲解的testing包，但是现在知道调用t.Errof会报告一个错误就足够了。这个函数循环遍历一个表格中的输入，这个表格中定义了三个表达式和针对每个表达式不同的环境变量。第一个表达式根据给定圆的面积A计算它的半径，第二个表达式通过两个变量x和y计算两个立方体的体积之和，第三个表达式将华氏温度F转换成摄氏度。
+
+```go
+func TestEval(t *testing.T) {
+    tests := []struct {
+        expr string
+        env  Env
+        want string
+    }{
+        {"sqrt(A / pi)", Env{"A": 87616, "pi": math.Pi}, "167"},
+        {"pow(x, 3) + pow(y, 3)", Env{"x": 12, "y": 1}, "1729"},
+        {"pow(x, 3) + pow(y, 3)", Env{"x": 9, "y": 10}, "1729"},
+        {"5 / 9 * (F - 32)", Env{"F": -40}, "-40"},
+        {"5 / 9 * (F - 32)", Env{"F": 32}, "0"},
+        {"5 / 9 * (F - 32)", Env{"F": 212}, "100"},
+    }
+    var prevExpr string
+    for _, test := range tests {
+        // Print expr only when it changes.
+        if test.expr != prevExpr {
+            fmt.Printf("\n%s\n", test.expr)
+            prevExpr = test.expr
+        }
+        expr, err := Parse(test.expr)
+        if err != nil {
+            t.Error(err) // parse error
+            continue
+        }
+        got := fmt.Sprintf("%.6g", expr.Eval(test.env))
+        fmt.Printf("\t%v => %s\n", test.env, got)
+        if got != test.want {
+            t.Errorf("%s.Eval() in %v = %q, want %q\n",
+            test.expr, test.env, got, test.want)
+        }
+    }
+}
+```
+
+对于表格中的每一条记录，这个测试会解析它的表达式然后在环境变量中计算它，输出结果。这里我们没有空间来展示Parse函数，但是如果你使用go get下载这个包你就可以看到这个函数。
+
+go test(§11.1) 命令会运行一个包的测试用例：
+
+```shell
+$ go test -v gopl.io/ch7/eval
+```
+
+这个-v标识可以让我们看到测试用例打印的输出；正常情况下像这样一个成功的测试用例会阻止打印结果的输出。这里是测试用例里fmt.Printf语句的输出：
+
+```shell
+sqrt(A / pi)
+    map[A:87616 pi:3.141592653589793] => 167
+
+pow(x, 3) + pow(y, 3)
+    map[x:12 y:1] => 1729
+    map[x:9 y:10] => 1729
+
+5 / 9 * (F - 32)
+    map[F:-40] => -40
+    map[F:32] => 0
+    map[F:212] => 100
+```
+
+幸运的是目前为止所有的输入都是适合的格式，但是我们的运气不可能一直都有。甚至在解释型语言中，为了静态错误检查语法是非常常见的；**静态错误就是不用运行程序就可以检测出来的错误**。
+
+通过将静态检查和动态的部分分开，我们可以快速的检查错误并且对于多次检查只执行一次而不是每次表达式计算的时候都进行检查。
+
+让我们往Expr接口中增加另一个方法。Check方法对一个表达式语义树检查出静态错误。我们马上会说明它的vars参数。
+
+```go
+type Expr interface {
+    Eval(env Env) float64
+    // Check reports errors in this Expr and adds its Vars to the set.
+    Check(vars map[Var]bool) error
+}
+```
+
+具体的Check方法展示在下面。literal和Var类型的计算不可能失败，所以这些类型的Check方法会返回一个nil值。对于unary和binary的Check方法会首先检查操作符是否有效，然后递归的检查运算单元。相似地对于call的这个方法首先检查调用的函数是否已知并且有没有正确个数的参数，然后递归的检查每一个参数。
+
+```go
+func (v Var) Check(vars map[Var]bool) error {
+    vars[v] = true
+    return nil
+}
+
+func (literal) Check(vars map[Var]bool) error {
+    return nil
+}
+
+func (u unary) Check(vars map[Var]bool) error {
+    if !strings.ContainsRune("+-", u.op) {
+        return fmt.Errorf("unexpected unary op %q", u.op)
+    }
+    return u.x.Check(vars)
+}
+
+func (b binary) Check(vars map[Var]bool) error {
+    if !strings.ContainsRune("+-*/", b.op) {
+        return fmt.Errorf("unexpected binary op %q", b.op)
+    }
+    if err := b.x.Check(vars); err != nil {
+        return err
+    }
+    return b.y.Check(vars)
+}
+
+func (c call) Check(vars map[Var]bool) error {
+    arity, ok := numParams[c.fn]
+    if !ok {
+        return fmt.Errorf("unknown function %q", c.fn)
+    }
+    if len(c.args) != arity {
+        return fmt.Errorf("call to %s has %d args, want %d",
+            c.fn, len(c.args), arity)
+    }
+    for _, arg := range c.args {
+        if err := arg.Check(vars); err != nil {
+            return err
+        }
+    }
+    return nil
+}
+
+var numParams = map[string]int{"pow": 2, "sin": 1, "sqrt": 1}
+```
+
+我们在两个组中有选择地列出有问题的输入和它们得出的错误。Parse函数（这里没有出现）会报出一个语法错误和Check函数会报出语义错误。
+
+```
+x % 2               unexpected '%'
+math.Pi             unexpected '.'
+!true               unexpected '!'
+"hello"             unexpected '"'
+
+log(10)             unknown function "log"
+sqrt(1, 2)          call to sqrt has 2 args, want 1
+```
+
+Check方法的参数是一个Var类型的集合，这个集合聚集从表达式中找到的变量名。为了保证成功的计算，这些变量中的每一个都必须出现在环境变量中。从逻辑上讲，这个集合就是调用Check方法返回的结果，但是因为这个方法是递归调用的，所以对于Check方法，填充结果到一个作为参数传入的集合中会更加的方便。调用方在初始调用时必须提供一个空的集合。
+
+在第3.2节中，我们绘制了一个在编译期才确定的函数f(x,y)。现在我们可以解析，检查和计算在字符串中的表达式，我们可以构建一个在运行时从客户端接收表达式的web应用并且它会绘制这个函数的表示的曲面。我们可以使用集合vars来检查表达式是否是一个只有两个变量x和y的函数——实际上是3个，因为我们为了方便会提供半径大小r。并且我们会在计算前使用Check方法拒绝有格式问题的表达式，这样我们就不会在下面函数的40000个计算过程（100x100个栅格，每一个有4个角）重复这些检查。
+
+这个ParseAndCheck函数混合了解析和检查步骤的过程：
+
+*gopl.io/ch7/surface*
+
+```go
+import "gopl.io/ch7/eval"
+
+func parseAndCheck(s string) (eval.Expr, error) {
+    if s == "" {
+        return nil, fmt.Errorf("empty expression")
+    }
+    expr, err := eval.Parse(s)
+    if err != nil {
+        return nil, err
+    }
+    vars := make(map[eval.Var]bool)
+    if err := expr.Check(vars); err != nil {
+        return nil, err
+    }
+    for v := range vars {
+        if v != "x" && v != "y" && v != "r" {
+            return nil, fmt.Errorf("undefined variable: %s", v)
+        }
+    }
+    return expr, nil
+}
+```
+
+为了编写这个web应用，所有我们需要做的就是下面这个plot函数，这个函数有和http.HandlerFunc相似的签名：
+
+```go
+func plot(w http.ResponseWriter, r *http.Request) {
+    r.ParseForm()
+    expr, err := parseAndCheck(r.Form.Get("expr"))
+    if err != nil {
+        http.Error(w, "bad expr: "+err.Error(), http.StatusBadRequest)
+        return
+    }
+    w.Header().Set("Content-Type", "image/svg+xml")
+    surface(w, func(x, y float64) float64 {
+        r := math.Hypot(x, y) // distance from (0,0)
+        return expr.Eval(eval.Env{"x": x, "y": y, "r": r})
+    })
+}
+```
+
+![img](http://books.studygolang.com/gopl-zh/images/ch7-07.png)
+
+这个plot函数解析和检查在HTTP请求中指定的表达式并且用它来创建一个两个变量的匿名函数。这个匿名函数和来自原来surface-plotting程序中的固定函数f有相同的签名，但是它计算一个用户提供的表达式。环境变量中定义了x，y和半径r。最后plot调用surface函数，它就是gopl.io/ch3/surface中的主要函数，修改后它可以接受plot中的函数和输出io.Writer作为参数，而不是使用固定的函数f和os.Stdout。图7.7中显示了通过程序产生的3个曲面。
+
+## 7.10 类型断言
+
+**类型断言是一个使用在接口值上的操作。语法上它看起来像x.(T)被称为断言类型，这里x表示一个接口的类型和T表示一个类型。**
+
+**一个类型断言检查它操作对象的动态类型是否和断言的类型匹配**。
+
+这里有两种可能。
+
++ <u>第一种，如果断言的类型T是一个**具体类型**，然后类型断言检查x的动态类型是否和T相同。如果这个检查成功了，类型断言的结果是x的动态值，当然它的类型是T。换句话说，具体类型的类型断言从它的操作对象中获得具体的值。如果检查失败，接下来这个操作会抛出panic</u>。
+
+例如：
+
+```go
+var w io.Writer
+w = os.Stdout
+f := w.(*os.File)      // success: f == os.Stdout
+c := w.(*bytes.Buffer) // panic: interface holds *os.File, not *bytes.Buffer
+```
+
++ <u>第二种，如果相反地断言的类型T是一个**接口类型**，然后类型断言检查是否x的动态类型满足T。如果这个检查成功了，动态值没有获取到；这个结果仍然是一个有相同动态类型和值部分的接口值，但是结果为类型T。换句话说，对一个接口类型的类型断言改变了类型的表述方式，改变了可以获取的方法集合（通常更大），但是它保留了接口值内部的动态类型和值的部分</u>。
+
+在下面的第一个类型断言后，w和rw都持有os.Stdout，因此它们都有一个动态类型`*os.File`，但是变量w是一个io.Writer类型，只对外公开了文件的Write方法，而rw变量还公开了它的Read方法。
+
+```go
+var w io.Writer
+w = os.Stdout
+rw := w.(io.ReadWriter) // success: *os.File has both Read and Write
+w = new(ByteCounter)
+rw = w.(io.ReadWriter) // panic: *ByteCounter has no Read method
+```
+
++ **如果断言操作的对象是一个nil接口值，那么不论被断言的类型是什么这个类型断言都会失败**。
+
+我们几乎不需要对一个更少限制性的接口类型（更少的方法集合）做断言，因为它表现的就像是赋值操作一样，除了对于nil接口值的情况。
+
+```go
+w = rw             // io.ReadWriter is assignable to io.Writer
+w = rw.(io.Writer) // fails only if rw == nil
+```
+
+**经常地，对一个接口值的动态类型我们是不确定的，并且我们更愿意去检验它是否是一些特定的类型**。
+
++ **如果类型断言出现在一个预期有两个结果的赋值操作中，例如如下的定义，这个操作不会在失败的时候发生panic，但是替代地返回一个额外的第二个结果，这个结果是一个标识成功与否的布尔值**：
+
+  ```go
+  var w io.Writer = os.Stdout
+  f, ok := w.(*os.File)      // success:  ok, f == os.Stdout
+  b, ok := w.(*bytes.Buffer) // failure: !ok, b == nil
+  ```
+
+  **第二个结果通常赋值给一个命名为ok的变量。如果这个操作失败了，那么ok就是false值，第一个结果等于被断言类型的零值**，在这个例子中就是一个nil的`*bytes.Buffer`类型。
+
+这个ok结果经常立即用于决定程序下面做什么。if语句的扩展格式让这个变的很简洁：
+
+```go
+if f, ok := w.(*os.File); ok {
+    // ...use f...
+}
+```
+
+<u>当类型断言的操作对象是一个变量，你有时会看见原来的变量名重用而不是声明一个新的本地变量名，这个重用的变量原来的值会被覆盖（理解：其实是声明了一个同名的新的本地变量，外层原来的w不会被改变）</u>，如下面这样：
+
+```go
+if w, ok := w.(*os.File); ok {
+    // ...use w...
+}
+```
+
+## 7.11 基于类型断言区别错误类型
+
+**思考在os包中文件操作返回的错误集合。I/O可以因为任何数量的原因失败，但是有三种经常的错误必须进行不同的处理：**
+
++ **文件已经存在（对于创建操作）**
++ **找不到文件（对于读取操作）**
++ **权限拒绝**
+
+os包中提供了三个帮助函数来对给定的错误值表示的失败进行分类：
+
+```go
+package os
+
+func IsExist(err error) bool
+func IsNotExist(err error) bool
+func IsPermission(err error) bool
+```
+
+对这些判断的一个缺乏经验的实现可能会去检查错误消息是否包含了特定的子字符串，
+
+```go
+func IsNotExist(err error) bool {
+    // NOTE: not robust!
+    return strings.Contains(err.Error(), "file does not exist")
+}
+```
+
+但是处理I/O错误的逻辑可能一个和另一个平台非常的不同，所以这种方案并不健壮，并且对相同的失败可能会报出各种不同的错误消息。在测试的过程中，通过检查错误消息的子字符串来保证特定的函数以期望的方式失败是非常有用的，但对于线上的代码是不够的。
+
+**一个更可靠的方式是使用一个专门的类型来描述结构化的错误**。
+
+**os包中定义了一个PathError类型来描述在文件路径操作中涉及到的失败，像Open或者Delete操作；并且定义了一个叫LinkError的变体来描述涉及到两个文件路径的操作，像Symlink和Rename**。
+
+这下面是os.PathError：
+
+```go
+package os
+
+// PathError records an error and the operation and file path that caused it.
+type PathError struct {
+    Op   string
+    Path string
+    Err  error
+}
+
+func (e *PathError) Error() string {
+    return e.Op + " " + e.Path + ": " + e.Err.Error()
+}
+```
+
+<u>大多数调用方都不知道PathError并且通过调用错误本身的Error方法来统一处理所有的错误。尽管PathError的Error方法简单地把这些字段连接起来生成错误消息，PathError的结构保护了内部的错误组件</u>。
+
+**调用方需要使用类型断言来检测错误的具体类型以便将一种失败和另一种区分开；具体的类型可以比字符串提供更多的细节**。
+
+```go
+_, err := os.Open("/no/such/file")
+fmt.Println(err) // "open /no/such/file: No such file or directory"
+fmt.Printf("%#v\n", err)
+// Output:
+// &os.PathError{Op:"open", Path:"/no/such/file", Err:0x2}
+```
+
+这就是三个帮助函数是怎么工作的。
+
+<u>例如下面展示的IsNotExist，它会报出是否一个错误和syscall.ENOENT（§7.8）或者和有名的错误os.ErrNotExist相等（可以在§5.4.2中找到io.EOF）；或者是一个`*PathError`，它内部的错误是syscall.ENOENT和os.ErrNotExist其中之一</u>。
+
+```go
+import (
+    "errors"
+    "syscall"
+)
+
+var ErrNotExist = errors.New("file does not exist")
+
+// IsNotExist returns a boolean indicating whether the error is known to
+// report that a file or directory does not exist. It is satisfied by
+// ErrNotExist as well as some syscall errors.
+func IsNotExist(err error) bool {
+    if pe, ok := err.(*PathError); ok {
+        err = pe.Err
+    }
+    return err == syscall.ENOENT || err == ErrNotExist
+}
+```
+
+下面这里是它的实际使用：
+
+```go
+_, err := os.Open("/no/such/file")
+fmt.Println(os.IsNotExist(err)) // "true"
+```
+
+**如果错误消息结合成一个更大的字符串，当然PathError的结构就不再为人所知，例如通过一个对fmt.Errorf函数的调用。**
+
++ **区别错误通常必须在失败操作后，错误传回调用者前进行**。
+
+## 7.12 通过类型断言询问行为
+
+下面这段逻辑和net/http包中web服务器负责写入HTTP头字段（例如："Content-type:text/html"）的部分相似。io.Writer接口类型的变量w代表HTTP响应；写入它的字节最终被发送到某个人的web浏览器上。
+
+```go
+func writeHeader(w io.Writer, contentType string) error {
+    if _, err := w.Write([]byte("Content-Type: ")); err != nil {
+        return err
+    }
+    if _, err := w.Write([]byte(contentType)); err != nil {
+        return err
+    }
+    // ...
+}
+```
+
+**因为Write方法需要传入一个byte切片而我们希望写入的值是一个字符串，所以我们需要使用[]byte(...)进行转换**。<u>这个转换分配内存并且做一个**拷贝**，但是**这个拷贝在转换后几乎立马就被丢弃掉<**/u>。让我们假装这是一个web服务器的核心部分并且我们的性能分析表示这个内存分配使服务器的速度变慢。这里我们可以避免掉内存分配么？
+
+这个io.Writer接口告诉我们关于w持有的具体类型的唯一东西：就是可以向它写入字节切片。如果我们回顾net/http包中的内幕，我们知道在这个程序中的w变量持有的动态类型也有一个**允许字符串高效写入的WriteString方法；这个方法会避免去分配一个临时的拷贝**。（这可能像在黑夜中射击一样，但是许多满足io.Writer接口的重要类型同时也有WriteString方法，包括`*bytes.Buffer`，`*os.File`和`*bufio.Writer`。）
+
++ **我们不能对任意io.Writer类型的变量w，假设它也拥有WriteString方法。但是我们可以定义一个只有这个方法的新接口并且使用类型断言来检测是否w的动态类型满足这个新接口**。
+
+```go
+// writeString writes s to w.
+// If w has a WriteString method, it is invoked instead of w.Write.
+func writeString(w io.Writer, s string) (n int, err error) {
+    type stringWriter interface {
+        WriteString(string) (n int, err error)
+    }
+    if sw, ok := w.(stringWriter); ok {
+        return sw.WriteString(s) // avoid a copy
+    }
+    return w.Write([]byte(s)) // allocate temporary copy
+}
+
+func writeHeader(w io.Writer, contentType string) error {
+    if _, err := writeString(w, "Content-Type: "); err != nil {
+        return err
+    }
+    if _, err := writeString(w, contentType); err != nil {
+        return err
+    }
+    // ...
+}
+```
+
++ **为了避免重复定义，我们将这个检查移入到一个实用工具函数writeString中，但是它太有用了以致于标准库将它作为io.WriteString函数提供。这是向一个io.Writer接口写入字符串的推荐方法**。
+
+这个例子的神奇之处在于，没有定义了WriteString方法的标准接口，也没有指定它是一个所需行为的标准接口。一个具体类型只会通过它的方法决定它是否满足stringWriter接口，而不是任何它和这个接口类型所表达的关系。<u>它的意思就是上面的技术依赖于一个假设，这个假设就是：如果一个类型满足下面的这个接口，然后WriteString(s)方法就必须和Write([]byte(s))有相同的效果</u>。
+
+```go
+interface {
+    io.Writer
+    WriteString(s string) (n int, err error)
+}
+```
+
+<u>尽管io.WriteString实施了这个假设，但是调用它的函数极少可能会去实施类似的假设</u>。
+
++ **定义一个特定类型的方法隐式地获取了对特定行为的协约**。
+
+对于Go语言的新手，特别是那些来自有强类型语言使用背景的新手，可能会发现它缺乏显式的意图令人感到混乱，但是**在实战的过程中这几乎不是一个问题。除了空接口interface{}，接口类型很少意外巧合地被实现**。
+
+上面的writeString函数使用一个类型断言来获知一个普遍接口类型的值是否满足一个更加具体的接口类型；并且如果满足，它会使用这个更具体接口的行为。这个技术可以被很好的使用，不论这个被询问的接口是一个标准如io.ReadWriter，或者用户定义的如stringWriter接口。
+
+**这也是fmt.Fprintf函数怎么从其它所有值中区分满足error或者fmt.Stringer接口的值。**
+
+**在fmt.Fprintf内部，有一个将单个操作对象转换成一个字符串的步骤，像下面这样**：
+
+```go
+package fmt
+
+func formatOneValue(x interface{}) string {
+    if err, ok := x.(error); ok {
+        return err.Error()
+    }
+    if str, ok := x.(Stringer); ok {
+        return str.String()
+    }
+    // ...all other types...
+}
+```
+
+<u>如果x满足这两个接口类型中的一个，具体满足的接口决定对值的格式化方式。如果都不满足，默认的case或多或少会统一地使用反射来处理所有的其它类型</u>；我们可以在第12章知道具体是怎么实现的。
+
+**再一次的，它假设任何有String方法的类型都满足fmt.Stringer中约定的行为，这个行为会返回一个适合打印的字符串**。
+
+## 7.13 类型分支
+
+### 注意点-可辨识联合
+
+下文上来就提到"可辨识联合"的概念，需要注意。在后续有对应的switch类型分支样例。
+
+---
+
+接口被以两种不同的方式使用。
+
++ 在第一个方式中，以io.Reader，io.Writer，fmt.Stringer，sort.Interface，http.Handler和error为典型，**一个接口的方法表达了实现这个接口的具体类型间的相似性，但是隐藏了代码的细节和这些具体类型本身的操作**。**重点在于方法上，而不是具体的类型上**。
+
++ **第二个方式是利用一个接口值可以持有各种具体类型值的能力，将这个接口认为是这些类型的联合**。<u>**类型断言**用来动态地区别这些类型，使得对每一种情况都不一样</u>。在这个方式中，重点在于具体的类型满足这个接口，而不在于接口的方法（如果它确实有一些的话），**并且没有任何的信息隐藏**。
+
+  **我们将以这种方式使用的接口描述为discriminated unions（可辨识联合）**。
+
+**如果你熟悉面向对象编程，你可能会将这两种方式当作是subtype polymorphism（子类型多态）和 ad hoc polymorphism（非参数多态），但是你不需要去记住这些术语**。对于本章剩下的部分，我们将会呈现一些第二种方式的例子。
+
+和其它那些语言一样，Go语言查询一个SQL数据库的API会干净地将查询中固定的部分和变化的部分分开。一个调用的例子可能看起来像这样：
+
+```go
+import "database/sql"
+
+func listTracks(db sql.DB, artist string, minYear, maxYear int) {
+    result, err := db.Exec(
+        "SELECT * FROM tracks WHERE artist = ? AND ? <= year AND year <= ?",
+        artist, minYear, maxYear)
+    // ...
+}
+```
+
+<u>Exec方法使用SQL字面量替换在查询字符串中的每个'?'；SQL字面量表示相应参数的值，它有可能是一个布尔值，一个数字，一个字符串，或者nil空值。**用这种方式构造查询可以帮助避免SQL注入攻击**；这种攻击就是对手可以通过利用输入内容中不正确的引号来控制查询语句</u>。在Exec函数内部，我们可能会找到像下面这样的一个函数，它会将每一个参数值转换成它的SQL字面量符号。
+
+```go
+func sqlQuote(x interface{}) string {
+    if x == nil {
+        return "NULL"
+    } else if _, ok := x.(int); ok {
+        return fmt.Sprintf("%d", x)
+    } else if _, ok := x.(uint); ok {
+        return fmt.Sprintf("%d", x)
+    } else if b, ok := x.(bool); ok {
+        if b {
+            return "TRUE"
+        }
+        return "FALSE"
+    } else if s, ok := x.(string); ok {
+        return sqlQuoteString(s) // (not shown)
+    } else {
+        panic(fmt.Sprintf("unexpected type %T: %v", x, x))
+    }
+}
+```
+
+**switch语句可以简化if-else链，如果这个if-else链对一连串值做相等测试。一个相似的type switch（类型分支）可以简化类型断言的if-else链**。
+
+在最简单的形式中，**一个类型分支像普通的switch语句一样，它的运算对象是x.(type)——它使用了关键词字面量type——并且每个case有一到多个类型。一个类型分支基于这个接口值的动态类型使一个多路分支有效。这个nil的case和if x == nil匹配，并且这个default的case和如果其它case都不匹配的情况匹配。**
+
+一个对sqlQuote的类型分支可能会有这些case：
+
+```go
+switch x.(type) {
+case nil:       // ...
+case int, uint: // ...
+case bool:      // ...
+case string:    // ...
+default:        // ...
+}
+```
+
+和（§1.8）中的普通switch语句一样，每一个case会被顺序的进行考虑，并且当一个匹配找到时，这个case中的内容会被执行。**当一个或多个case类型是接口时，case的顺序就会变得很重要，因为可能会有两个case同时匹配的情况**。<u>default case相对其它case的位置是无所谓的。它不会允许落空发生</u>。
+
+注意到在原来的函数中，对于bool和string情况的逻辑需要通过类型断言访问提取的值。
+
++ **因为这个做法很典型，类型分支语句有一个扩展的形式，它可以将提取的值绑定到一个在每个case范围内都有效的新变量**。
+
+```go
+switch x := x.(type) { /* ... */ }
+```
+
+这里我们已经将新的变量也命名为x；和类型断言一样，重用变量名是很常见的。
+
++ **和一个switch语句相似地，一个类型分支隐式的创建了一个词法块，因此新变量x的定义不会和外面块中的x变量冲突。**
++ **每一个case也会隐式的创建一个单独的词法块。**
+
+使用类型分支的扩展形式来重写sqlQuote函数会让这个函数更加的清晰：
+
+```go
+func sqlQuote(x interface{}) string {
+    switch x := x.(type) {
+    case nil:
+        return "NULL"
+    case int, uint:
+        return fmt.Sprintf("%d", x) // x has type interface{} here.
+    case bool:
+        if x {
+            return "TRUE"
+        }
+        return "FALSE"
+    case string:
+        return sqlQuoteString(x) // (not shown)
+    default:
+        panic(fmt.Sprintf("unexpected type %T: %v", x, x))
+    }
+}
+```
+
+在这个版本的函数中，在每个单一类型的case内部，变量x和这个case的类型相同。例如，变量x在bool的case中是bool类型和string的case中是string类型。
+
+<u>在所有其它的情况中，变量x是switch运算对象的类型（接口）；在这个例子中运算对象是一个interface{}</u>。
+
+**当多个case需要相同的操作时，比如int和uint的情况，类型分支可以很容易的合并这些情况**。
+
+尽管sqlQuote接受一个任意类型的参数，但是这个函数只会在它的参数匹配类型分支中的一个case时运行到结束；其它情况的它会panic出“unexpected type”消息。
+
+**虽然x的类型是interface{}，但是我们把它认为是一个int，uint，bool，string，和nil值的discriminated union（可识别联合）**
+
+## 7.14 示例: 基于标记的XML解码
+
+第4.5章节展示了如何使用encoding/json包中的Marshal和Unmarshal函数来将JSON文档转换成Go语言的数据结构。encoding/xml包提供了一个相似的API。当我们想构造一个文档树的表示时使用encoding/xml包会很方便，但是对于很多程序并不是必须的。encoding/xml包也提供了一个更低层的基于标记的API用于XML解码。
+
+**在基于标记的样式中，解析器消费输入并产生一个标记流；四个主要的标记类型－StartElement，EndElement，CharData，和Comment－每一个都是encoding/xml包中的具体类型**。每一个对(*xml.Decoder).Token的调用都返回一个标记。
+
+这里显示的是和这个API相关的部分：
+
+*encoding/xml*
+
+```go
+package xml
+
+type Name struct {
+    Local string // e.g., "Title" or "id"
+}
+
+type Attr struct { // e.g., name="value"
+    Name  Name
+    Value string
+}
+
+// A Token includes StartElement, EndElement, CharData,
+// and Comment, plus a few esoteric types (not shown).
+type Token interface{}
+type StartElement struct { // e.g., <name>
+    Name Name
+    Attr []Attr
+}
+type EndElement struct { Name Name } // e.g., </name>
+type CharData []byte                 // e.g., <p>CharData</p>
+type Comment []byte                  // e.g., <!-- Comment -->
+
+type Decoder struct{ /* ... */ }
+func NewDecoder(io.Reader) *Decoder
+func (*Decoder) Token() (Token, error) // returns next Token in sequence
+```
+
+**这个没有方法的Token接口也是一个可识别联合的例子。传统的接口如io.Reader的目的是隐藏满足它的具体类型的细节，这样就可以创造出新的实现：在这个实现中每个具体类型都被统一地对待。相反，满足可识别联合的具体类型的集合被设计为确定和暴露，而不是隐藏。**
+
++ **可识别联合的类型几乎没有方法，操作它们的函数使用一个类型分支的case集合来进行表述，这个case集合中每一个case都有不同的逻辑**。
+
+下面的xmlselect程序获取和打印在一个XML文档树中确定的元素下找到的文本。使用上面的API，它可以在输入上一次完成它的工作而从来不要实例化这个文档树。
+
+*gopl.io/ch7/xmlselect*
+
+```go
+// Xmlselect prints the text of selected elements of an XML document.
+package main
+
+import (
+    "encoding/xml"
+    "fmt"
+    "io"
+    "os"
+    "strings"
+)
+
+func main() {
+    dec := xml.NewDecoder(os.Stdin)
+    var stack []string // stack of element names
+    for {
+        tok, err := dec.Token()
+        if err == io.EOF {
+            break
+        } else if err != nil {
+            fmt.Fprintf(os.Stderr, "xmlselect: %v\n", err)
+            os.Exit(1)
+        }
+        switch tok := tok.(type) {
+        case xml.StartElement:
+            stack = append(stack, tok.Name.Local) // push
+        case xml.EndElement:
+            stack = stack[:len(stack)-1] // pop
+        case xml.CharData:
+            if containsAll(stack, os.Args[1:]) {
+                fmt.Printf("%s: %s\n", strings.Join(stack, " "), tok)
+            }
+        }
+    }
+}
+
+// containsAll reports whether x contains the elements of y, in order.
+func containsAll(x, y []string) bool {
+    for len(y) <= len(x) {
+        if len(y) == 0 {
+            return true
+        }
+        if x[0] == y[0] {
+            y = y[1:]
+        }
+        x = x[1:]
+    }
+    return false
+}
+```
+
+main函数中的循环每遇到一个StartElement时，它把这个元素的名称压到一个栈里，并且每次遇到EndElement时，它将名称从这个栈中推出。这个API保证了StartElement和EndElement的序列可以被完全的匹配，甚至在一个糟糕的文档格式中。注释会被忽略。当xmlselect遇到一个CharData时，只有当栈中有序地包含所有通过命令行参数传入的元素名称时，它才会输出相应的文本。
+
+下面的命令打印出任意出现在两层div元素下的h2元素的文本。它的输入是XML的说明文档，并且它自己就是XML文档格式的。
+
+```shell
+$ go build gopl.io/ch1/fetch
+$ ./fetch http://www.w3.org/TR/2006/REC-xml11-20060816 |
+    ./xmlselect div div h2
+html body div div h2: 1 Introduction
+html body div div h2: 2 Documents
+html body div div h2: 3 Logical Structures
+html body div div h2: 4 Physical Structures
+html body div div h2: 5 Conformance
+html body div div h2: 6 Notation
+html body div div h2: A References
+html body div div h2: B Definitions for Character Normalization
+...
+```
+
+## 7.15 一些建议
+
+当设计一个新的包时，新手Go程序员总是先创建一套接口，然后再定义一些满足它们的具体类型。这种方式的结果就是有很多的接口，它们中的每一个仅只有一个实现。不要再这么做了。这种接口是不必要的抽象；它们也有一个运行时损耗。你可以使用导出机制（§6.6）来限制一个类型的方法或一个结构体的字段是否在包外可见。
+
++ **接口只有当有两个或两个以上的具体类型必须以相同的方式进行处理时才需要**。
+
++ **当一个接口只被一个单一的具体类型实现时有一个例外，就是由于它的依赖，这个具体类型不能和这个接口存在在一个相同的包中**。这种情况下，一个接口是解耦这两个包的一个好方式。
+
+因为在Go语言中只有当两个或更多的类型实现一个接口时才使用接口，它们必定会从任意特定的实现细节中抽象出来。结果就是有更少和更简单方法的更小的接口（经常和io.Writer或 fmt.Stringer一样只有一个）。当新的类型出现时，小的接口更容易满足。
+
++ **对于接口设计的一个好的标准就是 ask only for what you need（只考虑你需要的东西）**
+
+我们完成了对方法和接口的学习过程。<u>Go语言对面向对象风格的编程支持良好，但这并不意味着你只能使用这一风格。不是任何事物都需要被当做一个对象；独立的函数有它们自己的用处，未封装的数据类型也是这样</u>。观察一下，在本书前五章的例子中像input.Scan这样的方法被调用不超过二十次，与之相反的是普遍调用的函数如fmt.Printf。
+
+# 8. Goroutines和Channels
+
