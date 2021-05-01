@@ -1,4 +1,4 @@
-# 《Go语言圣经》学习笔记
+# 《Go语言圣经》学习笔记-1
 
 > [Go语言圣经（中文版）--在线阅读](http://books.studygolang.com/gopl-zh/)
 >
