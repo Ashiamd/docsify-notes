@@ -5045,6 +5045,13 @@ errorf(linenum, "undefined: %s", name) // "Line 12: undefined: count"
 
 ## 5.8 Deferred函数
 
+### 注意点
+
++ **defer语句中的函数会在return语句更新返回值变量后再执行**（可以用于最后释放物理资源；可以观察、修改返回值；也可监听函数执行前和执行后的状态=>下文中有样例代码）
++ **在Go的panic机制中，(defer)延迟函数的调用在释放堆栈信息之前**（5.9 Panic异常 章节）
+
+---
+
 在findLinks的例子中，我们用http.Get的输出作为html.Parse的输入。只有url的内容的确是HTML格式的，html.Parse才可以正常工作，但实际上，url指向的内容很丰富，可能是图片，纯文本或是其他。将这些格式的内容传递给html.parse，会产生不良后果。
 
 下面的例子获取HTML页面并输出页面的标题。title函数会检查服务器返回的Content-Type字段，如果发现页面不是HTML，将终止函数运行，返回错误。
@@ -5282,6 +5289,12 @@ func fetch(url string) (filename string, n int64, err error) {
 **上例中，通过os.Create打开文件进行写入，在关闭文件时，我们没有对f.close采用defer机制，因为这会产生一些微妙的错误。许多文件系统，尤其是NFS，写入文件时发生的错误会被延迟到文件关闭时反馈。如果没有检查文件关闭时的反馈信息，可能会导致数据丢失，而我们还误以为写入操作成功。如果io.Copy和f.close都失败了，我们倾向于将io.Copy的错误信息反馈给调用者，因为它先于f.close发生，更有可能接近问题的本质**。
 
 ## 5.9 Panic异常
+
+### 注意点-配合defer
+
++ **在Go的panic机制中，(defer)延迟函数的调用在释放堆栈信息之前**
+
+---
 
 **Go的类型系统会在编译时捕获很多错误，但有些错误只能在运行时检查，如数组访问越界、空指针引用等。这些运行时错误会引起painc异常**。
 

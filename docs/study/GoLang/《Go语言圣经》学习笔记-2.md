@@ -428,7 +428,7 @@ func Lookup(key string) string {
 
 ## 6.4 方法值和方法表达式
 
-我们经常选择一个方法，并且在同一个表达式里执行，比如常见的p.Distance()形式，实际上将其分成两步来执行也是可能的。**p.Distance叫作“选择器”，选择器会返回一个方法“值”->一个将方法（Point.Distance）绑定到特定接收器变量的函数**。**这个函数可以不通过指定其接收器即可被调用；即调用时不需要指定接收器（译注：因为已经在前文中指定过了），只要传入函数的参数即可**：
+我们经常选择一个方法，并且在同一个表达式里执行，比如常见的p.Distance()形式，实际上将其分成两步来执行也是可能的。**p.Distance叫作“选择器”，选择器会返回一个方法“值”->一个将方法（Point.Distance）绑定到特定接收器变量的<u>函数</u>**。**这个函数可以不通过指定其接收器即可被调用；即调用时不需要指定接收器（译注：因为已经在前文中指定过了），只要传入函数的参数即可**：
 
 ```go
 p := Point{1, 2}
@@ -445,7 +445,7 @@ scaleP(3)           //      then (6, 12)
 scaleP(10)          //      then (60, 120)
 ```
 
-在一个包的API需要一个函数值、且调用方希望操作的是某一个绑定了对象的方法的话，方法“值”会非常实用（``=_=`真是绕）。举例来说，下面例子中的time.AfterFunc这个函数的功能是在指定的延迟时间之后来执行一个（译注：另外的）函数。且这个函数操作的是一个Rocket对象r
+<u>在一个包的API需要一个函数值、且调用方希望操作的是某一个绑定了对象的方法的话，方法“值”会非常实用</u>（``=_=`真是绕）。举例来说，下面例子中的time.AfterFunc这个函数的功能是在指定的延迟时间之后来执行一个（译注：另外的）函数。且这个函数操作的是一个Rocket对象r
 
 ```go
 type Rocket struct { /* ... */ }
@@ -2794,4 +2794,740 @@ html body div div h2: B Definitions for Character Normalization
 我们完成了对方法和接口的学习过程。<u>Go语言对面向对象风格的编程支持良好，但这并不意味着你只能使用这一风格。不是任何事物都需要被当做一个对象；独立的函数有它们自己的用处，未封装的数据类型也是这样</u>。观察一下，在本书前五章的例子中像input.Scan这样的方法被调用不超过二十次，与之相反的是普遍调用的函数如fmt.Printf。
 
 # 8. Goroutines和Channels
+
+并发程序指同时进行多个任务的程序，随着硬件的发展，并发程序变得越来越重要。Web服务器会一次处理成千上万的请求。平板电脑和手机app在渲染用户画面同时还会后台执行各种计算任务和网络请求。即使是传统的批处理问题——读取数据、计算、写输出，现在也会用并发来隐藏掉I/O的操作延迟以充分利用现代计算机设备的多个核心。计算机的性能每年都在以非线性的速度增长。
+
+Go语言中的并发程序可以用两种手段来实现。**本章讲解goroutine和channel，其支持“顺序通信进程”（communicating sequential processes）或被简称为CSP**。
+
+**CSP是一种现代的并发编程模型，在这种编程模型中值会在不同的运行实例（goroutine）中传递，尽管大多数情况下仍然是被限制在单一实例中**。
+
+**第9章覆盖更为传统的并发模型：多线程共享内存**，如果你在其它的主流语言中写过并发程序的话可能会更熟悉一些。第9章也会深入介绍一些并发程序带来的风险和陷阱。
+
+尽管Go对并发的支持是众多强力特性之一，但跟踪调试并发程序还是很困难，在线性程序中形成的直觉往往还会使我们误入歧途。如果这是读者第一次接触并发，推荐稍微多花一些时间来思考这两个章节中的样例。
+
+## 8.1 Goroutines
+
+**在Go语言中，每一个并发的执行单元叫作一个goroutine**。
+
+设想这里的一个程序有两个函数，一个函数做计算，另一个输出结果，假设两个函数没有相互之间的调用关系。一个线性的程序会先调用其中的一个函数，然后再调用另一个。如果程序中包含多个goroutine，对两个函数的调用则可能发生在同一时刻。马上就会看到这样的一个程序。
+
+<u>如果你使用过操作系统或者其它语言提供的线程，那么你可以简单地把goroutine类比作一个线程，这样你就可以写出一些正确的程序了。goroutine和线程的本质区别会在9.8节中讲</u>。
+
++ **当一个程序启动时，其主函数即在一个单独的goroutine中运行，我们叫它main goroutine。新的goroutine会用go语句来创建**。
+
++ **在语法上，go语句是一个普通的函数或方法调用前加上关键字go**。
+
++ **go语句会使其语句中的函数在一个新创建的goroutine中运行。而go语句本身会迅速地完成**。
+
+```go
+f()    // call f(); wait for it to return
+go f() // create a new goroutine that calls f(); don't wait
+```
+
+下面的例子，main goroutine将计算菲波那契数列的第45个元素值。由于计算函数使用低效的递归，所以会运行相当长时间，在此期间我们想让用户看到一个可见的标识来表明程序依然在正常运行，所以来做一个动画的小图标：
+
+*gopl.io/ch8/spinner*
+
+```go
+func main() {
+    go spinner(100 * time.Millisecond)
+    const n = 45
+    fibN := fib(n) // slow
+    fmt.Printf("\rFibonacci(%d) = %d\n", n, fibN)
+}
+
+func spinner(delay time.Duration) {
+    for {
+        for _, r := range `-\|/` {
+            fmt.Printf("\r%c", r)
+            time.Sleep(delay)
+        }
+    }
+}
+
+func fib(x int) int {
+    if x < 2 {
+        return x
+    }
+    return fib(x-1) + fib(x-2)
+}
+```
+
+动画显示了几秒之后，fib(45)的调用成功地返回，并且打印结果：
+
+```
+Fibonacci(45) = 1134903170
+```
+
+然后主函数返回。
+
++ **主函数返回时，所有的goroutine都会被直接打断，程序退出**。
+
++ **除了从主函数退出或者直接终止程序之外，没有其它的编程方法能够让一个goroutine来打断另一个的执行，但是之后可以看到一种方式来实现这个目的，通过goroutine之间的通信来让一个goroutine请求其它的goroutine，并让被请求的goroutine自行结束执行**。
+
+留意一下这里的两个独立的单元是如何进行组合的，spinning和菲波那契的计算。分别在独立的函数中，但两个函数会同时执行。
+
+## 8.2 示例: 并发的Clock服务
+
+网络编程是并发大显身手的一个领域，由于服务器是最典型的需要同时处理很多连接的程序，这些连接一般来自于彼此独立的客户端。在本小节中，我们会讲解go语言的net包，这个包提供编写一个网络客户端或者服务器程序的基本组件，无论两者间通信是使用TCP、UDP或者Unix domain sockets。在第一章中我们使用过的net/http包里的方法，也算是net包的一部分。
+
+我们的第一个例子是一个顺序执行的时钟服务器，它会每隔一秒钟将当前时间写到客户端：
+
+*gopl.io/ch8/clock1*
+
+```go
+// Clock1 is a TCP server that periodically writes the time.
+package main
+
+import (
+    "io"
+    "log"
+    "net"
+    "time"
+)
+
+func main() {
+    listener, err := net.Listen("tcp", "localhost:8000")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    for {
+        conn, err := listener.Accept()
+        if err != nil {
+            log.Print(err) // e.g., connection aborted
+            continue
+        }
+        handleConn(conn) // handle one connection at a time
+    }
+}
+
+func handleConn(c net.Conn) {
+    defer c.Close()
+    for {
+        _, err := io.WriteString(c, time.Now().Format("15:04:05\n"))
+        if err != nil {
+            return // e.g., client disconnected
+        }
+        time.Sleep(1 * time.Second)
+    }
+}
+```
+
+Listen函数创建了一个net.Listener的对象，这个对象会监听一个网络端口上到来的连接，在这个例子里我们用的是TCP的localhost:8000端口。listener对象的Accept方法会直接阻塞，直到一个新的连接被创建，然后会返回一个net.Conn对象来表示这个连接。
+
+handleConn函数会处理一个完整的客户端连接。在一个for死循环中，用time.Now()获取当前时刻，然后写到客户端。由于net.Conn实现了io.Writer接口，我们可以直接向其写入内容。<u>这个死循环会一直执行，直到写入失败。**最可能的原因是客户端主动断开连接**。这种情况下handleConn函数会用defer调用关闭服务器侧的连接，然后返回到主函数，继续等待下一个连接请求</u>。
+
+**time.Time.Format方法提供了一种格式化日期和时间信息的方式**。它的参数是一个格式化模板，标识如何来格式化时间，而这个格式化模板限定为Mon Jan 2 03:04:05PM 2006 UTC-0700。有8个部分（周几、月份、一个月的第几天……）。可以以任意的形式来组合前面这个模板；出现在模板中的部分会作为参考来对时间格式进行输出。在上面的例子中我们只用到了小时、分钟和秒。
+
+time包里定义了很多标准时间格式，比如time.RFC1123。在进行格式化的逆向操作time.Parse时，也会用到同样的策略。
+
+（<u>译注：这是go语言和其它语言相比比较奇葩的一个地方。你需要记住格式化字符串是1月2日下午3点4分5秒零六年UTC-0700，而不像其它语言那样Y-m-d H:i:s一样，当然了这里可以用1234567的方式来记忆，倒是也不麻烦。</u>）
+
+为了连接例子里的服务器，我们需要一个客户端程序，比如netcat这个工具（nc命令），这个工具可以用来执行网络连接操作。
+
+```
+$ go build gopl.io/ch8/clock1
+$ ./clock1 &
+$ nc localhost 8000
+13:58:54
+13:58:55
+13:58:56
+13:58:57
+^C
+```
+
+客户端将服务器发来的时间显示了出来，我们用Control+C来中断客户端的执行，在Unix系统上，你会看到^C这样的响应。如果你的系统没有装nc这个工具，你可以用telnet来实现同样的效果，或者也可以用我们下面的这个用go写的简单的telnet程序，用net.Dial就可以简单地创建一个TCP连接：
+
+*gopl.io/ch8/netcat1*
+
+```go
+// Netcat1 is a read-only TCP client.
+package main
+
+import (
+    "io"
+    "log"
+    "net"
+    "os"
+)
+
+func main() {
+    conn, err := net.Dial("tcp", "localhost:8000")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer conn.Close()
+    mustCopy(os.Stdout, conn)
+}
+
+func mustCopy(dst io.Writer, src io.Reader) {
+    if _, err := io.Copy(dst, src); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+这个程序会从连接中读取数据，并将读到的内容写到标准输出中，直到遇到end of file的条件或者发生错误。mustCopy这个函数我们在本节的几个例子中都会用到。让我们同时运行两个客户端来进行一个测试，这里可以开两个终端窗口，下面左边的是其中的一个的输出，右边的是另一个的输出：
+
+```
+$ go build gopl.io/ch8/netcat1
+$ ./netcat1
+13:58:54                               $ ./netcat1
+13:58:55
+13:58:56
+^C
+                                       13:58:57
+                                       13:58:58
+                                       13:58:59
+                                       ^C
+$ killall clock1
+```
+
+killall命令是一个Unix命令行工具，可以用给定的进程名来杀掉所有名字匹配的进程。
+
+第二个客户端必须等待第一个客户端完成工作，这样服务端才能继续向后执行；因为我们这里的服务器程序同一时间只能处理一个客户端连接。我们这里对服务端程序做一点小改动，使其支持并发：在handleConn函数调用的地方增加go关键字，让每一次handleConn的调用都进入一个独立的goroutine。
+
+*gopl.io/ch8/clock2*
+
+```go
+for {
+    conn, err := listener.Accept()
+    if err != nil {
+        log.Print(err) // e.g., connection aborted
+        continue
+    }
+    go handleConn(conn) // handle connections concurrently
+}
+```
+
+现在多个客户端可以同时接收到时间了：
+
+```shell
+$ go build gopl.io/ch8/clock2
+$ ./clock2 &
+$ go build gopl.io/ch8/netcat1
+$ ./netcat1
+14:02:54                               $ ./netcat1
+14:02:55                               14:02:55
+14:02:56                               14:02:56
+14:02:57                               ^C
+14:02:58
+14:02:59                               $ ./netcat1
+14:03:00                               14:03:00
+14:03:01                               14:03:01
+^C                                     14:03:02
+                                       ^C
+$ killall clock2
+```
+
+## 8.3 示例: 并发的Echo服务
+
+clock服务器每一个连接都会起一个goroutine。在本节中我们会创建一个echo服务器，这个服务在每个连接中会有多个goroutine。大多数echo服务仅仅会返回他们读取到的内容，就像下面这个简单的handleConn函数所做的一样：
+
+```go
+func handleConn(c net.Conn) {
+    io.Copy(c, c) // NOTE: ignoring errors
+    c.Close()
+}
+```
+
+一个更有意思的echo服务应该模拟一个实际的echo的“回响”，并且一开始要用大写HELLO来表示“声音很大”，之后经过一小段延迟返回一个有所缓和的Hello，然后一个全小写字母的hello表示声音渐渐变小直至消失，像下面这个版本的handleConn(译注：笑看作者脑洞大开)：
+
+*gopl.io/ch8/reverb1*
+
+```go
+func echo(c net.Conn, shout string, delay time.Duration) {
+    fmt.Fprintln(c, "\t", strings.ToUpper(shout))
+    time.Sleep(delay)
+    fmt.Fprintln(c, "\t", shout)
+    time.Sleep(delay)
+    fmt.Fprintln(c, "\t", strings.ToLower(shout))
+}
+
+func handleConn(c net.Conn) {
+    input := bufio.NewScanner(c)
+    for input.Scan() {
+        echo(c, input.Text(), 1*time.Second)
+    }
+    // NOTE: ignoring potential errors from input.Err()
+    c.Close()
+}
+```
+
+我们需要升级我们的客户端程序，这样它就可以发送终端的输入到服务器，并把服务端的返回输出到终端上，这使我们有了使用并发的另一个好机会：
+
+*gopl.io/ch8/netcat2*
+
+```go
+func main() {
+    conn, err := net.Dial("tcp", "localhost:8000")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer conn.Close()
+    go mustCopy(os.Stdout, conn)
+    mustCopy(conn, os.Stdin)
+}
+```
+
+**当main goroutine从标准输入流中读取内容并将其发送给服务器时，另一个goroutine会读取并打印服务端的响应**。当main goroutine碰到输入终止时，例如，用户在终端中按了Control-D(^D)，在windows上是Control-Z，这时程序就会被终止，尽管其它goroutine中还有进行中的任务。（在8.4.1中引入了channels后我们会明白如何让程序等待两边都结束。）
+
+下面这个会话中，客户端的输入是左对齐的，服务端的响应会用缩进来区别显示。 客户端会向服务器“喊三次话”：
+
+```shell
+$ go build gopl.io/ch8/reverb1
+$ ./reverb1 &
+$ go build gopl.io/ch8/netcat2
+$ ./netcat2
+Hello?
+    HELLO?
+    Hello?
+    hello?
+Is there anybody there?
+    IS THERE ANYBODY THERE?
+Yooo-hooo!
+    Is there anybody there?
+    is there anybody there?
+    YOOO-HOOO!
+    Yooo-hooo!
+    yooo-hooo!
+^D
+$ killall reverb1
+```
+
+<u>注意客户端的第三次shout在前一个shout处理完成之前一直没有被处理，这貌似看起来不是特别“现实”。真实世界里的回响应该是会由三次shout的回声组合而成的</u>。为了模拟真实世界的回响，我们需要更多的goroutine来做这件事情。这样我们就再一次地需要go这个关键词了，这次我们用它来调用echo：
+
+*gopl.io/ch8/reverb2*
+
+```go
+func handleConn(c net.Conn) {
+    input := bufio.NewScanner(c)
+    for input.Scan() {
+        go echo(c, input.Text(), 1*time.Second)
+    }
+    // NOTE: ignoring potential errors from input.Err()
+    c.Close()
+}
+```
+
+**go后跟的函数的参数会在go语句自身执行时被求值**；**因此input.Text()会在main goroutine中被求值**。
+
+现在回响是并发并且会按时间来覆盖掉其它响应了：
+
+```
+$ go build gopl.io/ch8/reverb2
+$ ./reverb2 &
+$ ./netcat2
+Is there anybody there?
+    IS THERE ANYBODY THERE?
+Yooo-hooo!
+    Is there anybody there?
+    YOOO-HOOO!
+    is there anybody there?
+    Yooo-hooo!
+    yooo-hooo!
+^D
+$ killall reverb2
+```
+
+让服务使用并发不只是处理多个客户端的请求，甚至在处理单个连接时也可能会用到，就像我们上面的两个go关键词的用法。然而**在我们使用go关键词的同时，需要慎重地考虑net.Conn中的方法在并发地调用时是否安全，事实上对于大多数类型来说也确实不安全**。我们会在下一章中详细地探讨并发安全性。
+
+## 8.4 Channels
+
++ **如果说goroutine是Go语言程序的并发体的话，那么channels则是它们之间的通信机制**。
+
++ **一个channel是一个通信机制，它可以让一个goroutine通过它给另一个goroutine发送值信息**。
++ **每个channel都有一个特殊的类型，也就是channels可发送数据的类型**。
+
++ **一个可以发送int类型数据的channel一般写为chan int**。
+
+**使用内置的make函数，我们可以创建一个channel**：
+
+```Go
+ch := make(chan int) // ch has type 'chan int'
+```
+
++ **和map类似，channel也对应一个make创建的底层数据结构的<u>引用</u>**。
+
++ **<u>当我们复制一个channel或用于函数参数传递时，我们只是拷贝了一个channel引用</u>，因此调用者和被调用者将引用同一个channel对象。和其它的引用类型一样，channel的零值也是nil。**
+
++ **两个相同类型的channel可以使用==运算符比较。如果两个channel引用的是相同的对象，那么比较的结果为真。**
++ **一个channel也可以和nil进行比较**。
+
+一个channel有**发送**和**接受**两个主要操作，都是**通信行为**。
+
++ **一个发送语句将一个值从一个goroutine通过channel发送到另一个执行接收操作的goroutine**。
++ **发送和接收两个操作都使用`<-`运算符**。
+  + 在发送语句中，`<-`运算符分割channel和要发送的值。
+  + **在接收语句中，`<-`运算符写在channel对象之前。一个不使用接收结果的接收操作也是合法的**。
+
+```Go
+ch <- x  // a send statement
+x = <-ch // a receive expression in an assignment statement
+<-ch     // a receive statement; result is discarded
+```
+
++ **Channel还支持close操作，用于关闭channel，随后对基于该channel的任何<u>发送操作</u>都将导致panic异常**。
++ **对一个已经被close过的channel进行<u>接收操作</u>依然可以接受到之前已经成功发送的数据；<u>如果channel中已经没有数据的话将产生一个零值的数据</u>**。
+
+使用内置的close函数就可以关闭一个channel：
+
+```Go
+close(ch)
+```
+
+<u>**以最简单方式调用make函数创建的是一个无缓存的channel**，但是我们也可以指定第二个整型参数，对应channel的容量。**如果channel的容量大于零，那么该channel就是带缓存的channel**</u>。
+
+```Go
+ch = make(chan int)    // unbuffered channel
+ch = make(chan int, 0) // unbuffered channel
+ch = make(chan int, 3) // buffered channel with capacity 3
+```
+
+我们将先讨论无缓存的channel，然后在8.4.4节讨论带缓存的channel。
+
+### 8.4.1 不带缓存的Channels
+
++ **一个基于无缓存Channels的发送操作将导致发送者goroutine<u>阻塞</u>，直到另一个goroutine在相同的Channels上执行接收操作，当发送的值通过Channels成功传输之后，两个goroutine可以继续执行后面的语句**。
+
++ **反之，如果接收操作先发生，那么接收者goroutine也将阻塞，直到有另一个goroutine在相同的Channels上执行发送操作**。
+
++ **基于无缓存Channels的发送和接收操作将导致两个goroutine做一次同步操作。**
+
+  因为这个原因，**无缓存Channels有时候也被称为同步Channels**。
+
+  当通过一个无缓存Channels发送数据时，**接收者收到数据发生在再次唤醒唤醒发送者goroutine之前**（译注：***happens before*，这是Go语言并发内存模型的一个关键术语！**）。
+
+在讨论并发编程时，当我们说x事件在y事件之前发生（*happens before*），我们并不是说x事件在时间上比y时间更早；我们要表达的意思是要保证在此之前的事件都已经完成了，例如在此之前的更新某些变量的操作已经完成，你可以放心依赖这些已完成的事件了。
+
+当我们说x事件既不是在y事件之前发生也不是在y事件之后发生，我们就说x事件和y事件是并发的。这并不是意味着x事件和y事件就一定是同时发生的，我们只是不能确定这两个事件发生的先后顺序。在下一章中我们将看到，当两个goroutine并发访问了相同的变量时，我们有必要保证某些事件的执行顺序，以避免出现某些并发问题。
+
+在8.3节的客户端程序，它在主goroutine中（译注：就是执行main函数的goroutine）将标准输入复制到server，因此当客户端程序关闭标准输入时，后台goroutine可能依然在工作。
+
+<u>我们需要让主goroutine等待后台goroutine完成工作后再退出，我们使用了一个channel来同步两个goroutine</u>：
+
+*gopl.io/ch8/netcat3*
+
+```Go
+func main() {
+    conn, err := net.Dial("tcp", "localhost:8000")
+    if err != nil {
+        log.Fatal(err)
+    }
+    done := make(chan struct{})
+    go func() {
+        io.Copy(os.Stdout, conn) // NOTE: ignoring errors
+        log.Println("done")
+        done <- struct{}{} // signal the main goroutine
+    }()
+    mustCopy(conn, os.Stdin)
+    conn.Close()
+    <-done // wait for background goroutine to finish
+}
+```
+
+<u>当用户关闭了标准输入，主goroutine中的mustCopy函数调用将返回，然后调用conn.Close()关闭读和写方向的网络连接</u>。
+
++ **关闭网络连接中的<u>写方向</u>的连接将导致server程序收到一个文件（end-of-file）结束的信号**。
++ **关闭网络连接中<u>读方向</u>的连接将导致后台goroutine的io.Copy函数调用返回一个“read from closed connection”（“从关闭的连接读”）类似的错误**，因此我们临时移除了错误日志语句；在练习8.3将会提供一个更好的解决方案。（需要注意的是go语句调用了一个**函数字面量**，这是Go语言中启动goroutine常用的形式。）
+
+在后台goroutine返回之前，它先打印一个日志信息，然后向done对应的channel发送一个值。主goroutine在退出前先等待从done对应的channel接收一个值。因此，总是可以在程序退出前正确输出“done”消息。
+
+<u>基于channels发送消息有两个重要方面。首先每个消息都有一个值，但是有时候通讯的事实和发生的时刻也同样重要</u>。
+
++ <u>当我们更希望强调通讯发生的时刻时，我们将它称为**消息事件**。</u>
+
++ 有些消息事件并不携带额外的信息，它仅仅是用作两个goroutine之间的同步，这时候我们可以用`struct{}`空结构体作为channels元素的类型，虽然也可以使用bool或int类型实现同样的功能，`done <- 1`语句也比`done <- struct{}{}`更短。
+
+### 8.4.2 串联的Channels（Pipeline）
+
+#### 注意点-range语法糖
+
++ **判断读通道channel是否被关闭，range语法糖**。（下文中提及）
+
+---
+
+**Channels也可以用于将多个goroutine连接在一起，一个Channel的输出作为下一个Channel的输入。这种串联的Channels就是所谓的管道（pipeline）**。
+
+下面的程序用两个channels将三个goroutine串联起来，如图8.1所示。
+
+![img](http://books.studygolang.com/gopl-zh/images/ch8-01.png)
+
+第一个goroutine是一个计数器，用于生成0、1、2、……形式的整数序列，然后通过channel将该整数序列发送给第二个goroutine；第二个goroutine是一个求平方的程序，对收到的每个整数求平方，然后将平方后的结果通过第二个channel发送给第三个goroutine；第三个goroutine是一个打印程序，打印收到的每个整数。为了保持例子清晰，我们有意选择了非常简单的函数，当然三个goroutine的计算很简单，在现实中确实没有必要为如此简单的运算构建三个goroutine。
+
+*gopl.io/ch8/pipeline1*
+
+```Go
+func main() {
+    naturals := make(chan int)
+    squares := make(chan int)
+
+    // Counter
+    go func() {
+        for x := 0; ; x++ {
+            naturals <- x
+        }
+    }()
+
+    // Squarer
+    go func() {
+        for {
+            x := <-naturals
+            squares <- x * x
+        }
+    }()
+
+    // Printer (in main goroutine)
+    for {
+        fmt.Println(<-squares)
+    }
+}
+```
+
+如您所料，上面的程序将生成0、1、4、9、……形式的无穷数列。像这样的串联Channels的管道（Pipelines）可以用在需要长时间运行的服务中，每个长时间运行的goroutine可能会包含一个死循环，在不同goroutine的死循环内部使用串联的Channels来通信。但是，如果我们希望通过Channels只发送有限的数列该如何处理呢？
+
+**如果发送者知道，没有更多的值需要发送到channel的话，那么让接收者也能及时知道没有多余的值可接收将是有用的，因为接收者可以停止不必要的接收等待。这可以通过内置的close函数来关闭channel实现**：
+
+```Go
+close(naturals)
+```
+
++ **当一个channel被关闭后，再向该channel发送数据将导致panic异常**。
+
++ **当一个被关闭的channel中已经发送的数据都被成功接收后，后续的接收操作将不再阻塞，它们会立即返回一个零值**。
+
+**关闭上面例子中的naturals变量对应的channel并不能终止循环，它依然会收到一个永无休止的零值序列，然后将它们发送给打印者goroutine**。
+
++ **没有办法直接测试一个channel是否被关闭，但是接收操作有一个变体形式：它多接收一个结果，多接收的第二个结果是一个布尔值ok，ture表示成功从channels接收到值，false表示channels已经被关闭并且里面没有值可接收**。
+
+使用这个特性，我们可以修改squarer函数中的循环代码，当naturals对应的channel被关闭并没有值可接收时跳出循环，并且也关闭squares对应的channel.
+
+```Go
+// Squarer
+go func() {
+    for {
+        x, ok := <-naturals
+        if !ok {
+            break // channel was closed and drained
+        }
+        squares <- x * x
+    }
+    close(squares)
+}()
+```
+
+**因为上面的语法是笨拙的，而且这种处理模式很常见，因此Go语言的range循环可直接在channels上面迭代**。
+
++ **使用range循环是上面处理模式的简洁语法，它依次从channel接收数据，当channel被关闭并且没有值可接收时跳出循环。**
+
+在下面的改进中，我们的计数器goroutine只生成100个含数字的序列，然后关闭naturals对应的channel，这将导致计算平方数的squarer对应的goroutine可以正常终止循环并关闭squares对应的channel。（在一个更复杂的程序中，可以通过defer语句关闭对应的channel。）最后，主goroutine也可以正常终止循环并退出程序。
+
+*gopl.io/ch8/pipeline2*
+
+```Go
+func main() {
+    naturals := make(chan int)
+    squares := make(chan int)
+
+    // Counter
+    go func() {
+        for x := 0; x < 100; x++ {
+            naturals <- x
+        }
+        close(naturals)
+    }()
+
+    // Squarer
+    go func() {
+        for x := range naturals {
+            squares <- x * x
+        }
+        close(squares)
+    }()
+
+    // Printer (in main goroutine)
+    for x := range squares {
+        fmt.Println(x)
+    }
+}
+```
+
++ **其实你并不需要关闭每一个channel。只有当需要告诉接收者goroutine，所有的数据已经全部发送时才需要关闭channel**。
+
++ **不管一个channel是否被关闭，当它没有被引用时将会被Go语言的垃圾自动回收器回收**。
+
++ （**不要将关闭一个打开文件的操作和关闭一个channel操作混淆。对于每个打开的文件，都需要在不使用的时候调用对应的Close方法来关闭文件。**）
+
++ **试图<u>重复</u>关闭一个channel将导致panic异常，试图关闭一个nil值的channel也将导致panic异常。关闭一个channels还会触发一个广播机制**，我们将在8.9节讨论。
+
+### 8.4.3 单方向的Channel
+
+随着程序的增长，人们习惯于将大的函数拆分为小的函数。我们前面的例子中使用了三个goroutine，然后用两个channels来连接它们，它们都是main函数的局部变量。将三个goroutine拆分为以下三个函数是自然的想法：
+
+```Go
+func counter(out chan int)
+func squarer(out, in chan int)
+func printer(in chan int)
+```
+
+其中计算平方的squarer函数在两个串联Channels的中间，因此拥有两个channel类型的参数，一个用于输入一个用于输出。两个channel都拥有相同的类型，但是它们的使用方式相反：一个只用于接收，另一个只用于发送。参数的名字in和out已经明确表示了这个意图，但是并无法保证squarer函数向一个in参数对应的channel发送数据或者从一个out参数对应的channel接收数据。
+
+这种场景是典型的。
+
++ **当一个channel作为一个函数参数时，它一般总是被专门用于只发送或者只接收**。
+
+<u>为了表明这种意图并防止被滥用，Go语言的类型系统提供了单方向的channel类型，分别用于只发送或只接收的channel</u>。
+
++ 类型`chan<- int`表示一个只发送int的channel，只能发送不能接收。
++ 相反，类型`<-chan int`表示一个只接收int的channel，只能接收不能发送。
+
+**（箭头`<-`和关键字chan的相对位置表明了channel的方向。）<u>这种限制将在编译期检测</u>**。
+
++ **因为<u>关闭操作只用于断言不再向channel发送新的数据</u>，所以只有在发送者所在的goroutine才会调用close函数，因此<u>对一个只接收的channel调用close将是一个编译错误</u>**。
+
+这是改进的版本，这一次参数使用了单方向channel类型：
+
+*gopl.io/ch8/pipeline3*
+
+```Go
+func counter(out chan<- int) {
+    for x := 0; x < 100; x++ {
+        out <- x
+    }
+    close(out)
+}
+
+func squarer(out chan<- int, in <-chan int) {
+    for v := range in {
+        out <- v * v
+    }
+    close(out)
+}
+
+func printer(in <-chan int) {
+    for v := range in {
+        fmt.Println(v)
+    }
+}
+
+func main() {
+    naturals := make(chan int)
+    squares := make(chan int)
+    go counter(naturals)
+    go squarer(squares, naturals)
+    printer(squares)
+}
+```
+
+**调用counter（naturals）时，naturals的类型将隐式地从chan int转换成chan<- int。**
+
+**调用printer(squares)也会导致相似的隐式转换，这一次是转换为`<-chan int`类型只接收型的channel。**
+
++ **任何双向channel向单向channel变量的赋值操作都将导致该隐式转换**。
++ **这里并没有反向转换的语法：也就是不能将一个类似`chan<- int`类型的单向型的channel转换为`chan int`类型的双向型的channel**。
+
+### 8.4.4 带缓存的Channels
+
+**带缓存的Channel内部持有一个元素<u>队列</u>**。
+
+<u>队列的最大容量是在调用make函数创建channel时通过第二个参数指定的</u>。
+
+下面的语句创建了一个可以持有三个字符串元素的带缓存Channel。图8.2是ch变量对应的channel的图形表示形式。
+
+```Go
+ch = make(chan string, 3)
+```
+
+![img](http://books.studygolang.com/gopl-zh/images/ch8-02.png)
+
++ **向缓存Channel的<u>发送操作</u>就是向内部缓存队列的<u>尾部插入元素</u>，<u>接收操作</u>则是从队列的<u>头部删除元素</u>**。
+  + **如果内部缓存队列是满的，那么发送操作将<u>阻塞</u>直到因另一个goroutine执行接收操作而释放了新的队列空间**。
+  + **相反，如果channel是空的，接收操作将<u>阻塞</u>直到有另一个goroutine执行发送操作而向队列插入元素。**
+
+我们可以在无阻塞的情况下连续向新创建的channel发送三个值：
+
+```Go
+ch <- "A"
+ch <- "B"
+ch <- "C"
+```
+
+此刻，channel的内部缓存队列将是满的（图8.3），如果有第四个发送操作将发生阻塞。
+
+![img](http://books.studygolang.com/gopl-zh/images/ch8-03.png)
+
+如果我们接收一个值，
+
+```Go
+fmt.Println(<-ch) // "A"
+```
+
+那么channel的缓存队列将不是满的也不是空的（图8.4），因此对该channel执行的发送或接收操作都不会发生阻塞。通过这种方式，**channel的缓存队列解耦了接收和发送的goroutine**。
+
+![img](http://books.studygolang.com/gopl-zh/images/ch8-04.png)
+
++ **在某些特殊情况下，程序可能需要知道channel内部缓存的容量，可以用内置的cap函数获取**：
+
+  ```go
+  fmt.Println(cap(ch)) // "3"
+  ```
+
++ **同样，对于内置的len函数，如果传入的是channel，那么将返回channel内部缓存队列中有效元素的个数**。
+
+  因为在并发程序中该信息会随着接收操作而失效，但是它对某些故障诊断和性能优化会有帮助。
+
+  ```go
+  fmt.Println(len(ch)) // "2"
+  ```
+
+在继续执行两次接收操作后channel内部的缓存队列将又成为空的，如果有第四个接收操作将发生阻塞：
+
+```Go
+fmt.Println(<-ch) // "B"
+fmt.Println(<-ch) // "C"
+```
+
+在这个例子中，发送和接收操作都发生在同一个goroutine中，但是在真实的程序中它们一般由不同的goroutine执行。
+
+<u>Go语言新手有时候会将一个带缓存的channel当作同一个goroutine中的队列使用，虽然语法看似简单，但实际上这是一个错误。Channel和goroutine的调度器机制是紧密相连的，如果没有其他goroutine从channel接收，发送者——或许是整个程序——将会面临永远阻塞的风险。如果你只是需要一个简单的队列，使用slice就可以了</u>。
+
+下面的例子展示了一个使用了带缓存channel的应用。它并发地向三个镜像站点发出请求，三个镜像站点分散在不同的地理位置。它们分别将收到的响应发送到带缓存channel，最后接收者只接收第一个收到的响应，也就是最快的那个响应。因此mirroredQuery函数可能在另外两个响应慢的镜像站点响应之前就返回了结果。
+
+（顺便说一下，**多个goroutines并发地向同一个channel发送数据，或从同一个channel接收数据都是常见的用法。**）
+
+```Go
+func mirroredQuery() string {
+    responses := make(chan string, 3)
+    go func() { responses <- request("asia.gopl.io") }()
+    go func() { responses <- request("europe.gopl.io") }()
+    go func() { responses <- request("americas.gopl.io") }()
+    return <-responses // return the quickest response
+}
+
+func request(hostname string) (response string) { /* ... */ }
+```
+
++ **如果我们使用了无缓存的channel，那么两个慢的goroutines将会因为没有人接收而被永远卡住。这种情况，称为goroutines泄漏，这将是一个BUG。**
+
++ **<u>和垃圾变量不同，泄漏的goroutines并不会被自动回收</u>，因此确保每个不再需要的goroutine能正常退出是重要的**。
+
+关于无缓存或带缓存channels之间的选择，或者是带缓存channels的容量大小的选择，都可能影响程序的正确性。
+
++ **无缓存channel更强地保证了每个发送操作与相应的同步接收操作**；
++ **但是对于带缓存channel，这些操作是解耦的**。
+
+同样，即使我们知道将要发送到一个channel的信息的数量上限，创建一个对应容量大小的带缓存channel也是不现实的，因为这要求在执行任何接收操作之前缓存所有已经发送的值。<u>如果未能分配足够的缓存将导致程序死锁</u>。
+
+Channel的缓存也可能影响程序的性能。想象一家蛋糕店有三个厨师，一个烘焙，一个上糖衣，还有一个将每个蛋糕传递到它下一个厨师的生产线。在狭小的厨房空间环境，每个厨师在完成蛋糕后必须等待下一个厨师已经准备好接受它；这类似于在一个无缓存的channel上进行沟通。
+
+如果在每个厨师之间有一个放置一个蛋糕的额外空间，那么每个厨师就可以将一个完成的蛋糕临时放在那里而马上进入下一个蛋糕的制作中；这类似于将channel的缓存队列的容量设置为1。只要每个厨师的平均工作效率相近，那么其中大部分的传输工作将是迅速的，个体之间细小的效率差异将在交接过程中弥补。如果厨师之间有更大的额外空间——也是就更大容量的缓存队列——将可以在不停止生产线的前提下消除更大的效率波动，例如一个厨师可以短暂地休息，然后再加快赶上进度而不影响其他人。
+
+<u>另一方面，如果生产线的前期阶段一直快于后续阶段，那么它们之间的缓存在大部分时间都将是满的。相反，如果后续阶段比前期阶段更快，那么它们之间的缓存在大部分时间都将是空的。对于这类场景，额外的缓存并没有带来任何好处</u>。
+
+<u>生产线的隐喻对于理解channels和goroutines的工作机制是很有帮助的。例如，如果第二阶段是需要精心制作的复杂操作，一个厨师可能无法跟上第一个厨师的进度，或者是无法满足第三阶段厨师的需求。要解决这个问题，我们可以再雇佣另一个厨师来帮助完成第二阶段的工作，他执行相同的任务但是独立工作。这类似于**基于相同的channels创建另一个独立的goroutine**</u>。
+
+我们没有太多的空间展示全部细节，但是gopl.io/ch8/cake包模拟了这个蛋糕店，可以通过不同的参数调整。它还对上面提到的几种场景提供对应的基准测试（§11.4） 。
+
+## 8.5 并发的循环
 
