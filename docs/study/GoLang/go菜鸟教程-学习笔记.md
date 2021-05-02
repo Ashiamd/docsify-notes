@@ -702,7 +702,7 @@ a, b, c := 5, 7, "abc"
 
 常量是一个简单值的标识符，在程序运行时，不会被修改的量。
 
-常量中的数据类型只可以是布尔型、数字型（整数型、浮点型和**复数**）和字符串型。
+常量中的数据类型<u>只可以是布尔型、数字型（整数型、浮点型和**复数**）和字符串型</u>。
 
 常量的定义格式：
 
@@ -912,7 +912,6 @@ iota 表示从 0 开始自动加 1，所以 **i=1<<0**, **j=3<<1**（**<<** 表�
 > 
 > // 输出是 0 1 2 0 0
 > ```
-> 
 
 # 8. Go 语言运算符
 
@@ -2837,9 +2836,9 @@ func main(){
 >
 >   ```go
 >   package main
->   
+>     
 >   import "fmt"
->   
+>     
 >   // 闭包使用方法，函数声明中的返回值(闭包函数)不用写具体的形参名称
 >   func add(x1, x2 int) func(int, int) (int, int, int) {
 >     i := 0
@@ -2848,7 +2847,7 @@ func main(){
 >       return i, x1 + x2, x3 + x4
 >     }
 >   }
->   
+>     
 >   func main() {
 >     add_func := add(1, 2)
 >     fmt.Println(add_func(4, 5))
@@ -2941,11 +2940,11 @@ func (c Circle) getArea() float64 {
 >
 >   ```go
 >   package main
->
+>  
 >   import (
 >      "fmt"  
 >   )
->
+>  
 >   /* 定义结构体 */
 >   type Circle struct {
 >     radius float64
@@ -3172,18 +3171,17 @@ func main() {
 >   
 >   ```go
 >   package main
->   
+>     
 >   import (
 >       "fmt"
 >   )
->   
+>     
 >   func main() {
 >       var sum int
 >       sum = Sum_test(2, 3)
 >       fmt.Printf("sum: %d; Total_sum: %d\n", sum, Total_sum)
 >   }
 >   ```
->
 
 
 ## 12.3 形式参数
@@ -3908,7 +3906,7 @@ func main() {
 >       fmt.Println("slice1 = ", slice1) //[10,2,3,4,5,6,7,8]
 >       fmt.Println("array = ", array) //[1,2,3,4,5,6,7,8]
 >   }
->   
+>     
 >   func change_arr1(arr []int) {
 >       arr[0] = 10
 >       fmt.Println("arr = ", arr) //[10,2,3,4,5,6,7,8]
@@ -4274,7 +4272,7 @@ a[2] = 200
 >       temp := v
 >       parr[k] = &temp;
 >   }
->   
+>     
 >   // 输出地址比对
 >   for i := 0; i < 3; i+=1 {
 >       fmt.Println(&arr[i], parr[i]);
@@ -4298,7 +4296,7 @@ a[2] = 200
 >   for k, _ := range arr {
 >       parr[k] = &arr[k];
 >   }
->   
+>     
 >   // 输出地址比对
 >   for i := 0; i < 3; i+=1 {
 >       fmt.Println(&arr[i], parr[i], &(*p)[i]);
@@ -4797,7 +4795,7 @@ Book book_id : 6495700
 >   　　　Name string　　　　　　//Name字段首字母大写
 >   　　　age int               //age字段首字母小写
 >   }
->   
+>     
 >   func main() {
 >   　　person:=Person{"小明",18}
 >   　　if result,err:=json.Marshal(&person);err==nil{  //json.Marshal 将对象转换为json字符串
@@ -4836,9 +4834,9 @@ Book book_id : 6495700
 >      　　Name  string   `json:"name"`　  //标记json名字为name　　　
 >      　　Age    int     `json:"age"`
 >      　　Time int64    `json:"-"`        // 标记忽略该字段
->   
+>     
 >   }
->   
+>     
 >   func main(){
 >   　　person:=Person{"小明",18, time.Now().Unix()}
 >   　　if result,err:=json.Marshal(&person);err==nil{
@@ -5329,33 +5327,33 @@ India 首都是 New delhi
 >
 >   ```go
 >   package main
->   
+>     
 >   import (
 >       "fmt"
 >   )
->   
+>     
 >   type HashMap struct {
 >       key string
 >       value string
 >       hashCode int
 >       next *HashMap
 >   }
->   
+>     
 >   var table [16](*HashMap)
->   
+>     
 >   func initTable() {
 >       for i := range table{
 >           table[i] = &HashMap{"","",i,nil}
 >       }
 >   }
->   
+>     
 >   func getInstance() [16](*HashMap){
 >       if(table[0] == nil){
 >           initTable()
 >       }
 >       return table
 >   }
->   
+>     
 >   func genHashCode(k string) int{
 >       if len(k) == 0{
 >           return 0
@@ -5371,33 +5369,33 @@ India 首都是 New delhi
 >       }
 >       return hashCode
 >   }
->   
+>     
 >   func indexTable(hashCode int) int{
 >       return hashCode%16
 >   }
->   
+>     
 >   func indexNode(hashCode int) int {
 >       return hashCode>>4
 >   }
->   
+>     
 >   func put(k string, v string) string {
 >       var hashCode = genHashCode(k)
 >       var thisNode = HashMap{k,v,hashCode,nil}
->   
+>     
 >       var tableIndex = indexTable(hashCode)
 >       var nodeIndex = indexNode(hashCode)
->   
+>     
 >       var headPtr [16](*HashMap) = getInstance()
 >       var headNode = headPtr[tableIndex]
->   
+>     
 >       if (*headNode).key == "" {
 >           *headNode = thisNode
 >           return ""
 >       }
->   
+>     
 >       var lastNode *HashMap = headNode
 >       var nextNode *HashMap = (*headNode).next
->   
+>     
 >       for nextNode != nil && (indexNode((*nextNode).hashCode) < nodeIndex){
 >           lastNode = nextNode
 >           nextNode = (*nextNode).next
@@ -5415,18 +5413,18 @@ India 首都是 New delhi
 >       }
 >       return ""
 >   }
->   
+>     
 >   func get(k string) string {
 >       var hashCode = genHashCode(k)
 >       var tableIndex = indexTable(hashCode)
->   
+>     
 >       var headPtr [16](*HashMap) = getInstance()
 >       var node *HashMap = headPtr[tableIndex]
->   
+>     
 >       if (*node).key == k{
 >           return (*node).value
 >       }
->   
+>     
 >       for (*node).next != nil {
 >           if k == (*node).key {
 >               return (*node).value
@@ -5435,7 +5433,7 @@ India 首都是 New delhi
 >       }
 >       return ""
 >   }
->   
+>     
 >   //examples 
 >   func main() {
 >       getInstance()
@@ -5876,7 +5874,7 @@ errorMsg is:
 >      username string
 >      password string
 >   }
->   
+>     
 >   func (p *User) init(username string ,password string) (*User,string)  {
 >      if ""==username || ""==password {
 >         return p,p.Error()
@@ -5884,11 +5882,11 @@ errorMsg is:
 >      p.username = username
 >      p.password = password
 >      return p,""}
->   
+>     
 >   func (p *User) Error() string {
 >         return "Usernam or password shouldn't be empty!"}
 >   }
->   
+>     
 >   func main() {
 >      var user User
 >      user1, _ :=user.init("","");
@@ -6242,17 +6240,17 @@ func main() {
 >
 > + ```shell
 >   package main
->   
+>     
 >   import "fmt"
->   
+>     
 >   func main() {
 >       ch := make(chan int, 2)
->   
+>     
 >       ch <- 1
 >       a := <-ch
 >       ch <- 2
 >       ch <- 3
->   
+>     
 >       fmt.Println(<-ch)
 >       fmt.Println(<-ch)
 >       fmt.Println(a)
