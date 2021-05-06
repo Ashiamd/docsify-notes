@@ -2692,13 +2692,540 @@ public static void main(String[] args) {
 
 ### 8.2.2 操作数栈
 
+> [《深入理解java虚拟机》 第八章 虚拟机字节码执行引擎](https://blog.csdn.net/lik_lik/article/details/89322483)	<=	图片来源
 
+​	**操作数栈（Operand Stack）也常被称为操作栈，它是一个后入先出（Last In First Out，LIFO）栈**。同局部变量表一样，操作数栈的最大深度也在编译的时候被写入到Code属性的max_stacks数据项之中。操作数栈的每一个元素都可以是包括long和double在内的任意Java数据类型。**32位数据类型所占的栈容量为1，64位数据类型所占的栈容量为2**。<u>Javac编译器的数据流分析工作保证了在方法执行的任何时候，操作数栈的深度都不会超过在max_stacks数据项中设定的最大值。</u>
 
+​	当一个方法刚刚开始执行的时候，这个方法的操作数栈是空的，在方法的执行过程中，会有各种字节码指令往操作数栈中写入和提取内容，也就是出栈和入栈操作。譬如在做算术运算的时候是通过将运算涉及的操作数栈压入栈顶后调用运算指令来进行的，又譬如在调用其他方法的时候是通过操作数栈来进行方法参数的传递。举个例子，例如整数加法的字节码指令iadd，这条指令在运行的时候要求操作数栈中最接近栈顶的两个元素已经存入了两个int型的数值，当执行这个指令时，会把这两个int值出栈并相加，然后将相加的结果重新入栈。
 
+​	<u>操作数栈中元素的数据类型必须与字节码指令的序列严格匹配，在编译程序代码的时候，编译器必须要严格保证这一点，在类校验阶段的数据流分析中还要再次验证这一点</u>。再以上面的iadd指令为例，这个指令只能用于整型数的加法，它在执行时，最接近栈顶的两个元素的数据类型必须为int型，不能出现一个long和一个float使用iadd命令相加的情况。
 
+​	**另外在概念模型中，两个不同栈帧作为不同方法的虚拟机栈的元素，是完全相互独立的**。**<u>但是在大多虚拟机的实现里都会进行一些优化处理，令两个栈帧出现一部分重叠</u>**。让下面栈帧的部分操作数栈与上面栈帧的部分局部变量表重叠在一起，这样做不仅节约了一些空间，更重要的是在进行方法调用时就可以直接共用一部分数据，无须进行额外的参数复制传递了，重叠的过程如图8-2所示。
 
+​	**Java虚拟机的解释执行引擎被称为“基于栈的执行引擎”，里面的“栈”就是操作数栈**。后文会对基于栈的代码执行过程进行更详细的讲解，介绍它与更常见的基于寄存器的执行引擎有哪些差别。
 
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20190415222347729.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2xpa19saWs=,size_16,color_FFFFFF,t_70)
 
+### 8.2.3 动态连接
 
-[^44]:
-[^45]:
+​	**每个栈帧都包含一个指向运行时常量池[^44]中该栈帧所属方法的引用，持有这个引用是为了支持方法调用过程中的动态连接（Dynamic Linking）**。
+
+​	<u>通过第6章的讲解，我们知道Class文件的常量池中存有大量的符号引用，字节码中的方法调用指令就以常量池里指向方法的符号引用作为参数。</u>
+
++ <u>这些符号引用一部分会在**类加载阶段或者第一次使用**的时候就被转化为直接引用，这种转化被称为**静态解析**</u>。
++ <u>另外一部分将在**每一次运行期间**都转化为直接引用，这部分就称为**动态连接**</u>。
+
+​	关于这两个转化过程的具体过程，将在8.3节中再详细讲解。
+
+[^44]:运行时常量池的相关内容详见第2章。
+
+### 8.2.4 方法返回地址
+
+​	当一个方法开始执行后，只有两种方式退出这个方法。
+
++ 第一种方式是执行引擎**遇到任意一个方法返回的字节码指令**，这时候可能会有返回值传递给上层的方法调用者（调用当前方法的方法称为调用者或者主调方法），方法是否有返回值以及返回值的类型将根据遇到何种方法返回指令来决定，这种退出方法的方式称为**“正常调用完成”（Normal Method Invocation Completion）**。
+
++ 另外一种退出方式是在方法执行的过程中**遇到了异常，并且这个异常没有在方法体内得到妥善处理**。无论是Java虚拟机内部产生的异常，还是代码中使用athrow字节码指令产生的异常，只要在本方法的异常表中没有搜索到匹配的异常处理器，就会导致方法退出，这种退出方法的方式称为**“异常调用完成（Abrupt Method Invocation Completion）”**。一个方法使用异常完成出口的方式退出，是不会给它的上层调用者提供任何返回值的。
+
+​	<u>无论采用何种退出方式，在方法退出之后，都必须返回到最初方法被调用时的位置，程序才能继续执行，方法返回时可能需要在栈帧中保存一些信息，用来帮助恢复它的上层主调方法的执行状态</u>。
+
++ 一般来说，**方法正常退出**时，**主调方法的PC计数器的值**就可以作为返回地址，**栈帧中很可能会保存这个计数器值**。
++ 而**方法异常退出**时，返回地址是要通过**异常处理器表**来确定的，**栈帧中就一般不会保存这部分信息**。
+
+​	**方法退出的过程实际上等同于把当前栈帧出栈**（学过汇编就很好理解了），因此退出时可能执行的操作有：恢复上层方法的局部变量表和操作数栈，把返回值（如果有的话）压入调用者栈帧的操作数栈中，调整PC计数器的值以指向方法调用指令后面的一条指令等。笔者这里写的“可能”是由于这是基于概念模型的讨论，只有具体到某一款Java虚拟机实现，会执行哪些操作才能确定下来。
+
+### 8.2.5 附加信息
+
+​	《Java虚拟机规范》允许虚拟机实现增加一些规范里没有描述的信息到栈帧之中，例如与调试、性能收集相关的信息，这部分信息完全取决于具体的虚拟机实现，这里不再详述。
+
+​	**在讨论概念时，一般会把动态连接、方法返回地址与其他附加信息全部归为一类，称为栈帧信息**。
+
+## 8.3 方法调用
+
+​	<u>方法调用并不等同于方法中的代码被执行，方法调用阶段唯一的任务就是确定被调用方法的版本（即调用哪一个方法），暂时还未涉及方法内部的具体运行过程</u>。
+
+​	在程序运行时，进行方法调用是最普遍、最频繁的操作之一，但第7章中已经讲过，Class文件的编译过程中不包含传统程序语言编译的连接步骤，**一切方法调用在Class文件里面存储的都只是符号引用，而不是方法在实际运行时内存布局中的入口地址（也就是之前说的直接引用）**。这个特性给Java带来了更强大的动态扩展能力，但也使得Java方法调用过程变得相对复杂，某些调用需要在类加载期间，甚至到运行期间才能确定目标方法的直接引用。
+
+### 8.3.1 解析
+
+​	<u>承接前面关于方法调用的话题，所有方法调用的目标方法在Class文件里面都是一个常量池中的符号引用，在类加载的解析阶段，会将其中的一部分符号引用转化为直接引用，这种解析能够成立的前提是：方法在程序真正运行之前就有一个可确定的调用版本，并且**这个方法的调用版本在运行期是不可改变的**。换句话说，**调用目标在程序代码写好、编译器进行编译那一刻就已经确定下来**</u>。**这类方法的调用被称为解析（Resolution）**。
+
+​	在Java语言中符合“编译期可知，运行期不可变”这个要求的方法，主要有静态方法和私有方法两大类，前者与类型直接关联，后者在外部不可被访问，**这两种方法各自的特点决定了它们都不可能通过继承或别的方式重写出其他版本，因此它们都适合在类加载阶段进行解析**。
+
+​	调用不同类型的方法，字节码指令集里设计了不同的指令。在Java虚拟机支持以下5条方法调用字节码指令，分别是：
+
++ invokestatic。用于调用静态方法。
+
++ invokespecial。用于调用实例构造器\<init\>\(\)方法、私有方法和父类中的方法。
+
++ invokevirtual。用于调用所有的虚方法。
+
++ invokeinterface。用于调用接口方法，会在运行时再确定一个实现该接口的对象。
+
++ invokedynamic。先在运行时动态解析出调用点限定符所引用的方法，然后再执行该方法。
+
+​	<u>前面4条调用指令，分派逻辑都固化在Java虚拟机内部，而invokedynamic指令的分派逻辑是由用户设定的引导方法来决定的</u>。
+
+​	只要能被invokestatic和invokespecial指令调用的方法，都可以在解析阶段中确定唯一的调用版本，Java语言里符合这个条件的方法共有**静态方法、私有方法、实例构造器、父类方法**4种，再加上**被final修饰的方法**（尽管它使用invokevirtual指令调用），**这5种方法调用会<u>在类加载的时候</u>就可以把符号引用解析为该方法的直接引用**。<u>这些方法统称为“非虚方法”（Non-Virtual Method），与之相反，其他方法就被称为“虚方法”（Virtual Method）</u>。
+
+​	代码清单8-5演示了一种常见的解析调用的例子，该样例中，静态方法sayHello()只可能属于类型StaticResolution，没有任何途径可以覆盖或隐藏这个方法。
+
+​	代码清单8-5　方法静态解析演示
+
+```java
+/**
+* 方法静态解析演示
+*
+* @author zzm
+*/
+public class StaticResolution {
+  public static void sayHello() {
+    System.out.println("hello world");
+  }
+  public static void main(String[] args) {
+    StaticResolution.sayHello();
+  }
+}
+```
+
+​	使用javap命令查看这段程序对应的字节码，会发现的确是通过invokestatic命令来调用sayHello()方法，而且其调用的方法版本已经在编译时就明确以常量池项的形式固化在字节码指令的参数之中（代码里的31号常量池项）：
+
+```shell
+javap -verbose StaticResolution
+public static void main(java.lang.String[]);
+Code:
+Stack=0, Locals=1, Args_size=1
+0: invokestatic #31; //Method sayHello:()V
+3: return
+LineNumberTable:
+line 15: 0
+line 16: 3
+```
+
+​	Java中的非虚方法除了使用invokestatic、invokespecial调用的方法之外还有一种，就是被final修饰的实例方法。虽然由于历史设计的原因，final方法是使用invokevirtual指令来调用的，但是因为它也无法被覆盖，没有其他版本的可能，所以也无须对方法接收者进行多态选择，又或者说多态选择的结果肯定是唯一的。**在《Java语言规范》中明确定义了被final修饰的方法是一种非虚方法。**
+
+​	**解析调用一定是个静态的过程，在编译期间就完全确定，在类加载的解析阶段就会把涉及的符号引用全部转变为明确的直接引用，不必延迟到运行期再去完成**。
+
+​	而另一种主要的方法调用形式：分派（Dispatch）调用则要复杂许多，它可能是静态的也可能是动态的，按照分派依据的宗量数可分为单分派和多分派[^45]。这两类分派方式两两组合就构成了静态单分派、静态多分派、动态单分派、动态多分派4种分派组合情况，下面我们来看看虚拟机中的方法分派是如何进行的。
+
+[^45]:这里涉及的单分派、多分派及相关概念（如“宗量数”）在后续章节有详细解释，如没有这方面基础的读者暂时略过即可。
+
+### 8.3.2 分派
+
+​	众所周知，Java是一门面向对象的程序语言，因为**Java具备面向对象的3个基本特征：继承、封装和多态**。本节讲解的分派调用过程将会揭示多态性特征的一些最基本的体现，如“重载”和“重写”在Java虚拟机之中是如何实现的，这里的实现当然不是语法上该如何写，我们关心的依然是虚拟机如何确定正确的目标方法。
+
+#### 1. 静态分派
+
+​	在开始讲解静态分派[^46]前，笔者先声明一点，“分派”（Dispatch）这个词本身就具有动态性，一般不应用在静态语境之中，<u>这部分原本在英文原版的《Java虚拟机规范》和《Java语言规范》里的说法都是“Method Overload Resolution”</u>，即应该归入8.2节的“解析”里去讲解，<u>但部分其他外文资料和国内翻译的许多中文资料都将这种行为称为“静态分派”</u>，所以笔者在此特别说明一下，以免读者阅读英文资料时遇到这两种说法产生疑惑。
+
+​	为了解释**静态分派**和**重载（Overload）**，笔者准备了一段经常出现在面试题中的程序代码，读者不妨先看一遍，想一下程序的输出结果是什么。后面的话题将围绕这个类的方法来编写重载代码，以分析虚拟机和编译器确定方法版本的过程。程序如代码清单8-6所示。
+
+​	代码清单8-6　方法静态分派演示
+
+```java
+package org.fenixsoft.polymorphic;
+/**
+* 方法静态分派演示
+* @author zzm
+*/
+public class StaticDispatch {
+  static abstract class Human {
+  }
+  static class Man extends Human {
+  }
+  static class Woman extends Human {
+  }
+  public void sayHello(Human guy) {
+    System.out.println("hello,guy!");
+  }
+  public void sayHello(Man guy) {
+    System.out.println("hello,gentleman!");
+  }
+  public void sayHello(Woman guy) {
+    System.out.println("hello,lady!");
+  }
+  public static void main(String[] args) {
+    Human man = new Man();
+    Human woman = new Woman();
+    StaticDispatch sr = new StaticDispatch();
+    sr.sayHello(man);
+    sr.sayHello(woman);
+  }
+}
+```
+
+​	运行结果：
+
+```shell
+hello,guy!
+hello,guy!
+```
+
+​	代码清单8-6中的代码实际上是在考验阅读者对重载的理解程度，相信对Java稍有经验的程序员看完程序后都能得出正确的运行结果，但为什么虚拟机会选择执行参数类型为Human的重载版本呢？在解决这个问题之前，我们先通过如下代码来定义两个关键概念：
+
+```java
+Human man = new Man();
+```
+
+​	<u>我们把上面代码中的“Human”称为变量的**“静态类型”（Static Type）**，或者叫**“外观类型”（Apparent Type）**，后面的“Man”则被称为变量的**“实际类型”（Actual Type）**或者叫**“运行时类型”（Runtime Type）**</u>。静态类型和实际类型在程序中都可能会发生变化，区别是静态类型的变化仅仅在使用时发生，变量本身的静态类型不会被改变，并且最终的**静态类型是在编译期可知的**；而**实际类型变化的结果在运行期才可确定**，编译器在编译程序的时候并不知道一个对象的实际类型是什么。笔者猜想上面这段话读者大概会不太好理解，那不妨通过一段实际例子来解释，譬如有下面的代码：
+
+```java
+// 实际类型变化
+Human human = (new Random()).nextBoolean() ? new Man() : new Woman();
+// 静态类型变化
+sr.sayHello((Man) human)
+sr.sayHello((Woman) human)
+```
+
+​	对象human的实际类型是可变的，编译期间它完全是个“薛定谔的人”，到底是Man还是Woman，必须等到程序运行到这行的时候才能确定。**而human的静态类型是Human，也可以在使用时（如sayHello()方法中的强制转型）临时改变这个类型，但这个改变仍是在编译期是可知的，两次sayHello()方法的调用，在编译期完全可以明确转型的是Man还是Woman**。
+
+​	解释清楚了静态类型与实际类型的概念，我们就把话题再转回到代码清单8-6的样例代码中。main()里面的两次sayHello()方法调用，在方法接收者已经确定是对象“sr”的前提下，使用哪个重载版本，就完全取决于传入参数的数量和数据类型。<u>代码中故意定义了两个静态类型相同，而实际类型不同的变量，但虚拟机（或者准确地说是编译器）在重载时是通过参数的静态类型而不是实际类型作为判定依据的</u>。
+
+​	**由于静态类型在编译期可知，所以在编译阶段，Javac编译器就根据参数的静态类型决定了会使用哪个重载版本，因此选择了sayHello(Human)作为调用目标，并把这个方法的符号引用写到main()方法里的两条invokevirtual指令的参数中**。
+
+​	**所有依赖静态类型来决定方法执行版本的分派动作，都称为静态分派**。静态分派的最典型应用表现就是方法重载。<u>静态分派发生在编译阶段，因此确定静态分派的动作实际上不是由虚拟机来执行的，这点也是为何一些资料选择把它归入“解析”而不是“分派”的原因</u>。
+
+​	需要注意Javac编译器虽然能确定出方法的重载版本，但在很多情况下这个重载版本并不是“唯一”的，往往只能确定一个“相对更合适的”版本。这种模糊的结论在由0和1构成的计算机世界中算是个比较稀罕的事件，产生这种模糊结论的主要原因是<u>字面量天生的模糊性，它不需要定义，所以字面量就没有显式的静态类型，它的静态类型只能通过语言、语法的规则去理解和推断</u>。代码清单8-7演示了何谓“更加合适的”版本。
+
+​	代码清单8-7　重载方法匹配优先级
+
+```java
+package org.fenixsoft.polymorphic;
+public class Overload {
+  public static void sayHello(Object arg) {
+    System.out.println("hello Object");
+  }
+  public static void sayHello(int arg) {
+    System.out.println("hello int");
+  }
+  public static void sayHello(long arg) {
+    System.out.println("hello long");
+  }
+  public static void sayHello(Character arg) {
+    System.out.println("hello Character");
+  }
+  public static void sayHello(char arg) {
+    System.out.println("hello char");
+  }
+  public static void sayHello(char... arg) {
+    System.out.println("hello char ...");
+  }
+  public static void sayHello(Serializable arg) {
+    System.out.println("hello Serializable");
+  }
+  public static void main(String[] args) {
+    sayHello('a');
+  }
+}
+```
+
+​	上面的代码运行后会输出：
+
+```shell
+hello char
+```
+
+​	这很好理解，'a'是一个char类型的数据，自然会寻找参数类型为char的重载方法，如果注释掉sayHello(char arg)方法，那输出会变为：
+
+```shell
+hello int
+```
+
+​	这时发生了一次自动类型转换，'a'除了可以代表一个字符串，还可以代表数字97（字符'a'的Unicode数值为十进制数字97），因此参数类型为int的重载也是合适的。我们继续注释掉sayHello(int arg)方法，那输出会变为：
+
+```shell
+hello long
+```
+
+​	这时发生了两次自动类型转换，'a'转型为整数97之后，进一步转型为长整数97L，匹配了参数类型为long的重载。笔者在代码中没有写其他的类型如float、double等的重载，不过实际上自动转型还能继续发生多次，按照char>int>long>float>double的顺序转型进行匹配，但不会匹配到byte和short类型的重载，因为**char到byte或short的转型是不安全的**。我们继续注释掉sayHello(long arg)方法，那输出会变为：
+
+```shell
+hello Character
+```
+
+​	这时发生了一次自动装箱，'a'被包装为它的封装类型java.lang.Character，所以匹配到了参数类型为Character的重载，继续注释掉sayHello(Character arg)方法，那输出会变为：
+
+```shell
+hello Serializable
+```
+
+​	这个输出可能会让人摸不着头脑，一个字符或数字与序列化有什么关系？出现hello Serializable，是因为java.lang.Serializable是java.lang.Character类实现的一个接口，当自动装箱之后发现还是找不到装箱类，但是找到了装箱类所实现的接口类型，所以紧接着又发生一次自动转型。char可以转型成int，但是Character是绝对不会转型为Integer的，它只能安全地转型为它实现的接口或父类。Character还实现了另外一个接口java.lang.Comparable\<Character\>，<u>如果同时出现两个参数分别为Serializable和Comparable\<Character\>的重载方法，那它们在此时的优先级是一样的。编译器无法确定要自动转型为哪种类型，会提示“类型模糊”（Type Ambiguous），并拒绝编译</u>。程序必须在调用时显式地指定字面量的静态类型，如：sayHello((Comparable\<Character\>)'a')，才能编译通过。但是如果读者愿意花费一点时间，绕过Javac编译器，自己去构造出表达相同语义的字节码，将会发现这是能够通过Java虚拟机的类加载校验，而且能够被Java虚拟机正常执行的，但是会选择Serializable还是Comparable\<Character\>的重载方法则并不能事先确定，这是《Java虚拟机规范》所允许的，在第7章介绍接口方法解析过程时曾经提到过。
+
+​	下面继续注释掉sayHello(Serializable arg)方法，输出会变为：
+
+```shell
+hello Object
+```
+
+​	这时是char装箱后转型为父类了，如果有多个父类，那将在继承关系中从下往上开始搜索，越接上层的优先级越低。即使方法调用传入的参数值为null时，这个规则仍然适用。我们把sayHello(Object arg)也注释掉，输出将会变为：
+
+```shell
+hello char ...
+```
+
+​	7个重载方法已经被注释得只剩1个了，可见**变长参数的重载优先级是最低的**，这时候字符'a'被当作了一个char[]数组的元素。笔者使用的是char类型的变长参数，读者在验证时还可以选择int类型、Character类型、Object类型等的变长参数重载来把上面的过程重新折腾一遍。但是要注意的是，**有一些在单个参数中能成立的自动转型，如char转型为int，在变长参数中是不成立的**[^47]。
+
+​	代码清单8-7演示了编译期间选择静态分派目标的过程，这个过程也是Java语言实现方法重载的本质。演示所用的这段程序无疑是属于很极端的例子，除了用作面试题为难求职者之外，在实际工作中几乎不可能存在任何有价值的用途，笔者拿来做演示仅仅是用于讲解重载时目标方法选择的过程，对绝大多数下进行这样极端的重载都可算作真正的“关于茴香豆的茴有几种写法的研究”。
+
+​	**无论对重载的认识有多么深刻，一个合格的程序员都不应该在实际应用中写这种晦涩的重载代码。**
+
+​	另外还有一点读者可能比较容易混淆：笔者讲述的解析与分派这两者之间的关系并不是二选一的排他关系，它们是在不同层次上去筛选、确定目标方法的过程。<u>例如前面说过静态方法会在编译期确定、在类加载期就进行解析，而静态方法显然也是可以拥有重载版本的，选择重载版本的过程也是通过静态分派完成的</u>。
+
+#### 2. 动态分派
+
+​	了解了静态分派，我们接下来看一下Java语言里动态分派的实现过程，它与Java语言多态性的另外一个重要体现[^48]——**重写（Override）**有着很密切的关联。我们还是用前面的Man和Woman一起sayHello的例子来讲解动态分派，请看代码清单8-8中所示的代码。
+
+​	代码清单8-8　方法动态分派演示
+
+```java
+package org.fenixsoft.polymorphic;
+/**
+* 方法动态分派演示
+* @author zzm
+*/
+public class DynamicDispatch {
+  static abstract class Human {
+    protected abstract void sayHello();
+  }
+  static class Man extends Human {
+    @Override
+    protected void sayHello() {
+      System.out.println("man say hello");
+    }
+  }
+  static class Woman extends Human {
+    @Override
+    protected void sayHello() {
+      System.out.println("woman say hello");
+    }
+  }
+  public static void main(String[] args) {
+    Human man = new Man();
+    Human woman = new Woman();
+    man.sayHello();
+    woman.sayHello();
+    man = new Woman();
+    man.sayHello();
+  }
+}
+```
+
+​	运行结果：
+
+```shell
+man say hello
+woman say hello
+woman say hello
+```
+
+​	这个运行结果相信不会出乎任何人的意料，对于习惯了面向对象思维的Java程序员们会觉得这是完全理所当然的结论。我们现在的问题还是和前面的一样，Java虚拟机是如何判断应该调用哪个方法的？
+
+​	显然这里选择调用的方法版本是不可能再根据静态类型来决定的，因为静态类型同样都是Human的两个变量man和woman在调用sayHello()方法时产生了不同的行为，甚至变量man在两次调用中还执行了两个不同的方法。导致这个现象的原因很明显，是因为这两个变量的实际类型不同，Java虚拟机是如何根据实际类型来分派方法执行版本的呢？我们使用javap命令输出这段代码的字节码，尝试从中寻找答案，输出结果如代码清单8-9所示。
+
+​	代码清单8-9　main()方法的字节码
+
+```shell
+public static void main(java.lang.String[]);
+Code:
+Stack=2, Locals=3, Args_size=1
+0: new #16; //class org/fenixsoft/polymorphic/DynamicDispatch$Man
+3: dup
+4: invokespecial #18; //Method org/fenixsoft/polymorphic/Dynamic Dispatch$Man."<init>":()V
+7: astore_1
+8: new #19; //class org/fenixsoft/polymorphic/DynamicDispatch$Woman
+11: dup
+12: invokespecial #21; //Method org/fenixsoft/polymorphic/DynamicDispatch$Woman."<init>":()V
+15: astore_2
+16: aload_1
+17: invokevirtual #22; //Method org/fenixsoft/polymorphic/Dynamic Dispatch$Human.sayHello:()V
+20: aload_2
+21: invokevirtual #22; //Method org/fenixsoft/polymorphic/Dynamic Dispatch$Human.sayHello:()V
+24: new #19; //class org/fenixsoft/polymorphic/DynamicDispatch$Woman
+27: dup
+28: invokespecial #21; //Method org/fenixsoft/polymorphic/DynamicDispatch$Woman."<init>":()V
+31: astore_1
+32: aload_1
+33: invokevirtual #22; //Method org/fenixsoft/polymorphic/Dynamic Dispatch$Human.sayHello:()V
+36: return
+```
+
+​	0～15行的字节码是准备动作，作用是建立man和woman的内存空间、调用Man和Woman类型的实例构造器，将这两个实例的引用存放在第1、2个局部变量表的变量槽中，这些动作实际对应了Java源码中的这两行：
+
+```shell
+Human man = new Man();
+Human woman = new Woman();
+```
+
+​	接下来的16～21行是关键部分，16和20行的aload指令分别把刚刚创建的两个对象的引用压到栈顶，这两个对象是将要执行的sayHello()方法的所有者，称为接收者（Receiver）；17和21行是方法调用指令，这两条调用指令单从字节码角度来看，无论是指令（都是invokevirtual）还是参数（都是常量池中第22项的常量，注释显示了这个常量是Human.sayHello()的符号引用）都完全一样，但是这两句指令最终执行的目标方法并不相同。那看来解决问题的关键还必须从invokevirtual指令本身入手，要弄清楚它是如何确定调用方法版本、如何实现多态查找来着手分析才行。根据《Java虚拟机规范》，invokevirtual指令的运行时解析过程[^49]大致分为以下几步：
+
+1）找到操作数栈顶的第一个元素所指向的对象的实际类型，记作C。
+
+2）如果在类型C中找到与常量中的描述符和简单名称都相符的方法，则进行访问权限校验，如果
+
+通过则返回这个方法的直接引用，查找过程结束；不通过则返回java.lang.IllegalAccessError异常。
+
+3）否则，按照继承关系从下往上依次对C的各个父类进行第二步的搜索和验证过程。
+
+4）如果始终没有找到合适的方法，则抛出java.lang.AbstractMethodError异常。
+
+​	**正是因为invokevirtual指令执行的第一步就是在运行期确定接收者的实际类型，所以两次调用中的invokevirtual指令并不是把常量池中方法的符号引用解析到直接引用上就结束了，还会根据方法接收者的实际类型来选择方法版本，这个过程就是Java语言中方法重写的本质**。<u>我们把这种在运行期根据实际类型确定方法执行版本的分派过程称为动态分派</u>。
+
+​	既然这种多态性的根源在于虚方法调用指令invokevirtual的执行逻辑，那自然我们得出的结论就只会对方法有效，对字段是无效的，因为字段不使用这条指令。**事实上，在Java里面只有虚方法存在，字段永远不可能是虚的，换句话说，字段永远不参与多态，哪个类的方法访问某个名字的字段时，该名字指的就是这个类能看到的那个字段**。
+
+​	**<u>当子类声明了与父类同名的字段时，虽然在子类的内存中两个字段都会存在，但是子类的字段会遮蔽父类的同名字段</u>**。
+
+​	为了加深理解，笔者又编撰了一份“劣质面试题式”的代码片段，请阅读代码清单8-10，思考运行后会输出什么结果。
+
+​	代码清单8-10　字段没有多态性
+
+```java
+package org.fenixsoft.polymorphic;
+/**
+* 字段不参与多态
+* @author zzm
+*/
+public class FieldHasNoPolymorphic {
+  static class Father {
+    public int money = 1;
+    public Father() {
+      money = 2;
+      showMeTheMoney();
+    }
+    public void showMeTheMoney() {
+      System.out.println("I am Father, i have $" + money);
+    }
+  }
+  static class Son extends Father {
+    public int money = 3;
+    public Son() {
+      money = 4;
+      showMeTheMoney();
+    }
+    public void showMeTheMoney() {
+      System.out.println("I am Son, i have $" + money);
+    }
+  }
+  public static void main(String[] args) {
+    Father gay = new Son();
+    System.out.println("This gay has $" + gay.money);
+  }
+}
+```
+
+​	运行后输出结果为：
+
+```shell
+I am Son, i have $0
+I am Son, i have $4
+This gay has $2
+```
+
+​	**输出两句都是“I am Son”，这是因为Son类在创建的时候，首先隐式调用了Father的构造函数，而Father构造函数中对showMeTheMoney()的调用是一次虚方法调用，实际执行的版本是Son::showMeTheMoney()方法，所以输出的是“I am Son”，这点经过前面的分析相信读者是没有疑问的了**。
+
+​	**而这时候虽然父类的money字段已经被初始化成2了，但Son::showMeTheMoney()方法中访问的却是子类的money字段，这时候结果自然还是0，因为它要到子类的构造函数执行时才会被初始化**。
+
+​	**main()的最后一句通过<u>静态类型访问</u>到了父类中的money，输出了2**。
+
+#### 3. 单分派与多分派
+
+​	**方法的接收者与方法的参数统称为方法的宗量，这个定义最早应该来源于著名的《Java与模式》一书**。
+
++ 根据分派基于多少种宗量，可以将分派划分为单分派和多分派两种。
+
++ **单分派是根据一个宗量对目标方法进行选择，多分派则是根据多于一个宗量对目标方法进行选择**。
+
+​	单分派和多分派的定义读起来拗口，从字面上看也比较抽象，不过对照着实例看并不难理解其含义，代码清单8-11中举了一个Father和Son一起来做出“一个艰难的决定[^50]”的例子。
+
+​	代码清单8-11　单分派和多分派
+
+```java
+/**
+* 单分派、多分派演示
+* @author zzm
+*/
+public class Dispatch {
+  static class QQ {}
+  static class _360 {}
+  public static class Father {
+    public void hardChoice(QQ arg) {
+      System.out.println("father choose qq");
+    }
+    public void hardChoice(_360 arg) {
+      System.out.println("father choose 360");
+    }
+  }
+  public static class Son extends Father {
+    public void hardChoice(QQ arg) {
+      System.out.println("son choose qq");
+    }
+    public void hardChoice(_360 arg) {
+      System.out.println("son choose 360");
+    }
+  }
+  public static void main(String[] args) {
+    Father father = new Father();
+    Father son = new Son();
+    father.hardChoice(new _360());
+    son.hardChoice(new QQ());
+  }
+}
+```
+
+​	运行结果：
+
+```shell
+father choose 360
+son choose qq
+```
+
+​	在main()里调用了两次hardChoice()方法，这两次hardChoice()方法的选择结果在程序输出中已经显示得很清楚了。<u>我们关注的首先是编译阶段中编译器的选择过程，也就是静态分派的过程。这时候选择目标方法的依据有两点：一是**静态类型**是Father还是Son，二是**方法参数**是QQ还是360</u>。这次选择结果的最终产物是产生了两条invokevirtual指令，两条指令的参数分别为**常量池**中指向Father::hardChoice(360)及Father::hardChoice(QQ)**方法的符号引用**。
+
+​	**因为是根据两个宗量进行选择，所以<u>Java语言的静态分派属于多分派类型</u>**。
+
+​	再看看运行阶段中虚拟机的选择，也就是动态分派的过程。在执行“son.hardChoice(new QQ())”这行代码时，更准确地说，是在执行这行代码所对应的invokevirtual指令时，由于**编译期已经决定目标方法的签名必须为hardChoice(QQ)**，虚拟机此时不会关心传递过来的参数“QQ”到底是“腾讯QQ”还是“奇瑞QQ”，因为这时候参数的静态类型、实际类型都对方法的选择不会构成任何影响，唯一可以影响虚拟机选择的因素只有该方法的接受者的实际类型是Father还是Son。
+
+​	**因为只有一个宗量作为选择依据，所以<u>Java语言的动态分派属于单分派类型</u>**。
+
+​	根据上述论证的结果，我们可以总结一句：**如今（直至本书编写的Java 12和预览版的Java 13）的Java语言是一门静态多分派、动态单分派的语言**。强调“如今的Java语言”是因为这个结论未必会恒久不变，C#在3.0及之前的版本与Java一样是动态单分派语言，但在C#4.0中引入了dynamic类型后，就可以很方便地实现动态多分派。JDK 10时Java语法中新出现var关键字，但请读者切勿将其与C#中的dynamic类型混淆，事实上Java的var与C#的var才是相对应的特性，它们与dynamic有着本质的区别：**var是在编译时根据声明语句中赋值符右侧的表达式类型来静态地推断类型，这本质是一种语法糖**；<u>而dynamic在编译时完全不关心类型是什么，等到运行的时候再进行类型判断</u>。Java语言中与C#的dynamic类型功能相对接近（只是接近，并不是对等的）的应该是在JDK 9时通过JEP 276引入的jdk.dynalink模块[^51]，**使用jdk.dynalink可以实现在表达式中使用动态类型，Javac编译器会将这些动态类型的操作翻译为invokedynamic指令的调用点**。
+
+​	**按照目前Java语言的发展趋势，它并没有直接变为动态语言的迹象，而是通过内置动态语言（如JavaScript）执行引擎、加强与其他Java虚拟机上动态语言交互能力的方式来间接地满足动态性的需求**。
+
+​	<u>但是作为多种语言共同执行平台的Java虚拟机层面上则不是如此，早在JDK 7中实现的JSR-292[^52]里面就已经开始提供对动态语言的方法调用支持了，JDK 7中新增的invokedynamic指令也成为最复杂的一条方法调用的字节码指令，稍后笔者将在本章中专门开一节来讲解这个与Java调用动态语言密切相关的特性</u>。
+
+#### 4. 虚拟机动态分派的实现
+
+> [多态方法调用的解析和分派](https://www.cnblogs.com/wade-luffy/p/6058075.html)	<=	下方图片来源
+
+​	前面介绍的分派过程，作为对Java虚拟机概念模型的解释基本上已经足够了，它已经解决了虚拟机在分派中“会做什么”这个问题。但如果问Java虚拟机“具体如何做到”的，答案则可能因各种虚拟机的实现不同会有些差别。
+
+​	动态分派是执行非常频繁的动作，而且动态分派的方法版本选择过程需要运行时在接收者类型的方法元数据中搜索合适的目标方法，因此，<u>Java虚拟机实现基于执行性能的考虑，真正运行时一般不会如此频繁地去反复搜索类型元数据</u>。面对这种情况，**一种基础而且常见的优化手段是为类型在方法区中建立一个虚方法表（Virtual Method Table，也称为vtable，与此对应的，在invokeinterface执行时也会用到接口方法表——Interface Method Table，简称itable），使用虚方法表索引来代替元数据查找以提高性能**[^53]。我们先看看代码清单8-11所对应的虚方法表结构示例，如图8-3所示。
+
+![img](https://images2015.cnblogs.com/blog/990532/201611/990532-20161113074119030-528815574.jpg)
+
+​	虚方法表中存放着各个方法的实际入口地址。
+
++ **如果某个方法在子类中没有被重写，那子类的虚方法表中的地址入口和父类相同方法的地址入口是一致的，都指向父类的实现入口。**
++ **如果子类中重写了这个方法，子类虚方法表中的地址也会被替换为指向子类实现版本的入口地址**。
+
+​	在图8-3中，Son重写了来自Father的全部方法，因此Son的方法表没有指向Father类型数据的箭头。但是Son和Father都没有重写来自Object的方法，所以它们的方法表中所有从Object继承来的方法都指向了Object的数据类型。
+
+​	**为了程序实现方便，具有相同签名的方法，在父类、子类的虚方法表中都应当具有一样的索引序号**，<u>这样当类型变换时，仅需要变更查找的虚方法表，就可以从不同的虚方法表中按索引转换出所需的入口地址</u>。**虚方法表一般在类加载的连接阶段进行初始化，准备了类的变量初始值后，虚拟机会把该类的虚方法表也一同初始化完毕**。
+
+​	<u>上文中笔者提到了查虚方法表是分派调用的一种优化手段，由于Java对象里面的方法默认（即不使用final修饰）就是虚方法，虚拟机除了使用虚方法表之外，为了进一步提高性能，还会使用类型继承关系分析（Class Hierarchy Analysis，CHA）、守护内联（Guarded Inlining）、内联缓存（InlineCache）等多种非稳定的激进优化来争取更大的性能空间，关于这几种优化技术的原理和运作过程，读者可以参考第11章中的相关内容</u>。
+
+[^46]:维基百科中关于静态分派的解释：https://en.wikipedia.org/wiki/Static_dispatch。
+[^47]:重载中选择最合适方法的过程，可参见《Java语言规范》15.12.2节的相关内容。
+[^48]:重写肯定是多态性的体现，但对于重载算不算多态，有一些概念上的争议，有观点认为必须是多个不同类对象对同一签名的方法做出不同响应才算多态，也有观点认为只要使用同一形式的接口去实现不同类的行为就算多态。笔者看来这种争论并无太大意义，概念仅仅是说明问题的一种工具而已。
+[^49]:指普通方法的解析过程，有一些特殊情况（签名多态性方法）的解析过程会稍有区别，但这是用于支持动态语言调用的，与本节话题关系不大。
+[^50]:这是一个2010年诞生的老梗了，尽管当时很轰动，但现在可能很多人都并不了解事情始末，这并不会影响本文的阅读。如有兴趣具体可参考：https://zhuanlan.zhihu.com/p/19609988。
+[^51]:JEP 276的Owner是Attila Szegedi，jdk.dynalink包实质就是把他自己写的开源项目dynalink变成了Java标准的API，所以读者对jdk.dynalink感兴趣的话可以参考：https://github.com/szegedi/dynalink。
+[^52]:JSR-292：Supporting Dynamically Typed Languages on the Java Platform.（Java平台的动态语言支持）。
+[^53]:这里的“提高性能”是相对于直接搜索元数据来说的，实际上在HotSpot虚拟机的实现中，直接去查itable和vtable已经算是最慢的一种分派，只在解释执行状态时使用，在即时编译执行时，会有更多的性能优化措施，具体可常见第11章关于方法内联的内容。
+
+## 8.4 动态类型语言支持
+
+[^54]:
+[^55]:
+[^56]:
+[^57]:
+[^58]:
