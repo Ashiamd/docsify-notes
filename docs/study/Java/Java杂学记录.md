@@ -80,6 +80,10 @@ UserServiceImpl userService; // JDK报错，因为该类型不是接口，JDK是
 >
 > [为什么一些人喜欢在java代码中能加final的变量都加上final](https://blog.csdn.net/qq_31433709/article/details/87823478)
 >
+> 
+>
+> [关于final对象回收的疑问](https://bbs.csdn.net/topics/320255560)
+>
 > [final对象的生命周期](https://bbs.csdn.net/topics/220029494?page=2)	<=	大神回答
 >
 > + 原文中的问题
