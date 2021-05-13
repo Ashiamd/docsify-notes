@@ -3584,7 +3584,7 @@ MyAssigner有两种类型
 
 java代码（旧版Flink），新版的代码我暂时不打算折腾，之后用上再说吧。
 
-**这里设置的Watermark是2s，实际一般设置和window大小一致。**
+**这里设置的Watermark的延时时间是2s，实际一般设置和window大小一致。**
 
 ```java
 public class WindowTest3_EventTimeWindow {
