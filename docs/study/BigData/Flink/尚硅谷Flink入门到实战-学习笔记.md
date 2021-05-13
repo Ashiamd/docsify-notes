@@ -3486,11 +3486,11 @@ env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 乱序流的Watermarker如下图所示：（延迟时间设置为2s）
 
-<small>*乱序流，所以可能出现EventTime前后顺序不一致的情况，这里延时时间设置2s，第一个窗口则为5s+2s，当EventTime=7s的数据到达时，关闭第一个窗口。第二个窗口则是5\*2+2=12s，当12s这个EventTime的数据到达时，关闭第二个窗口。*</small>
+<small>*乱序流，所以可能出现EventTime前后顺序不一致的情况，这里延迟时间设置2s，第一个窗口则为5s+2s，当EventTime=7s的数据到达时，关闭第一个窗口。第二个窗口则是5\*2+2=12s，当12s这个EventTime的数据到达时，关闭第二个窗口。*</small>
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/2020052620175060.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
 
-​	当Flink接收到数据时，会按照一定的规则去生成Watermark，这条Watermark就等于当前所有到达数据中的maxEventTime-延迟时长，也就是说，**Watermark是基于数据携带的时间戳生成的**，一旦Watermark比当前未触发的窗口的停止时间要晚，那么就会触发相应窗口的执行。
+​	当Flink接收到数据时，会按照一定的规则去生成Watermark，这条<u>Watermark就等于当前所有到达数据中的maxEventTime-延迟时长</u>，也就是说，**Watermark是基于数据携带的时间戳生成的**，一旦Watermark比当前未触发的窗口的停止时间要晚，那么就会触发相应窗口的执行。
 
 ​	**由于event time是由数据携带的，因此，如果运行过程中无法获取新的数据，那么没有被触发的窗口将永远都不被触发**。
 
