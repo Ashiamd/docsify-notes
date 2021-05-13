@@ -3486,7 +3486,7 @@ env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 乱序流的Watermarker如下图所示：（延迟时间设置为2s）
 
-<small>*乱序流，所以可能出现EventTime前后顺序不一致的情况，这里延迟时间设置2s，第一个窗口则为5s+2s，当EventTime=7s的数据到达时，关闭第一个窗口。第二个窗口则是5\*2+2=12s，当12s这个EventTime的数据到达时，关闭第二个窗口。*</small>
+<small>*乱序流，所以可能出现EventTime前后顺序不一致的情况，这里延迟时间设置2s，第一个窗口则为`5s+2s`，当EventTime=7s的数据到达时，关闭第一个窗口。第二个窗口则是`5*2+2=12s`，当12s这个EventTime的数据到达时，关闭第二个窗口。*</small>
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/2020052620175060.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
 
@@ -3494,7 +3494,7 @@ env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 ​	**由于event time是由数据携带的，因此，如果运行过程中无法获取新的数据，那么没有被触发的窗口将永远都不被触发**。
 
-​	上图中，我们设置的允许最大延迟到达时间为2s，所以时间戳为7s的事件对应的Watermark是5s，时间戳为12s的事件的Watermark是10s，如果我们的窗口1是1s~5s，窗口2是6s~10s，那么时间戳为7s的事件到达时的Watermarker恰好触发窗口1，时间戳为12s的事件到达时的Watermark恰好触发窗口2。
+​	上图中，我们设置的允许最大延迟到达时间为2s，所以时间戳为7s的事件对应的Watermark是5s，时间戳为12s的事件的Watermark是10s，如果我们的窗口1是`1s~5s`，窗口2是`6s~10s`，那么时间戳为7s的事件到达时的Watermarker恰好触发窗口1，时间戳为12s的事件到达时的Watermark恰好触发窗口2。
 
 ​	**Watermark 就是触发前一窗口的“关窗时间”，一旦触发关门那么以当前时刻为准在窗口范围内的所有所有数据都会收入窗中。**
 
