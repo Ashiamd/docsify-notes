@@ -3472,19 +3472,19 @@ env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 4. Watermark可以理解成一个延迟触发机制，我们可以设置Watermark的延时时长t，<u>每次系统会校验已经到达的数据中最大的maxEventTime，然后认定eventTime小于maxEventTime - t的所有数据都已经到达</u>，**如果有窗口的停止时间等于maxEventTime – t，那么这个窗口被触发执行。**
 
-   `Watermark = maxEventTime-延时时间t`
+   `Watermark = maxEventTime-延迟时间t`
 
 5. watermark 用来让程序自己平衡延迟和结果正确性
 
-*watermark可以理解为把原本的窗口标准稍微放宽了一点。（比如原本5s，设置watermark=2s，那么实际等到7s的数据到达时，才认为是[0,5）的桶需要关闭了）*
+*watermark可以理解为把原本的窗口标准稍微放宽了一点。（比如原本5s，设置延迟时间=2s，那么实际等到7s的数据到达时，才认为是[0,5）的桶需要关闭了）*
 
-有序流的Watermarker如下图所示：（延时时间设置为0s）
+有序流的Watermarker如下图所示：（延迟时间设置为0s）
 
 <small>*此时以5s一个窗口，那么EventTime=5s的元素到达时，关闭第一个窗口，下图即W(5)，W(10)同理。*</small>
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20200526201731274.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQwMTgwMjI5,size_16,color_FFFFFF,t_70)
 
-乱序流的Watermarker如下图所示：（延时时间设置为2s）
+乱序流的Watermarker如下图所示：（延迟时间设置为2s）
 
 <small>*乱序流，所以可能出现EventTime前后顺序不一致的情况，这里延时时间设置2s，第一个窗口则为5s+2s，当EventTime=7s的数据到达时，关闭第一个窗口。第二个窗口则是5\*2+2=12s，当12s这个EventTime的数据到达时，关闭第二个窗口。*</small>
 
