@@ -1509,6 +1509,8 @@ public class TransformTest4_MultipleStreams {
     highTempStream.print("high");
     lowTempStream.print("low");
     allTempStream.print("all");
+    
+    env.execute();
   }
 }
 ```
@@ -1623,6 +1625,8 @@ public class TransformTest4_MultipleStreams {
         });
 
         resultStream.print();
+        
+        env.execute();
     }
 }
 ```
