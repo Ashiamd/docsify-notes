@@ -720,3 +720,315 @@ SELECT A1，A2，A3，A4，A5 FROM A
 
 ## 2.3 ClickHouse为何如此之快
 
+​	<small>很多用户心中一直会有这样的疑问，为什么ClickHouse这么快？前面的介绍对这个问题已经做出了科学合理的解释。比方说，因为ClickHouse是**列式存储数据库**，所以快；也因为ClickHouse使用了**向量化引擎**，所以快。这些解释都站得住脚，但是依然不能消除全部的疑问。因为这些技术并不是秘密，世面上有很多数据库同样使用了这些技术，但是依然没有ClickHouse这么快。所以我想从另外一个角度来探讨一番ClickHouse的秘诀到底是什么。</small>
+
+​	<small>首先向各位读者抛出一个疑问：在设计软件架构的时候，做设计的原则应该是自顶向下地去设计，还是应该自下而上地去设计呢？在传统观念中，或者说在我的观念中，自然是自顶向下的设计，通常我们都被教导要做好顶层设计。而**ClickHouse的设计则采用了自下而上的方式**。ClickHouse的原型系统早在2008年就诞生了，在诞生之初它并没有宏伟的规划。相反它的目的很单纯，就是希望能以最快的速度进行GROUP BY查询和过滤。他们是如何实践自下而上设计的呢？</small>
+
+### 2.3.1 着眼硬件，先想后做
+
+​	首先从硬件功能层面着手设计，在设计伊始就至少需要想清楚如下几个问题。
+
++ 我们将要使用的硬件水平是怎样的？包括CPU、内存、硬盘、网络等。
++ 在这样的硬件上，我们需要达到怎样的性能？包括延迟、吞吐量等。
++ 我们准备使用怎样的数据结构？包括String、HashTable、Vector等。
++ 选择的这些数据结构，在我们的硬件上会如何工作？
+
+​	如果能想清楚上面这些问题，那么在动手实现功能之前，就已经能够计算出粗略的性能了。所以，基于将硬件功效最大化的目的，ClickHouse会在内存中进行GROUP BY，并且使用HashTable装载数据。
+
+​	<u>与此同时，他们非常在意CPU L3级别的缓存，因为一次L3的缓存失效会带来70～100ns的延迟。这意味着在单核CPU上，它会浪费4000万次/秒的运算；而在一个32线程的CPU上，则可能会浪费5亿次/秒的运算。所以别小看这些细节，一点一滴地将它们累加起来，数据是非常可观的。正因为注意了这些细节，所以ClickHouse在基准查询中能做到1.75亿次/秒的数据扫描性能</u>。
+
+### 2.3.2 * 算法在前，抽象在后
+
+​	常有人念叨：“有时候，选择比努力更重要。”确实，路线选错了再努力也是白搭。在ClickHouse的底层实现中，经常会面对一些重复的场景，例如字符串子串查询、数组排序、使用HashTable等。如何才能实现性能的最大化呢？算法的选择是重中之重。<u>以字符串为例，有一本专门讲解字符串搜索的书，名为“Handbook of Exact StringMatching Algorithms”，列举了35种常见的字符串搜索算法。各位猜一猜ClickHouse使用了其中的哪一种？答案是一种都没有。这是为什么呢？因为性能不够快</u>。
+
+​	在字符串搜索方面，针对不同的场景，ClickHouse最终选择了这些算法：
+
++ 对于常量，使用Volnitsky算法；
++ 对于非常量，使用CPU的向量化执行SIMD，暴力优化；
++ 正则匹配使用re2和hyperscan算法。
+
+​	**性能是算法选择的首要考量指标**。
+
+### 2.3.3 勇于尝鲜，不行就换
+
+​	除了字符串之外，其余的场景也与它类似，ClickHouse会**使用最合适、最快的算法**。如果世面上出现了号称性能强大的新算法，ClickHouse团队会立即将其纳入并进行验证。如果效果不错，就保留使用；如果性能不尽人意，就将其抛弃。
+
+### 2.3.4 特定场景，特殊优化
+
+​	针对同一个场景的不同状况，选择使用不同的实现方式，尽可能将性能最大化。关于这一点，其实在前面介绍字符串查询时，针对不同场景选择不同算法的思路就有体现了。类似的例子还有很多，例如去重计数uniqCombined函数，会根据数据量的不同选择不同的算法：<u>当数据量较小的时候，会选择Array保存；当数据量中等的时候，会选择HashSet；而当数据量很大的时候，则使用HyperLogLog算法</u>。
+
+​	<u>对于数据结构比较清晰的场景，会通过代码生成技术实现循环展开，以减少循环次数。接着就是大家熟知的大杀器——向量化执行了</u>。**SIMD被广泛地应用于文本转换、数据过滤、数据解压和JSON转换等场景。相较于单纯地使用CPU，利用寄存器暴力优化也算是一种降维打击了**。
+
+### 2.3.5 持续测试，持续改进
+
+​	如果只是单纯地在上述细节上下功夫，还不足以构建出如此强大的ClickHouse，还需要拥有一个能够持续验证、持续改进的机制。由于Yandex的天然优势，ClickHouse经常会使用真实的数据进行测试，这一点很好地保证了测试场景的真实性。与此同时，ClickHouse也是我见过的发版速度最快的开源软件了，差不多每个月都能发布一个版本。没有一个可靠的持续集成环境，这一点是做不到的。正因为拥有这样的发版频率，ClickHouse才能够快速迭代、快速改进。
+
+​	所以ClickHouse的黑魔法并不是一项单一的技术，而是一种**自底向上的、追求极致性能的设计思路**。这就是它如此之快的秘诀。
+
+## 2.4 本章小结
+
+​	本章我们快速浏览了世界第三大Web流量分析平台Yandex.Metrica背后的支柱ClickHouse的核心特性和逻辑架构。通过对核心特性部分的展示，ClickHouse如此强悍的缘由已初见端倪，**列式存储**、**向量化执行引擎**和**表引擎**都是它的撒手锏。在架构设计部分，则进一步展示了ClickHouse的一些设计思路，例如Column、Field、Block和Cluster。了解这些设计思路，能够帮助我们更好地理解和使用ClickHouse。最后又从另外一个角度探讨了ClickHouse如此之快的秘诀。下一章将介绍如何安装、部署ClickHouse。
+
+# 3. 安装与部署
+
+> + [使用教程 | ClickHouse文档](https://clickhouse.tech/docs/zh/getting-started/tutorial/)
+> + [ClickHouse docker-compose初试_lzshlzsh的专栏-CSDN博客](https://blog.csdn.net/lzshlzsh/article/details/104296325)
+
+## 3.1 ClickHouse的安装过程
+
+### 3.1.1 环境准备
+
+### 3.1.2 安装ClickHouse
+
+1. 安装执行
+
+2. 目录结构
+
+   程序在安装的过程中会自动构建整套目录结构，接下来分别说明它们的作用。
+
+   首先是核心目录部分：
+
+   1. `/etc/clickhouse-server`：服务端的配置文件目录，包括全局配置config.xml和用户配置users.xml等。
+   2. `/var/lib/clickhouse`：默认的数据存储目录（通常会修改默认路径配置，将数据保存到大容量磁盘挂载的路径）。
+   3. `/var/log/clickhouse-server`：默认保存日志的目录（通常会修改路径配置，将日志保存到大容量磁盘挂载的路径）。
+
+   接着是配置文件部分：
+
+   1. `/etc/security/limits.d/clickhouse.conf`：文件句柄数量的配置，默认值如下所示：
+
+      ```shell
+      # cat /etc/security/limits.d/clickhouse.conf
+      clickhouse soft nofile 262144
+      clickhouse hard nofile 262144
+      ```
+
+      该配置也可以通过config.xml的max_open_files修改。
+
+   2. `/etc/cron.d/clickhouse-server`：cron定时任务配置，用于恢复因异常原因中断的ClickHouse服务进程，其默认的配置如下：
+
+      ```shell
+      # cat /etc/cron.d/clickhouse-server
+      # */10 * * * * root (which service > /dev/null 2>&1 && (service clickhouse-server
+      condstart ||:)) || /etc/init.d/clickhouse-server condstart > /dev/null 2>&1
+      ```
+
+      可以看到，在默认的情况下，每隔10秒就会使用condstart尝试启动一次ClickHouse服务，而condstart命令的启动逻辑如下所示。
+
+      ```shell
+      is_running || service_or_func start
+      ```
+
+      如果ClickHouse服务正在运行，则跳过；如果没有运行，则通过start启动。
+
+   最后是一组在/usr/bin路径下的可执行文件：
+
+   1. clickhouse：主程序的可执行文件。
+
+   2. clickhouse-client：一个指向ClickHouse可执行文件的软链接，供客户端连接使用。
+
+   3. clickhouse-server：一个指向ClickHouse可执行文件的软链接，供服务端启动使用。
+
+   4. clickhouse-compressor：内置提供的压缩工具，可用于数据的正压反解。
+
+3. 启动服务
+
+4. 版本升级
+
+## 3.2 客户端的访问接口
+
+​	**ClickHouse的底层访问接口支持TCP和HTTP两种协议**。
+
++ 其中，TCP协议拥有更好的性能，其默认端口为**9000**，主要用于集群间的内部通信及CLI客户端；
++ 而HTTP协议则拥有更好的兼容性，可以通过REST服务的形式被广泛用于JAVA、Python等编程语言的客户端，其默认端口为**8123**。
+
+​	通常而言，并不建议用户直接使用底层接口访问ClickHouse，更为推荐的方式是通过CLI和JDBC这些封装接口，因为它们更加简单易用。
+
+### 3.2.1 CLI
+
+### 3.2.2 JDBC
+
+​	ClickHouse支持标准的JDBC协议，底层基于HTTP接口通信。使用下面的Maven依赖，即可为Java程序引入官方提供的数据库驱动包：
+
+```xml
+<dependency>
+  <groupId>ru.yandex.clickhouse</groupId>
+  <artifactId>clickhouse-jdbc</artifactId>
+  <version>0.2.4</version>
+</dependency>
+```
+
+​	该驱动有两种使用方式。
+
+1. 标准形式
+
+   ​	标准形式是我们常用的方式，通过JDK原生接口获取连接，其关键参数如下：
+
+   + JDBC Driver Class为`ru.yandex.clickhouse.ClickHouseDriver`；
+   + JDBC URL为`jdbc:clickhouse://<host>:<port>[/<database>]`。
+
+   ​	接下来是一段伪代码用例：
+
+   ```java
+   // 初始化驱动
+   Class.forName("ru.yandex.clickhouse.ClickHouseDriver");
+   // url
+   String url = "jdbc:clickhouse://ch5.nauu.com:8123/default";
+   // 用户名密码
+   String user = "default";
+   String password = "";
+   // 登录
+   Connection con = DriverManager.getConnection(url, username, password);
+   Statement stmt = con.createStatement();
+   // 查询
+   ResultSet rs = stmt.executeQuery("SELECT 1");
+   rs.next();
+   System.out.printf("res "+rs.getInt(1));
+   ```
+
+2. 高可用模式
+
+   ​	高可用模式允许设置多个host地址，每次会从可用的地址中随机选择一个进行连接，其URL声明格式如下：
+
+   ```shell
+   jdbc:clickhouse://<first-host>:<port>,<second-host>:<port>[,…]/<database>
+   ```
+
+   ​	在高可用模式下，需要通过BalancedClickhouseDataSource对象获取连接，接下来是一段伪代码用例：
+
+   ```java
+   //多个地址使用逗号分隔
+   String url1 = "jdbc:clickhouse://ch8.nauu.com:8123,ch5.nauu.com:8123/default";
+   //设置JDBC参数
+   ClickHouseProperties clickHouseProperties = new ClickHouseProperties();
+   clickHouseProperties.setUser("default");
+   //声明数据源
+   BalancedClickhouseDataSource balanced = new BalancedClickhouseDataSource(url1,
+   clickHouseProperties);
+   //对每个host进行ping操作, 排除不可用的dead连接
+   balanced.actualize();
+   //获得JDBC连接
+   Connection con = balanced.getConnection();
+   Statement stmt = con.createStatement();
+   //查询
+   ResultSet rs = stmt.executeQuery("SELECT 1 , hostName()");
+   rs.next();
+   System.out.println("res "+rs.getInt(1)+","+rs.getString(2));
+   ```
+
+   ​	由于篇幅所限，所以本小节只介绍了两个典型的封装接口，即CLI（基于TCP）和JDBC（基于HTTP）。但ClickHouse的访问接口并不仅限于此、它还拥有原生的C++、ODBC接口及众多第三方的集成接口（Python、NodeJS、Go、PHP等），如果想进一步了解可参阅官方手册。
+
+## 3.3 内置的实用工具
+
+​	ClickHouse除了提供基础的服务端与客户端程序之外，还内置了clickhouse-local和clickhouse-benchmark两种实用工具，现在分别说明它们的作用。
+
+### 3.3.1 clickhouse-local
+
+​	clickhouse-local可以独立运行大部分SQL查询，不需要依赖任何ClickHouse的服务端程序，它可以理解成是ClickHouse服务的单机版微内核，是一个轻量级的应用程序。clickhouse-local只能够使用File表引擎（关于表引擎的更多介绍在后续章节展开），它的数据与同机运行的ClickHouse服务也是完全隔离的，相互之间并不能访问。
+
+### 3.3.2 clickhouse-benchmark
+
+​	clickhouse-benchmark是基准测试的小工具，它可以自动运行SQL查询，并生成相应的运行指标报告。
+
+## 3.4 本章小结
+
+​	本章首先介绍了基于离线RPM包安装ClickHouse的整个过程。接着介绍了ClickHouse的两种访问接口，其中TCP端口拥有更好的访问性能，而HTTP端口则拥有更好的兼容性。但是在日常应用的过程中，更推荐使用基于它们之上实现的封装接口。所以接下来，我们又分别介绍了两个典型的封装接口，其中CLI接口是基于TCP封装的，它拥有交互式和非交互式两种运行模式。而JDBC接口是基于HTTP封装的，是一种标准的数据库访问接口。最后介绍了ClickHouse内置的几种实用工具。从下一章开始将正式介绍ClickHouse的功能，首先会从数据定义开始。
+
+# 4. 数据定义
+
+​	对于一款可以处理海量数据的分析系统而言，支持DML查询实属难能可贵。有人曾笑言：解决问题的最好方法就是恰好不需要。在海量数据的场景下，许多看似简单的操作也会变得举步维艰，所以一些系统会选择做减法以规避一些难题。而ClickHouse支持较完备的DML语句，包括INSERT、SELECT、UPDATE和DELETE。虽然UPDATE和DELETE可能存在性能问题，但这些能力的提供确实丰富了各位架构师手中的筹码，在架构设计时也能多几个选择。
+
+​	作为一款完备的DBMS（数据库管理系统），ClickHouse提供了DDL与DML的功能，并支持大部分标准的SQL。也正因如此，ClickHouse十分容易入门。如果你是一个拥有其他数据库（如MySQL）使用经验的老手，通过上一章的介绍，在搭建好数据库环境之后，再凭借自身经验摸索几次，很快就能够上手使用ClickHouse了。但是作为一款异军突起的OLAP数据库黑马，ClickHouse有着属于自己的设计目标，高性能才是它的根本，所以也不能完全以对传统数据库的理解度之。比如，ClickHouse在基础数据类型方面，虽然相比常规数据库更为精练，但同时它又提供了实用的复合数据类型，而这些是常规数据库所不具备的。再比如，**ClickHouse所提供的DDL与DML查询，在部分细节上也与其他数据库有所不同（例如UPDATE和DELETE是借助ALTER变种实现的）**。
+
+​	所以系统学习并掌握ClickHouse中数据定义的方法是很有必要的，这能够帮助我们更深刻地理解和使用ClickHouse。本章将详细介绍ClickHouse的数据类型及DDL的相关操作，在章末还会讲解部分DML操作。
+
+## 4.1 ClickHouse的数据类型
+
+​	作为一款分析型数据库，ClickHouse提供了许多数据类型，它们可以划分为**基础类型**、**复合类型**和**特殊类型**。其中基础类型使ClickHouse具备了描述数据的基本能力，而另外两种类型则使ClickHouse的数据表达能力更加丰富立体。
+
+### 4.1.1 基础类型
+
+​	基础类型只有**数值**、**字符串**和**时间**三种类型，没有Boolean类型，但可以使用整型的0或1替代。
+
+1. 数值类型
+
+   1. Int
+
+      ​	在普遍观念中，常用Tinyint、Smallint、Int和Bigint指代整数的不同取值范围。而ClickHouse则直接使用Int8、Int16、Int32和Int64指代4种大小的Int类型，其末尾的数字正好表明了占用字节的大小（8位=1字节），具体信息如表4-1所示。
+
+      ​	表4-1 有符号整数类型的具体信息
+
+      | 名称  | 大小（字节） | 范围                                     | 普遍观念 |
+      | ----- | ------------ | ---------------------------------------- | -------- |
+      | Int8  | 1            | -128~127                                 | Tinyint  |
+      | Int16 | 2            | -32768~32767                             | Smallint |
+      | Int32 | 4            | -2147483648~2147483647                   | Int      |
+      | Int64 | 8            | -9223372036854775808~9223372036854775807 | Bigint   |
+
+      ​	ClickHouse支持无符号的整数，使用前缀U表示，具体信息如表4-2所示。
+
+      ​	表4-2 无符号整数类型的具体信息
+
+      | 名称   | 大小（字节） | 范围                   | 普遍观念          |
+      | ------ | ------------ | ---------------------- | ----------------- |
+      | UInt8  | 1            | 0~255                  | Tinyint Unsigned  |
+      | UInt16 | 2            | 0~65535                | Smallint Unsigned |
+      | UInt32 | 4            | 0~4294967295           | Int Unsigned      |
+      | UInt64 | 8            | 0~18446744073709551615 | Bigint Unsigned   |
+
+   2. Float
+
+      ​	与整数类似，ClickHouse直接使用Float32和Float64代表单精度浮点数以及双精度浮点数，具体信息如表4-3所示。
+      
+      ​	表4-3 浮点数类型的具体信息
+      
+      | 名称    | 大小（字节） | 有效精度(位数) | 普遍观念 |
+      | ------- | ------------ | -------------- | -------- |
+      | Float32 | 4            | 7              | Float    |
+      | Float64 | 8            | 16             | Double   |
+      
+      ​	在使用浮点数的时候，应当要意识到它是有限精度的。假如，分别对Float32和Float64写入超过有效精度的数值，下面我们看看会发生什么。例如，将拥有20位小数的数值分别写入Float32和Float64，此时结果就会出现数据误差：
+      
+      ```shell
+      ```
+      
+      可以发现，Float32从小数点后第8位起及Float64从小数点后第17位起，都产生了数据溢出。
+      
+      ClickHouse的浮点数支持**正无穷**、**负无穷**以及**非数字**的表达方式。
+      
+      + 正无穷：
+      
+        ```shell
+        ```
+      
+      + 负无穷：
+      
+        ```shell
+        
+        ```
+      
+      + 非数字：
+      
+        ```shell
+        ```
+      
+   3. Decimal
+
+      ​	如果要求更高精度的数值运算，则需要使用定点数。ClickHouse提供了Decimal32、Decimal64和Decimal128三种精度的定点数。可以通过两种形式声明定点：简写方式有Decimal32(S)、Decimal64(S)、Decimal128(S)三种，原生方式为Decimal(P,S)，其中：
+
+      + P代表精度，决定总位数（整数部分+小数部分），取值范围是1～38；
+      + S代表规模，决定小数位数，取值范围是0～P。
+
+      ​	简写方式与原生方式的对应关系如表4-4所示。
+
+      ​	表4-4 定点数类型的具体信息
+
+      | 名称          | 等效声明          | 范围                        |
+      | ------------- | ----------------- | --------------------------- |
+      | Decimal32(S)  | Decimal(1~9，S)   | -1\*10^(9-S)到1\*10^(9-S)   |
+      | Decimal64(S)  | Decimal(10~18，S) | -1\*10^(18-S)到1\*10^(18-S) |
+      | Decimal128(S) | Decimal(19~38，S) | -1\*10^(38-S)到1\*10^(38-S) |
+
+      
+
+2. 
+
