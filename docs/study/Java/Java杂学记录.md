@@ -354,5 +354,7 @@ duration = 5342706955
 >
 > [并发基础（八） java线程的中断机制](https://www.cnblogs.com/jinggod/p/8486096.html)
 
+## 16. Stream API
 
+> [Java 8 学习笔记_iicer的博客-CSDN博客](https://blog.csdn.net/weixin_45225595/article/details/106203264) 	=>	网友根据B站尚硅谷视频做的笔记，推荐阅读。
 
