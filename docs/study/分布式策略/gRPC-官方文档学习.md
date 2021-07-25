@@ -2,13 +2,11 @@
 
 > [Documentation | gRPC](https://www.grpc.io/docs/)	=>	主要就是根据官方文档简单学习一下gRPC，中间会对一些概念另外查文章学习。
 >
-> <small>之前写过一个简单的移动端多人聊天室，服务端主要用到的就是netty+protobuf（客户端dart+protobuf）。但是当时主要就用到message（就是用来UDP即时通讯时序列化数据），没用到里面的service定义服务接口。</small>
+> <small>之前写过一个简单的移动端多人聊天室，服务端主要用到的就是netty+protobuf（客户端dart+protobuf）。但是当时主要就用到protobuf的message（就是用来UDP即时通讯时序列化数据），没用到gRPC定义service服务接口。</small>
 
-# 1. 文档
+# 1. gRPC介绍
 
-## 1.1 gRPC介绍
-
-### 1.1.1 gRPC概述
+## 1.1 gRPC概述
 
 ​	gRPC can use protocol buffers as both its Interface Definition Language (**IDL**) and as its underlying message interchange format.
 
@@ -45,7 +43,7 @@
 > | Python      | Windows, Linux, Mac    | Python 3.5+                                 |
 > | Ruby        | Windows, Linux, Mac    | Ruby 2.3+                                   |
 
-### 1.1.2 Working with Protocol Buffers
+## 1.2 Working with Protocol Buffers
 
 > - [Language Guide (proto3)](https://developers.google.com/protocol-buffers/docs/proto3)
 
@@ -95,7 +93,7 @@ message HelloReply {
 
 > ​	To learn more about protocol buffers, including how to install `protoc` with the gRPC plugin in your chosen language, see the [protocol buffers documentation](https://developers.google.com/protocol-buffers/docs/overview).
 
-### 1.1.3 Protocol buffer versions
+## 1.3 Protocol buffer versions
 
 ​	简言之就是现在有proto3和proto2，官方推荐用比较新的proto3。
 
@@ -103,7 +101,7 @@ message HelloReply {
 >
 > In general, while you can use proto2 (the current default protocol buffers version), we recommend that you use proto3 with gRPC as it lets you use the full range of gRPC-supported languages, as well as avoiding compatibility issues with proto2 clients talking to proto3 servers and vice versa.
 
-## 1.2 核心概念、体系架构和生命周期
+# 2. 核心概念、体系架构和生命周期
 
 > Core concepts, architecture and lifecycle
 >
@@ -111,7 +109,7 @@ message HelloReply {
 >
 > Not familiar with gRPC? First read [Introduction to gRPC](https://www.grpc.io/docs/what-is-grpc/introduction/). For language-specific details, see the quick start, tutorial, and reference documentation for your language of choice.
 
-### 1.2.1 Service definition
+## 2.1 Service definition
 
 ​	下面这段前面重复过了，就是"1.1.1 gRPC"概述的内容
 
@@ -159,7 +157,7 @@ gRPC支持四种service方法：
 
 >  You’ll learn more about the different types of RPC in the [RPC life cycle](https://www.grpc.io/docs/what-is-grpc/core-concepts/#rpc-life-cycle) section below.
 
-### 1.2.2 Using the API
+## 2.2 Using the API
 
 ​	通过gRPC提供的protoc插件编译`.proto`文件，生成client端和server端的代码。通常client端调用API，server端实现API。
 
@@ -169,19 +167,19 @@ gRPC支持四种service方法：
 
   *ps：简言之，client调用gRPC按照proto生成的本地对象，而gRPC负责实际的client和server之间的message数据交互。（从调用者的角度来看，网络交互细节被省略了，只需要与本地对象交互）*
 
-### 1.2.3 Synchronous vs. asynchronous
+## 2.3 Synchronous vs. asynchronous
 
 ​	Synchronous RPC 调用在服务器收到响应之前一直阻塞，这与RPC所期望的过程调用的抽象最接近。另一方面，网络本身就是异步的，在大多数情况下，无需阻塞线程就可启动（和使用）RPC服务，这很有用（很便利）。
 
 ​	大多数gRPC编程API都支持同步和异步两种方式。（详情参考所选语言的文档）
 
-### 1.2.4 RPC life cycle
+## 2.4 RPC life cycle
 
 ​	该章节可以了解到client通过gRPC调用server方法的一些过程，但详情还是要参照选定语言的参考文档。
 
 *ps：下面直接看全英版本，就不继续使用我拙劣的译文了，全英比较不容易有理解上的歧义。*
 
-#### Unary RPC
+### Unary RPC
 
 ​	First consider the simplest type of RPC where the client sends a single request and gets back a single response.
 
@@ -195,28 +193,93 @@ gRPC支持四种service方法：
 
 3. Once the server has the client’s request message, it does whatever work is necessary to create and populate a response. The response is then returned (if successful) to the client together with status details (status code and optional status message) and optional trailing metadata.
 
-   *一旦serevr接收到来自client的request message，就会执行创建和填充response的相关流程。如果处理成功，reponse会携带一些状态信息（状态码、可选的状态message）和可选trailing metadata返回给client。*
+   *一旦serevr接收到来自client的request message，就会执行创建和填充response的相关流程。如果处理成功，reponse会携带一些status details状态信息（状态码、可选的状态message）和可选trailing metadata返回给client。*
 
 4. If the response status is OK, then the client gets the response, which completes the call on the client side.
 
-   
+   *如果response的status正常，那么client获取response，客户端调用流程终止。*
 
-#### Server streaming RPC
+### Server streaming RPC
 
-#### Client streaming RPC
+​	A server-streaming RPC is similar to a unary RPC, except that the server returns a stream of messages in response to a client’s request. After sending all its messages, the server’s status details (status code and optional status message) and optional trailing metadata are sent to the client. This completes processing on the server side. The client completes once it has all the server’s messages.
 
-#### Bidirectional streaming RPC
+​	*server-stream RPC和前面的unary RPC类似，只不过server返回值response变为stream（里面是一系列message）。在server（借助stream）发送完所有message后，再发送server的status details状态信息（状态码、可选的状态message）和可选trailing metadata到client。server服务端流程至此结束，而client在接收所有来自server的messages之后结束流程。*
 
-#### Deadlines/Timeouts
+### Client streaming RPC
 
-#### RPC termination
+​	A client-streaming RPC is similar to a unary RPC, except that the client sends a stream of messages to the server instead of a single message. The server responds with a single message (along with its status details and optional trailing metadata), typically but not necessarily after it has received all the client’s messages.
 
-#### Cancelling an RPC
+​	*client-stream RPC同理和RPC类似，不过就是client发送到server的request变为stream（里面是一系列message）。server响应一个message（携带一些status details状态信息和可选trailing metadata），通常在接收所有来自client的messages后响应（注意：并不是硬性要求在接收完所有数据后才response）*
+
+### Bidirectional streaming RPC
+
+​	In a bidirectional streaming RPC, the call is initiated by the client invoking the method and the server receiving the client metadata, method name, and deadline. The server can choose to send back its initial metadata or wait for the client to start streaming messages.
+
+​	*在 bidirectional streaming RPC中，client调用方法、server接收client的metadata、method、deadline时启动RPC调用流程。server可以选择发送其metadata或者等待client通过stream传输messages过来。*
+
+​	Client- and server-side stream processing is application specific. Since the two streams are independent, the client and server can read and write messages in any order. For example, a server can wait until it has received all of a client’s messages before writing its messages, or the server and client can play “ping-pong” – the server gets a request, then sends back a response, then the client sends another request based on the response, and so on.
+
+​	*client和server端的stream处理流程是应用程序实现中指定的。由于两个stream彼此独立，client和server可随机读写messages。比如，server可以等到接收完所有来自client的messages再进行写messages操作，或者server和client之间进行"ping-pong"操作（即server每接收一个request就回送一个response，之后client又根据新收到的response发送新的request，如此往复。）或者进行其他形式的request/response交互操作。*
+
+### * Deadlines/Timeouts
+
+​	gRPC allows clients to specify how long they are willing to wait for an RPC to complete before the RPC is terminated with a `DEADLINE_EXCEEDED` error. On the server side, the server can query to see if a particular RPC has timed out, or how much time is left to complete the RPC.
+
+​	*gRPC允许client指定RPC调用完成的最长执行时间。server端可以查询特定的RPC是否处理超时，或者还剩多少时间可以用于处理该RPC。*
+
+​	Specifying a deadline or timeout is language specific: some language APIs work in terms of timeouts (durations of time), and some language APIs work in terms of a deadline (a fixed point in time) and may or may not have a default deadline.
+
+​	*指定deadline或者timeout和具体使用的编程语言有关：有些编程语言的API根据timeouts（duration of time）运作RPC，有些则根据deadline（a fixed point in time），还有一些有或者没有默认的deadline。*
+
+### * RPC termination
+
+​	**In gRPC, both the client and server make independent and local determinations of the success of the call, and their conclusions may not match. This means that, for example, you could have an RPC that finishes successfully on the server side (“I have sent all my responses!") but fails on the client side (“The responses arrived after my deadline!"). It’s also possible for a server to decide to complete before a client has sent all its requests.**
+
+​	***在gRPC中，client和server对"RPC调用成功/结束"只在本地进行独立的判定，它们判定的结论可能不匹配。这意味着，你在server端可能完成了RPC调用，但是在client端出现失败（如client判定来自server端response超出预期的deadline）。还有可能server在client发送完所有requets之前就单方宣告server端已经完成RPC处理。***
+
+### * Cancelling an RPC
+
+​	Either the client or the server can cancel an RPC at any time. A cancellation terminates the RPC immediately so that no further work is done.
+
+​	*在client和server端都可以随时取消RPC调用。一次cancellation取消操作能立即终止RPC，使后续流程不再进行。*
 
 > Warning
 >
 > Changes made before a cancellation are not rolled back.
+>
+> 注意：
+>
+> **在cancellation取消操作之前的所有改变都不会被回滚！！！**
+>
+> **在cancellation取消操作之前的所有改变都不会被回滚！！！**
+>
+> **在cancellation取消操作之前的所有改变都不会被回滚！！！**
 
-#### Metadata
+### * Metadata
 
-#### Channels
+​	Metadata is information about a particular RPC call (such as [authentication details](https://www.grpc.io/docs/guides/auth/)) in the form of a list of key-value pairs, where the keys are strings and the values are typically strings, but can be binary data. Metadata is opaque to gRPC itself - it lets the client provide information associated with the call to the server and vice versa.
+
+​	Access to metadata is language dependent.
+
+​	*Metadata是关于特定某个RPC调用的信息（比如身份认证信息），其以key-value对的形式存在，key为字符串，value通常是字符串，但也可以是二进制数据。Metadata对gRPC本身来说是隐藏无需感知的，client和server用其来关联自定义信息到RPC调用动作（可以类比HTTP请求中的header）。*
+
+​	*每个编程语言关于metadata的操作不尽相同。*
+
+### * Channels
+
+​	A gRPC channel provides a connection to a gRPC server on a specified host and port. It is used when creating a client stub. Clients can specify channel arguments to modify gRPC’s default behavior, such as switching message compression on or off. A channel has state, including `connected` and `idle`.
+
+​	How gRPC deals with closing a channel is language dependent. Some languages also permit querying channel state.
+
+​	*一个gRPC channel对应一个在特定host、port开放的gRPC server。在创建client stub时就会用到channel。Clients 可以指定不同的channel参数去改变gRPC的默认行为，比如改变message的压缩情况（压缩or不压缩）。channel具有state状态，包括`connected`、`idle`。*
+
+​	*gRPC关闭channel的流程依赖编程语言实现。一些编程语言还支持查询channel的state状态。*
+
+# 3. FAQ
+
+# 4. Languages
+
+# 5. Platforms
+
+# 6. Guides
+
