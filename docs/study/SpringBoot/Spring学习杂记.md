@@ -10,6 +10,8 @@
 
 > [Aspectj与Spring AOP比较 - 简书 (jianshu.com)](https://www.jianshu.com/p/872d3dbdc2ca) => 图文并茂，推荐阅读
 
-# 3. @Transcational
+# 3. Spring事务
 
 > + [Spring中同一类@Transactional修饰方法相互调用的坑_前路无畏的博客-CSDN博客](https://blog.csdn.net/fsjwin/article/details/109211355)
+> + [Spring事务传播级别-代码实验-随笔(半成品) - Ashiamd - 博客园 (cnblogs.com)](https://www.cnblogs.com/Ashiamd/p/15085827.html)
+
