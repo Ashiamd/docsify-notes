@@ -8,5 +8,8 @@
 
 # 2. AOP
 
-> [Aspectj与Spring AOP比较 - 简书 (jianshu.com)](https://www.jianshu.com/p/872d3dbdc2ca)
+> [Aspectj与Spring AOP比较 - 简书 (jianshu.com)](https://www.jianshu.com/p/872d3dbdc2ca) => 图文并茂，推荐阅读
 
+# 3. @Transcational
+
+> + [Spring中同一类@Transactional修饰方法相互调用的坑_前路无畏的博客-CSDN博客](https://blog.csdn.net/fsjwin/article/details/109211355)
