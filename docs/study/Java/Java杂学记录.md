@@ -358,3 +358,7 @@ duration = 5342706955
 
 > [Java 8 学习笔记_iicer的博客-CSDN博客](https://blog.csdn.net/weixin_45225595/article/details/106203264) 	=>	网友根据B站尚硅谷视频做的笔记，推荐阅读。
 
+## 17. web基础
+
+> [Servlet、Tomcat、SpringMVC-整理-随笔](https://www.cnblogs.com/Ashiamd/p/15085668.html)
+
