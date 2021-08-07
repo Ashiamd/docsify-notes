@@ -19,11 +19,14 @@
 1. @Transactional 由于serviceImp实现的service，所以AOP默认用的Spring AOP中的jdk动态代理。因此private、protected、包级、static的不能生效，但是不报错。另外由于AOP，同类下的其他方法上的@Transactional不生效，因为是类内部方法调用，动态代理不生效。解决方法：1、写在不同的类里；2、同类，但是用AspectJ获取代理对象，用代理对象再调用同类的B方法。
 (ps: 可以在 `org.springframework.transaction.interceptor.TransactionAspectSupport#invokeWithinTransaction` 中打断点查看一些事务调用情况)
 
-2. @Transactional指定的spring事务传播对 TransactionTemplate transactionTemplate 有效，TransactionTemplate transactionTemplate 就是单纯开启事务的，就好像原本的@Transactional在方法前后通过AOP来开启、提交事务，我们这手动提交事务罢了。然后mysql事务本身和spring的事务传递是两个东西，所以transactionTemplate也受当前使用它的方法的spring事务传播级别的影响。
+2. @Transactional指定的spring事务传播对 TransactionTemplate transactionTemplate 同样有效。+ 
 
-3. REQUIRES_NEW 和 NESTED的区别，前者开启和原事务完全无关的新事务，回滚是独立的新事务被回滚；后者如果已经存在事务，则仅设置savepoint，和原事务是同一个事务，不过就是后者回滚只回滚到自己的检查点。如果原本没有事务，那么NESTED就和REQUIRES一样。
+    + TransactionTemplate transactionTemplate可以通过`transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_NEVER);`设置事务传播级别。
+    + 注意，如果在@Transactional方法内又使用transactionTemplate，那可能导致最后开了两个事务（具体看transactionTemplate设置的事务传播级别是什么，如果@Transactional和transactionTemplate都是用REQUIRES_NEW，那就是两个不相干的事务了）
 
-4. 由于@Transactional这边Spring传播级别通过AOP实现，所以调用方法的时候就确认是否有父事务环境了，不会等运行到中间调用B之后又重新判断(Propagation.SUPPORTS就是一个典型例子)。
+3. REQUIRES_NEW 和 NESTED的区别，前者开启和原事务完全无关的新事务，回滚是独立的新事务被回滚；后者如果已经存在事务，则仅设置savepoint，和原事务是同一个事务，不过就是后者回滚只回滚到自己的检查点。如果原本没有事务，那么NESTED就和REQUIRES一样都是新建事务。
+
+4. 由于@Transactional这边Spring传播级别通过AOP实现，所以调用方法的时候就确认是否有父事务环境了，不会等运行到中间调用B之后又重新判断(所以如果外层是Propagation.NEVER，即时方法内临时调用另一个事务方法，也不会抛出异常，外部方法始终无事务，内部被调用方法是独立的一个事务)。
 
 5. 同一个类中方法调用会可能导致@Transactional失效，重新使得@Transcational生效的方法：
     1. pom.xml 中添加AspectJ:
@@ -41,10 +44,10 @@
 
 6. TransactionTemplate相关
 
-    + TransactionTemplate transactionTemplate的传播级别和当前方法上的@Transcational( propagation = Propagation.XXXX) 有关！！（比如A是NEVER，A通过transactionTemplate调用B，B是REQUIRED，那么transactionTemplate由于调用B之前先新建了事务，所以A抛异常，由于A直接抛异常，所以B压根没被执行）
-    + transactionTemplate.execute本身就是开一个事务，但是同样要遵循该方法设定的spring事务传播级别。如果A的事务传播级别为Propagation.NEVER，那么A调用B，如果B新建事务（RQUIRED、REQUIRES_NEW），那么B执行完后，A直接抛出异常，这之前的修改都是commit到数据库的。但是B的操作由于是新的事务，只要B不抛出新异常，就仍然改库。
-    + 理解Nested的关键是savepoint。它与PROPAGATION_REQUIRES_NEW的区别是，PROPAGATION_REQUIRES_NEW另起一个事务，将会与它的父事务相互独立，而Nested的事务和它的父事务是相依的，它的提交是要等和它的父事务一块提交的。也就是说，如果父事务最后回滚，它也要回滚的。而Nested事务的好处是它有一个savepoint。也就是说ServiceB.methodB失败回滚，那么ServiceA.methodA也会回滚到savepoint点上，ServiceA.methodA可以选择另外一个分支，比如ServiceC.methodC，继续执行，来尝试完成自己的事务。但是这个事务并没有在EJB标准中定义。
-    
+    - transactionTemplate.execute本身就是开一个事务，也可以手动设定事务传播级别等。和@Transactional注解的区别就是注解的形式在方法执行前设置事务传播级别和开启事务，而transactionTemplate只在execute的时候才开启事务。
+
+    + TransactionTemplate transactionTemplate可以通过`transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_NEVER);`设置事务传播级别
+
 7. Spring AOP知识回顾
 
     1. 对于基于接口动态代理的AOP事务增强来说，由于接口的方法是public的，这就要求实现类的实现方法必须是public的， 不能是protected，private等，同时不能使用static的修饰符。
