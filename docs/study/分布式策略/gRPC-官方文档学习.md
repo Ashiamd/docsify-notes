@@ -277,6 +277,66 @@ gRPC支持四种service方法：
 
 # 3. FAQ
 
+## 3.1 什么是gRPC
+
+​	gRPC is a modern, open source remote procedure call (RPC) framework that can run anywhere. It enables client and server applications to communicate transparently, and makes it easier to build connected systems.
+
+​	gRPC是开源的RPC远程过程调用框架。它使得client和server应用能够透明通信（即gRPC维护client和server之间的通信，我们只需按照一定语法进行编写即可，无需关心底层通信实现），使用gRPC能够使系统间联系更加简单。
+
+## 3.2 适合gRPC的场景
+
++ 低延迟、高扩展性、分布式系统
+
+  Low latency, highly scalable, distributed systems.
+
++ 开发与云服务器通信的移动客户端
+
+  Developing mobile clients which are communicating to a cloud server.
+
++ 设计准确、高效、语言无关的（通信）协议
+
+  Designing a new protocol that needs to be accurate, efficient and language independent.
+
++ 分层设计，以支持扩展性，例如：（用户身份）认证、负载均衡、日志记录和监控等
+
+  Layered design to enable extension eg. authentication, load balancing, logging and monitoring etc.
+
+## 3.3 gRPC release支持多久
+
+​	**The gRPC project does not do LTS releases**. Given the rolling release model above, we support the current, latest release and the release prior to that. Support here means bug fixes and security fixes.
+
+## 3.4 我能在浏览器上使用gRPC吗
+
+​	The [gRPC-Web](https://github.com/grpc/grpc-web) project is Generally Available.
+
+## 3.5 可以在gRPC上使用其他数据格式(JSON、protobuf、Thrift、XML)吗
+
+​	Yes. gRPC is designed to be extensible to support multiple content types. The initial release contains support for Protobuf and with external support for other content types such as FlatBuffers and Thrift, at varying levels of maturity.
+
+## 3.6 Can I use gRPC in a service mesh
+
+​	Yes. gRPC applications can be deployed in a service mesh like any other application. gRPC also supports [xDS APIs](https://www.envoyproxy.io/docs/envoy/latest/api-docs/xds_protocol) which enables deploying gRPC applications in a service mesh without sidecar proxies. The proxyless service mesh features supported in gRPC are listed [here](https://github.com/grpc/grpc/blob/master/doc/grpc_xds_features.md).
+
+## 3.7 gRPC如何助长移动端开发
+
+​	gRPC and Protobuf provide an easy way to precisely define a service and auto generate reliable client libraries for iOS, Android and the servers providing the back end. The clients can take advantage of advanced streaming and connection features which help save bandwidth, do more over fewer TCP connections and save CPU usage and battery life.
+
+​	简言之gRPC可生成IOS、Android的client客户端代码，这些代码中采用先进的流处理和连接特性，能够有效节省带宽、节省CPU使用率，（变向）延长电池寿命。
+
+## 3.8 Why is gRPC better than any binary blob over HTTP/2?
+
+​	This is largely what gRPC is on the wire. However gRPC is also a set of libraries that will provide higher-level features consistently across platforms that common HTTP libraries typically do not. Examples of such features include:
+
++ interaction with flow-control at the application layer
++ cascading call-cancellation
++ load balancing & failover
+
+## 3.9 Why is gRPC better/worse than REST?
+
+​	gRPC largely follows HTTP semantics over HTTP/2 but we explicitly allow for full-duplex streaming. We diverge from typical REST conventions as we use static paths for performance reasons during call dispatch as parsing call parameters from paths, query parameters and payload body adds latency and complexity. We have also formalized a set of errors that we believe are more directly applicable to API use cases than the HTTP status codes.
+
+​	gRPC很大程度上遵循基于HTTP/2的HTTP语义，但明确支持全双工流。我们偏离了典型的REST协议，我们出于性能考量，决定在分发调用请求时采用静态路由，因为从路由中解析调度参数、查询参数和数据载体payload body会带来额外的延迟和（处理/设计的）复杂性。我们同时还定义了一组errors，确信其比HTTP状态码更适用于API。
+
 # 4. Languages
 
 # 5. Platforms
