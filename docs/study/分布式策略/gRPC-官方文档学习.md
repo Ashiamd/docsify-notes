@@ -339,6 +339,62 @@ gRPC支持四种service方法：
 
 # 4. Languages
 
+## Java
+
+### Quick start
+
+> [Quick start | Java | gRPC](https://www.grpc.io/docs/languages/java/quickstart/)	=>	跟着做即可
+
+*ps：虽然和这个没关系，但是我顺便安装了一下AdoptOpenJDK-11，用的jenv管理jdk8和jdk11*
+
+### 基础教程
+
+​	通过该基础教程，将学到：
+
++ Define a service in a `.proto` file.
++ Generate server and client code using the protocol buffer compiler.
++ Use the Java gRPC API to write a simple client and server for your service.
+
+​	It assumes that you have read the [Introduction to gRPC](https://www.grpc.io/docs/what-is-grpc/introduction/) and are familiar with [protocol buffers](https://developers.google.com/protocol-buffers/docs/overview). Note that the example in this tutorial uses the [proto3](https://github.com/google/protobuf/releases) version of the protocol buffers language: you can find out more in the [proto3 language guide](https://developers.google.com/protocol-buffers/docs/proto3) and [Java generated code guide](https://developers.google.com/protocol-buffers/docs/reference/java-generated).
+
+#### 为什么使用gRPC
+
+​	Our example is a simple route mapping application that lets clients get information about features on their route, create a summary of their route, and exchange route information such as traffic updates with the server and other clients.
+
+​	With gRPC we can define our service once in a `.proto` file and generate clients and servers in any of gRPC’s supported languages, which in turn can be run in environments ranging from servers inside a large data center to your own tablet — all the complexity of communication between different languages and environments is handled for you by gRPC. We also get all the advantages of working with protocol buffers, including efficient serialization, a simple IDL, and easy interface updating.
+
+简言之：
+
+1. gRPC方便客户端获取路由信息，以及和服务端交换路由信息
+2. gRPC使得开发时对语言的依赖性降低，只要符合接口定义，可以使用任何gRPC支持的语言进行开发
+3. gRPC默认使用protobuf，享有高效的序列化、简单的IDL、（更方便定义）易于更新的接口
+
+#### 示例代码
+
+The example code for our tutorial is in [grpc/grpc-java/examples/src/main/java/io/grpc/examples/routeguide](https://github.com/grpc/grpc-java/tree/master/examples/src/main/java/io/grpc/examples/routeguide). To download the example, clone the latest release in `grpc-java` repository by running the following command:
+
+```shell
+$ git clone -b v1.39.0 https://github.com/grpc/grpc-java.git
+```
+
+Then change your current directory to `grpc-java/examples`:
+
+```shell
+$ cd grpc-java/examples
+```
+
+#### 定义service
+
+
+
+### ALTS
+
+### API
+
+### Generated code
+
+
+
 # 5. Platforms
 
 # 6. Guides
