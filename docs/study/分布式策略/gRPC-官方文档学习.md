@@ -1138,7 +1138,7 @@ The future stub signature for a unary RPC method `unaryExample`:
 public ListenableFuture<ResponseType> unaryExample(RequestType request)
 ```
 
-#### Codegen
+#### 代码生成
 
 Typically the build system handles creation of the gRPC generated code.
 
@@ -1284,3 +1284,20 @@ How gRPC deals with errors, and gRPC error codes.
 [Performance Best Practices](https://www.grpc.io/docs/guides/performance/)
 
 A user guide of both general and language-specific best practices to improve performance.
+
+----
+
+## Authentication
+
+
+
+## Benchmarking
+
+
+
+## Error handling
+
+
+
+## Performance Best Practices
+

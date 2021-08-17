@@ -16,10 +16,67 @@
 > + [Spring事务-随笔-Ashiamd - 博客园 (cnblogs.com)](https://www.cnblogs.com/Ashiamd/p/15085827.html)
 > + [Spring事务测试github项目](https://github.com/Ashiamd/SpringTransactionTest)
 
-1. @Transactional 由于serviceImp实现的service，所以AOP默认用的Spring AOP中的jdk动态代理。因此private、protected、包级、static的不能生效，但是不报错。另外由于AOP，同类下的其他方法上的@Transactional不生效，因为是类内部方法调用，动态代理不生效。解决方法：1、写在不同的类里；2、同类，但是用AspectJ获取代理对象，用代理对象再调用同类的B方法。
-(ps: 可以在 `org.springframework.transaction.interceptor.TransactionAspectSupport#invokeWithinTransaction` 中打断点查看一些事务调用情况)
+1. @Transactional 由于serviceImp实现的service，所以AOP默认用的Spring AOP中的jdk动态代理。因此private、protected、包级、static的不能生效，但是不报错。另外由于AOP，同类下的其他方法上的@Transactional不生效，因为是类内部方法调用，动态代理不生效。
 
-2. @Transactional指定的spring事务传播对 TransactionTemplate transactionTemplate 同样有效。+ 
+  解决方法：
+
+  1. 写在不同的类里；
+
+     ```java
+     // eg：
+     @Service("studentService")
+     public class StudentServiceImpl implements StudentService {
+       
+       @Resource
+       private TeacherService teacherService;
+       
+       @Transactional(rollbackFor = Throwable.class, propagation = Propagation.REQUIRES_NEW)
+       @Override
+       public void A(Integer id) throws Exception {
+     		this.insert(id);
+         teacherService.insert(id);
+       }
+     }
+     ```
+
+  2. 同类，但是用AspectJ获取代理对象，用代理对象再调用同类的B方法；
+
+     ```java
+     // eg:
+     @Service("studentService")
+     public class StudentServiceImpl implements StudentService {
+       
+       @Transactional(rollbackFor = Throwable.class, propagation = Propagation.REQUIRES_NEW)
+       @Override
+       public void A(Integer id) throws Exception {
+     		this.insert(id);
+         ((StudentServiceImpl)AopContext.currentProxy()).B(id);
+       }
+     }
+     ```
+
+  3. 同类，依赖注入自己，再调用注入的对象的方法
+
+     ```java
+     // eg:
+     @Service("studentService")
+     public class StudentServiceImpl implements StudentService {
+     
+       @Resource
+       private StudentService studentService;
+     
+       @Transactional(rollbackFor = Throwable.class, propagation = Propagation.REQUIRES_NEW)
+       @Override
+       public void A(Integer id) throws Exception {
+         this.insert(id);
+         studentService.insert(id);
+       }
+     }
+     ```
+
+  (ps: 可以在 `org.springframework.transaction.interceptor.TransactionAspectSupport#invokeWithinTransaction` 中打断点查看一些事务调用情况)
+
+2. @Transactional指定的spring事务传播对 TransactionTemplate transactionTemplate 同样有效。
 
     + TransactionTemplate transactionTemplate可以通过`transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_NEVER);`设置事务传播级别。
     + 注意，如果在@Transactional方法内又使用transactionTemplate，那可能导致最后开了两个事务（具体看transactionTemplate设置的事务传播级别是什么，如果@Transactional和transactionTemplate都是用REQUIRES_NEW，那就是两个不相干的事务了）
