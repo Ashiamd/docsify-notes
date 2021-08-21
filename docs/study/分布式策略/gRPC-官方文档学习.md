@@ -1287,17 +1287,330 @@ A user guide of both general and language-specific best practices to improve per
 
 ----
 
-## Authentication
+## 6.1 Authentication
 
+> An overview of gRPC authentication, including built-in auth mechanisms, and how to plug in your own authentication systems.
 
+### 概述
 
-## Benchmarking
+​	gRPC is designed to work with a variety of authentication mechanisms, making it easy to safely use gRPC to talk to other systems. You can use our supported mechanisms - SSL/TLS with or without Google token-based authentication - or you can plug in your own authentication system by extending our provided code.
 
+​	gRPC also provides a simple authentication API that lets you provide all the necessary authentication information as `Credentials` when creating a channel or making a call.
 
+​	gRPC本身设计时就考虑到多种认证机制，使用gRPC能够简单地实现系统间安全通信。可以使用携带or不携带用于认证的Google token的SSL/TLS来实现安全通信，也可以考虑拓展gRPC提供的代码来实现自己的认证系统。
 
-## Error handling
+​	gRPC提供了简单的认证API，使得在创建和使用channel的时候能够携带必要的认证信息（诸如`Credentials`）
 
+### 支持的认证机制
 
+​	gRPC内置了以下几种认证机制：
 
-## Performance Best Practices
++ **SSL/TLS**
+
+  gRPC has SSL/TLS integration and promotes the use of SSL/TLS to authenticate the server, and to encrypt all the data exchanged between the client and the server. Optional mechanisms are available for clients to provide certificates for mutual authentication.
+
++ **ALTS**
+
+  gRPC supports [ALTS](https://cloud.google.com/security/encryption-in-transit/application-layer-transport-security) as a transport security mechanism, if the application is running on [Google Cloud Platform (GCP)](https://cloud.google.com/). For details, see one of the following language-specific pages: [ALTS in C++](https://www.grpc.io/docs/languages/cpp/alts/), [ALTS in Go](https://www.grpc.io/docs/languages/go/alts/), [ALTS in Java](https://www.grpc.io/docs/languages/java/alts/), [ALTS in Python](https://www.grpc.io/docs/languages/python/alts/).
+
++ **Token-based authentication with Google**
+
+  gRPC provides a generic mechanism (described below) to attach metadata based credentials to requests and responses. Additional support for acquiring access tokens (typically OAuth2 tokens) while accessing Google APIs through gRPC is provided for certain auth flows: you can see how this works in our code examples below. In general this mechanism must be used *as well as* SSL/TLS on the channel - <u>Google will not allow connections without SSL/TLS, and most gRPC language implementations will not let you send credentials on an unencrypted channel</u>.
+
+> Warning
+>
+> Google credentials should only be used to connect to Google services. <u>Sending a Google issued OAuth2 token to a non-Google service could result in this token being stolen and used to impersonate the client to Google services.</u>
+
+### 认证API
+
+> gRPC provides a simple authentication API based around the unified concept of Credentials objects, which can be used when creating an entire gRPC channel or an individual call.
+
+#### Credential types
+
+Credentials can be of two types:
+
+- **Channel credentials**, which are attached to a `Channel`, such as SSL credentials.
+- **Call credentials**, which are attached to a call (or `ClientContext` in C++).
+
+​	You can also combine these in a `CompositeChannelCredentials`, allowing you to specify, for example, SSL details for the channel along with call credentials for each call made on the channel. A `CompositeChannelCredentials` associates a `ChannelCredentials` and a `CallCredentials` to create a new `ChannelCredentials`. The result will send the authentication data associated with the composed `CallCredentials` with every call made on the channel.
+
+​	For example, you could create a `ChannelCredentials` from an `SslCredentials` and an `AccessTokenCredentials`. The result when applied to a `Channel` would send the appropriate access token for each call on this channel.
+
+​	Individual `CallCredentials` can also be composed using `CompositeCallCredentials`. The resulting `CallCredentials` when used in a call will trigger the sending of the authentication data associated with the two `CallCredentials`.
+
+#### Using client-side SSL/TLS
+
+​	Now let’s look at how `Credentials` work with one of our supported auth mechanisms. This is the simplest authentication scenario, where a client just wants to authenticate the server and encrypt all data. The example is in C++, but the API is similar for all languages: you can see how to enable SSL/TLS in more languages in our Examples section below.
+
+```protobuf
+// Create a default SSL ChannelCredentials object.
+auto channel_creds = grpc::SslCredentials(grpc::SslCredentialsOptions());
+// Create a channel using the credentials created in the previous step.
+auto channel = grpc::CreateChannel(server_name, channel_creds);
+// Create a stub on the channel.
+std::unique_ptr<Greeter::Stub> stub(Greeter::NewStub(channel));
+// Make actual RPC calls on the stub.
+grpc::Status s = stub->sayHello(&context, *request, response);
+```
+
+​	For advanced use cases such as modifying the root CA or using client certs, the corresponding options can be set in the `SslCredentialsOptions` parameter passed to the factory method.
+
+> Note
+>
+> Non-POSIX-compliant systems (such as Windows) need to specify the root certificates in `SslCredentialsOptions`, since the defaults are only configured for POSIX filesystems.
+
+#### Using Google token-based authentication
+
+​	gRPC applications can use a simple API to create a credential that works for authentication with Google in various deployment scenarios. Again, our example is in C++ but you can find examples in other languages in our Examples section.
+
+```java
+auto creds = grpc::GoogleDefaultCredentials();
+// Create a channel, stub and make RPC calls (same as in the previous example)
+auto channel = grpc::CreateChannel(server_name, creds);
+std::unique_ptr<Greeter::Stub> stub(Greeter::NewStub(channel));
+grpc::Status s = stub->sayHello(&context, *request, response);
+```
+
+​	This channel credentials object works for applications using Service Accounts as well as for applications running in [Google Compute Engine (GCE)](https://cloud.google.com/compute/). In the former case, the service account’s private keys are loaded from the file named in the environment variable `GOOGLE_APPLICATION_CREDENTIALS`. The keys are used to generate bearer tokens that are attached to each outgoing RPC on the corresponding channel.
+
+​	<u>For applications running in GCE, a default service account and corresponding OAuth2 scopes can be configured during VM setup.</u> At run-time, this credential handles communication with the authentication systems to obtain OAuth2 access tokens and attaches them to each outgoing RPC on the corresponding channel.
+
+#### Extending gRPC to support other authentication mechanisms
+
+​	The Credentials plugin API allows developers to plug in their own type of credentials. This consists of:
+
+- The `MetadataCredentialsPlugin` abstract class, which contains the pure virtual `GetMetadata` method that needs to be implemented by a sub-class created by the developer.
+- The `MetadataCredentialsFromPlugin` function, which creates a `CallCredentials` from the `MetadataCredentialsPlugin`.
+
+​	Here is example of a simple credentials plugin which sets an authentication ticket in a custom header.
+
+```c++
+class MyCustomAuthenticator : public grpc::MetadataCredentialsPlugin {
+  public:
+  MyCustomAuthenticator(const grpc::string& ticket) : ticket_(ticket) {}
+
+  grpc::Status GetMetadata(
+    grpc::string_ref service_url, grpc::string_ref method_name,
+    const grpc::AuthContext& channel_auth_context,
+    std::multimap<grpc::string, grpc::string>* metadata) override {
+    metadata->insert(std::make_pair("x-custom-auth-ticket", ticket_));
+    return grpc::Status::OK;
+  }
+
+  private:
+  grpc::string ticket_;
+};
+
+auto call_creds = grpc::MetadataCredentialsFromPlugin(
+  std::unique_ptr<grpc::MetadataCredentialsPlugin>(
+    new MyCustomAuthenticator("super-secret-ticket")));
+```
+
+​	A deeper integration can be achieved by plugging in a gRPC credentials implementation at the core level. <u>gRPC internals also allow switching out SSL/TLS with other encryption mechanisms.</u>
+
+### Examples
+
+> These authentication mechanisms will be available in all gRPC’s supported languages. The following sections demonstrate how authentication and authorization features described above appear in each language: more languages are coming soon.
+
+#### Java
+
+**Base case - no encryption or authentication**
+
+```java
+ManagedChannel channel = ManagedChannelBuilder.forAddress("localhost", 50051)
+    .usePlaintext(true)
+    .build();
+GreeterGrpc.GreeterStub stub = GreeterGrpc.newStub(channel);
+```
+
+**With server authentication SSL/TLS**
+
+<u>In Java we recommend that you use OpenSSL when using gRPC over TLS</u>. You can find details about installing and using OpenSSL and other required libraries for both Android and non-Android Java in the gRPC Java [Security](https://github.com/grpc/grpc-java/blob/master/SECURITY.md#transport-security-tls) documentation.
+
+To enable TLS on a server, a certificate chain and private key need to be specified in PEM format. Such private key should not be using a password. The order of certificates in the chain matters: more specifically, the certificate at the top has to be the host CA, while the one at the very bottom has to be the root CA. <u>The standard TLS port is 443, but we use 8443 below to avoid needing extra permissions from the OS</u>.
+
+```java
+Server server = ServerBuilder.forPort(8443)
+    // Enable TLS
+    .useTransportSecurity(certChainFile, privateKeyFile)
+    .addService(TestServiceGrpc.bindService(serviceImplementation))
+    .build();
+server.start();
+```
+
+If the issuing certificate authority is not known to the client then a properly configured `SslContext` or `SSLSocketFactory` should be provided to the `NettyChannelBuilder` or `OkHttpChannelBuilder`, respectively.
+
+On the client side, server authentication with SSL/TLS looks like this:
+
+```java
+// With server authentication SSL/TLS
+ManagedChannel channel = ManagedChannelBuilder.forAddress("myservice.example.com", 443)
+    .build();
+GreeterGrpc.GreeterStub stub = GreeterGrpc.newStub(channel);
+
+// With server authentication SSL/TLS; custom CA root certificates; not on Android
+ManagedChannel channel = NettyChannelBuilder.forAddress("myservice.example.com", 443)
+    .sslContext(GrpcSslContexts.forClient().trustManager(new File("roots.pem")).build())
+    .build();
+GreeterGrpc.GreeterStub stub = GreeterGrpc.newStub(channel);
+```
+
+**Authenticate with Google**
+
+The following code snippet shows how you can call the [Google Cloud PubSub API](https://cloud.google.com/pubsub/overview) using gRPC with a service account. The credentials are loaded from a key stored in a well-known location or by detecting that the application is running in an environment that can provide one automatically, e.g. Google Compute Engine. While this example is specific to Google and its services, similar patterns can be followed for other service providers.
+
+```java
+GoogleCredentials creds = GoogleCredentials.getApplicationDefault();
+ManagedChannel channel = ManagedChannelBuilder.forTarget("greeter.googleapis.com")
+    .build();
+GreeterGrpc.GreeterStub stub = GreeterGrpc.newStub(channel)
+    .withCallCredentials(MoreCallCredentials.from(creds));
+```
+
+## 6.2 Benchmarking
+
+> gRPC is designed to support high-performance open-source RPCs in many languages. This page describes performance benchmarking tools, scenarios considered by tests, and the testing infrastructure.
+
+### 概述
+
+gRPC is designed for both high-performance and high-productivity design of distributed applications. Continuous performance benchmarking is a critical part of the gRPC development workflow. Multi-language performance tests run every few hours against the master branch, and these numbers are reported to a dashboard for visualization.
+
+- [Multi-language performance dashboard @master (latest dev version)](https://performance-dot-grpc-testing.appspot.com/explore?dashboard=5180705743044608)
+
+### 性能测试设计
+
+Each language implements a performance testing worker that implements a gRPC [WorkerService](https://github.com/grpc/grpc/blob/master/src/proto/grpc/testing/worker_service.proto). This service directs the worker to act as either a client or a server for the actual benchmark test, represented as [BenchmarkService](https://github.com/grpc/grpc/blob/master/src/proto/grpc/testing/benchmark_service.proto). That service has two methods:
+
+- UnaryCall - a unary RPC of a simple request that specifies the number of bytes to return in the response
+- StreamingCall - a streaming RPC that allows repeated ping-pongs of request and response messages akin to the UnaryCall
+
+![gRPC performance testing worker diagram](https://www.grpc.io/img/testing_framework.png)
+
+These workers are controlled by a [driver](https://github.com/grpc/grpc/blob/master/test/cpp/qps/qps_json_driver.cc) that takes as input a scenario description (in JSON format) and an environment variable specifying the host:port of each worker process.
+
+### Languages under test
+
+The following languages have continuous performance testing as both clients and servers at master:
+
+- C++
+- Java
+- Go
+- C#
+- node.js
+- Python
+- Ruby
+
+In addition to running as both the client-side and server-side of performance tests, all languages are tested as clients against a C++ server, and as servers against a C++ client. This test aims to provide the current upper bound of performance for a given language’s client or server implementation without testing the other side.
+
+Although PHP or mobile environments do not support a gRPC server (which is needed for our performance tests), their client-side performance can be benchmarked using a proxy WorkerService written in another language. This code is implemented for PHP but is not yet in continuous testing mode.
+
+### Scenarios under test
+
+There are several important scenarios under test and displayed in the dashboards above, including the following:
+
+- Contentionless latency - the median and tail response latencies seen with only 1 client sending a single message at a time using StreamingCall
+- QPS - the messages/second rate when there are 2 clients and a total of 64 channels, each of which has 100 outstanding messages at a time sent using StreamingCall
+- Scalability (for selected languages) - the number of messages/second per server core
+
+Most performance testing is using secure communication and protobufs. Some C++ tests additionally use insecure communication and the generic (non-protobuf) API to display peak performance. Additional scenarios may be added in the future.
+
+### Testing infrastructure
+
+All performance benchmarks are run in our dedicated GKE cluster, where each benchmark worker (a client or a server) gets scheduled to different GKE node (and each GKE node is a separate GCE VM) in one of our worker pools. The source code for the benchmarking framework we use is publicly available in the [test-infra github repository](https://github.com/grpc/test-infra).
+
+Most test instances are 8-core systems, and these are used for both latency and QPS measurement. For C++ and Java, we additionally support QPS testing on 32-core systems. All QPS tests use 2 identical client machines for each server, to make sure that QPS measurement is not client-limited.
+
+## 6.3 Error handling
+
+> How gRPC deals with errors, and gRPC error codes.
+
+### Standard error model
+
+As you’ll have seen in our concepts document and examples, when a gRPC call completes successfully the server returns an `OK` status to the client (depending on the language the `OK` status may or may not be directly used in your code). But what happens if the call isn’t successful?
+
+If an error occurs, gRPC returns one of its error status codes instead, with an optional string error message that provides further details about what happened. Error information is available to gRPC clients in all supported languages.
+
+### Richer error model
+
+The error model described above is the official gRPC error model, is supported by all gRPC client/server libraries, and is independent of the gRPC data format (whether protocol buffers or something else). You may have noticed that it’s quite limited and doesn’t include the ability to communicate error details.
+
+If you’re using protocol buffers as your data format, however, you may wish to consider using the richer error model developed and used by Google as described [here](https://cloud.google.com/apis/design/errors#error_model). This model enables servers to return and clients to consume additional error details expressed as one or more protobuf messages. It further specifies a [standard set of error message types](https://github.com/googleapis/googleapis/blob/master/google/rpc/error_details.proto) to cover the most common needs (such as invalid parameters, quota violations, and stack traces). **The protobuf binary encoding of this extra error information is provided as trailing metadata in the response.**
+
+This richer error model is already supported in the C++, Go, Java, Python, and Ruby libraries, and at least the grpc-web and Node.js libraries have open issues requesting it. Other language libraries may add support in the future if there’s demand, so check their github repos if interested. Note however that the grpc-core library written in C will not likely ever support it since it is purposely data format agnostic.
+
+You could use a similar approach (put error details in trailing response metadata) if you’re not using protocol buffers, but you’d likely need to find or develop library support for accessing this data in order to make practical use of it in your APIs.
+
+There are important considerations to be aware of when deciding whether to use such an extended error model, however, including:
+
+- Library implementations of the extended error model may not be consistent across languages in terms of requirements for and expectations of the error details payload
+- Existing proxies, loggers, and other standard HTTP request processors don’t have visibility into the error details and thus wouldn’t be able to leverage them for monitoring or other purposes
+- Additional error detail in the trailers interferes with head-of-line blocking, and will decrease HTTP/2 header compression efficiency due to more frequent cache misses
+- Larger error detail payloads may run into protocol limits (like max headers size), effectively losing the original error
+
+### Error status codes
+
+Errors are raised by gRPC under various circumstances, from network failures to unauthenticated connections, each of which is associated with a particular status code. The following error status codes are supported in all gRPC languages.
+
+#### General errors
+
+| Case                                                         | Status code                     |
+| ------------------------------------------------------------ | ------------------------------- |
+| Client application cancelled the request                     | `GRPC_STATUS_CANCELLED`         |
+| Deadline expired before server returned status               | `GRPC_STATUS_DEADLINE_EXCEEDED` |
+| Method not found on server                                   | `GRPC_STATUS_UNIMPLEMENTED`     |
+| Server shutting down                                         | `GRPC_STATUS_UNAVAILABLE`       |
+| Server threw an exception (or did something other than returning a status code to terminate the RPC) | `GRPC_STATUS_UNKNOWN`           |
+
+#### Network failures
+
+| Case                                                         | Status code                     |
+| ------------------------------------------------------------ | ------------------------------- |
+| No data transmitted before deadline expires. Also applies to cases where some data is transmitted and no other failures are detected before the deadline expires | `GRPC_STATUS_DEADLINE_EXCEEDED` |
+| Some data transmitted (for example, the request metadata has been written to the TCP connection) before the connection breaks | `GRPC_STATUS_UNAVAILABLE`       |
+
+#### Protocol errors
+
+| Case                                                         | Status code                      |
+| ------------------------------------------------------------ | -------------------------------- |
+| Could not decompress but compression algorithm supported     | `GRPC_STATUS_INTERNAL`           |
+| Compression mechanism used by client not supported by the server | `GRPC_STATUS_UNIMPLEMENTED`      |
+| Flow-control resource limits reached                         | `GRPC_STATUS_RESOURCE_EXHAUSTED` |
+| Flow-control protocol violation                              | `GRPC_STATUS_INTERNAL`           |
+| Error parsing returned status                                | `GRPC_STATUS_UNKNOWN`            |
+| Unauthenticated: credentials failed to get metadata          | `GRPC_STATUS_UNAUTHENTICATED`    |
+| Invalid host set in authority metadata                       | `GRPC_STATUS_UNAUTHENTICATED`    |
+| Error parsing response protocol buffer                       | `GRPC_STATUS_INTERNAL`           |
+| Error parsing request protocol buffer                        | `GRPC_STATUS_INTERNAL`           |
+
+### Sample code
+
+For sample code illustrating how to handle various gRPC errors, see the [grpc-errors](https://github.com/avinassh/grpc-errors) repo.
+
+## 6.4 Performance Best Practices
+
+> A user guide of both general and language-specific best practices to improve performance.
+
+### General
+
+- Always **re-use stubs and channels** when possible.
+
+- **Use keepalive pings** to keep HTTP/2 connections alive during periods of inactivity to allow initial RPCs to be made quickly without a delay (i.e. C++ channel arg GRPC_ARG_KEEPALIVE_TIME_MS).
+
+- **Use streaming RPCs** when handling a long-lived logical flow of data from the client-to-server, server-to-client, or in both directions. Streams can avoid continuous RPC initiation, which includes connection load balancing at the client-side, starting a new HTTP/2 request at the transport layer, and invoking a user-defined method handler on the server side.
+
+  Streams, however, cannot be load balanced once they have started and can be hard to debug for stream failures. They also might increase performance at a small scale but can reduce scalability due to load balancing and complexity, so they should only be used when they provide substantial performance or simplicity benefit to application logic. Use streams to optimize the application, not gRPC.
+
+  ***Side note:*** *This does not apply to Python (see Python section for details).*
+
+- *(Special topic)* <u>Each gRPC channel uses 0 or more HTTP/2 connections and each connection usually has a limit on the number of concurrent streams</u>. When the number of active RPCs on the connection reaches this limit, additional RPCs are queued in the client and must wait for active RPCs to finish before they are sent. <u>Applications with high load or long-lived streaming RPCs might see performance issues because of this queueing</u>. There are two possible solutions:
+
+  1. **Create a separate channel for each area of high load** in the application.
+  2. **Use a pool of gRPC channels** to distribute RPCs over multiple connections (channels must have different channel args to prevent re-use so define a use-specific channel arg such as channel number).
+
+  ***Side note:*** *The gRPC team has plans to add a feature to fix these performance issues (see [grpc/grpc#21386](https://github.com/grpc/grpc/issues/21386) for more info), so any solution involving creating multiple channels is a temporary workaround that should eventually not be needed.*
+
+### Java
+
+- **Use non-blocking stubs** to parallelize RPCs.
+- **Provide a custom executor that limits the number of threads, based on your workload** (cached (default), fixed, forkjoin, etc).
 
