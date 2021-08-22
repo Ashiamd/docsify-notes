@@ -37,6 +37,8 @@ We recommend reading the following documentation in order to plan and execute a 
 
 ![CAS Architecture Diagram](https://apereo.github.io/cas/6.3.x/images/cas_architecture.png)
 
+![img](https://upload-images.jianshu.io/upload_images/12540413-041b3228c5e865e8.png?imageMogr2/auto-orient/strip|imageView2/2/w/1200/format/webp)
+
 ### 1.1 System Components
 
 The CAS server and clients comprise the two physical components of the CAS system architecture that communicate by means of various protocols.

@@ -1,6 +1,21 @@
 # CAS学习杂记
 
+> 理论文章
+>
 > - [单点登录（SSO）看这一篇就够了 - 简书 (jianshu.com)](https://www.jianshu.com/p/75edcc05acfd)
+>
+> - [cas 单点登录 登出流程说明_这是一个懒人的博客-CSDN博客_cas单点退出流程](https://blog.csdn.net/qq_30062125/article/details/84983764)
+>
+> - [单点登录CAS实现中，感觉只要TGC就足够了，干嘛还要ST的_百度知道 (baidu.com)](https://zhidao.baidu.com/question/427773428303757572.html)
+>
+>   1. 单点登录的过程中，第一步应用服务器将请求重定向到认证服务器，用户输入账号密码认证成功后，只是在浏览器和认证服务器之间建立了信任(TGC)，但是浏览器和应用服务器之间并没有建立信任。
+>
+>   2. ST是CAS认证中心认证成功后返回给浏览器，浏览器带着它去访问应用服务器，应用服务器再凭它去认证中心验证你这个用户是否合法。只有这样，浏览器和应用服务器才能建立信任的会话。
+>   3. 而TGC的作用主要是用于实现单点登录，就是当浏览器要访问应用服务器2时，应用服务器2也会重定向到认证服务器，但是此时由于TGC的存在，认证服务器信任了该浏览器，就不需要用户再输入账号密码了，直接返回给浏览器ST，重复2中的步骤。
+>
+> - [CAS票据之ST与TGT过期策略详细说明_Java精选-CSDN博客](https://blog.csdn.net/afreon/article/details/53183157) <= 结合下面的大流程图，很清晰了。
+>
+> 实战文章
 >
 > - [基于CAS实现单点登录（SSO）：工作原理_时光在路上-CSDN博客](https://blog.csdn.net/tch918/article/details/19930037)
 >
@@ -18,9 +33,26 @@
 
 # 1. CAS流程
 
-其实最主要（最重要的也就下面这一张图了）
+> - [单点登录（SSO）看这一篇就够了 - 简书 (jianshu.com)](https://www.jianshu.com/p/75edcc05acfd)
+> - [cas 单点登录 登出流程说明_这是一个懒人的博客-CSDN博客_cas单点退出流程](https://blog.csdn.net/qq_30062125/article/details/84983764)
 
 ![img](https://upload-images.jianshu.io/upload_images/12540413-041b3228c5e865e8.png?imageMogr2/auto-orient/strip|imageView2/2/w/1200/format/webp)
+
+---
+
+- TGT：Ticket Granted Ticket（票根，可以签发ST）
+- TGC：Ticket Granted Cookie（cookie中CASTGC的value），存在Cookie中，可以通过他找到TGT。
+- ST：Service Ticket，是TGT生成的，是每个应用的票据，就是流程中的ticket
+
+单点登录：
+
+![img](https://img-blog.csdnimg.cn/2018121310572451.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzMwMDYyMTI1,size_16,color_FFFFFF,t_70)
+
+ 单点退出：
+
+![img](https://img-blog.csdnimg.cn/20181213104925514.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzMwMDYyMTI1,size_16,color_FFFFFF,t_70)
+
+ 
 
 # 2. 搭建Tomcat启用HTTPS
 
