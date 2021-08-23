@@ -5,6 +5,8 @@
 > [Elasticsearch 的使用Demo](https://blog.csdn.net/u011580290/article/details/88226164)	<=	推荐文章
 >
 > [gavin5033的博客--ELK专栏](https://blog.csdn.net/gavin5033/category_8070372.html)	<=	推荐ELK学习文章
+>
+> [Elasticsearch 索引的映射配置详解 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/41929500)	<=	很清晰的概述文章
 
 # 1. Elastic Stack简介
 

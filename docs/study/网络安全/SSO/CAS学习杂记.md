@@ -3,17 +3,15 @@
 > 理论文章
 >
 > - [单点登录（SSO）看这一篇就够了 - 简书 (jianshu.com)](https://www.jianshu.com/p/75edcc05acfd)
->
-> - [cas 单点登录 登出流程说明_这是一个懒人的博客-CSDN博客_cas单点退出流程](https://blog.csdn.net/qq_30062125/article/details/84983764)
->
+>- [cas 单点登录 登出流程说明_这是一个懒人的博客-CSDN博客_cas单点退出流程](https://blog.csdn.net/qq_30062125/article/details/84983764)
 > - [单点登录CAS实现中，感觉只要TGC就足够了，干嘛还要ST的_百度知道 (baidu.com)](https://zhidao.baidu.com/question/427773428303757572.html)
 >
 >   1. 单点登录的过程中，第一步应用服务器将请求重定向到认证服务器，用户输入账号密码认证成功后，只是在浏览器和认证服务器之间建立了信任(TGC)，但是浏览器和应用服务器之间并没有建立信任。
 >
 >   2. ST是CAS认证中心认证成功后返回给浏览器，浏览器带着它去访问应用服务器，应用服务器再凭它去认证中心验证你这个用户是否合法。只有这样，浏览器和应用服务器才能建立信任的会话。
->   3. 而TGC的作用主要是用于实现单点登录，就是当浏览器要访问应用服务器2时，应用服务器2也会重定向到认证服务器，但是此时由于TGC的存在，认证服务器信任了该浏览器，就不需要用户再输入账号密码了，直接返回给浏览器ST，重复2中的步骤。
->
+>  3. 而TGC的作用主要是用于实现单点登录，就是当浏览器要访问应用服务器2时，应用服务器2也会重定向到认证服务器，但是此时由于TGC的存在，认证服务器信任了该浏览器，就不需要用户再输入账号密码了，直接返回给浏览器ST，重复2中的步骤。
 > - [CAS票据之ST与TGT过期策略详细说明_Java精选-CSDN博客](https://blog.csdn.net/afreon/article/details/53183157) <= 结合下面的大流程图，很清晰了。
+> - [CAS实现单点登录SSO执行原理探究(终于明白了)_javaloveiphone的专栏-CSDN博客_cas sso原理](https://blog.csdn.net/javaloveiphone/article/details/52439613)  <=  极力推荐，超高赞文章！（多图流、完整登录退出流程）
 >
 > 实战文章
 >
@@ -48,7 +46,7 @@
 
 ![img](https://img-blog.csdnimg.cn/2018121310572451.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzMwMDYyMTI1,size_16,color_FFFFFF,t_70)
 
- 单点退出：
+ 单点退出（也可以是先访问应用系统，看具体怎么实现）：
 
 ![img](https://img-blog.csdnimg.cn/20181213104925514.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzMwMDYyMTI1,size_16,color_FFFFFF,t_70)
 
