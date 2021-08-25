@@ -41,6 +41,8 @@
 
   *ps：与设计模式中的工厂方法（Factory Method）无对应关系*
 
+---
+
 + 举例
 
   1. Boolean（基本类型boolean的装箱类）
@@ -51,7 +53,17 @@
      }
      ```
 
+---
+
 + 优势：
+
+  1. （比起构造函数）方法名有意义，**可读性高**
+  2.  每次调用**不一定创建新对象**
+  3. **可以返回类型的任何子类型对象**
+  4. **可通过调整传入的参数来改变返回的对象的类**
+  5. **方法返回的对象所属的类，在编写包含该静态工厂方法的类时可以不存在**
+
+  ---
 
   1. （比起构造函数）方法名有意义，**可读性高**
 
@@ -79,7 +91,84 @@
   3. **可以返回类型的任何子类型对象**
 
      + **灵活应用：API返回某对象，同时该对象又不需要是公有的。该技巧适用于基于接口的框架（interface based framework）**（#20）
-     + 
+
+     + 良好习惯：可要求客户端通过接口（而非其实现类）来引用被返回的对象（#64）
+
+     > **在Java 8 之前，接口不能有静态方法**，因此按照惯例，接口 Type 的静态工厂方法被放在一个名为Types 的不可实例化的伴生类（#4）中。例如Java Collections Framework的集合接口有45 个工具实现，分别提供了不可修改的集合、同步集合，等等。几乎所有这些实现都通过静态工厂方法在一个不可实例化的类（java.util.Collections）中导出。所有返回对象的类都是非公有的。
+     >
+     > Java8中，接口支持静态方法，无需给接口再提供伴生类，原先的静态方法可单独封装到一个包级私有的类中（因为**Java8仍要求接口的所有静态方法必须是公有的**）。
+     >
+     > **Java 9 中允许接口有私有的静态方法，但是静态域和静态成员类仍然需要是公有的**。
+
+  4. **可通过调整传入的参数来改变返回的对象的类**
+
+     + 只要是已声明的**返回类型的子类型**，都是允许的。返回对象的类也可能随着发行版本的不同而不同。
+     + EnumSet（#36）没有公有的构造器，只有静态工厂方法。
+
+     > EnumSet中的`noneOf`静态方法，根据传入的底层枚举类型的大小，返回`RegularEnumSet`和`JumboEnumSet`这两种子类其中一种的实例。
+     >
+     > + 枚举类型内含有原素<=64个，返回`RegularEnumSet`实例，用单个long进行支持
+     > + 枚举类型内含有原素>=65个，返回`JumboEnumSet`实例，用一个long数组进行支持
+     >
+     > 这两个实现类的存在对于客户端不可见（非public的class）。
+     >
+     > 如果RegularEnumSet 不能再给小的枚举类型提供性能优势，就可能从未来的发行版本中将它删除，不会造成任何负面的影响。同样地，如果事实证明对性能有好处，也可能在未来的发行版本中添加第三甚至第四个EnumSet 实现。<u>客户端永远不知道也不关心它们从工厂方法中得到的对象的类，它们只关心它是EnumSet 的某个子类</u>。
+     >
+     > ```java
+     > /**
+     >      * Creates an empty enum set with the specified element type.
+     >      *
+     >      * @param <E> The class of the elements in the set
+     >      * @param elementType the class object of the element type for this enum
+     >      *     set
+     >      * @return An empty enum set of the specified type.
+     >      * @throws NullPointerException if {@code elementType} is null
+     >      */
+     > public static <E extends Enum<E>> EnumSet<E> noneOf(Class<E> elementType) {
+     >   Enum<?>[] universe = getUniverse(elementType);
+     >   if (universe == null)
+     >     throw new ClassCastException(elementType + " not an enum");
+     > 
+     >   if (universe.length <= 64)
+     >     return new RegularEnumSet<>(elementType, universe);
+     >   else
+     >     return new JumboEnumSet<>(elementType, universe);
+     > }
+     > ```
+
+  5. **方法返回的对象所属的类，在编写包含该静态工厂方法的类时可以不存在**
+
+     + 该灵活性构成了服务提供者框架（Service Provider Framework）的基础，例如JDBC（Java数据库连接）API。
+
+     > 服务提供者框架：多个服务提供者实现一个服务，系统为服务提供者的客户端提供多个实现，并把它们从多个实现中解稠出。
+     >
+     > 服务提供者框架包含3重要组件，1可选组件：
+     >
+     > + 服务接口（Service Interface）：由提供者实现
+     > + 提供者注册API（Provider Registration API）：提供者注册实现的途径
+     > + 服务访问API （Service Access API）：用于客户端获取服务实例。服务访问API 是客户端用来指定某种选择实现的条件。如果没有这样的规定， API 就会返回默认实现的一个实例，或者允许客户端遍历所有可用的实现。服务访问API 是"灵活的静态工厂"，它构成了服务提供者框架的基础。
+     > + 服务提供者接口（Service Provider Interface）-可选：它表示产生服务接口之实例的工厂对象。如果没有服务提供者接口，实现就通过**反射**方式进行实例化（#65）。
+     >
+     > ---
+     >
+     > 对于JDBC来说， Connection接口就是其"服务接口"的一部分，DriverManager.registerDriver是"提供者注册API"，DriverManager.getConnection是"服务访问API"，Driver是"服务提供者接口"。
+     >
+     > ---
+     >
+     > 服务提供者框架变种多，例如：
+     >
+     > + 桥接模式（Bridge），"服务访问API"返回’比提供者需要的‘更为丰富的服务接口。
+     > + 依赖注入框架（#5）
+     > + **Java6起，提供了通用的"服务提供者框架" - `java.util.ServiceLoader`**（#59）
+     >
+     > JDBC出现更早，所以没使用`java.util.ServiceLoader`实现。
+     >
+     > ---
+     >
+     > + [java.util.ServiceLoader使用_石头的专栏-CSDN博客_java.util.serviceloader](https://blog.csdn.net/kokojhuang/article/details/8273303)
+     >
+     > + [java.util.ServiceLoader加载服务实现类 - 简书 (jianshu.com)](https://www.jianshu.com/p/7d0caf0f9d3f)
+     > + [Java SPI机制：ServiceLoader实现原理及应用剖析 (juejin.cn)](https://juejin.cn/post/6844903891746684941) <= 较详细，有时间的话推荐阅读
 
 + 劣势：
 
