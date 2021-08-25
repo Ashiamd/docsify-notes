@@ -1,4 +1,4 @@
-# 《Effective Java第三版》-读书笔记
+# 《Effective-Java第三版》-读书笔记
 
 > + `1、`、`2、`表示：第1章、第2章
 >
