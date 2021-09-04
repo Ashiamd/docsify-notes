@@ -277,6 +277,8 @@
 >
 > 好处：读不加锁，读写不冲突
 >
+> [【八】MySQL事务之MVCC、undo、redo、binlog、二阶段提交_Sid小杰的博客-CSDN博客](https://blog.csdn.net/jy02268879/article/details/105580287)
+>
 > 
 >
 > 
@@ -296,6 +298,26 @@
 > 数据库查询流程（MySQL基本架构）
 >
 > [数据库基础知识](https://blog.csdn.net/qq_35190492/article/details/104203466?utm_medium=distribute.pc_feed.none-task-blog-alirecmd-20&depth_1-utm_source=distribute.pc_feed.none-task-blog-alirecmd-20&request_id=)
+>
+> 
+>
+> binlog、undolog、redolog
+>
+> [MySQL三种日志有啥用？如何提高MySQL并发度？_小识的博客-CSDN博客](https://blog.csdn.net/zzti_erlie/article/details/116886211)
+>
+> [【八】MySQL事务之MVCC、undo、redo、binlog、二阶段提交_Sid小杰的博客-CSDN博客](https://blog.csdn.net/jy02268879/article/details/105580287)
+>
+> [docker mysql 开启binlog - 简书 (jianshu.com)](https://www.jianshu.com/p/8398d41a9c4a)
+>
+> **自己试了一下，binlog是会记录insert时的自增主键的**
+>
+> `mysqlbinlog --base64-output=DECODE-ROWS -v -v /var/lib/mysql/binlog文件`
+>
+> 
+>
+> auto_increment实现
+>
+> [MySQL auto_increment实现 - zengkefu - 博客园 (cnblogs.com)](https://www.cnblogs.com/zengkefu/p/5683258.html)
 
 ### 1. 事务(各路学习后的总结)
 
