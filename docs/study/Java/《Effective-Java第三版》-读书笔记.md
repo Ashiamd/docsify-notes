@@ -495,4 +495,100 @@
 
 ## E3 用私有构造器或者枚举类型强化Singleton 属性
 
-p24
++ 概述
+
+  Singleton通常用来代表一个无状态的对象，如函数（E24），或者本质唯一的系统组件。
+
++ 举例
+
+  实现Singleton有两种常见的方式。其共同点：
+
+  + 构造器私有
+  + 导出公有静态成员（以便客户端能够访问该类的唯一实例）
+
+  ---
+
+  + 方式一：
+
+    **公有静态成员是一个final域**
+
+    ```java
+    // Singleton with public final field
+    public class Elvis {
+      public static final Elvis INSTANCE = new Elvis();
+      private Elvis() {...}
+      public void leaveTheBuilding(){...}
+    }
+    ```
+
+    + **私有构造器仅被调用一次**，用来实例化静态final域Elvis.INSTANCE。由于缺少公有或者受保护的构造器，保证了Elvis的全局唯一性。
+
+    + **客户端可以借助`AccessibleObject.setAccessible`方法，通过反射机制（E65）调用私有构造器**。
+
+      （如果要抵御这种攻击，可以修改构造器，在其被哟求创建第二个实例时抛出异常）
+
+  + 方式二：
+
+    **公有的成员是个静态工厂方法**
+
+    ```java
+    // Singleton with static factory
+    public class Elvis {
+      private static final Elvis INSTANCE = new Elvis();
+      private Elvis() {...}
+      public static Elvis getInstance() { return INSTANCE; }
+      public void leaveTheBuilding() { ... }
+    }
+    ```
+
+    公有域方法的主要优势：
+
+    + API很清楚地表明这个类是一个Singleton：公有的静态域是final的，所以该域总是包含相同的对戏那个引用。
+    + 实现简单
+
+    + 灵活性高（可以改写成泛型Singleton工厂（E30））
+    + 可以通过方法引用（method reference）作为提供者，比如`Elvis::instance`就是一个`Supplier<Elvis>`
+
+    除非满足以上任意一种优势，否则应该优先考虑公有域（public-field）的方法。
+
+  ---
+
+  ​	为了将利用上述方法实现的Singleton类变成可序列化的（Serializable）（12、），仅在声明中加上`implements Serializable`是不够的。
+
+  ​	**为了维护并保证Singleton，必须声明所有实例域都是transient的，并提供一个readResolve方法（E89）**。否则，每次反序列化一个序列化的实例，都会创建一个新的实例。
+
+  ​	在Elvis类中加入readResolve方法如下：
+
+  ```java
+  // readResolve method to preserve singleton property
+  private Object readResolve() {
+    // Return the one true Elvis and let the garbage collector
+    // take care of the Elvis impersonator
+    return INSTANCE;
+  }
+  ```
+
+  ---
+
+  + 方式三：
+
+  **声明一个包含单个元素的枚举类型**
+
+  ```java
+  // Enum singleton - the preferred approach
+  public enum Elvis {
+    INSTANCE;
+    
+    public void leaveTheBuilding() {...}
+  }
+  ```
+
+  ​	这种方法在功能上与公有域方法类似，但更加简洁，**无偿提供了序列化机制，绝对防止多次实例化**，即时是在面对复杂的序列化或者反射攻击的时候。
+
+  + **单元素的枚举类型经常成为实现Singleton的最佳方法**
+
+  > 如果Singleton必须扩展一个超类，而不是扩展Enum的时候，则不宜使用该方法（虽然可以声明枚举去实现接口）。
+
+## E4 通过私有构造器强化不可实例化的能力
+
+p25
