@@ -184,4 +184,31 @@ MySQL数据库提供的连接方式从本质上看即上述提及的进程通信
 
 ### 1.5.1 TCP/IP
 
-p26
+​	MySQL实例(server)在一台服务器上，客户端client在另一台服务器上与其通过TCP/IP网络进行通信。
+
+​	在通过TCP/IP连接到MySQL实例时，MySQL数据库会先检查一张权限视图，用来判断发起请求的客户端IP是否允许连接到MySQL实例。
+
+​	在mysql架构下，表名为user。
+
+### 1.5.2 命名管道和共享内存
+
++ 如果两个需要进程通信的进程在同一台服务器上，可以使用命名管道，Microsoft SQL Server数据库默认安装后的本地连接也是使用命名管道。在MySQL数据库中须在配置文件中启用`--enable-named-pipe`选项。
+
++ 在MySQL4.1之后，提供共享内存的连接方式，通过配置文件中添加`--shared-memory`实现。如果想使用共享内存的方式，在连接时，MySQL客户端还需要使用`--protocol=memory`选项。
+
+### 1.5.3 UNIX域套接字
+
+​	在Linux和Unix环境下，还可以使用UNIX域套接字。UNIX域套接字不是网络协议，只能在MySQL客户端和数据库实例在一台服务器上的情况下使用。用户可以在配置文件中指定套接字文件的路径，如`--socket=/tmp/mysql.sock`。当数据库实例启动后，用户可以通过下列命令来进行UNIX域套接字文件的查找：
+
+`SHOW VARIABLES LIKE 'socket';`
+
+查出UNIX域套接字文件路径后，进行连接`mysql -udavid -S 套接字文件`
+
+## 1.6 小结
+
++ 数据库、数据库实例
++ 常见的表存储引擎的特性
+
+# 2. InnoDB存储引擎
+
+P30
