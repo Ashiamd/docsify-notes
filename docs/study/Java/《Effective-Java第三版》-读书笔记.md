@@ -591,5 +591,114 @@
 
 ## E4 通过私有构造器强化不可实例化的能力
 
-p25
++ 概述
+
+  **不应该为了使某类不被实例化而特地声明为抽象类**。这样容易误导用户该类是为了继承而设计的。（E19）
+
+  推荐的做法：**让这个类包含一个私有构造器，这样它就不能被实例化**
+
+  *ps：因为只有当类不包含显式的构造器时，编译器才会生成缺省的构造器*
+
++ 举例
+
+  ```java
+  // Noninstantiable utility class
+  public class UtilityClass {
+    // Suppress default constructor for nonistantibility
+    private UtilityClass() {
+      throw new AssertionError();
+    }
+    ... // Remainder omitted
+  }
+  ```
+
+  AssertionError非必需，但是可以避免不小心在类内部调用构造器。
+
++ 副作用
+
+  **不能被子类化**
+
+  ps：所有的构造器都必须显式或隐式调用超类（superclass）构造器。这种情况下子类就没有可访问的超类构造器可调用了。
+
+## E5 优先考虑依赖注人来引用资源
+
+- 概述
+
+  **静态工具类和Singleton类不适合于需要引用底层资源的类**。
+
+  ---
+
+- 举例
+
+  一个类需要能够创建多实例，每个实例都是用客户端指定的资源。满足该需求的简单的模式是：
+
+  **当创建一个新的实例时，就将该资源传到构造器中**。
+
+  ```java
+  // Dependency injection provides flexibility and testability
+  public class SpellChecker {
+    private final Lexicon dictionary;
+    
+    public SpellChecker(Lexicon dictionary) {
+      this.dictionary = Objects.requireNonNull(dictionary);
+    }
+    
+    public boolean isValid(Stirng word) {...}
+   	public List<String> suggestions(String typo) {...}
+  }
+  ```
+
+  这是依赖注入（dependency injection）的一种形式
+
+  ---
+
+- 特性
+
+  依赖注入的对象资源具有不可变性（E17），因此多个客户端可以共享依赖对象（假设客户端们想要的是同一个底层资源）。
+
+  依赖注入也同样适用于构造器、静态工厂（E1）和构造器（E2）
+
+---
+
+- 变体
+
+  **将资源工厂（factory）传给构造器。**
+
+  工厂具体表现为工厂方法（Factory Method）。**在Java8中增加的接口Supplier\<T\>最适合用于表示工厂**。
+
+  ---
+
+- 变体举例
+
+  带有Supplier\<T>的方法，通常应该限制输入工厂的类型参数使用*有限制的通配符类型*（bounded wildcard type）（E31）。
+
+  ```java
+  Mosaic create(Supplier<? extends Tile> tileFactory) {...}
+  ```
+
+---
+
+- 依赖注入的优点
+
+  提高灵活性和可测试性
+
+- 依赖注入的缺点
+
+  大项目通常包含上千个依赖，管理时凌乱不堪。
+
+  此时应该考虑使用依赖注入框架（dependency injection framework），如Dagger、Guice、Spring。
+
+  > **设计成手动依赖注入的API，一般都适用于这些框架**
+
+---
+
++ 小结
+
+  ​	不要使用SIngleton和静态工具类来实现依赖一个或多个底层资源的类；也不要直接使用这个类来创建这些资源。
+
+  ​	**将资源或工厂传给构造器（或者静态工厂，或者构造器），通过它们来创建类**。
+
+  ​	这种实线就成为依赖注入，提高类的灵活性、可重用性和可测试性。
+
+## E6 避免创建不必要的对象
 
