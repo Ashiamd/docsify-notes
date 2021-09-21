@@ -700,5 +700,225 @@
 
   ​	这种实线就成为依赖注入，提高类的灵活性、可重用性和可测试性。
 
-## E6 避免创建不必要的对象
+## * E6 避免创建不必要的对象
 
++ 概述
+
+  尽可能复用单个对象。如果对象是不可变的（immutable）（E17），它就始终可以被重用。
+
++ 举例
+
+  + 错误使用方式
+
+    ```java
+    String s = new String("test");
+    ```
+
+    每次都会新建一个新的String实例
+
+  + 正确方式
+
+    ```java
+    String s = "test";
+    ```
+
+    该版本只用了一个String实例。
+
+    **对于同一个虚拟机中运行的代码，只要它们包含相同的字符串字面常量，该对象就会被重用**。
+
+---
+
+- 扩展
+
+  ​	对于同时提供了静态工厂方法（static factory method）（E1）和构造器的不可变类，**通常优先使用静态工厂方法而不是构造器，以避免创建不必要的对象**。
+
+  ​	有些对象创建成本比其他对象要高得多，这类对象建议缓存下来重用。例如正则表达式中的Pattern实例。
+
+  ```java
+  // Performance can be greatly improved!
+  static boolean isRomanNumeral(String s) {
+    return s.matches("^(?=.)M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})$");
+  }
+  ```
+
+  ​	上述实现中，**`String.matches`方法最易于查看一个字符串是否于正则表达式相匹配，但并不适合在注重性能的情形中重复使用**。
+
+  ​	它在内部为正则表达式创建了一个Pattern实例，但只用了一次，之后就可以进行垃圾回收了。**创建Pattern实例的成本很高，因为需要将正则表达式编译成一个有限状态机（finite state machine）**。
+
+  ​	为了提升性能，应该显式地将正则表达式编译成一个Pattern实例（不可变），让它成为类初始化的一部分，并将它缓存起来，每当调用isRomanNumeral方法的时候就重用同一个实例：
+
+  ```java
+  // Reusing expensive object for improved performance
+  public class RomanNumerals {
+    private static final Pattern ROMAN = Pattern.compile("^(?=.)M*(C[MD]|D?C{0,3})(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})$");
+    
+    static boolean isRomanNumeral(String s){
+      return ROMAN.matcher(s).matches();
+    }
+  }
+  ```
+
+  ​	*改进后的isRomanNumeral方法如果被频繁调用，会显示出明显的性能优势。在作者的机器上，速度提高了6.5倍（都是us级别）。同时，提取Pattern实例用final修饰时，可以起名，增加可读性。*
+
+---
+
+- 自动装箱（autoboxing）
+
+  ```java
+  private static long sum(){
+   	Long sum = 0L;
+    for(long i = 0; i <= Integer.MAX_VALUE; ++i){
+      sum +=i;
+    }
+    return sum;
+  }
+  ```
+
+  上面sum声明为Long，每次增加long时构造一个实例，程序大约构造了2<sup>31</sup>个多余的Long实例。
+
+  将sum从Long改成long，在作者机器上从6.3s减少到0.59秒。（我这里是6.041s降低到0.562秒）。
+
+  结论：**优先使用基本类型而不是装箱基本类型，当心无意识的自动装箱**。
+
+---
+
++ 对象池
+
+  ​	正确使用对象池的典型对象示例就是数据库连接池。建立数据库连接的代价是非常昂贵的，因此重用这些对象非常有意义。
+
+---
+
+- 保护性拷贝
+
+  + 当你应该重用现有对象的时候，请不要创建新的对象
+  + 当你应该创建新对象的时候，请不要重用现有的对象（E50）
+
+  ​	必要时如果没能实施保护性拷贝，将会导致潜在的Bug和安全漏洞；而不必要地创建对象则会影响程序的风格和性能。
+
+## * E7 消除过期的对象引用
+
++ 举例
+
+  ```java
+  // Can you spot the "memory leak"
+  public class Stack {
+    private Object[] elements;
+    private int size = 0;
+    private static final int DEFAULT_INITIAL_CAPACITY = 16;
+  
+    public Stack() {
+      elements = new Object[DEFAULT_INITIAL_CAPACITY];
+    }
+  
+    public void push(Object e){
+      ensureCapacity();
+      elements[size++] = e;
+    }
+  
+    public Object pop() {
+      if(size == 0)
+        throw new EmptyStackException();
+      return elements[--size];
+    }
+  
+    /**
+     * Ensure space for at least one more elemnt, roughly
+     * doubling the capacity each time the array needs to grow.
+     */
+    private void ensureCapacity() {
+      if(elements.length == size)
+        elements = Arrays.copyOf(elements, 2 * size + 1);
+    }
+  }
+  ```
+
+  ​	泛型版本参考（E29）。该程序存在隐藏的"内存泄漏"，随着内存占用不断增加，极端情况下会导致**磁盘交换**（Disk Paging），甚至导致程序失败（OutOfMemoryError错误），尽管这种失败情形相对少见。
+
+  ---
+
+  分析：
+
+  ​	程序中发生内存泄漏的原因：**如果一个栈先是增长，然后收缩，那么从栈中弹出来的对象将不会被当作垃圾回收，即使使用栈的程序不再引用这些对象，它们也不会被回收**。
+
+  + **栈内部维护这些对象的过期引用（obsolete reference）——永远也不会再被解除的引用**。
+
+  本例中，凡是在elements数组的“活动部分”（active portion）以外的任何引用都是过期的。
+
+  *ps：活动部分指elements中下标小于size的那些元素*
+
+---
+
++ 处理"无意识的对象保护"（unintentional object retention）
+
+  一旦一个对象引用已经过期，只需清空这个引用即可。对于上述的示例，修改pop方法如下：
+
+  ```java
+  public Object pop() {
+    if(size == 0)
+      throw new EmptyStackException();
+    Object result = elements[--size];
+    elements[size] = null; // Eliminate obsolete reference
+    return result;
+  }
+  ```
+
+---
+
++ **清空对象引用应该是一种例外，而不是一种规范行为**。
+
+  那么，何时应该清空引用呢？Stack类的哪方面特性使它易于遭受内存泄漏的影响呢？
+
+  ​	简而言之，问题在于，Stack类自己管理内存。存储池（storage pool）包含了elements数组（**对象引用**单元，而不是对象本身）的元素。
+
+  ​	**数组活动区域（同前面的定义）中的元素是已分配的（allocated），而数组其余部分的元素则是自由的（free）。但是垃圾回收器并不知道这一点；对于垃圾回收器而言，elements数组中的所有对象引用都同等有效**。只有程序员知道数组的非活动部分是不重要的。程序员可以把这个情况告知垃圾回收器，做法很简单旦数组元素变成了非活动部分的一部分，程序员就手工清空这些数组元素（赋值null）。
+
+---
+
++ **只要类是自己管理内存，就应该警惕内存泄漏问题**。一旦元素被释放掉，则该元素中包含的任何对象引用都应该被清空。
+
+---
+
+- **内存泄露的另一个常见来源：缓存**
+
+  对象引用放到缓存中，长时间不用容易被遗忘，但是又仍然存在于缓存中。
+
+  如果正好要实现这样的缓存：只要在缓存之外存在对某个项的键的引用，该项就有意义。那么可以使用WeakHashMap代表缓存。当缓存中的项过期之后，它们就会被自动删除。
+
+  **只有当所要的缓存项的生命周期是由该键的外部引用而不是由值决定时，WeakHashMap才有用处**。
+
+  > **更为常见的情形则是，"缓存项的生命周期是否有意义"并不是很容易确定，随着时间的推移，其中的项会变得越来越没有价值**。在这种情况下，缓存应该时不时地清除掉没用的项。这项清除工作可以由一个后台线程（可能是 ScheduledThreadPoolExecutor）来完成，或者也可以在给缓存添加新条目的时候顺便进行清理。 **LinkedHashMap**类利用它的removeEldestEntry方法可以很容易地实现后一种方案。对于更加复杂的缓存，必须直接使用**java.lang.ref**
+
+  > [WeakHashMap的详细理解_qiuhao9527的博客-CSDN博客_weakhashmap](https://blog.csdn.net/qiuhao9527/article/details/80775524)
+  >
+  > [一文搞懂WeakHashMap工作原理（java后端面试高薪必备知识点） (baidu.com)](https://baijiahao.baidu.com/s?id=1666368292461068600&wfr=spider&for=pc)
+  >
+  > [Java篇 - WeakHashMap的弱键回收机制_u014294681的博客-CSDN博客_weakhashmap](https://blog.csdn.net/u014294681/article/details/86522487)
+
+  - 测试weakHashMap
+
+    ```java
+    public static void main(String[] args) {
+      WeakHashMap<String, Integer> weakHashMap = new WeakHashMap<>();
+      for (int i = 0; i < 1024; ++i) {
+        String tmp = "String_" + i;
+        weakHashMap.put(tmp, i);
+        tmp = null; // 注释掉这行，则第一次输出1，后面全部输出2
+        System.gc();
+        System.out.println(weakHashMap.size());
+      }
+    }
+    ```
+
+    输出最多的是1，偶尔输出0和2
+
+---
+
+- **内存泄漏的第三个常见来源是监听器和其他回调**
+
+  ​	如果实现了一个API，客户端在这个API中注册回调，却没有显式地取消注册，那么除非采取某些动作，否则它们会不断地堆积起来。确保回调立即被当作垃圾回收的最佳方法是只保存它们的弱引用（weak reference），例如，只将它们保存成WeakHashMap中的键。
+
+  > [JAVA回调机制(CallBack)详解 - Bro__超 - 博客园 (cnblogs.com)](https://www.cnblogs.com/heshuchao/p/5376298.html)
+
+## E8 避免使用终结方法和清除方法
+
+p33
