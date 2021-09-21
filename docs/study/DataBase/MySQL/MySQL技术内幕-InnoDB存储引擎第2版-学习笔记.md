@@ -211,4 +211,176 @@ MySQL数据库提供的连接方式从本质上看即上述提及的进程通信
 
 # 2. InnoDB存储引擎
 
-P30
+​	InnoDB是事务安全的MySQL存储引擎，设计上采用了类似Oracle数据库的结构。
+
+​	通常来说，InnoDB存储引擎是OLTP应用中核心表的首选存储引擎。
+
+## 2.1 InnoDB存储引擎概述
+
+​	MySQL5.5开始，InnoDB是MySQL默认的表存储引擎（之前的版本InnoDB存储引擎尽在Windows下为默认的存储引擎）。
+
+​	InnoDB是第一个完整支持ACID事务的MySQL存储引擎（BDB是第一个支持事务的MySQL存储引擎，已经停止开发）
+
+特点：
+
++ **行锁设计**
++ **支持MVCC**
++ **支持外键**
++ **提供一致性非锁定读**
++ 被设计用来最有效地利用以及使用内存和CPU
+
+## 2.2 InnoDB存储引擎的版本
+
+| 版本         | 功能                                                     |
+| ------------ | -------------------------------------------------------- |
+| 老版本InnoDB | 支持ACID、行锁设计、MVCC                                 |
+| InnoDB 1.0.x | 继承了上述版本所有功能，增加了compress和dynamic页格式    |
+| InnoDB 1.1.x | 继承了上述版本所有功能，增加了Linux AIO、多回滚段        |
+| InnoDB 1.2.x | 继承了上述版本所有功能，增加了全文索引支持、在线索引添加 |
+
+## 2.3 InnoDB体系架构
+
+> [InnoDB体系架构详解_qqqq0199181的博客-CSDN博客_innodb架构](https://blog.csdn.net/qqqq0199181/article/details/80659856)
+
+![img](https://img-blog.csdn.net/20180612011119133)
+
+​	InnoDB存储引擎有多个内存块，可以认为这些内存块组成了一个大的内存池，负责如下工作：
+
++ 维护所有进程/线程需要访问的多个内部数据结构。
++ 缓存磁盘上的数据，方便快速地读取，同时在对磁盘文件的数据修改之前在这里缓存。
++ 重做日志（redo log）缓冲。
+
+​	后台线程的主要作用是负责刷新内存池中的数据，保证缓冲池中的内存缓存是最近的数据。此外将已修改的数据文件刷新到磁盘文件，同时保证在数据库发生异常的情况下InnoDB能恢复到正常运行状态。
+
+### 2.3.1 后台线程
+
+1. Master Thread
+
+   ​	主要负责将缓冲池中的数据异步刷新到磁盘，保证数据的一致性。
+
+   + 脏页的刷新
+   + 合并插入缓冲（INSERT BUFFER）
+   + UNDO页的回收
+   + ...
+
+   *ps：2.5节会详细地介绍各个版本中的Master Thread的工作方式。*
+
+2. IO Thread
+
+   在InnoDB存储引擎中大量使用了AIO（Async IO）来处理写IO请求，极大提高数据库的性能。
+
+   IO Thread主要负责这些IO请求的回调（call back）处理。
+
+   （此处省略参数配置、使用介绍）
+
+3. Purge Thread
+
+   事务被提交后，其所使用的undolog可能不再需要，因此需要PurgeThread回收已经使用并分配的undo页。
+
+   + InnoDB1.1之前，purge操作仅在Master Thread中完成
+   + InnoDB1.1之后，purge操作可以独立到单独的线程中进行
+
+   （此处省略配置文件设置启用独立的Purge Thread）
+
+4. Page Cleaner Thread
+
+   InnoDB 1.2.x版本中引入。
+
+   ​	将之前版本中脏页的刷新操作都放入到单独的线程中完成，减轻原Master Thread的工作及对于用户查询线程的阻塞，进一步提高InnoDB存储引擎的性能。
+
+### 2.3.2 内存
+
+​	InnoDB存储引擎基于磁盘存储，并将其中的记录按照页的方式进行管理。因此可以将其视为基于磁盘的数据库系统（Disk-base Database）。
+
+1. 缓冲池
+
+   ​	简单来说就是一块内存区域，通过内存的速度来弥补磁盘速度较慢对数据库性能的影响。
+
+   ​	在数据库中进行读取页的操作，首先将从磁盘读到的页放在缓冲池中。这个过程称为将页"FIX"在缓冲池中。下一次再读取相同的页时，首先判断该页是否在缓冲池中。若在缓冲池中，称该页在缓冲池中被命中，直接读取该页，否则读取磁盘上的页。
+
+   ​	对于数据库中过的页操作，则首先修改在缓冲池中的页，然后再以一定的频率刷新到磁盘上。
+
+   + **并非每次缓冲池中的页发生更新时触发刷新数据到磁盘，而是通过Checkpoint机制刷新到磁盘**。
+
+   （此处省略缓冲池大小配置）
+
+   + **缓冲池缓存的数据页数据类型有：索引页、数据页、undo页、插入缓冲（insert buffer）、自适应哈希索引（data dictionary）等**。
+
+     ![InnoDB内存结构](https://static.oschina.net/uploads/img/201611/22145927_7wWa.png)
+
+     > [InnoDB存储引擎内部结构_weixin_33860528的博客-CSDN博客](https://blog.csdn.net/weixin_33860528/article/details/92001932)
+
+   ​	**从InnoDB 1.0.x开始，允许有多个缓冲池实例。每个页根据哈希值平均分配到不同的缓冲池实例中**。可通过innodb_buffer_pool_instances进行配置，默认值为1。
+
+   （此处省略关于innodb_buffer_pool_instances相关的配置介绍和使用）
+
+---
+
+2. LRU List、Free List和Flush List
+
+   ​	通常来说，数据库中的缓冲池通过LRU算法进行管理。当缓冲池不能存放新读取到的页时，首先释放LRU列表中尾端的页。
+
+   ​	InnoDB存储引擎中，缓冲池中的页大小默认为16KB，同样使用LRU算法对缓冲池进行管理。
+
+   ​	<u>InnoDB对传统LRU进行优化，在LRU列表中加入了midpoint位置。新读取到的页，并非放到LRU列表首部，而是放到LRU列表的midpoint位置</u>。（在InnoDB称为midpoint insertion strategy）
+
+   ​	默认配置下，midpoint在LRU列表长度的5/8处。（可由innodb_old_blocks_pct控制）
+
+   （此处省略innodb_old_blocks_pct配置和说明）
+
+   ​	InnoDB中，把midpoint之后的列表称为old列表，之前的称为new列表。可以简单理解为new列表中的页都是最为活跃的热点数据。
+
+   + **为什么不适用朴素的LRU算法，将新读取的页插入LRU首部？**
+
+     ​	**若直接插入LRU首部，诸如索引或者数据的扫描操作，会使缓冲池中的页被刷新出，这些数据一般仅在本次查询中使用，非热点数据。这使得原先真正的热点数据从LRU列表中被移除，下一次读取该页，需要重新从磁盘读取**。
+
+     ​	为解决该问题，InnoDB引入innodb_old_blocks_time，表示该页读取到mid位置后需要等待多久才会被加入到LRU列表的热端。
+
+     （省略配置介绍）
+
+   ---
+
+   ​	数据库启动时，LRU列表空，所有页存放在Free列表中。当需要从缓冲池分页时，首先从Free列表中查找是否有可用的空闲页，若有则将该页从Free列表中删除，放入LRU列表中。
+
+   + 当页从LRU的old部分加入到new部分时，称该操作为page made young
+   + 因innodb_old_blocks_time的设置而导致页没有从old部分移动到new部分的操作称为page not made young
+
+   可以通过`SHOW ENGINE INNODB STATUS`观察LRU列表以及Free列表的使用情况和运行状态。
+
+   （此处省略指令的使用）
+
+   + 缓冲池中的页还可能被分配给自适应哈希索引、Lock信息、Insert Buffer等页，这部分页不需要LRU算法维护，因此不再LRU列表中
+
+   > `SHOW ENGINE INNODB STATUS`，输出的`Buffer pool hit rate`表示缓冲池命中率，通常不应该小于95%，出现异常时需要观察是否是由于全表扫描引起LRU列表被污染的问题。
+   >
+   > `SHOW ENGINE INNODB STATUS`显示的非当前状态，而是过去某个时间范围的InnoDB存储引擎的状态。
+
+   （省略压缩页unzip_LRU内容介绍）
+
+---
+
+3. 重做日志缓冲（redo log buffer）
+
+   InnoDB首先将重做日志信息放入该缓冲区，然后按照一定频率将其刷新到重做日志文件。
+
+   ​	redo log buffer一般不用设置很大，一般每一秒钟会将重做日志缓冲刷新到日志文件，只需保证每秒产生的事务量在这个缓冲大小之内即可。（配置参数innodb_log_buffer_size，默认8MB）
+
+   ​	通常8MB足以，下列三种情况下会将刷新缓冲到磁盘的重做日志文件中：
+
+   + **Master Thread每一秒将重做日志缓冲刷新到重做日志文件**
+   + **每个事物提交时会将重做日志缓冲到重做日志文件**
+   + **当重做日志缓冲池剩余空间小于1/2时，重做日志缓冲刷新到重做日志文件**
+
+---
+
+4. 额外的内存池
+
+   ​	在InnoDB中，通过内存堆（heap）的方式管理内存。对一些数据结构本身的内存进行分配时，需要从额外的内存池中进行申请，当该区域内存不足时，会从缓冲池中进行申请。
+
+   > 例如，分配了缓冲池（innodb_buffer_pool），但是每个缓冲池中的帧缓冲（frame buffer）还有对应的缓冲池控制对象（buffer control block），这些对象记录了一些诸如LRU、锁、等待等信息，而这个对象的内存需要从额外内存池中申请。
+   >
+   > 因此，申请了很大的InnoDB缓冲池时，也应考虑相应增加这个值。
+
+## 2.4 Checkpoint技术
+
+p45
