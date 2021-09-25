@@ -1099,4 +1099,67 @@
 
 ## E9 try-with-resources 优先于 try-finally
 
-p37
++ 概述
+
+  ​	Java类库中包括许多必须通过调用close方法来手工关闭的资源。例如InputStream、OutputStream和java.sql.Connection。
+
+  ​	**虽然其中的许多资源都是用终结方法作为安全网，但是效果并不理想（E8）**。
+
+  ​	根据经验，try-finally语句是确保资源会被适时关闭的最佳方法，就算发生异常或者返回也一样。
+
+  + 在需要关闭的资源较多，嵌套使用try-finally可读性差，还需要考虑调用在finally调用close方法时抛出异常的情况。
+
+  + Java7引入try-with-resources语句，解决try-finally问题。要使用这个构造的资源，必须要实现AutoCloseable接口，其中包含了单个返回void的close方法。
+
+    Java类库和第三方类库中许多类和接口，都实现或扩展了AutoCloseable接口。**如果编写一个类，它代表的是必须被关闭的资源，那么这个类也应该实现AutoCloseable**。
+
+  + **在处理必须关闭的资源时，始终优先考虑用try-with-resources，而不是用try-finally**。
+    + 简洁、清晰
+    + 产生的异常更有价值
+
+  ---
+
+  + 举例：
+
+    文件读取一行，然后释放资源。分别用try-finally和try-with-resources实现。
+
+    1. try-finally
+
+       ```java
+       // try-finally - No longer the best way to close resources!
+       static String firstLineOfFile(String path) throws IOException {
+         BufferedReader br = new BufferedReader(new FileReader(path));
+         try{
+           return br.readLine();
+         } finally {
+           br.close();
+         }
+       }
+       ```
+
+    2. try-with-resources
+
+       ```java
+       // try-with-resources - the best way to close resources!
+       static String firstLineOfFile(String path) throws IOException {
+         try (BufferedReader br = new BufferedReader(new FileReader(path))) {
+           return br.readLine();
+         }
+       }
+       ```
+
+    ​	上述try-finally实现中，如果底层的物理设备异常，那么调用readLine就会抛出异常，同理调用close也会抛出异常。<u>在这种情况下，第二个异常完全抹除了第一个异常</u>。在异常堆栈轨迹中，完全没有关于第一个异常的记录，这在现实的系统中会导致调试变得非常复杂，因为通常需要看到第一个异常才能诊断出问题何在。虽然可以通过编程来禁止第二个异常，保留第一个异常，但事实上没有人会这么做，因为实现繁琐。
+
+    ​	而使用try-with-resources，假设同样readLine和（不可见的）close都抛出异常，后一个异常就会被禁止，以保留第一个异常。
+
+    > 事实上，为了保留你想要看到的那个异常，即便多个异常都可以被禁止。这些被禁止的异常并不是简单地被抛弃了，而是会被打印在堆栈轨迹中，并注明它们是被禁止的异常。通过编程调用getSuppressed方法还可以访问到它们，getSuppressed方法也已经添加在Java7的Trowabe中了。
+
+# 3、对于所有对象都通用的方法
+
+​	尽管Object是一个具体类，但设计它主要是为了扩展。它所有的非final方法（equals、hashCode、toString、clone和fianlize）都有明确的通用约定（general contract），因为它们设计成是要被覆盖（override）的。
+
+​	E8讨论的finalize本章节不再讨论；Comparable。compareTo虽然不是Object方法，但是本章也对它进行讨论，因为它也具有类似的特征。
+
+## E10 覆盖equals时请遵守通用约定
+
+P40
