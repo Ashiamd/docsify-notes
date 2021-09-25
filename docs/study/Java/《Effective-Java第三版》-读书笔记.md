@@ -919,6 +919,184 @@
 
   > [JAVA回调机制(CallBack)详解 - Bro__超 - 博客园 (cnblogs.com)](https://www.cnblogs.com/heshuchao/p/5376298.html)
 
-## E8 避免使用终结方法和清除方法
+## * E8 避免使用终结方法和清除方法
 
-p33
++ 概述
+
+  + **终结方法（finalizer）通常是不可预测的，也是很危险的，一般情况下是不必要的。**
+  + **在Java9中用清除方法（cleaner）代替了终结方法。清除方法没有终结方法那么危险，但仍然是不可预测、运行缓慢，一般情况下也是不必要的**。
+
+  + Java的终结方法不能直接想为C++中析构器（destructors）的对应物。
+
+    + C++依赖析构器回收存储空间（内存对象or其他非内存资源如文件描述符等）
+    + Java中当一个对戏那个不可达时，垃圾回收器会回收与该对象相关联的存储空间，而其他非内存资源则一般通过try-finally块来完成类似工作（E9）
+
+  + **终结方法和清除方法的缺点在于不能保证被及时执行**。
+
+    一个对象变得不可到达开始，到它的终结方法被执行，所花费的这段时间是任意长的。
+
+    注重时间（time-critical）的任务不应该由终结方法或者清除方法来完成。
+
+  + 执行终结方法和清除方法是垃圾回收算法中的一个主要功能，不同JVM实现中不同。如果程序依赖终结方法、清除方法被执行的时间点，那么不同JVM中运行的表现会截然不同。
+
+  + **Java语言规范不保证终结方法或清除方法的执行（可能永远不执行）**，程序终止时，某些已经无法方法的对象上的终结方法根本没被执行也是完全有可能的。
+
+  + **永远不应该依赖终结方法或清除方法来更新重要的持久状态**。
+
+  + `System.gc`和`System.runFinalization`不保证终结方法或者清除方法被执行（只是增加被执行的机会）。唯一生成保证执行的是`System.runFinalizersOnExit`和`Runtime.runFinalizersOnExit`，但这两个方法有致命缺陷，已经废弃很久了[ThreadStop]。
+
+  + **使用终结方法的另一个问题：如果忽略在终结过程中被抛出的未捕获的异常，该对象的终结过程也会终止**。
+
+    ​	未被捕获的异常会使对象处于破坏的状态（corrupt state），如果另一个线程企图使用这种被破坏的对象，则可能发生不确定的行为。
+
+    + 正常情况下，未被捕获的异常将会使线程终止，并打印出栈轨迹（Stack Trace）
+    + **异常发生在终结方法中时，不会打印出栈轨迹，甚至连警告都不会打印**。
+    + 清除方法没有该问题，因为使用清除方法的一个类库在控制它的线程。
+
+  + **使用终结方法和清除方法有非常严重的性能损失**。
+
+  + **终结方法存在严重安全问题**。
+
+    终结方法攻击的思想：如果从构造器或者它的序列化对等体（readObject和readResolve方法，详情见12章）抛出异常，恶意子类的终结方法就可以在构造了一部分中途就中途夭折的对象上继续运行。<u>终结方法会将该对象的引用记录在一个静态域中，阻止它被垃圾回收</u>。通过记录到异常的对象，就可以轻松地在这个对象上（终结方法中）调用任何永远不允许在这里出现的方法。
+
+    + **由于终结方法的存在，使得即使构造器抛出异常，也不能保证对象能正常被销毁**。
+    + final类不会受到终结方法攻击，因为没有人能够编写出final类的恶意子类。**为了防止非final类受到终结方法攻击，要编写一个空的final的finalize方法**。
+
+  + **让类实现AutoCloseable，来终止对象中封装的资源（文件、线程等）**
+
+    ​	类实现AutoCloseable，并要求客户端在每个实例不再需要使用的时候调用close方法。（一般利用try-with-resources确保终止，即使遇到异常也是如此，E9）
+
+    > 需注意的细节，该实例必须记录自己是否已经被关闭：close方法必须在一个私有域中记录下"该对象已经不再有效"。如果这些方法时在对象已经终止之后才被调用，其他的方法就必须检查这个域，并抛出IllegalStateException异常。
+
+  + 终结方法和清除方法的两个合法用途：
+
+    1. 资源所有者忘记调用它的close方法时，终结方法或清除方法可以充当"安全网"。
+
+       虽然Java规范不保证终结方法或清除方法被执行，但是总比客户端不执行close永远不释放好一些。如果考虑编写这类安全网终结方法，需考虑（性能、安全隐患）代价是否值得。**有些Java类（如FileInputStream、FileOutputStream、ThreadPoolExecutor和java.sql.Conneciton）都具有能充当安全网的终结方法**。
+
+       > [JDK 1.8 API阅读与翻译(2) FileInputStream - 简书 (jianshu.com)](https://www.jianshu.com/p/9586a9d588b1)
+
+    2. **通过终结方法或清除方法回收本地对等体对象（native peer）**。
+
+       ​	本地对等体是一个本地（非Java的）对象（native object），普通对象通过本地方法（native method）委托给一个本地对象。
+
+       ​	因为本地对等体不是一个普通（java）对象，所以垃圾回收器不会知道它，当它的Java对等体被回收的时候，它不会被回收。
+
+       ​	<u>如果本地对等体没有关键资源，并且性能也可以接受的话，那么清除方法或者终结方法正是执行这项任务最合适的工具。如果本地对等体拥有必须被及时终止的资源，或者性能无法接受，那么该类就应该有一个close方法，如前所述</u>。
+
+  + **总而言之，除非是作为安全网，或者是为了终止非关键的本地资源，否则不要使用清除方法，对于在Java9之前的发行版本，则尽量不要使用终结方法。若使用了终结方法或者清除方法，则要注意它的不确定性和性能后果**。
+
+---
+
++ 举例
+
+  1. 典型错误：使用终结方法或者清除方法来关闭已打开的文件
+
+     ​	打开的文件描述符是很有限的资源，如果系统无法及时运行终结方法或者清除方法，就会导致大量的文件仍然保留在打开的状态，于是当一个程序再也不能打开文件的时候，就可能会运行失败。
+
+     > [linux文件描述符限制和单机最大长连接数_ybxuwei的专栏-CSDN博客_文件描述符上限](https://blog.csdn.net/ybxuwei/article/details/77969032)
+     >
+     > [网络通信socket连接数上限 - _学而时习之 - 博客园 (cnblogs.com)](https://www.cnblogs.com/sparkleDai/p/7604876.html)
+
+  2. 终结方法队列对象插入速度比回收速度快的少见情况
+
+     ​	**在少数情况下，为类提供终结方法，可能会随意地延迟其实例的回收过程**。书籍作者的同事调试一个长期运行的GUI程序时，程序莫名其妙地出现OutOfMemoryError错误而死掉。分析表明，<u>该应用程序死掉的时候，其终结方法队列中有数千个图形对象正在等待被终结和回收</u>。
+
+     ​	而<u>终结方法线程的优先级比该该应用程序中的其他线程的优先级低得多</u>，所以图形对象的终结速度达不到它们进入队列的速度。
+
+     ​	**Java语言规范不保证哪个线程将会执行终结方法，除了不用终结方法依赖，并没有很轻便的方法能够避免这类问题**。	
+
+     ​	**清除方法稍好一点，类的设计者可以控制自己的清除线程，但清除方法仍然在后台运行，处于垃圾回收器的控制之下，因此不能确保及时清除**。
+
+  3. 错误操作：依赖终结方法或者清除方法来释放共享资源
+
+     由于Java语言规范不保证终结方法的执行，如果依赖终结方法或者清除方法释放诸如数据库上的永久锁等资源，很容易让整个分布式系统跨掉。
+
+     （程序终止时，已经无法访问的对象的终结方法没被执行也是完全可能的）
+
+  4. 终结方法和清除方法的性能损失。
+
+     + 书籍作者通过try-with-resources关闭一个简单的AutoCloseable对象，垃圾回收器将它回收后，这些工作花费时间约12ns；
+
+     + 增加一个终结方法时时间增加到550ns；（终结方法创建和销毁对象比原本慢约50倍，因为终结方法组织了有效的垃圾回收）
+
+     + 采用清除方法清除类的所有实例，比终结方法稍快。如果把清除方法作为安全网（safety net），那能更快一些。这种情况下创建、清除和销毁对象，花费66ns左右。（如果采用清除方法作为安全网，比起慢50倍的终结方法，这个慢5倍）
+
+  5. 清除方法使用例子：
+
+     ​	以简单的Room类为例，假设房间在回收之前必须进行清除。Room类实现了AutoCloseabe；它利用清除方法自动清除安全网的过程只是一个实现细节。与终结方法不同的是，清除方法不会污染类的公有API：
+
+     ```java
+     // An autocloseable class using a cleaner as a safety net
+     public class Room implements AutoCloseable {
+       private static final Cleaner cleaner = Cleaner.create();
+       
+       // Resource that requires cleaning. Must not refer to Room!
+       private static class State implements Runnable {
+         int numJunkPiles; // Number of junk piles in this room
+         
+         State(int numJunkPiles) {
+           this.numJunkPiles = numJunkPiles;
+         }
+         
+         // Invoked by close method or cleaner
+         @Override public void run() {
+           System.out.println("Cleaning room");
+           numJunkPiles = 0;
+         }
+       }
+       
+       // The state of this room, shared with our cleanable
+       private final State state;
+       
+       // Our cleanable. Cleans the room when it's eligible for gc
+       private final Cleaner.Cleanable cleanable;
+       
+       public Room(int numJunkPiles) {
+         state = new State(numJunkPiles);
+         cleanable = cleaner.register(this, state);
+       }
+       
+       @Override public void close() {
+         cleanable.clean();
+       }
+     }
+     ```
+
+     ​	内嵌的静态类State保存清除方法清除房间所需的资源。在该例中，就是numJunkPiles域，表示房间的杂乱度。更现实地说，它可以是final的long，包含一个指向本地对等体的指针。State实现了Runnable接口，其run方法最多被Cleanable调用一次，后者是我们在Room构造器中用清除器注册State实例时获得的。以下两种情况之一会出发run方法的调用：
+
+     1. 调用Room的close方法（close方法里触发Cleanable的清除方法）
+     2. 到了Room实例应该被垃圾回收时，客户端还没调用close方法，清除方法就会（希望如此）调用State的run方法。
+
+     ​	**关键是State实例没有引用它的Room实例**。**如果它引用了，会造成循环，阻止Room实例被垃圾回收（以及防止被自动清除）**。因此<u>State必须是一个静态的嵌套类，因为非静态的嵌套类包含了对其外围实例的引用（E24）</u>。同样，也<u>不建议使用lambda，因为它们很容易捕捉到对外围对象的引用</u>。
+
+  6. Room方法只用作安全网。如果客户端将所有的Room实例化都包在try-with-resource块中，将永远不会请求到自动清除。下面是表现良好的客户端代码示例：
+
+     ```java
+     public Class Adult {
+       public static void main(String[] args) {
+         try(Room myRoom = new Room(7)) {
+           System.out.println("Goodbye");
+         }
+       }
+     }
+     ```
+
+     正如期望一样，运行程序会打印出“Goodbye”，随后就是“Cleaning room”。但下面这个程序就不保证会输出“Cleaning room”
+
+     ```java
+     public class Teenager{
+       public static void main(String[] args) {
+         new Room(99);
+         System.out.println("Peace out");
+       }
+     }
+     ```
+
+     ​	上诉代码在书籍作者机器上没打印出“Cleaning room”就退出程序了。这就是前面提及的（终结方法、清除方法的）不可预见性。
+
+     ​	**Cleaner规范指出："清除方法在System.exit期间的行为是与实现相关的。不确保清除动作是否会被调用。"虽然规范没有指明，但其实对于正常的程序退出也是如此**。在作者的机器上，只要在main方法加上`System.gc()`就能在退出之前打印"Cleaning room"。（但不保证所有人操作时都如此）
+
+## E9 try-with-resources 优先于 try-finally
+
+p37
