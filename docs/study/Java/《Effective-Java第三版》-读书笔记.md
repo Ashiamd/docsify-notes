@@ -1160,6 +1160,324 @@
 
 ​	E8讨论的finalize本章节不再讨论；Comparable。compareTo虽然不是Object方法，但是本章也对它进行讨论，因为它也具有类似的特征。
 
-## E10 覆盖equals时请遵守通用约定
+## * E10 覆盖equals时请遵守通用约定
 
-P40
++ 概述
+
+  ​	覆盖equals方法容易犯错，避免的方式即不覆盖equals方法，在这种情况下，类的每个实例都只与它自身相等。
+
+  ​	如果满足了以下**任何一个条件**，这就正是所期望的结果：
+
+  + **类的每个实例本质上都是唯一的**。
+
+    ​	对于代表活动实体而不是值（value）的类来说确实如此，例如Thread。Object提供的equals实现对于这些类来说正是正确的行为。
+
+  + **类没有必要提供"逻辑相等"（logical equality）的测试功能**。
+
+    ​	例如，Java.util.regex.Pattern可以覆盖equals，以检查两个Pattern实例是否代表同一个正则表达式，但是设计者并不认为客户需要或者期望这样的功能。在这种情况下，从Object继承得到的equals实现已经足够了。
+
+  + **超类已经覆盖了equals，超类的行为对于这个类也是合适的**。
+
+    ​	例如，大多数的Set实现都从AbstractSet继承equals实现，List实现从AbstractList继承equals实现，Map实现从AbstractMap继承equals实现。
+
+  + **类是私有的，或者是包级私有的，可以确定它的equals方法永远不会被调用**。
+
+    ​	如果你非常想要规避风险，可以覆盖equals方法，以确保它不会被意外调用：
+
+    ```java
+    @Override public boolean equals(Object o) {
+      throw new AssertionError(); // Method is never called
+    }
+    ```
+
+---
+
+- 需要覆盖equals方法的场景
+
+  ​	类具有"逻辑相等（logical equality）"概念，且超类没有覆盖equal。（这通常属于"值类value class"的情形）。
+
+  ​	有一种"值类"不需要覆盖equals方法，即用实例受控（E1）确保"每个值最多只存在一个对象"的类。枚举类型（E34）就属于这种类。对于这种类而言，逻辑相等 = 对象等同，因此Object的equals方法等同于逻辑意义上的equals方法
+
+  ```java
+  // Object.java
+  public boolean equals(Object obj) { return (this == obj); }
+  ```
+
+  > 值类仅仅是一个表示值的类，比如Integer或者String
+
+---
+
+* 覆盖equals方法的通用约定
+
+  ​	下面是约定的内容，来自Object的规范。
+
+  ​	equals方法实现了**等价关系（equivalence relation）**，其属性如下：
+
+  + **自反性（reflexive）**：对于任何非null的引用值x，`x.equals(x)`必须返回true。
+  + **对称性（symmetric）**：对于任何非null的引用值x和y，当且仅当`y.equals(x)`返回true时，`x.equals(y)`必须返回true。
+  + **传递性（transitive）**：对于任何非null的引用值x、y和z，如果`x.equals(y)`返回true，且`y.equals(z)`也返回true，那么`x.equals(z)`也必须返回true。
+  + **一致性（consistent）**：对于任何非null的引用值x和y，只要equals的比较操作在对象中所用的信息没有被修改，多次调用x.equals(y)就会一致地返回true，或者一致地返回false。
+
+  + **非空性（Non-nullity）**：对于任何非null的引用值x，`x.equals(null)`必须返回false。
+
+---
+
++ 等价关系是什么
+
+  ​	不严格地说，它就是一个操作符，将一组元素划分到其元素与另一个元素等价的分组中。这些分组被称为等价类（equivalence class）。从用户的角度来看，对于有用的equals方法，每个等价类中的所有元素都必须是可交换的。
+
+----
+
++ **equals的5个属性分析**：
+
+  1. 自反性（reflexive）：一般不会违背这条。假如违背了，那么添加该类的实例到集合中，该集合的contains方法会表示不包含刚才添加的实例。
+
+  2. 对称性（symmetric）：不注意的话就可能违反。
+
+     ```java
+     // Broken - violates symmetry!
+     public final class CaseInsensitiveString {
+       private final String s;
+       
+       public CaseInsensitiveString(String s) {
+         this.s = Objects.requireNonNull(s);
+       }
+       
+       // Broken - violates symmetry!
+       @Override public boolean equals(Object o) {
+         if(o instanceof CaseInsensitiveString)
+           return s.equalsIngnoreCase(((CaseInsensitiveString) o).s);
+         if(o instanceof String) // One-way interoperability!
+           return s.equalsIgnoreCase((String) o);
+         return false;
+       }
+       ... // Remainder omitted
+     }
+     ```
+
+     ​	比如某个类重写了equals方法，用于判断不区分大小写的字符串是否相等。那么该类实例调用equals方法时，传入原字符串不相等但是不区分大小写时相等的String实例，返回true；反过来调用String实例的equals方法则返回false。
+
+     ​	此时如果把该类对象放入集合，调用集合的contains方法（传入不区分大小写时才能相等的String实例），不能保证返回true或者false（不同JDK实现或许不同，但是作者的jdk版本返回false）
+
+     ​	<u>一旦违反了equals约定，当其他对象面对你的对象时，你完全不知道这些对象的行为会怎么样</u>。
+
+     ​	为解决问题，该写equals方法如下，该类不再用于和String进行比较
+
+     ```java
+     @Override public boolean equals(Object o) {
+       return o instanceof CaseInsensitiveString && 
+         ((CaseInsensitiveString) o).s.equalsIgnoreCase(s);
+     }
+     ```
+
+  3. 传递性（transitivity）：这个也是容易违反的。**子类增加的信息会影响equals的比较结果**。
+
+     ```java
+     public class Point {
+       private final int x;
+       private final int y;
+       
+       public Point(int x, int y) {
+         this.x = x;
+         this.y = y;
+       }
+       
+       @Override public boolean equals(Object o) {
+         if(!(o instanceof Point))
+           return false;
+         Point p = (Point)o;
+         return p.x == x && p.y == y;
+       }
+       
+       ... // Remainder omitted
+     }
+     ```
+
+     子类ColorPoint扩展Point，并编写equals如下
+
+     ```java
+     public class ColorPoint extends Point {
+       private final Color color;
+       
+       public ColorPoint(int x, int y, Color color) {
+         super(x, y);
+         this.color = color;
+       }
+       
+       // Broken - violates symmetry!
+       @override public boolean equals(Object o) {
+         if(!(o instanceof ColorPoint))
+           return false;
+         return super.equals(o) && ((ColorPoint) o).color == color;
+       }
+     }
+     ```
+
+     ​	上诉写法，在比较Point和ColorPoint的时候会得到不正确的结果。
+
+     修改如下时（依旧错误）
+
+     ```java
+     @Override public boolean equals(Object o) {
+       if(!(o instanceof Point))
+         return false;
+       // If o is a normal Point, do a color-blind comparison
+       if(!(o instanceof ColorPoint))
+         return o.equals(this);
+       
+       // o is a ColorPoint; do a full comparison
+       return super.equals(po) && ((ColorPoint) o).color == color;
+     }
+     ```
+
+     上诉实现，提供了对称性，但是牺牲了传递性
+
+     ```java
+     ColorPoint p1 = new ColorPoint(1, 2, Color.RED);
+     Point p2 = new Point(1, 2);
+     ColorPoint p3 = new ColorPoint(1, 2, Color.BLUE);
+     ```
+
+     此时`p1.equals(p2)`和`p2.equals(p3)`返回true，但是`p1.equals(p3)`返回false，违反了传递性。
+
+     <u>此外，这种实现方式可能导致无限递归问题</u>。例如有Point有两个子类都以上诉方式实现equals方法，那么调用equals方法比较这两个子类，将抛出StackOverflowError异常。
+
+     ​	这是面向对象语言中关于等价关系的一个基本问题。**我们无法在扩展可实例化的类的同时，既增加新的值组件，同时又保留equals约定**，除非愿意放弃面向对象的抽象所带来的优势。
+
+     ​	虽然没有一种令人满意的方法可以既扩展不可实例化的类，又增加值组件，但是有不错的权宜之计：遵从（E18）"**复合优先于继承**"的建议。
+
+     ​	不再让ColorPoint扩展Point，而是在ColorPoint中加入一个私有的Point域，以及一个公有的视图（view）方法（E6），此方法返回一个与该有色点处在相同位置的普通Poitn对象：
+
+     ```java
+     // Adds a value component without violating the equals contract
+     public class ColorPoint {
+       private final Point point;
+       private final Color color;
+       
+       public ColorPoint(int x, int y, Color color) {
+         point = new Point(x,y);
+         this.color = Objects.requireNonNull(color);
+       }
+       
+       /**
+        * Returns the point-view of this color point.
+        */
+       public Point asPoint(){
+         return point;
+       }
+       
+       @Override public boolean equals(Object o) {
+         if(!(o instanceof ColorPoint))
+           return false;
+         ColorPoint cp = (ColorPoint) o;
+         return cp.point.equals(point) && cp.color.equals(color);
+       }
+       
+       ... // Remainder omitted
+     }
+     ```
+
+     > Java平台类库中，有一些类扩展了可实例化的类，并添加了新的值组件。例如，java.sql.Timestamp对java.util.Date进行了扩展，并增加了nanoseconds域。**Timestamp的equals实现确实违反了对称性**，如果Timestamp和Date对象用于同一个集合中，或者以其他方式被混合在一起，则会引起不正确的行为。Timestamp类的这种行为时各错误，不值得效仿。
+
+     > 注意，**你可以在一个抽象（abstract）类的子类中增加新的值组件且不违反equals约定**。对于（E23）的建议而得到的那种类层次结构来说，这一点非常重要。
+     >
+     > 例如，你可能有一个抽象的Shape类，它没有任何值组件，Circle子类添加了一个radius域，Rectangle子类添加了length和width域名。**只要不可能直接创建超类的实例，前面的所述种种问题就不会发生。**
+
+  4. 一致性（Consistency）：可变对象在不同的时候与不同的对象相等，而不可变对象则不会这样。
+
+     在编写类的时候，应该仔细考虑其是否不可变（E17）。<u>如果是不可变类，需保证equals满足这样的限制条件：相等的对象永远相等，不相等的对象永远不相等。</u>
+
+     ​	**无论类是否不可变，都不要使equals方法依赖于不可靠的资源**。
+
+     > java.net.URL的equals方法，依赖于对URL主机IP地址的比较。将一个主机名转换成IP地址可能需要访问网络，随着时间的推移，就不能确保会产生相同的结果，即IP地址可能发生了改变。这样会导致URL equals方法违反euqals约定，在实践中可能引发一些问题。
+     >
+     > URL euqals方法的行为是一个大错误且不应该被模范。
+     >
+     > 为了避免这类问题，equals方法应该对驻留在内存中的对象执行确定性的计算。
+
+  5. 非空性（Non-nullity）：所有对象都不能等于null。
+
+     很多类的equals方法都通过一个显式的null来防止`o.equals(null)`意外返回true或者抛出NullPointerException。
+
+     ```java
+     @Override public boolean equals(Object o) {
+       if(o == null)
+         return false;
+       ...
+     }
+     ```
+
+     ​	这项测试是不必要的。<u>为了测试参数的等同性，equals方法必须先把参数转化成适当的类型，以便可以调用它的访问方法，或者访问它的域。在进行转化之前，equals方法必须使用instanceof操作符，检查其参数的类型是否正确</u>：
+
+     ```java
+     @Override public boolean equals(Object o) {
+       if(!(o instanceof MyType))
+         return false;
+       MyType mt = (MyType) o;
+       ...
+     }
+     ```
+
+     ​	<u>如果漏掉了这一步的类型检查，并且传递给equals方法的参数又是错误的类型，那么equals方法将会抛出CLassCastException异常，这就违反了equals约定。但是，如果instanceof的第一个操作数为null，那么不管第二个操作数是哪种类型，instanceof操作符都指定应该返回false。因此，如果把null传给equals方法，类型检测就会返回false，所以不需要显式的null检查</u>。
+
+---
+
+- **如何实现高质量equals方法**
+
+  1. **使用\=\=操作符检查"参数是否为这个对象的引用"**。
+
+     如果是，返回true。这只不过是一种性能优化，如果比较操作有可能比较昂贵，就值得这么做。
+
+  2. **使用instanceof操作符检测"参数是否为正确的类型"**。
+
+     如果不是，返回false。<u>一般来说，所谓"正确的类型"是指equals方法所在的那个类。某些情况下，是指该类所实现的某个接口。如果类实现的接口改进了equals约定，允许在实现了该接口的类之间比较，那么就使用接口。集合接口如Set、List、Map.Entry具有这样的特性</u>。
+
+  3. **把参数转换成正确的类型**。
+
+     因为转换之前进行过instanceof测试，所以确保会成功。
+
+  4. **对于该类中的每个"关键"（signficant）域，检查参数中过的域是否与该对象中对应的域相匹配**。
+
+     如果这些测试全部成功，则返回true；否则返回false。
+
+     + 如果第2步中的类型是个接口，就必须通过接口方法访问参数中的域；如果该类型是个类，也许就能够直接访问参数中的域，取决于它们的可访问性。
+
+     + 对于非浮点数类型（既不是float也不是double类型）的基本类型域，可以使用==操作符进行比较
+
+     + 对于对象引用域，可以递归地调用equals方法
+
+     + 对于float域，可以使用静态`Float.compare(float, float)`方法
+
+     + 对于double域，可以使用静态`Double.compare(double, double)`方法
+
+       > 对于float和double域进行特殊处理是必要的，因为存在着Float.NaN，-0.0f以及类似的double常量；详细信息参考JLS 15.21.1 或者 Float.equals的文档。
+       >
+       > 使用Float.compare或者Double.compare每次比较都会自动装箱，会导致性能下降。
+
+     + 对于数组域，需要把以上指导原则应用到每一个元素中。如果数组域中每个元素都很重要，就可以使用其中一个Arrays.equals方法。
+
+     > <u>有些对象引用域包含null可能是合法的，为了避免可能导致NullPointerException异常，则使用静态方法`Objects.equals(Object, Object)`来检查这类域的等同性</u>。
+
+     ​	域的比较顺序可能会影响equals方法的性能。为了获得最佳的性能，应该**最先比较最有可能不一致的域，或者是开销最低的域**，最理想的情况是两个条件同时满足的域。
+
+     ​	**不应该比较那些不属于对象逻辑状态的域**，例如用于同步操作的Lock域。
+
+     ​	<u>也不需要比较衍生域（derived field），因为这些域可以由"关键域"（significant field）计算获得，但是这样做有可能提高equals方法的性能。如果衍生于代表了整个对象的描述信息，比较这个域可以节省在比较失败时取比较实际数据所需要的开销。例如，假设有一个Polygon类，并缓存了该面积。如果两个多边形有着不同的面积，就没有必要再去比较它们的边和定点</u>。
+
+     ​	**在编写完equals方法之后，需要确认：是否对称的、传递的、一致的**（当然equals也需要满足其他两个特性：自反性、非空性，这两个特性通常会自动满足），并且需要编写单元测试验证这些特性，除非使用AutoValue生成equals方法，这种情况下就可以放心地省略测试。
+
+---
+
++ 告诫
+
+  1. **覆盖equals时总要覆盖hashCode**（E11）。
+  2. **不要企图让equals方法过于智能**。
+  3. **不要将equals声明中的Object对象替换成其他类型**。（替换了，则没有覆盖Object.equals）
+
+  编写和测试equals（和hashCode）都是繁琐的。可以利用Google开源的AutoValue框架，它会自动生成这些方法。大多数情况下，AutoValue生成的方法本质上和亲自编写的方法是一样的。
+
+  ​	总而言之，不要轻易覆盖equals方法，除非迫不得已。如果覆盖equals方法，需要比较这个类的所有关键域，并且查看它们是否遵守equals合约的所有五个条款。
+
+## E11 覆盖equals时总要覆盖hashCode
+
+P50
