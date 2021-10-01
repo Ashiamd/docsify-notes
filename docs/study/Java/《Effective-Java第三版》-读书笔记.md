@@ -1760,6 +1760,179 @@
 
   *（如前文所言，**在数组上调用clone返回的数组，其编译时的类型与被克隆数组的类型相同**。这是复制数组的最佳习惯做法。事实上，数组是clone方法唯一吸引人的用法）*
 
-## E14 考虑实现Comparable接口
+## * E14 考虑实现Comparable接口
 
-p64
++ 概述
+
+​	compareTo方法并没有在Object类中声明，它是Comparable接口中唯一的方法。
+
+​	compareTo方法，不但允许进行简单的等同性比较，而且允许执行顺序比较，而且与Object的equals方法具有相似的特征，是个泛型（generic）。类实现了Comparable接口，就表明它的实例具有内在的排序关系（natural ordering）。为实现Comparable接口的对象数组进行排序只需如下操作：
+
+```java
+Arrays.sort(a);
+```
+
+​	实现了Comparable接口，就可以跟许多泛型算法（generic algorithm）以及依赖于该接口的集合实现（collection implement）进行协作。**事实上，Java平台类库中的所有值类（value classes），以及所有的枚举类型（E34）都实现了Comparable接口**。
+
+​	**如果正在编写一个值类，它具有非常明显的内在排序关系，比如按字母顺序、按数值顺序或者年代顺序，那你就应该坚决考虑实现Comparable接口**：
+
+```java
+public interface Comparable<T> {
+  int compareTo(T t);
+}
+```
+
+---
+
++ compateTo方法的通用约定
+
+  ​	与equals方法的约定相似：将这个对象与指定的对象进行比较。当该对象小于、等于或大于指定对象的时候，分别返回一个负整数、零或者正整数。如果由于指定对象的类型而无法与该对象进行比较，则抛出ClassCastException异常。
+
+  ​	在下面的说明中，符号sgn（expression）表示数学中的signum函数，它根据表达式（expression）的值为负数、零和正值，分别返回-1、0或1。
+
+  + 实现者必须确保所有的x和y都必须满足`sgn(x.compareTo(y)) == -sgn(y.compareTo(x))`。
+
+    （这也暗示，当且仅当`y.compareTo(x)`抛异常时，`x.compareTo(y)`才必须抛出异常。）
+
+  + 实现者还必须确保这个关系是可传递的：`(x.compareTo(y) > 0 && y.compateTo(z) > 0)`暗示着`x.compareTo(z) > 0`。
+
+  + 最后，实现者必须确保`x.compareTo(y) == 0`暗示着所有的z都必须满足`sgn(x.compareTo(z)) == sgn(y.compareTo(z))`。
+
+  + **强烈建议`(x.compareTo(y) == 0) == (x.equals(y))`，但这并非绝对必要**。
+
+    一般来说，任何实现了Comparable接口的类，若违反了这个条件，都应该明确予以说明。建议使用这样的说法："注意：该类具有内在的排序功能，但是与equals不一致。"
+
+  > compareTo约定的最后一段是一条强烈的建议，而不是真正的规则，它只是说明了compareTo方法施加的等同性测试，在通常情况下应该返回与equals方法同样的结果。
+  >
+  > 如果遵守了这一条，那么由compareTo方法所施加的顺序关系就被认为与equals一致。如果违反了这条规则，顺序关系就被认为与equals不一致。如果一个类的compareTo方法施加了一个与equals方法不一致的顺序关系，它仍然能够正常工作，但是如果一个有序集合(sorted collection)包含了该类的元素，这个集合就可能无法遵守相应集合接口(Collection、Set或Map)的通用约定。**因为对于这些接口的通用约定是按照equals方法来定义的，但是有序集合使用了由compareTo方法而不是equals方法所施加的等同性测试**。尽管出现这种情况不会造成灾难性的后果，但是应该有所了解。
+
+  ---
+
+  ​	千万不要被上述约定中的数学关系所迷惑。如同equa1s约定（E10）一样，compareTo约定并没有看起来那么复杂。
+
+  ​	与equals方法不同的是，它对所有的对象强行施加了一种通用的等同关系，**compareTo不能跨越不同类型的对象进行比较**：在比较不同类型的对象时，compareto可以抛出ClassCastException异常。通常，这正是compareTo在这种情况下应该做的事情。合约确实允许进行跨类型之间的比较，这一般是在被比较对象实现的接口中进行定义。
+
+  ​	<u>就好像违反了hashCode约定的类会破坏其他依赖于散列的类一样，违反compareTo约定的类也会破坏其他依赖于比较关系的类</u>。
+
+  ​	**依赖于比较关系的类包括有序集合类TreeSet和TreeMap，以及工具类Collections和Arrays，它们内部包含有搜索和排序算法**。
+
+---
+
++ 忠告
+
+  ​	前面的通用约定，使得<u>由compareTo方法施加的等同性测试，也必须遵守相同于equals约定所施加的限制条件：**自反性、对称性和传递性**</u>。
+
+  ​	因此下列的告诫也同样适用：
+
+  + **无法在用新的值组件扩展可实例化的类时，同时保持compareTo约定，除非愿意放弃面向对象的抽象优势（E10）**。
+
+  + 针对equals的权宜之计也同样适用于compareTo方法。**如果你想为一个实现了Comparable接口的类增加值组件，请不要扩展这个类；而是要编写一个不相关的类，其中包含第一个类的一个实例**。然后提供一个"视图"(view)方法返回这个实例。这样既可以让你自由地在第二个类上实现 compareTo方法，同时也允许它的客户端在必要的时候，把第二个类的实例视同第一个类的实例。
+
+  + **<u>有序集合</u>使用了由compareTo方法而不是equals方法所施加的等同性测试，所以强烈建议`(x.compareTo(y) == 0) == (x.equals(y))`**。
+
+    > ​	例如，以BigDecimal类为例，它的compareTo方法与equals不一致。如果你创x建了一个空的 Hashset实例，并且添加`new BigDecimal("1.0")`和 `new BigDecima("1.0")`，这个集合就将包含两个元素，因为<u>新增到集合中的两个BigDecimal实例，通过equals方法来比较时是不相等的</u>。
+    >
+    > ​	然而，如果你使用TreeSet而不是HashSet来执行同样的过程，集合中将只包含一个元素因为这两个BigDecimal实例在<u>通过compareTo方法进行比较时是相等的</u>。(详情请参阅Bigdecimal的文档)
+
+---
+
++ 编写compareTo方法
+
+  ​	编写compareTo方法与编写equals方法非常相，但也存在几处重大的差别。因为 Comparable接口是参数化的，而且comparable方法是静态的类型，因此不必进行类型检查，也不必对它的参数进行类型转换。如果参数的类型不合适，这个调用甚至无法编译。如果参数为null，这个调用应该抛出NullPointerException异常，并且一旦该方法试图访问它的成员时就应该抛出异常。
+
+  ​	**CompareTo方法中域的比较是顺序的比较，而不是等同性的比较**。比较对象引用域可以通过递归地调用 compareTo方法来实现。<u>如果一个域并没有实现 Comparable接口，或者你需要使用一个非标准的排序关系，就可以使用一个显式的Comparator来代替</u>。或者编写自己的比较器，或者使用已有的比较器，例如针对（E10）中的CaselnsensitiveString类的这个compareTo方法使用一个已有的比较器：
+
+  ```java
+  // Single-field Comparable with object reference field
+  public final class CaseInsensitiveString implements Comparable<CaseInsensitiveString> {
+    public int compareTo(CaseInsensitiveString cis) {
+  		return String.CASE_INSENSITIVE_ORDER.compare(s, cis.s);
+    }
+    ... // Remainder omitted
+  }
+  ```
+
+  > 注意CaseInsensitiveString类实现了Comparable\<CaseInsensitiveString\>接口。这意味着CaseInsensitiveString引用只能与另一个CaseInsensitiveString引用进行比较。在声明类去实现Comparable接口时，这是常用的模式。
+
+  > **在Java7版本中，Java的所有装箱基本类型的类中增加了静态的compare方法。在compareTo方法中使用关系操作符\<和\>是非常繁琐的，并且容易出错，因此不再建议使用**。
+
+  ​	如果一个类有多个关键域，那么，按什么样的顺序来比较这些域是非常关键的。你必须从最关键的域开始，逐步进行到所有的重要域。如果某个域的比较产生了非零的结果（零代表相等），则整个比较操作结束，并返回该结果。如果最关键的域是相等的，则进一步比较次关键的域，以此类推。如果所有的域都是相等的，则对象就是相等的，并返回零。下面通过（E11）中的 PhoneNumber类的 compareTo方法来说明这种方法：
+
+  ```java
+  // Multiple-field Comaprable with primitive fields
+  public int compareTo(PhoneNumber pn) {
+    int result = Short.compare(areaCode, pn.areaCode);
+    if(result == 0){
+      result = Short.compare(prefix, pn.prefix);
+      if(result == 0)
+        result = Short.compare(lineNum, pn.lineNum);
+    }
+    return result;	
+  }
+  ```
+
+  ​	<u>在Java8中，Comparator接口配置了一组比较器构造方法（comparator construction methods），使得比较器的构造工作变得非常流畅</u>。之后，按照 Comparable接口的要求，这些比较器可以用来实现一个 compareTo方法。许多程序员都喜欢这种方法的简洁性，虽然它要付出一定的性能成本：在我的机器上, PhonenNmber实例的数组排序的速度慢了大约10%。在使用这个方法时，为了简洁起见，可以考虑使用Java的静态导入(static import)设施，通过静态比较器构造方法的简单的名称就可以对它们进行引用。下面是使用这个方法之后 PhoneNumber的compareTo方法:
+
+  ```java
+  // Comparable with comparator construction methods
+  private static final Comparator<PhoneNumber> COMPARATPOR = 
+    comparingInt((PhoneNumber pn)-> pn.areaCode)
+    .thenComparingInt(pn -> pn.prefix)
+    .thenComparingInt(pn -> pn.lineNum);
+  
+  public int compareTo(PhoneNumber pn) {
+    return COMPARATOR.compare(this, pn);
+  }
+  ```
+
+  > 这个实现利用两个比较构造方法，在初始化类的时候构建了一个比较器。第一个是comparingInt。这是一个静态方法，带有一个键提取器函数(key extractor function)，它将一个对象引用映射到一个类型为int的键上，并根据这个键返回一个对实例进行排序的比较器。
+  >
+  > 在上一个例子中comparingInt带有一个 lambda()，它从 PhoneNumber提取区号，并返回一个按区号对电话号码进行排序的Comparator\<Phonenumber\>。注意，<u>lambda显式定义了其输入参数( Phonenumber pn)的类型</u>。事实证明，在这种情况，Java的类型推导还没有强大到足以为自己找出类型，因此我们不得不帮助它直接进行指定，以使程序能够成功地进行编译。
+
+  > **Comparator类具备全套的构造方法**。对于基本类型long和double都有对应的comparingInt和 thenComparingInt。int版本也可以用于更狭义的整数型类型，如PhoneNumber例子中的short。 double版本也可以用于float。这样便涵盖了所有的Java数字型基本类型。
+
+  ​	**对象引用类型也有比较器构造方法**。静态方法comparing有两个重载。一个带有键提取器，使用键的内在排序关系。第二个既带有键提取器，还带有要用在被提取的键上的比较器。这个名为thenComparing的实例方法有三个重载。一个重载只带一个比较器，并用它提供次级顺序。第二个重载只带一个键提取器，并利用键的内在排序关系作为次级顺序。最后一个重载既带有键提取器，又带有要在被提取的键上使用的比较器。
+
+  ​	compareTo或者compare方法偶尔也会依赖于两个值之间的区别，即如果第一个值小于第二个值，则为负；如果两个值相等，则为零；如果第一个值大于第二个值，则为正。下面举个例子：
+
+  ```java
+  // BROKEN difference-based comparator - violates transitivity!
+  static Comparator<Object> hashCodeOrder = new Compatator<>() {
+    public int compare(Object o1, Object o2) {
+      return o1.hashCode() - o2.hashCode();
+    }
+  }
+  ```
+
+  ​	千万不要使用这个方法，它很容易造成整数溢出，同时违反IEEE 754浮点算数标准。甚至与利用本条目讲到的方法编写的那些方法相比，最终得到的方法并没有明显变快。
+
+  因此，要么使用一个静态方法compare：
+
+  ```java
+  // Comparator based on static compare method
+  static Comparator<Object> hashCodeOrder = new Comparator<>() {
+    public int compare(Object o1, Object o2) {
+      return Integer.compare(o1.hashCode(), o2.hashCode());
+    }
+  };
+  ```
+
+  要么使用一个比较构造方法：
+
+  ```java
+  // Comparator based on Comparator construction method
+  static Comparator<Object> hashCodeOrder = 
+    Comparator.comparingInt(o -> o.hashCode());
+  ```
+
+---
+
++ 小结
+
+  ​	总而言之，每当实现一个对排序敏感的类时，都应该让这个类实现Comparable接口，以便其实例可以轻松地被分类、搜索，以及用在基于比较的集合中。
+
+  ​	**每当在compareTo方法的实现中比较域值时，都要避免使用\<和\>操作符，而应该在装箱基本类型的类中使用静态的compare方法，或者在Comparator接口中使用比较器构造方法**。
+
+# 4. 类和接口
+
+P69
