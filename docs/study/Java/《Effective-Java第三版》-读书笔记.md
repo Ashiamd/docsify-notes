@@ -1591,4 +1591,175 @@
 
 ## E12 始终要覆盖toString
 
-P54
++ 概述
+
+  Object提供的默认toString实现，返回`类的名称@散列码`。
+
+  + 当对象被传递给println、printf、字符串联操作符（+）以及assert，或者被调试器打印出来时，toString方法会被自动调用。
+  + toString方法应该返回对象中包含的所有值得关注的信息
+  + 在静态工具类（E4）中编写toString方法是没有意义的。也不要在大多数枚举类型（E34）中编写toString方法，因为Java已经提供了非常完美的方法。
+  + 一般而言需要在编写的每一个可实例化的类中覆盖Object的toString实现，除非已经在超类中这么做了。
+
+## * E13 谨慎地覆盖clone
+
++ 概述
+
+​	Cloneable接口的目的是作为对象的一个mixin接口（mixin interface）（E20），表明这样的对象允许克隆（clone）。
+
+​	<u>遗憾的是，它并没有成功达到这个目的。它的主要缺陷在于少了一个clone方法，而Object的clone方法是受保护的（protected）。如果不借助反射（reflection）（E65），就不能仅仅因为一个对象实现了Cloneable，就调用clone方法</u>。**即使是反射调用也可能会失败，因为不能保证对象一定具有可访问的clone方法**。
+
+​	尽管存在这样或那样的缺陷，这项设施仍然被广泛使用，因此值得我们进一步了解。下面将介绍如何实现一个行为良好的clone方法，并讨论何时适合这么做，同时简单介绍其他可替代做法。
+
+> 既然Cloneable接口并没有包含任何方法，那有什么作用？它决定了Object中受保护的clone方法实现的行为：**如果一个类实现了Cloneable，Object的clone方法就返回该对象的逐域拷贝，否则就会抛出`CloneNotSupportedException`异常**。
+>
+> 这是接口的一种极端非典型的用法，也不值得效仿。
+>
+> 通常情况下，实现接口是为了表明类可以为它的客户做些什么，然而，对于Cloneable接口，它改变了超类中受保护的方法的行为。
+
+​	虽然规范中没有明确指出，**事实上，实现Cloneable接口的类是为了提供一个功能适当的公有的clone方法**。
+
+​	为了达到这个目的，类及所有超类都必须遵守一个相当复杂的、不可实施的，并且基本上没有文档说明的协议。由此得到一种语言之外的（extra linguistic）机制：**它无须调用构造器就可以创建对象**。
+
+---
+
++ clone方法的通用约定
+
+​	clone方法的通用约定是非常弱的，下面是来自Object规范中的约定内容：
+
+​	创建和返回一个该对象的一个拷贝。这个"拷贝"的精确含义取决于该对象的类。
+
+​	**一般的含义是，任何对于对象x，表达式`x.clone() != x`将会返回结果true，并且表达式`x.clone().getClass() == x.getClass()`将会返回结果true，但这些都不是绝对的要求**。
+
+​	**虽然通常情况下，表达式`x.clone().equals(x)`将会返回结果true，但是，这也不是一个绝对的要求**。
+
+​	**按照约定，这个方法返回的对象应该通过调用`super.clone`获得。如果类及其超类（Object除外）遵守这一约定，那么：`x.clone().getClass() == x.getClass()`** 
+
+​	<u>按照约定，返回的对象应该不依赖于被克隆的对象。为了成功地实现这种独立性，可能需要在`super.clone`返回对象之前，修改对象的一个或更多个域</u>。
+
+> ​	这种机制大体上类似于自动的构造器调用链，只不过它不是强制要求的：如果类的c1one方法返回的实例不是通过调用`super.clone`方法获得，而是通过调用构造器获得，编译器就不会发出警告，但是该类的子类调用了`super.clone`方法，得到的对象就会拥有错误的类，并阻止了clone方法的子类正常工作。
+>
+> ​	如果 final类覆盖了clone方法，那么这个约定可以被安全地忽略，因为没有子类需要担心它。如果 final类的clone方法没有调用`super.clone`方法，这个类就没有理由去实现`Cloneable`接口了，因为它不依赖于Object克隆实现的行为。
+
++ 如果你希望在一个类中实现Cloneable接口，并且它的超类都提供了行为良好的clone方法啊。首先，调用`super.clone`方法。因此得到的对象将是原始对象功能完整的克隆（clone）。在这个类中声明的域将等同于被克隆对象中相应的域。如果每个域包含一个基本类型的值，或者包含一个指向不可变对象的引用，那么被返回的对象则可能正是你所需要的对象，在这这种情况下不需要再做进一步处理。
+
++ **不可变的类永远都不应该提供clone方法**，因为它只会激发不必要的克隆。
+
++ 如果对象中包含的域引用了可变的对象，则clone方法的实现不能仅是调用`super.clone`。
+
+  > 引用类型只复制了引用，被引用的对象改变时，clone出来的对象也受影响。（即浅拷贝，而非深拷贝）
+
++ **实际上，clone方法就是另一个构造器；必须确保它不会伤害到原始的对象，并确保正确地创建被克隆对象中的约束条件（invariant）**。
+
++ clone方法禁止给final域赋新值。就像序列化一样，**Cloneable架构与引用可变对象的final域的正常用法是不相兼容的**。
+
++ 像构造器一样，clone方法也不应该在构造的过程中，调用可以覆盖的方法（E19）。如果clone调用了一个在子类中被覆盖的方法，那么在该方法所在的子类有机会修正它在克隆对象中的状态之前，该方法就会先被执行，这样很有可能会导致克隆对象和原始对象之间的不一致。
+
++ Object的clone方法被声明为可抛出`CloneNotSupportedException`异常，但是覆盖版本的clone方法可以忽略这个声明。**公有的clone方法应该省略throws声明**，因为不会抛出受检异常的方法使用起来更加轻松（E71）。
+
++ <u>为继承（E19）设计类有两种选择，但是无论选择其中的哪一种方法，这个类都不应该实现Cloneable接口</u>。你可以选择模拟Object的行为：实现一个功能适当的受保护的clone方法，它用该被声明抛出`CloneNotSupportedException`异常。这样可以使子类具有实现或不实现Cloneable接口的自由，就仿佛它们直接扩展了Object一样。或者，也可以选择不去实现一个有效的clone方法，并防止子类去实现它，只需要提供下列退化了的clone实现即可：
+
+  ```java
+  // clone method for extendable class not supporting Cloneable
+  @Override
+  protected final Object clone() throws CloneNotSupportedException {
+    throw new CloneNotSupportedException();
+  }
+  ```
+
++ **编写线程安全的类如果准备实现`Cloneable`接口，需要记住clone方法必须得到严格的同步，就像其他方法一样（E78）。Object的clone方法没有同步**，需要自己提供实现。
+
++ **在数组上调用clone返回的数组，其编译时的类型与被克隆数组的类型相同。这是复制数组的最佳习惯做法。事实上，数组是clone方法唯一吸引人的用法。**
+
+---
+
++ clone实现-举例
+
+  1. （E11）中的PhoneNumber类实现Cloneable接口。
+
+     ```java
+     @override public PhoneNumber clone() {
+       try {
+         return (PhoneNumber) super.clone();
+       } catch (CloneNotSupportedException e) {
+     		throw new AssertionError(); // Can't happen 
+       }
+     }
+     ```
+
+     ​	为了让这个方法生效，应该修改PhoneNumber的类声明实现为实现Cloneable接口。虽然Object的clone方法返回的是Object，但这个clone方法返回的却是PhoneNumber。这么做是合法的，也是我们所期待的，因为**Java支持协变返回类型（covariant return type）**。换句话说，目前覆盖方法的返回值类型可以是被覆盖方法的返回类型的子类了。这样在客户端中就不必进行转换了。我们必须在返回结果之前，先将super.clone从Object转换成PhoneNumber，当然这种转化是一定会成功的。
+
+     > [Java之协变返回类型理解和简单实例_阿毅-CSDN博客_协变返回类型](https://blog.csdn.net/huangwenyi1010/article/details/53454542)
+     >
+     > [java - 什么是协变返回类型？ - ITranslater](https://www.itranslater.com/qa/details/2325839725233439744)
+     >
+     > **简言之，子类/实现类重写方法时，允许返回值为超类的子类**。
+
+  2. （E7）中Stack类的clone，为了使Stack类中的clone方法正常工作，必须要拷贝栈的内部信息。最容易的做法是，在elements数组中递归地调用clone：
+
+     ```java
+     // Clone method for class with references to mutable state
+     @Override public Stack clone() {
+       try {
+         Stack result = (Stack) super.clone();
+         result.elements = elements.clone();
+         return result;
+       } catch (CloneNotSupportException e) {
+         throw new AssertionError();
+       }
+     }
+     ```
+
+     ​	**注意，我们不一定要将`elements.clone()`的结果转换成`Object[]`。在数组上调用clone返回的数组，其编译时的类型与被克隆数组的类型相同。这是复制数组的最佳习惯做法。事实上，数组是clone方法唯一吸引人的用法**。
+
+     > 还要注意如果elements域是final的，上述方案就不能正常工作，因为clone方法是被禁止给final域赋新值的。这是个根本的问题：就像序列化一样，**Cloneable架构与引用可变对象的final域的正常用法是不相兼容的**，除非在原始对象和克隆对象之间可以安全地共享此可变对象。为了使类成为可克隆的，可能有必要从某些域中去掉final修饰符。
+
+---
+
++ 替代clone的方案
+
+  ​	如果扩展一个实现了Cloneable接口的类，那么除了实现一个良好的clone方法外，没有其他选择。
+
+  **对象拷贝的更好方法是提供一个拷贝构造器（copy constructor）或拷贝工厂（copy factory）**。
+
+  拷贝构造器只是一个构造器，它唯一的参数类型就是包含该构造器的类，例如：
+
+  ```java
+  // Copy constructor
+  public Yum(Yum yum) {...};
+  ```
+
+  拷贝工厂是类似于拷贝构造器的静态工厂（E1）
+
+  ```java
+  public static Yum newInstance(Yum yum) {...};
+  ```
+
+  拷贝构造器的做法，及其静态工厂方法的变形，都比Cloneable/clone方法具有更多的优势：
+
+  + 不依赖于某一种很有风险的、语言之外的对象创建机制；
+  + 不要求遵守尚未制定好文档的规范；
+  + 不会与final域的正常使用发生冲突；
+  + 不会抛出不必要的受检异常；
+  + 不需要进行类型转化。
+
+  > 甚至，拷贝构造器或者拷贝工厂可以带一个参数，参数类型是该类所实现的接口。例如，**按照惯例所有通用集合实现都提供了一个拷贝构造器，其参数类型为Collection或者Map接口**。
+  >
+  > <u>基于接口的拷贝构造器和拷贝工厂（更准确的叫法应该是转换构造器（conversion constructor）和转换工厂（conversion  factory）），允许客户选择拷贝的实现类型，而不是强迫客户接受原始的实现类型</u>。
+  >
+  > 例如，假设你有一个Hashset:s，并且希望把它拷贝成一个TreeSet。clone方法无法提供这样的功能，但是用转换构造器很容易实现：newTreeSet<>(s)
+
+---
+
++ 小结
+
+  ​	**既然所有的问题都与Cloneable接口有关，新的接口就不应该扩展这个接口，新的可扩展的类也不应该实现这个接口**。
+
+  ​	虽然final类实现 Cloneable接口没有太大的危害，这个应该被视同性能优化，留到少数必要的情况下才使用（E67）。
+
+  ​	**总之，复制功能最好由构造器或者工厂提供。这条规则最绝对的例外是数组，最好利用 clone方法复制数组。**
+
+  *（如前文所言，**在数组上调用clone返回的数组，其编译时的类型与被克隆数组的类型相同**。这是复制数组的最佳习惯做法。事实上，数组是clone方法唯一吸引人的用法）*
+
+## E14 考虑实现Comparable接口
+
+p64
