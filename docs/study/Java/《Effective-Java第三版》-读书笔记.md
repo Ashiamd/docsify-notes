@@ -2484,4 +2484,267 @@ public final class Time {
 
 ## E21 为后代设计接口
 
-P93
++ 概述
+
+  ​	在Java8发行之前，如果不破坏现有的实现，是不可能给接口添加方法的。如果给某个接口添加了一个新的方法，一般来说，现有的实现中是没有这个方法的，因此就会导致编译错误。
+
+  ​	**在Java8中，增加了缺省方法(default method)构造[JLS 9.4]，目的就是允许给现有的接口添加方法**。但是给现有接口添加新方法还是充满风险的。
+
+  ​	**Java8在核心集合接口中增加了许多新的缺省方法，主要是为了便于使用lambda(详见第6章)**。Java类库的缺省方法是高品质的通用实现，它们在大多数情况下都能正常使用。但是，并非每一个可能的实现的所有变体，始终都可以编写出一个缺省方法。
+
+  ​	比如，以removeIf方法为例，它在Java8中被添加到了Collection接口。这个方法用来移除所有元素，并用一个boolean函数(或者断言)返回true。缺省实现指定用其迭代器来遍历集合，在每个元素上调用断言( predicate)，并利用迭代器的remove方法移除断言返回值为true的元素。其声明大致如下：
+
+  ```java
+  // Default method added to the Collection interface in Java 8
+  default boolean removeIf(Predicate<? super E> filter) {
+    Objects.requireNonNull(filter);
+    boolean result = false;
+    for (Iterator<E> it = iterator(); it.hasNext(); ) {
+      if(filter.test(it.next())) {
+        it.remove();
+        result = true;
+      }
+    }
+    return result;
+  }
+  ```
+
+  ​	这是适用于removeIf方法的最佳通用实现，但遗憾的是，它在某些现实的Collection实现中会出错。比如，以`org.apache.commons.collections4.Collection.SynchronizedCollection`为例，这个类来自 Apache Commons类库，类似于java.util中的静态工厂Collections.synchronizedCollection。 Apache版本额外提供了利用客户端提供的对象(而不是用集合)进行锁定的功能。换句话说，它是一个包装类(E18)，它的所有方法在委托给包装集合之前，都在锁定对象上进行了同步。
+
+  ​	**有了缺省方法，接口的现有实现就不会出现编译时没有报错或警告，运行时却失败的情况**。这个问题虽然并非普遍，但也不是孤立的意外事件。Java8在集合接口中添加的许多方法是极易受影响的，有些现有实现已知将会受到影响。
+
+  ​	<u>建议尽量避免利用缺省方法在现有接口上添加新的方法，除非有特殊需要，但就算在那样的情况下也应该慎重考虑：缺省的方法实现是否会破坏现有的接口实现</u>。然而，在创建接口的时候，用缺省方法提供标准的方法实现是非常方便的，它简化了实现接口的任务(E20)。
+
+  ​	**还要注意的是，缺省方法不支持从接口中删除方法，也不支持修改现有方法的签名。对接口进行这些修改肯定会破坏现有的客户端代码**。
+
+---
+
++ 小结
+
+​	结论很明显：**尽管缺省方法现在已经是Java平台的组成部分，但谨慎设计接口仍然是至关重要的**。虽然缺省方法可以在现有接口上添加方法，但这么做还是存在着很大的风险。就算接口中只有细微的缺陷都可能永远给用户带来不愉快；假如接口有严重的缺陷，则可能摧毁包含它的API。
+
+## E22 接口只用于定义类型
+
++ 概述
+
+  ​	当类实现接口时，接口就充当可以引用这个类的实例的类型(type)。因此，类实现了接口，就表明客户端可以对这个类的实例实施某些动作。**为了任何其他目的而定义接口是不恰当的**。
+
+  ​	有一种接口被称为常量接口(constant interface)，它不满足上面的条件。这种接口不包含任何方法，它只包含静态的final域，每个域都导出一个常量。使用这些常量的类实现这个接口，以避免用类名来修饰常量名。下面举个例子：
+
+  ```java
+  // Constant interface antipattern - do not use!
+  public interface PhysicalConstants {
+    // Avogadro's number (1/mol)
+    static final double AVOGADROS_NUMBER = 6.022_140_857e23;
+    
+    ...
+  }
+  ```
+
+  ​	**常量接口模式是对接口的不良使用**。类在内部使用某些常量，这纯粹是实现细节。实现常量接口会导致把这样的实现细节泄露到该类的导出API中。类实现常量接口对于该类的用户而言并没有什么价值。实际上，这样做反而会使他们更加糊涂。更糟糕的是，它代表了一种承诺：如果在将来的发行版本中，这个类被修改了，它不再需要使用这些常量了，它依然必须实现这个接口，以确保二进制兼容性。如果非final类实现了常量接口，它的所有子类的命名空间也会被接口中的常量所"污染"。
+
+  ​	**在Java平台类库中有几个常量接口，例如`java.io.ObjectStreamConstants`。这些接口应该被认为是反面的典型，不值得效仿**。
+
+---
+
++ 导出常量的合理方案
+
+  ​	如果要导出常量，可以有几种合理的选择方案。如果这些常量与某个现有的类或者接口紧密相关，就应该把这些常量添加到这个类或者接口中。
+
+  ​	例如，在Java平台类库中所有的数值包装类，如Integer和Double，都导出了MIN_VALUE和MAX_VALUE常量。**如果这些常量最好被看作枚举类型的成员，就应该用枚举类型(enum type)（E34）来导出这些常量。否则，应该使用不可实例化的工具类(utility class)（E4）来导出这些常量**。下面的例子是前面的PhysicalConstants例子的工具类翻版：
+
+  ```java
+  // Constatnt utility class
+  package com.effectivejava.science;
+  
+  public class PhysicalConstants {
+    private PhysicalConstants() { } // Prevents instantiaion
+    
+    public static final double AVOGADROS_NUMBER = 6.022_140_857e23;
+    
+    ...
+  }
+  ```
+
+  > 注意，有时候会在数字的字面量中使用下划线（_），Java7起支持，可提高可读性。
+  >
+  > 对于基数为10的字面量，无论是整数还是浮点数，都应该用下划线把数字隔成每三位一组，表示一千的正负倍数。
+
+  ​	工具类通常要求客户端要用类名来修饰这些常量名，例如 PhysicalConstants.AVOGADROS_NUMBER。如果大量利用工具类导出的常量，可以通过利用静态导入（static import）机制，避免用类名来修饰常量名。
+
+---
+
++ 小结
+
+  ​	简而言之，**接口应该植被用来定义类型，不应该被用来导出常量**。
+
+## E23 类层次优于标签类
+
++ 概述
+
+  ​	**标签类过于冗长、容易出错，并且效率低下**。
+
+  ​	幸运的是，面向对象的语言(如Java)提供了其他更好的方法来定义能表示多种风格对象的单个数据类型：子类型化(subtyping)。**标签类正是对类层次的一种简单的仿效**。
+
+  ​	为了将标签类转变成类层次，首先要为标签类中的每个方法都定义一个包含抽象方法的抽象类，标签类的行为依赖于标签值。在 Figure类中，只有一个这样的方法：area。这个抽象类是类层次的根(root)。如果还有其他的方法其行为不依赖于标签的值，就把这样的方法放在这个类中。同样地，如果所有的方法都用到了某些数据域，就应该把它们放在这个类中。在 Figure类中，不存在这种类型独立的方法或者数据域。
+
+  ​	接下来，为每种原始标签类都定义根类的具体子类。在前面的例子中，这样的类型有两个：圆形(Circle)和矩形(Rectangle)。在每个子类中都包含特定于该类型的数据域。在我们的示例中，radius是特定于圆形的, length和width是特定于矩形的。同时在每个子类中还包括针对根类中每个抽象方法的相应实现。以下是与原始的 Figure类相对应的类层次
+
+  ```java
+  // Class hierarchy replacement for a tagged class
+  abstract class Figure {
+    abstract double area();
+  }
+  
+  class Circle extends Figure {
+    final double radius;
+    Circle(double radius) { this.radius = radius; }
+    @Override double area() { return Math.PI * (radius*radius); }
+  }
+  
+  class Rectangle extends Figure {
+    final double length;
+    final double width;
+    Rectangle(double length, double width) {
+      this.length = length;
+      this.width = width;
+    }
+    @Override double area() { return length * width; }
+  }
+  ```
+
+  ​	这个类层次纠正了前面提到过的标签类的所有缺点。这段代码简单且清楚，不包含在原来的版本中见到的所有样板代码。每个类型的实现都配有自己的类,这些类都没有受到不相关数据域的拖累。所有的域都是 final的。编译器确保每个类的构造器都初始化它的数据域，对于根类中声明的每个抽象方法都确保有一个实现。这样就杜绝了由于遗漏 switch case而导致运行时失败的可能性。
+
+  ​	类层次的另一个好处在于，它们可以用来反映类型之间本质上的层次关系，有助于增强灵活性，并有助于更好地进行编译时类型检査。
+
+---
+
++ 标签类举例
+
+  ```java
+  // Tagged class - vastly inferior to a class hierarchy!
+  class Figure {
+    enum Shape { RECTANGLE, CIRCLE };
+    
+    // Tag field - the shape of this figure
+    final Shape shape;;
+    
+    // These fields are use only if shape is RECTANGLE
+    double length;
+    double width;
+    
+    // This field is used only if shape is CIRCLE
+    double radius;
+    
+    // Constructor for circle
+    Figure(couble radius) {
+      shape = Shape.CIRCLE;
+      this.radius = radius;
+    }
+    
+    // Constructor for rectangle
+    Figure(double length, double width) {
+      shape = Shape.RECTANGLE;
+      this.length = length;
+      this.width = width;
+    }
+    
+    double area() {
+      switch(shape) {
+        case RECTANGLE:
+          return length * width;
+        case CIRCLE:
+          return Math.PI * (radius * radius);
+        default:
+          throw new AssertionError(shape);
+      }
+    }
+  }
+  ```
+
+---
+
++ 小结
+
+  ​	简而言之，标签类很少有适用的时候。当你想要编写一个包含显式标签域的类时，应该考虑一下，这个标签是否可以取消，这个类是否可以用类层次来代替。当你遇到一个包含标签域的现有类时，就要考虑将它重构到一个层次结构中去。
+
+## * E24 静态成员类优于非静态成员类
+
++ 概述
+  ​	嵌套类(nested class)是指定义在另一个类的内部的类。**嵌套类存在的目的应该只是为它的外围类(enclosing class)提供服务**。**如果嵌套类将来可能会用于其他的某个环境中，它就应该是顶层类( top-level class)**。
+
+  ​	嵌套类有四种：
+
+  + **静态成员类(static member class)**
+  + **非静态成员类(nonstatic member class)**
+  + **匿名类(anonymous class)**
+  + **局部类(local class)**
+
+  ​	除了第一种之外，其他三种都称为内部类(inner class）。本条目将告诉你什么时候应该使用哪种嵌套类，以及这样做的原因。
+
+---
+
++ 静态成员类和非静态成员类
+
+  ​	静态成员类是最简单的一种嵌套类。最好把它看作是普通的类，只是碰巧被声明在另个类的内部而已，它可以访问外围类的所有成员，包括那些声明为私有的成员。**静态成员类是外围类的一个静态成员，与其他的静态成员一样，也遵守同样的可访问性规则**。如果它被声明为私有的，它就只能在外围类的内部才可以被访问，等等。
+
+  ​	<u>静态成员类的一种常见用法是作为公有的辅助类</u>，只有与它的外部类一起使用才有意义。例如，以枚举为例，它描述了计算器支持的各种操作(E34)。Operation枚举应该是Calculator类的公有静态成员类，之后Calculator类的客户端就可以用诸如Calculator.Operation.PLUS和Calculator.Operation.MINUS这样的名称来引用这些操作。
+
+  ​	从语法上讲，静态成员类和非静态成员类之间唯一的区别是，静态成员类的声明中包含修饰符static。尽管它们的语法非常相似，但是这两种嵌套类有很大的不同。非静态成员类的每个实例都隐含地与外围类的一个外围实例(enclosing instance)相关联。在非静态成员类的实例方法内部，可以调用外围实例上的方法，或者利用修饰过的this(qualified this)构造获得外围实例的引用[JLS,15.8.4]。**如果嵌套类的实例可以在它外围类的实例之外独立存在，这个嵌套类就必须是静态成员类：在没有外围实例的情况下，要想创建非静态成员类的实例是不可能的。**
+
+  ​	<u>当非静态成员类的实例被创建的时候，它和外围实例之间的关联关系也随之被建立起来；而且，这种关联关系以后不能被修改</u>。通常情况下，当在外围类的某个实例方法的内部调用非静态成员类的构造器时，这种关联关系被自动建立起来。使用表达式`enclosingInstance. new MemberClass(args)`来手工建立这种关联关系也是有可能的，但是很少使用。正如你所预料的那样，这种关联关系需要消耗非静态成员类实例的空间，并且会增加构造的时间开销。
+
+  ​	**非静态成员类的一种常见用法是定义一个 Adapter，它允许外部类的实例被看作是另一个不相关的类的实例**。例如，Map接口的实现往往使用非静态成员类来实现它们的集合视图(collection view)，这些集合视图是由Map的 keySet、 entrySet和values方法返回的。同样地，诸如Set和List这种集合接口的实现往往也使用非静态成员类来实现它们的迭代器(Iterator)：
+
+  ```java
+  // Typical use of a nonstatic member class
+  public class MySet<E> extends AbstractSet<E> {
+    ... // Bulk of the class omitted
+      
+    @Override public Iterator<E> iterator() {
+      return new MyIterator();
+    }
+    
+    private class MyIterator implements Iterator<E> {
+      ...
+    }
+  }
+  ```
+
+  ​	**如果声明成员类不要求访问外围实例，就要始终把修饰符static放在它的声明中，使它成为静态成员类，而不是非静态成员类**。如果省略了static修饰符，则每个实例都将包含一个额外的指向外围对象的引用。如前所述，<u>保存这份引用要消耗时间和空间，并且会导致外围实例在符合垃圾回收（E7）时却仍然得以保留。由此造成的内存泄漏可能是灾难性的</u>。但是常常难以发现，因为这个引用是不可见的。
+
+  ​	私有静态成员类的一种常见用法是代表外围类所代表的对象的组件。以Map实例为例，它把键(key)和值( value)关联起来。许多Map实现的内部都有一个Entry对象，对应于Map中的每个键-值对。虽然每个entry都与一个Map关联，但是 <u>entry上的方法(getKey、 getValue和 setValue)并不需要访问该Map。因此，使用非静态成员类来表示entry是很浪费的：私有的静态成员类是最佳的选择</u>。如果不小心漏掉了entry声明中的 static修饰符,该Map仍然可以工作，但是每个 entry中将会包含一个指向该Map的引用，这样就浪费了空间和时间。
+
+  ​	如果相关的类是导出类的公有或受保护的成员，毫无疑问，在静态和非静态成员类之间做出正确的选择是非常重要的。在这种情况下，该成员类就是导出的API元素，在后续的发行版本中，如果不违反向后兼容性，就无法从非静态成员类变为静态成员类。
+
+---
+
++ 匿名类
+
+  ​	顾名思义,匿名类是没有名字的。**它不是外围类的一个成员**。它并不与其他的成员起被声明，而是在使用的同时被声明和实例化。<u>匿名类可以出现在代码中任何允许存在表达式的地方</u>。**当且仅当匿名类出现在非静态的环境中时，它才有外围实例**。**但是即使它们出现在静态的环境中，也不可能拥有任何静态成员，而是拥有常数变量(constant variable)，常数变量是final基本类型，或者被初始化成常量表达式[JLS, 4.12.4]的字符串域**。
+
+  ​	匿名类的运用受到诸多的限制。除了在它们被声明的时候之外，是无法将它们实例化的。不能执行 instanceof测试，或者做任何需要命名类的其他事情。无法声明一个匿名类来实现多个接口，或者扩展一个类，并同时扩展类和实现接口。**除了从超类型中继承得到之外，匿名类的客户端无法调用任何成员**。由于匿名类出现在表达式中，它们必须保持简短大约10行或者更少)，否则会影响程序的可读性。
+
+  ​	**在Java中增加lambda（E6）之前，匿名类是动态地创建小型函数对象(function object)和过程对象( process object)的最佳方式，但是现在会优先选择lambda详见E42)。匿名类的另一种常见用法是在静态工厂方法的内部(参见E20中的 intArrayAsList方法)**
+
+---
+
++ 局部类
+
+  ​	局部类是四种嵌套类中使用最少的类。<u>在任何"可以声明局部变量"的地方，都可以声明局部类，并且局部类也遵守同样的作用域规则</u>。局部类与其他三种嵌套类中的每一种都有一些共同的属性。与成员类一样，局部类有名字，可以被重复使用。**与匿名类一样，只有当局部类是在非静态环境中定义的时候，才有外围实例，它们也不能包含静态成员**。与匿名类一样，它们必须非常简短，以便不会影响可读性。
+
+---
+
++ 小结
+
+  ​	总而言之，共有四种不同的嵌套类，每一种都有自己的用途。
+
+  + **如果一个嵌套类需要在单个方法之外仍然是可见的，或者它太长了，不适合放在方法内部，就应该使用成员类。**
+
+  + **如果成员类的每个实例都需要一个指向其外围实例的引用，就要把成员类做成非静态的；否则，就做成静态的。**
+
+  + **假设这个嵌套类属于一个方法的内部，如果你只需要在一个地方创建实例，并且已经有了一个预置的类型可以说明这个类的特征，就要把它做成匿名类；否则，就做成局部类。**
+
+## E25 限制源文件为单个顶级类
+
+P101 
