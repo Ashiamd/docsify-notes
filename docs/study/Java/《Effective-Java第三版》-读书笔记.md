@@ -2156,6 +2156,246 @@ public final class Time {
 > ​	最后值得注意的一点与本条目中的Complex类有关。这个例子只是被用来演示不可变性的，它不是一个工业强度的复数实现。它对复数乘法和除法使用标准的计算公式，会进行不正确的四舍五入，并且对复数NaN和无穷大也没有提供很好的语义[Kahan91，Smith62，Thomas94]。
 > ​	ps：此处笔记没有摘录这部分代码，想了解可以看原书。
 
-## E18 复合优先于继承
+## * E18 复合优先于继承
 
-P80
++ 概述
+
+  ​	继承（inheritance）是实现代码重用的有力手段，但使用不当会导致软件变得脆弱。
+
+  + **与方法调用不同的是，继承打破了封装性**。
+
+    ​	换句话说，子类依赖于其超类中特定功能的实现细节。超类的实现有可能会随着发行版本的不同而有所变化，如果真的发生了变化，子类可能会遭到破坏，即使它的代码完全没有改变。因而，子类必须要跟着其超类的更新而演变，除非超类是专门为了扩展而设计的，并且具有很好的文档说明。
+
+  + 继承使得子类变得"脆弱"（"覆盖"导致的问题）
+
+    ​	子类无感知超类的升级，超类有可能后续提供了一个签名和子类相同但是返回类型不同的方法，导致子类无法通过编译。或者子类无意间**覆盖**了超类的方法，但是不能保证遵守了超类方法的约定（因为这个被覆盖的方法是超类后续才添加上的）。
+
+---
+
++ 避免"覆盖"产生的混乱场景——"复合"（composition）
+
+  ​	避免"覆盖"导致的复杂情况，**不扩展现有的类，而是在新的类中增加一个私有域，它引用现有类的一个实例。这种设计被称为"复合"（composition）**。
+
+  ​	**新类中的每个实例方法都可以调用被包含的现有类实例中对应的方法，并返回它的结果。这被称为转发( forwarding)，新类中的方法被称为转发方法(forwarding method)**。这样得到的类将会非常稳固，它不依赖于现有类的实现细节。即使现有的类添加了新的方法，也不会影响新的类。
+
+  ​	为了进行更具体的说明，请看下面的例子，它用复合/转发的方法来代替InstrumentedHashSet类。注意这个实现分为两部分：**类本身和可重用的转发类(forwarding class)**，其中包含了所有的转发方法，没有任何其他的方法：
+
+  ```java
+  // Wrapper class - uses composition in place of inheritance
+  public class InstrumentedSet<E> extends ForwardingSet<E> {
+    private int addCount = 0;
+    
+    public InstrumentedSet(Set<E> s) {
+      super(s);
+    }
+    
+    @Override public boolean add(E e) {
+      addCount++;
+      return super.add(e);
+    }
+    
+    @Override public boolean addAll(Collection<? extends E> c) {
+  		addCount += c.size();
+      return super.addAll(c);
+    }
+    
+    public int getAddCount() {
+      return addCount;
+    }
+  }
+  
+  // Reusable forwading class
+  public class ForwardingSet<E> implements Set<E> {
+    private final Set<E> s;
+    public ForwardingSet(Set<E> s) { this.s = s; }
+    
+    public void clear() { s.clear(); }
+    public boolean contains(Object o) { return s.contains(o); }
+    public boolean isEmpty() { return s.isEmpty(); }
+    public int size() { return s.size(); }
+    public Iterator<E> iterator() { return s.iterator(); }
+    public boolean add(E e) { return s.add(e); }
+    public boolean remove(Object o) { return s.remove(o); }
+    public boolean containsAll(Collection<?> c) { return s.containsAll(c); }
+    public boolean addAll(Collectioin<?> c) { return s.addAll(c); }
+    public boolean removeAll(Collection<?> c) { return s.removeAll(c); }
+    public boolean retainAll(Collection<?> c) { return s.retainAll(c); }
+    public Object[] toArray() { return s.toArray(); }
+  	public <T> T[] toArray(T[] a) { return s.toArray(a); }
+    @Override public boolean equals(Object o) { return s.equals(o); }
+    @Override public int hashCode() { return s.hashCode(); }
+    @Override public String toString() { return s.toString(); }
+  }
+  ```
+
+  ​	Set接口的存在使得InstrumentedSet类的设计成为可能，因为Set接口保存了HashSet类的功能特性。除了获得健壮性之外，这种设计也带来了更多的灵活性。InstrumentedSet类实现了Set接口，并且拥有单个构造器，它的参数也是Set类型。从本质上讲，这个类把一个Set转变成了另一个Set，同时增加了计数的功能。
+
+  ​	<u>前面提到的基于继承的方法只适用于单个具体的类，并且对于超类中所支持的每个构造器都要求有个单独的构造器</u>，与此不同的是，这里的包装类(wrapper class)可以被用来包装任何Set实现，并且可以结合任何先前存在的构造器一起工作：
+
+  ```java
+  Set<Instant> times = new InstrumentedSet<>(new TreeSet<>(cmp));
+  Set<E> s = new InstrumentedSet<>(new HashSet<>(INIT_CAPACITY));
+  ```
+
+  ​	InstrumentedSet类甚至也可以用来临时替换一个原本没有计数特性的Set实例
+
+  ```java
+  static void walk(Set<Dog> dogs) {
+    InstrumentedSet<Dog> iDogs = new InstrumentedSet<>(dogs);
+    ... // Within this method use iDogs instead of dogs
+  }
+  ```
+
+  ​	因为每一个InstrumentedSet实例都把另一个Set实例包装起来了，所以InstrumentedSet类被称为包装类( wrapper class)。这也正是**Decorator(修饰者)模式**，因为 InstrumentedSet类对一个集合进行了修饰，为它增加了计数特性。<u>有时复合和转发的结合也被宽松地称为"委托"(delegation)。从技术的角度而言，这不是委托，除非包装对象把自身传递给被包装的对象</u>。
+
+---
+
++ 包装类不适合用于回调框架（callback framework）
+
+  ​	在回调框架中，对象把自身的引用传递给其他的对象，用于后续的调用("回调")。<u>因为被包装起来的对象并不知道它外面的包装对象，所以它传递一个指向自身的引用(this)，回调时避开了外面的包装对象。这被称为SELF问题</u>。
+
+  ​	**有些人担心转发方法调用所带来的性能影响，或者包装对象导致的内存占用。在实践中，这两者都不会造成很大的影响**。编写转发方法倒是有点琐碎，但是只需要给每个接口编写一次构造器，转发类则可以通过包含接口的包提供。例如，Guava就为所有的集合接口提供了转发类Guava。
+
+---
+
+- 何时使用继承
+
+  + **只有当子类真正是超类的子类型(subtype)时，才适合用继承**。
+
+    ​	<small>换句话说，对于两个类A和B，只有当两者之间确实存在“is-a”关系的时侯，类B才应该扩展类A。如果你打算让类B扩展类A，就应该问问自己：每个B确实也是A吗?如果你不能够确定这个问题的答案是肯定的，那么B就不应该扩展A。如果答案是否定的，通常情况下，B应该包含A的一个私有实例，并且暴露一个较小的、较简单的API：A本质上不是B的一部分，只是它的实现细节而已。</small>
+
+    > ​	在Java平台类库中,有许多明显违反这条原则的地方。例如，栈(Stack)并不是向量(Vector)，所以Stack不应该扩展 Vector。同样地，属性列表也不是散列表，所以Properties不应该扩展Hashtable。在这两种情况下，复合模式才是恰当的。
+
+  + **如果在适合使用复合的地方使用了继承，则会不必要地暴露实现细节**。
+
+    ​	<u>这样得到的API会把你限制在原始的实现上，永远限定了类的性能</u>。更为严重的是，由于暴露了内部的细节，客户端就有可能直接访问这些內部细节。这样至少会导致语义上的混淆。
+
+    ​	例如，如果p指向Properties实例，那么`p.getProperty(key)`就有可能产生与`p.get(key)`不同的结果：前一个方法考虑了默认的属性表，而后一个方法则继承自Hashtable，没有考虑默认的属性列表。
+
+    ​	<u>最严重的是，客户有可能直接修改超类，从而破坏子类的约束条件</u>。在Properties的情形中，设计者的目标是只允许字符串作为键(key)和值(value)，但是直接访问底层的Hashtable就允许违反这种约束条件。一旦违反了约東条件，就不可能再使用Properties API的其他部分(load和store)了。等到发现这个问题时，要改正它已经太晚了，因为客户端依赖于使用非字符串的键和值了。
+
+---
+
++ 小结
+
+  ​	在决定使用继承而不是复合之前，还应该问自己最后一组问题。对于你正试图扩展的类，它的API中有没有缺陷呢？如果有，你是否愿意把那些缺陷传播到类的APⅠ中？继承机制会把超类API中的所有缺陷传播到子类中，而复合则允许设计新的API来隐藏这些缺陷。
+
+  ​	简而言之，**继承的功能非常强大，但是也存在诸多问题，因为它违背了封装原则**。
+
+  ​	**只有当子类和超类之间确实存在子类型关系时，使用继承才是恰当的**。
+
+  ​	即便如此，**如果子类和超类处在不同的包中，并且超类并不是为了继承而设计的，那么继承将会导致脆弱性(fragility)。为了避免这种脆弱性，可以用复合和转发机制来代替继承，尤其是当存在适当的接口可以实现包装类的时候。包装类不仅比子类更加健壮，而且功能也更加强大**。
+
+## E19 要么设计继承而提供文档说明，要么禁止继承
+
++ 概述
+
+  + **为了继承而设计的类，必须有文档说明它可覆盖(overridable)的方法的自用性(self-use)**。
+
+    ​	对于每个公有的或受保护的方法或者构造器，它的文档必须指明该方法或者构造器调用了哪些可覆盖的方法，是以什么顺序调用的，每个调用的结果又是如何影响后续处理过程的(所谓可覆盖(overridable)的方法，是指非 final的、公有的或受保护的)。
+
+    ​	更广义地说，即类必须在文档中说明，在哪些情况下它会调用可覆盖的方法。例如，后台的线程或者静态的初始化器(initializer)可能会调用这样的方法。
+
+    > ​	关于程序文档有句格言：**好的API文档应该描述一个给定的方法做了什么工作，而不是描述它是如何做到的**。为了设计一个类的文档，以便它能够被安全地子类化，你必须描述清楚那些有可能未定义的实现细节。
+
+    > @implSpec标签是在Java8中增加的，在Java9中得到了广泛应用。
+
+  + **为了继承而设计的类必须以精心挑选的受保护的(protected)方法的形式，提供适当的钩子(hook)，以便进入其内部工作中**。
+
+    ​	这一个只能纯靠经验和实验，来判断该暴露哪些protected的方法，无捷径。
+
+  + **对于为了继承而设计的类，唯一的测试方法就是编写子类**。
+
+    ​	经验表明，3个子类通常就足以测试一个可扩展的类。除了超类的程序设计者以外，都需要编写一个或者多个这种子类。
+
+  + **必须在发布类之前先编写子类对类进行测试。**
+
+    ​	在为了继承而设计有可能被广泛使用的类时，必须要意识到，对于文档中所说明的自用模式(self-use pattern)，以及对于其受保护方法和域中所隐含的实现策略，你实际上已经做出了永久的承诺。这些承诺使得你在后续的版本中提高这个类的性能或者增加新功能都变得非常困难，甚至不可能。
+
+  + **为了允许继承，必须保证构造器绝不能调用可被覆盖的方法**。
+
+    ​	无论是直接调用还是间接调用。如果违反了这条规则，很有可能导致程序失败。超类的构造器在子类的构造器之前运行，所以，子类中覆盖版本的方法将会在子类的构造器运行之前先被调用。如果该覆盖版本的方法依赖于子类构造器所执行的任何初始化工作，该方法将不会如预期般执行。为了更加直观地说明这一点，下面举个例子，其中有个类违反了这条规则：
+
+    ```java
+    public class Super {
+      // Broken - constructor invokes an overridable method
+      public Super() {
+        overrideMe();
+      }
+      public void overrideMe() {
+      }
+    }
+    ```
+
+    ​	下面的子类覆盖了方法overrideMe，Super唯一的构造器就错误地调用了这个方法：
+
+    ```java
+    public final class Sub extends Super {
+      // Blank final, set by constructor
+      private final Instant instant;
+      
+      Sub() {
+        instant = Instant.now();
+      }
+      
+      // Overriding method invoked by superclass constructor
+      @Override public void overrideMe() {
+        System.out.println(instant);
+      }
+      
+      public static void main(String[] args) {
+        Sub sub = new Sub();
+        sub.overrideMe();
+      }
+    }
+    ```
+
+    ​	<u>你可能会期待这个程序会打印两次日期，但是它第一次打印出的是null，因为overrideMe方法被 Super构造器调用的时候，构造器Sub还没有机会初始化instant域</u>。
+
+    ​	注意，这个程序观察到的final域处于两种不同的状态。还要注意，如果overrideMe已经调用了 instant中的任何方法，当 Super构造器调用overrideMe的时候，调用就会抛出NullPointerException异常。如果该程序没有抛出NullPointerException异常，唯一的原因就在于println方法可以容忍null参数。
+
+  + **注意，通过构造器调用私有的方法、 final方法和静态方法是安全的，这些都不是可以被覆盖的方法**。
+
+---
+
++ 为了继承而设计类，与Cloneable和Serializable接口
+
+  ​	如果你决定在一个为了继承而设计的类中实现Cloneable或者Serializable接口，就应该意识到，因为clone和readObject方法在行为上非常类似于构造器，所以类似的限制规则也是适用的：**无论是clone还是 readObject，都不可以调用可覆盖的方法。不管是以直接还是间接的方式**。
+
+  + 对于readObject方法，覆盖的方法将在子类的状态被反序列化(deserialized)之前先被运行；
+  + 而对于clone方法，覆盖的方法则是在子类的clone方法有机会修正被克隆对象的状态之前先被运行。
+
+  ​	无论哪种情形，都不可避免地将导致程序失败。在clone方法的情形中，这种失败可能会同时损害到原始的对象以及被克隆的对象本身。例如，如果覆盖版本的方法假设它正在修改对象深层结构的克隆对象的备份，就会发生这种情况，但是该备份还没有完成。
+
+  ​	**最后，如果你决定在一个为了继承而设计的类中实现Serializable接口，并且该类有一个readResolve或者 writeReplace方法，就必须使readResolve或者writeReplace成为受保护的方法，而不是私有的方法**。如果这些方法是私有的，那么子类将会不声不响地忽略掉这两个方法。这正是"为了允许继承，而把实现细节变成一个类的API的一部分"的另一种情形。	
+
+---
+
++ 禁止子类化的方法
+
+  ​	**对于那些并非为了安全地进行子类化而设计和编写文档的类，要禁止子类化**。有两种方法可以禁止子类化：
+
+  + 类声明为final的。
+
+  + 把所有构造器变成私有的，或者包级私有的，并增加一些公有的静态工厂来替代构造器。
+
+    （这种方法在E17中讨论过，为内部使用子类提供了灵活性。）
+
+  ​	如果类实现了某个能够反映其本质的接口，比如Set、List或者Map，就不应该为了禁止子类化而感到后悔。（E18）中介绍的<u>包装类（wrapper class）模式</u>还提供了另一种更好的方法，让继承机制实现更多的功能。
+
+  ​	如果具体的类没有实现标准的接口，那么禁止继承可能会给某些程序员带来不便。如果你认为必须允许从这样的类继承，一种合理的办法是确保这个类永远不会调用它的任何可覆盖的方法，并在文档中说明这一点。换句话说，完全消除这个类中可覆盖方法的自用特性。这样做之后，就可以创建"能够安全地进行子类化"的类。覆盖方法将永远不会影响其他任何方法的行为。
+
+  ​	你可以机械地消除类中可覆盖方法的自用特性，而不改变它的行为。将每个可覆盖方法的代码体移到一个私有的"辅助方法"(helper method)中，并且让每个可覆盖的方法调用它的私有辅助方法。然后用"直接调用可覆盖方法的私有辅助方法"来代替"可覆盖方法的每个自用调用"。
+
+---
+
++ 小结
+
+  ​	简而言之，专门为了继承而设计类是一件很辛苦的工作。你必须建立文档说明其所有的自用模式，并且一旦建立了文档，在这个类的整个生命周期中都必须遵守。**如果没有做到，子类就会依赖超类的实现细节，如果超类的实现发生了变化，它就有可能遭到破坏**。
+
+  ​	为了允许其他人能编写出高效的子类，你必须导出一个或者多个受保护的方法。
+
+  ​	**除非知道真正需要子类，否则最好通过将类声明为final，或者确保没有可访问的构造器来禁止类被继承**。
+
+## E20 接口优于抽象类
+
