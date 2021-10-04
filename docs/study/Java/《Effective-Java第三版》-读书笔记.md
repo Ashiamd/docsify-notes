@@ -3014,7 +3014,91 @@ public class Test {
 | 泛型方法         | static\<E\> List\<E\> asList(E\[\] a) | E30      |
 | 类型令牌         | String.class                          | E33      |
 
-## E27 消除非受检的警告
+## * E27 消除非受检的警告
 
++ 概述
 
+  ​	用泛型编程时会遇到许多编译器警告：非受检转换警告(unchecked cast warning)、非受检方法调用警告、非受检参数化可变参数类型警告(unchecked parameterized vararg type warning)，以及非受检转换警告( unchecked conversion warning)。当你越来越熟悉泛型之后遇到的警告也会越来越少，但是<u>不要期待一开始用泛型编写代码就可以正确地进行编译</u>。
 
+  ​	有许多非受检警告很容易消除。例如，假设意外地编写了这样一个声明：
+
+  ```java
+  Set<Lark> exalation = new HashSet();
+  ```
+
+  ​	编译器会细致地提醒你哪里出错了：
+
+  ```shell
+  Venery.java:4: warning: [unchecked] unchecked conversion Set<Lark> exaltation = new HashSet();
+  
+  require: Set<Lark>
+  found: HashSet
+  ```
+
+  ​	你就可以纠正所显示的错误，消除警告。<u>注意，不必真正去指定类型参数，只需要用在Java7中开始引入的菱形操作符(diamond operator)(\<\>)将它括起来即可。随后编译器就会推测出正确的实际类型参数</u>(在本例中是Lark)：
+
+  ```java
+  Set<Lark> exaltation= new Hashset<>();
+  ```
+
+  ​	有些警告非常难以消除。本章主要介绍这种警告示例。当你遇到需要进行一番思考的警告时，要坚持住！**要尽可能地消除每一个非受检警告**。如果消除了所有警告，就可以确保代码是类型安全的，这是一件很好的事情。这意味着不会在运行时出现Class-Cast-Exception异常，你会更加自信自己的程序可以实现预期的功能。
+
+  ​	**如果无法消除警告，同时可以证明引起警告的代码是类型安全的，(只有在这种情况下才可以用一个 @SuppressWarnings("unchecked")注解来<u>禁止</u>这条警告**。如果在禁止警告之前没有先证实代码是类型安全的，那就只是给你自己一种错误的安全感而已。代码在编译的时候可能没有出现任何警告，但它在运行时仍然会抛出ClassCastException异常。但<u>是如果忽略(而不是禁止)明知道是安全的非受检警告，那么当新出现一条真正有问题的警告时，你也不会注意到。新出现的警告就会淹没在所有的错误警告声当中</u>。
+
+  ​	<u>SuppressWarnings注解可以用在任何粒度的级别中，从单独的局部变量声明到整个类都可以</u>。**<u>应该始终在尽可能小的范围内使用SuppressWarnings注解</u>**。它通常是个变量声明，或是非常简短的方法或构造器。**永远不要在整个类上使用SuppressWarnings，这么做可能会掩盖重要的警告**。
+
+  ​	<u>如果你发现自己在长度不止一行的方法或者构造器中使用了SuppressWarnings注解，可以将它移到一个局部变量的声明中。虽然你必须声明一个新的局部变量，不过这么做还是值得的</u>。例如，看看ArrayList类当中的toArray方法：
+
+  ```java
+  public <T> T[] toArray(T[] a) {
+    if(a.length < size)
+      return (T[]) Arrays.copyOf(elements, size, a.getClass());
+    System.arraycopy(elements, 0, a, 0, size);
+    if(a.length > size)
+      a[size] = null;
+    return a;
+  }
+  ```
+
+  ​	如果编译ArrayList，该方法就会产生这条警告：
+
+  ```shell
+  ArrayList.java:305: warning: [unchecked] unchecked cast return (T[]) Arrays.copyOf(elements, size, a.getClass());
+  							^
+  	required: T[]
+  	found:		Object[]
+  ```
+
+  ​	将 SuppressWarnings注解放在 return语句中是合法的，因为它不是声明[JLS，9.7]。<u>你可以试着将注解放在整个方法上，但是在实践中千万不要这么做，而是应该声明个局部变量来保存返回值，并注解其声明</u>，像这样：
+
+  ```java
+  // Adding local variable to reduce scope of @SuppressWarnings
+  public <T> T[] toArray(T[] a) {
+    if (a.length < size) {
+      // This cast is correct because the array we're creating
+      // is of the same type as the one passed in, which is T[].
+      @SuppressWarnings("unchecked") T[] result = (T[]) Arrays.copyOf(elements, size, a.getClass());
+      return result;
+    }
+    System.arraycopy(elements, 0, a, 0, size);
+    if(a.length > size)
+      a[size] = null;
+    return a;
+  }
+  ```
+
+  ​	这个方法可以正确地编译，禁止非受检警告的范围也会减到最小。
+
+  ​	**每当使用 Suppresswarnings(“ unchecked”)注解时，都要添加一条注释，说明为什么这么做是安全的**。这样可以帮助其他人理解代码，更重要的是，可以尽量减少其他人修改代码后导致计算不安全的概率。如果你觉得这种注释很难编写，就要多加思考。最终你会发现非受检操作是非常不安全的。
+
+---
+
++ 小结
+
+​	总而言之，非受检警告很重要，不要忽略它们。每一条警告都表示可能在运行时抛出ClassCastException异常。要尽最大的努力消除这些警告。
+
+​	如果无法消除非受检警告，同时可以证明引起警告的代码是类型安全的，就可以在尽可能小的范围内使用`@SuppressWarnings("unchecked″)`注解禁止该警告。要用注释把禁止该警告的原因记录下来。
+
+## E28 列表优于数组
+
+P109
