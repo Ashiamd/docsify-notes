@@ -3430,6 +3430,144 @@ public class Test {
 
   ​	总而言之，使用泛型比使用需要在客户端代码中进行转换的类型来得更加安全，也更加容易。<u>在设计新类型的时候，要确保它们不需要这种转换就可以使用。这通常意味着要把类做成是泛型的。只要时间允许，就把现有的类型都泛型化</u>。这对于这些类型的新用户来说会变得更加轻松，又不会破坏现有的客户端（E26）。
 
-## E30 优先考虑泛型方法
+## * E30 优先考虑泛型方法
 
-P116
++ 概述
+
+  ​	正如类可以从泛型中受益一般，方法也一样。<u>静态工具方法尤其适合于泛型化</u>。Collections中的所有"算法"方法(例如binarySearch和sort)都泛型化了。
+
+  ​	编写泛型方法与编写泛型类型相类似。例如下面这个方法，它返回两个集合的联合：
+
+  ```java
+  // Uses raw types - unacceptable! (E26)
+  public static Set union(Set s1, Set s2) {
+    Set result = new HashSet(s1);
+    result.addAll(s2);
+    return result;
+  }
+  ```
+
+  ​	这个方法可以编译，但是有两条警告：
+
+  ```shell
+  Union.java:5: warning: [unchecked] unchecked call to HashSet(Collection<? extends E>) as a member of raw type HashSet
+  	Set result = new HashSet(s1);
+  								^
+  Union.java:6: warning: [unchecked] unchecked call to addAll(Collection<? extends E>) as a member of raw type Set
+  	result.addAll(s2);
+  								^
+  ```
+
+  ​	为了修正这些警告，使方法变成是类型安全的，要将方法声明修改为声明一个类型参数(type parameter)，表示这三个集合的元素类型(两个参数和一个返回值)，并在方法中使用类型参数。
+
+  ​	**声明类型参数的类型参数列表，处在方法的修饰符及其返回值之间**。在这个示例中，类型参数列表为`<E>`，返回类型为`Set<E>`。类型参数的命名惯例与泛型方法以及泛型的相同（E29和E68）：
+
+  ```java
+  // Generic method 
+  public static <E> Set<E> union(Set<E> s1, Set<E> s2) {
+    Set<E> result = new HashSet<>(s1);
+    result.addAll(s2);
+    return result;
+  }
+  ```
+
+  ​	至少对于简单的泛型方法而言，就是这么回事了。现在该方法编译时不会产生任何警告，并提供了类型安全性，也更容易使用。以下是一个执行该方法的简单程序。程序中不包含转换，编译时不会有错误或者警告：
+
+  ```java
+  // Simple program to exercise generic method
+  public static void main(String[] args) {
+    Set<String> guys = Set.of("Tom", "Dick", "Harry");
+    Set<String> stooges = Set.of("Larry", "Moe", "Curly");
+    Set<String> aflCio = union(guys, stooges);
+    System.out.println(aflCio);
+  }
+  ```
+
+  ​	运行这段程序时，会打印出[Moe，Harry，Tom，Curly，Larry，Dick]。(元素的输出顺序是独立于实现的。)
+
+  ​	union方法的局限性在于三个集合的类型(两个输入参数和一个返回值)必须完全相同。<u>利用**有限制的通配符类型**( bounded wildcard type)可以使方法变得更加灵活</u>（E31）。
+
+  ​	有时可能需要创建一个不可变但又适用于许多不同类型的对象。由于泛型是通过**擦除**（E28）实现的，可以给所有必要的类型参数使用单个对象，但是需要编写一个静态工厂方法，让它重复地给每个必要的类型参数分发对象。这种模式称作**泛型单例工厂( generic singleton factory)**，常用于**函数对象**（E42），如`Collections.reverseOrder`，有时也用于像`Collections.emptySet`这样的集合。
+
+  ​	假设要编写一个**恒等函数(identity function)**分发器。类库中提供了`Function.identity`，因此不需要自己编写（E59），但是自己编写也很有意义。如果在每次需要的时候都重新创建一个，这样会很浪费，因为它是无状态的(stateless)。
+
+  ​	<u>如果Java泛型被具体化了，每个类型都需要一个恒等函数，但是它们被擦除后，就只需要一个泛型单例</u>。请看以下示例：
+
+  ```java
+  // Generic singleton factory pattern
+  private static UnaryOperator<Object> IDENTITY_FN = (t) -> t;
+  
+  @SuppressWarnings("unchecked")
+  public static <T> UnaryOperator<T> identityFunction() {
+    return (UnaryOperator<T>) IDENTITY_FN;
+  }
+  ```
+
+  ​	IDENTITY_FN转换成（`UnaryFunction<T>`），产生了一条未受检的转换警告，因为`UnaryFunction<Object>`对于每个`T`来说并非都是个`Unaryfunction<T>`。但是**恒等函数很特殊：它返回未被修改的参数**，因此我们知道无论的值是什么，用它作为`UnaryFunction<T>`都是类型安全的。因此，我们可以放心地禁止由这个转换所产生的未受检转换警告。一旦禁止，代码在编译时就不会出现任何错误或者警告。
+
+  ​	下面是一个范例程序，它利用泛型单例作为`UnaryFunction<String>`和`UnaryFunction<Number>`。像往常一样，它不包含转换，编译时没有出现错误或者警告：
+
+  ```java
+  // Sample program to exercise generic singleton
+  public static void main(Stringp[] args) {
+    Stringp[] strings = {"jute", "hemp", "nylon"};
+    UnaryOperator<String> sameString = identityFunction();
+    for(String s : strings)
+      System.out.println(sameString.apply(s));
+  
+    Number[] numbers = { 1, 2.0, 3L };
+    UnaryOperator<Number> sameNumber = identityFunction();
+    for(Number n : numbers)
+      System.out.println(sameNumber.apply(n));
+  }
+  ```
+
+  ​	虽然相对少见，但是通过某个<u>包含该类型参数本身的表达式来限制类型参数</u>是允许的。这就是**递归类型限制(recursive type bound)**。
+
+  ​	**<u>递归类型限制最普遍的用途与Comparable接口有关，它定义类型的自然顺序（E14）</u>**。这个接口的内容如下：
+
+  ```java
+  public interface Comparable<T> {
+    int compareTo(T o);
+  }
+  ```
+
+  ​	类型参数定义的类型，可以与实现`Comparable<T>`的类型的元素进行比较。**实际上，几乎所有的类型都只能与它们自身的类型的元素相比较**。例如String实现`Comparable<String>`，Integer实现`Comparable<Integer>`，等等。
+
+  ​	有许多方法都带有一个实现Comparable接口的元素列表，为了对列表进行排序，并在其中进行搜索，计算出它的最小值或者最大值，等等。要完成这其中的任何一项操作，都要求列表中的每个元素能够与列表中的每个其他元素相比较，换句话说，列表的元素可以互相比较(mutually comparable)。下面是如何表达这种约束条件的一个示例：
+
+  ```java
+  // Using a recursive type bound to express mutual comparability
+  public static <E extends Comparable<E>> E max(Collectoin<E> c);
+  ```
+
+  ​	<u>类型限制`<E extends Comparable<E>>`，可以读作"针对可以与自身进行比较的某个类型E"，这与互比性的概念或多或少有些一致</u>。
+
+  ​	下面的方法就带有上述声明。它根据元素的自然顺序计算列表的最大值，编译时没有出现错误或者警告：
+
+  ```java
+  // Returns max value in a collection - uses recursive type bound
+  public static <E extends Comparable<E>> E max(Collection<E> c) {
+    if(c.isEmpty())
+      throw new IllegalArgumentException("Empty collection");
+    E result = null;
+    for(E e : c)
+      if(result == null || e.compareTo(result) > 0)
+        result = Objects.requireNonNull(e);
+    return result;
+  }
+  ```
+
+  ​	注意，如果列表为空，这个方法就会抛出IllegalArgumentException异常。更好的替代做法是返回一个 `Optional<E>`（E55）。
+
+  ​	递归类型限制可能比这个要复杂得多，但幸运的是，这种情况并不经常发生。如果你理解了这种习惯用法和它的通配符变量（E31），以及**模拟自类型(simulated self-type)**习惯用法（E2），就能够处理在实践中遇到的许多递归类型限制了。
+
+---
+
++ 小结
+
+  ​	总而言之，泛型方法就像泛型一样，使用起来比要求客户端转换输入参数并返回值的方法来得更加安全，也更加容易。就像类型一样，你应该确保方法不用转换就能使用，这通常意味着要将它们泛型化。并且就像类型一样，还应该将现有的方法泛型化，使新用户使用起来更加轻松，且不会破坏现有的客户端（E26）。
+
+## E31 利用有限制通配符来提升API的灵活性
+
+P119
