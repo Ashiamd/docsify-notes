@@ -2945,7 +2945,7 @@ public class Test {
   }
   ```
 
-  ​	这个方法可行，但它使用了原生态类型，这是很危险的。安全的替代做法是<u>使用无限制的通配符类型</u>( unbounded wildcard type)。**如果要使用泛型，但不确定或者不关心实际的类型参数，就可以用一个问号代替**。例如，泛型Set\<E\>的无限制通配符类型为set\<?\>(读作"某个类型的集合")。这是最普通的参数化Set类型，可以持有任何集合。下面是numElementsInCommon方法使用了无限制通配符类型时的情形：
+  ​	这个方法可行，但它使用了原生态类型，这是很危险的。安全的替代做法是<u>使用无限制的通配符类型</u>( unbounded wildcard type)。**如果要使用泛型，但不确定或者不关心实际的类型参数，就可以用一个问号代替**。例如，泛型Set\<E\>的无限制通配符类型为Set\<?\>(读作"某个类型的集合")。这是最普通的参数化Set类型，可以持有任何集合。下面是numElementsInCommon方法使用了无限制通配符类型时的情形：
 
   ```java
   // Uses unbounded wildcard type - typesafe and flexible
@@ -2962,7 +2962,7 @@ public class Test {
   	 CAP#1 extends Object from capture of ?
   ```
 
-  ​	这样的错误消息显然无法令人满意，但是编译器已经尽到了它的职责，防止你破坏集合的类型约束条件。你不仅无法将任何元素(除了null之外)放进Collection\<?\>中而且根本无法猜测你会得到哪种类型的对象。要是无法接受这些限制，就可以使用**泛型方法(E30)**或者**有限制的通配符类型(E31)**。
+  ​	这样的错误消息显然无法令人满意，但是编译器已经尽到了它的职责，防止你破坏集合的类型约束条件。你不仅无法将任何元素(除了null之外)放进`Collection<?>`中而且根本无法猜测你会得到哪种类型的对象。要是无法接受这些限制，就可以使用**泛型方法(E30)**或者**有限制的通配符类型(E31)**。
 
   ​	不要使用原生态类型，这条规则有几个小小的例外。**必须在类文字(class literal)中使用原生态类型**。规范不允许使用参数化类型(虽然允许数组类型和基本类型[JLS, 15.8.2]换句话说，**<u>List.class、String[].class和int.class都合法，但是List\<String\>.class和List\<?\>. class则不合法</u>**。
 
@@ -2992,8 +2992,8 @@ public class Test {
 
   让我们做个快速的回顾：
 
-  + Set\<Object\>是个<u>参数化类型</u>，表示可以包含<u>任何对象类型</u>的一个集合；
-  + Set\<?\>则是个<u>通配符类型</u>，表示只能包含<u>某种未知对象类型</u>的一个集合；
+  + Set\<Object\>是个<u>参数化类型</u>，表示可以包含<u>**任何**对象类型</u>的一个集合；
+  + Set\<?\>则是个<u>通配符类型</u>，表示只能包含<u>**某种**未知对象类型</u>的一个集合；
   + Set是一个<u>原生态类型</u>，它脱离了泛型系统。
 
   **前两种是安全的，最后一种不安全**。
@@ -3650,7 +3650,7 @@ public class Test {
 
   ​	如果试着用上述的popAll版本编译这段客户端代码，就会得到一个非常类似于第次用 pushAll时所得到的错误：`Collection<Object>`不是`Collection<Number>`的子类型。
 
-  ​	这一次通配符类型同样提供了一种解决办法。popA11的输入参数类型不应该为"E的集合"，而应该为"E的某种超类的集合"(这里的超类是确定的，**因此E是它自身的一个超类型**[JLS，4.10])。
+  ​	这一次通配符类型同样提供了一种解决办法。popAll的输入参数类型不应该为"E的集合"，而应该为"E的某种超类的集合"(这里的超类是确定的，**因此E是它自身的一个超类型**[JLS，4.10])。
 
   ​	仍有一个通配符类型正符合此意:`Collection<? super E>`。让我们修改popAll来使用它：
 
@@ -3751,16 +3751,18 @@ public class Test {
 
   ​	为了从初始声明中得到修改后的版本，要应用PECS转换两次。最直接的是运用到参数list。它产生T实例，因此将类型从`List<T>`改成`List<? extends T>`。更灵活的是运用到类型参数T。这是我们第一次见到将通配符运用到类型参数。最初T被指定用来扩展`Comparab1e<T>`，但是T的 comparable消费T实例(并产生表示顺序关系的整值)。因此，参数化类型`Comparable<T>`被有限制通配符类型 `Comparable<? super T>`取代。
 
-  + comparable始终是消费者，因此**使用时始终应该是`Comparable<? super T>`优先于`Comparable<T>`**。
-  + 对于 comparator接口也一样，因此**使用时始终应该是 `Comparator<? super T>`优先于 `Comparator<T>`**。
+  + Comparable始终是消费者，因此**使用时始终应该是`Comparable<? super T>`优先于`Comparable<T>`**。
+  + 对于Comparator接口也一样，因此**使用时始终应该是 `Comparator<? super T>`优先于 `Comparator<T>`**。
 
   ​	修改过的max声明可能是整本书中最复杂的方法声明了。所增加的复杂代码真的起作用了么？是的，起作用了。下面是一个简单的列表示例，在初始的声明中不允许这样，修改过的版本则可以:
 
   ​	`List<ScheduledFuture<?>> scheduledFutures = ... ;`
 
-  ​	不能将初始方法声明运用到这个列表的原因在于，`java.util. concurrent. ScheduledFuture`没有实现 `Comparable<Scheduledfuture>`接口。相反，它是扩展`Comparable<Delayed>`接口的 Delayed接口的子接口。换句话说， ScheduleFuture实例并非只能与其他 ScheduledFuture实例相比较；它可以与任何Delayed实例相比较，这就足以导致初始声明时就会被拒绝。更通俗地说，需要用通配符支持那些不直接实现Comparable(或者 Comparator)而是扩展实现了该接口的类型。
+  ​	不能将初始方法声明运用到这个List的原因在于，`java.util.concurrent.ScheduledFuture`没有实现 `Comparable<ScheduledFuture>`接口。相反，<u>它是扩展`Comparable<Delayed>`接口的 Delayed接口的子接口。换句话说， ScheduleFuture实例并非只能与其他ScheduledFuture实例相比较；它可以与任何Delayed实例相比较，这就足以导致初始声明时就会被拒绝</u>。**更通俗地说，需要用通配符支持那些不直接实现Comparable(或者 Comparator)而是扩展实现了该接口的类型**。
 
-  ​	还有一个与通配符有关的话题值得探讨。类型参数和通配符之间具有双重性，许多方法都可以利用其中一个或者另一个进行声明。例如，下面是可能的两种静态方法声明，来交换列表中的两个被索引的项目。第一个使用无限制的类型参数（E30），第二个使用无限制的通配符：
+  ​	还有一个与通配符有关的话题值得探讨。类型参数和通配符之间具有双重性，许多方法都可以利用其中一个或者另一个进行声明。例如，下面是可能的两种静态方法声明，来交换列表中的两个被索引的项目。
+
+  ​	第一个使用无限制的<u>类型参数</u>（E30），第二个使用<u>无限制的通配符</u>：
 
   ```java
   // Two possible declarations for the swap method
@@ -3768,12 +3770,12 @@ public class Test {
   public static void swap(List<?> list, int i , int j);
   ```
 
-  ​	你更喜欢这两种声明中的哪一种呢?为什么?在公共API中，第二种更好一些，因为它更简单。将它传到一个列表中(任何列表)方法就会交换被索引的元素。不用担心类型参数。
+  ​	你更喜欢这两种声明中的哪一种呢？为什么？在公共API中，第二种更好一些，因为它更简单。将它传到一个List中（任何List）方法就会交换被索引的元素。不用担心类型参数。
 
   ​	一般来说，**如果类型参数只在方法声明中出现一次，就可以用通配符取代它**。
 
-  + 如果是无限制的类型参数，就用无限制的通配符取代它；
-  + 如果是有限制的类型参数，就用有限制的通配符取代它。
+  + **如果是无限制的类型参数，就用无限制的通配符取代它；**
+  + **如果是有限制的类型参数，就用有限制的通配符取代它。**
 
   ​	将第二种声明用于swap方法会有一个问题。下面这个简单的实现不能编译
 
@@ -3793,7 +3795,9 @@ public class Test {
   		CAP#1 extends Object from capture of ?
   ```
 
-  ​	不能将元素放回到刚刚从中取出的列表中，这似乎不太对劲。问题在于list的类型为`List<?>`，你不能把null之外的任何值放到`List<?>`中。幸运的是，有一种方式可以实现这个方法，无须求助于不安全的转换或者原生态类型( raw type)。这种想法就是编写一个私有的辅助方法来捕捉通配符类型。为了捕捉类型，辅助方法必须是一个泛型方法，像下面这样：
+  ​	不能将元素放回到刚刚从中取出的列表中，这似乎不太对劲。<u>问题在于list的类型为`List<?>`，你**不能把null之外的任何值放到`List<?>`中**</u>。
+
+  ​	幸运的是，有一种方式可以实现这个方法，无须求助于不安全的转换或者原生态类型( raw type)。这种想法就是**编写一个私有的辅助方法来捕捉通配符类型**。为了捕捉类型，辅助方法必须是一个泛型方法，像下面这样：
 
   ```java
   public static void swap(List<?> list, int i, int j) {
@@ -3806,7 +3810,7 @@ public class Test {
   }
   ```
 
-  ​	swapHelper方法知道list是一个`List<E>`。因此，它知道从这个列表中取出的任何值均为E类型，并且知道将E类型的任何值放进列表都是安全的。swap这个有些费解的实现编译起来却是正确无误的。它允许我们导出swap这个比较好的基于通配符的声明，同时在内部利用更加复杂的泛型方法。swap方法的客户端不一定要面对更加复杂的swapHelper声明，但是它们的确从中受益。值得一提的是，辅助方法中拥有的签名，正是我们在公有方法中因为它过于复杂而抛弃的。
+  ​	**swapHelper方法知道list是一个`List<E>`。因此，它知道从这个列表中取出的任何值均为E类型，并且知道将E类型的任何值放进列表都是安全的**。swap这个有些费解的实现编译起来却是正确无误的。<u>它允许我们导出swap这个比较好的基于通配符的声明，同时在内部利用更加复杂的泛型方法</u>。swap方法的客户端不一定要面对更加复杂的swapHelper声明，但是它们的确从中受益。<u>值得一提的是，辅助方法中拥有的签名，正是我们在公有方法中因为它过于复杂而抛弃的</u>。
 
 ---
 
@@ -3818,6 +3822,171 @@ public class Test {
 
   ​	**还要记住所有的comparable和comparator都是消费者。**
 
-## E32 谨慎并用泛型和可变参数
+## * E32 谨慎并用泛型和可变参数
 
-P124
++ 概述
+
+  > [一场由Java堆污染(Heap Pollution)引发的思考_zxm317122667的专栏-CSDN博客](https://blog.csdn.net/zxm317122667/article/details/78400398)	
+
+  ​	可变参数(vararg)方法（E53）和泛型都是在Java5中就有了，因此你可能会期待它们可以良好地相互作用；遗憾的是，它们不能。
+
+  ​	可变参数的作用在于让客户端能够将可变数量的参数传给方法，但这是个技术露底(leaky abstration)：当调用一个可变参数方法时，会创建一个**数组**用来存放可变参数；<u>这个数组应该是一个实现细节，它是可见的</u>。因此，<u>当可变参数有泛型或者参数化类型时，编译警告信息就会产生混乱</u>。
+
+  ​	回顾一下（E28），**<u>非具体化(non-reifiable)类型是指其运行时代码信息比编译时少，并且显然所有的泛型和参数类型都是非具体化的</u>**。
+
+  ​	<u>如果一个方法声明其可变参数为non-reifiable类型，编译器就会在声明中产生一条警告。如果方法是在类型为non-reifiable的可变参数上调用，编译器也会在调用时发出一条警告信息</u>。这个警告信息类似于：
+
+  ```shell
+  warning: [unchecked] Possible heap pollution from parameterized varag type List<String>
+  ```
+
+  ​	当一个参数化类型的变量指向一个不是该类型的对象时，会产生**堆污染（heap pollution）**[JLS，4.12.2]。它导致编辑器的自动生成转换失败，破坏了泛型系统的基本保证。
+
+  ​	举个例子。下面的代码是对（E28）的代码片段稍做修改得到的：
+
+  ```java
+  // Mixing generics and varargs can violate type safety!
+  static void dangerous(List<String>... stringLists) {
+    List<Integer> intList = List.of(42);
+    Object[] objects = stringLists;
+    objects[0] = intList;	//	Heap pollution
+    String s = stringLists[0].get(0); // ClassCastException
+  }
+  ```
+
+  ​	这个方法没有可见的转换，但是在调用一个或者多个参数时会抛出ClassCastException异常。上述最后一行代码中有一个不可见的转换，这是由编译器生成的。这个转换失败证明类型安全已经受到了危及，因此**<u>将值保存在泛型可变参数数组参数中是不安全的</u>**。
+
+  ​	这个例子引出了一个有趣的问题：**为什么显式创建泛型数组是非法的，用泛型可变参数声明方法却是合法的呢**？换句话说，为什么之前展示的方法只产生一条警告，而（E28）中的代码片段却产生一个错误呢？答案在于，**<u>带有泛型可变参数或者参数化类型的方法在实践中用处很大，因此Java语言的设计者选择容忍这一矛盾的存在</u>**。
+
+  ​	事实上，Java类库导出了好几个这样的方法，包括`Arrays.aslist(T... a)`、`Collections.addAll(Collection<? super T> C, T... elements)`， 以及`EnumSet.of(E first, E... rest)`。<u>与前面提到的危险方法不一样，这些类库方法是类型安全的</u>。
+
+  ​	在Java7之前，带泛型可变参数的方法的设计者，对于在调用处出错的警告信息一点办法也没有。这使得这些API使用起来非常不愉快。用户必须忍受这些警告，要么最好在每处调用点都通过`@Suppresswarnings(" unchecked")`注解来消除警告（E27）。这么做过于烦琐，而且影响可读性，并且掩盖了反映实际问题的警告。
+
+  ​	<u>在Java7中，增加了@SafeVarargs注解，它让带泛型vararg参数的方法的设计者能够自动禁止客户端的警告</u>。本质上， **@SafeVarargs注解是通过方法的设计者做出承诺，声明这是类型安全的**。作为对于该承诺的交换，编译器同意不再向该方法的用户发出警告说这些调用可能不安全。
+
+  ​	<u>重要的是，不要随意用@Safevarargs对方法进行注解，除非它真正是安全的</u>。那么它凭什么确保安全呢？回顾一下，泛型数组是在调用方法的时候创建的，用来保存可变参数。如果该方法没有在数组中保存任何值，也不允许对数组的引用转义(这可能导致不被信任的代码访问数组)，那么它就是安全的。**<u>换句话说，如果可变参数数组只用来将数量可变的参数从调用程序传到方法(毕竞这才是可变参数的目的)，那么该方法就是安全的</u>**。
+
+  ​	<u>**值得注意的是，从来不在可变参数的数组中保存任何值，这可能破坏类型安全性**</u>。以下面的泛型可变参数方法为例，它返回了一个包含其参数的数组。乍看之下，这似乎是一个方便的小工具：
+
+  ```java
+  // UNSAFE - Exposes a reference to its generic parameter array!
+  static <T> T[] toArray(T... args) {
+    return args;
+  }
+  ```
+
+  ​	这个方法只是返回其可变参数数组，看起来没什么危险，但它实际上很危险！<u>这个数组的类型，是由传到方法的参数的**编译时类型**来决定的，编译器没有足够的信息去做准确的决定</u>。因为该方法返回其可变参数数组，它会将堆污染传到调用堆栈上。
+
+  ​	下面举个具体的例子。这是一个泛型方法，它带有三个类型为T的参数，并返回一个包含两个(随机选择的)参数的数组：
+
+  ```java
+  static<T> T[] pickTwo(T a, T b, T c) {
+    switch(ThreadLocalRandom.current().nextInt(3)) {
+      case 0: return toArray(a, b);
+      case 1: return toArray(a, c);
+      case 2: return toArray(b, c);
+    }
+    throw new AssertionError(); // Can't get here
+  }
+  ```
+
+  ​	这个方法本身并没有危险，也不会产生警告，除非它调用了带有泛型可变参数的toArray方法。
+
+  ​	<u>在编译这个方法时，编译器会产生代码，创建一个可变参数数组，并将两个T实例传到toArray。这些代码配置了一个类型为`Object[]`的数组，这是确保能够保存这些实例的最具体的类型，无论在调用时给 pickTwo传递什么类型的对象都没问题。 toArray方法只是将这个数组返回给pickTwo，反过来也将它返回给其调用程序，因此 pickTwo始终都会返回一个类型为`Object[]`的数组</u>。
+
+  ​	现在以下面的main方法为例，练习一下 pickTwo的用法：
+
+  ```java
+  public static void main(String[] args) {
+    String[] attributes = pickTwo("Good", "Fast", "Cheap");
+  }
+  ```
+
+  ​	这个方法压根没有任何问题，因此编译时不会产生任何警告。但是在运行的时候，它会抛出一个ClassCastException，虽然它看起来并没有包括任何的可见的转换。<u>你看不到的是，编译器在 pickTwo返回的值上产生了一个隐藏的`String[]`转换</u>。但转换失败了，这是因为从实际导致堆污染(toArray)的方法处移除了两个级别，可变参数数组在实际的参数存入之后没有进行修改。
+
+  ​	这个范例是为了告诉大家，<u>**允许另一个方法访问一个泛型可变参数数组是不安全的**，有两种情况例外</u>：
+
+  + **将数组传给另一个用`@SafeVarargs`正确注解过的可变参数方法是安全的；**
+  + **将数组传给只计算数组内容部分函数的非可变参数方法也是安全的**。
+
+  ​	这里有一个安全使用泛型可变参数的典型范例。这个方法中带有一个任意数量参数的列表，并按顺序返回包含输入清单中所有元素的唯一列表。由于该方法用 @SafeVarargs注解过，因此在声明处或者调用处都不会产生任何警告：
+
+  ```java
+  // Safe method with a generic varargs parameter
+  @SafeVarags
+  static <T> List<T> flatten(List<? extends T>... lists) {
+    List<T> result = new ArrayList<>();
+    for(List<? extends T> list : lists)
+      result.addAll(list);
+    return result;
+  }
+  ```
+
+  ​	确定何时应该使用@SafeVarargs注解的规则很简单：**<u>对于每一个带有泛型可变参数或者参数化类型的方法，都要用@SafeVarargs进行注解</u>**，这样它的用户就不用承受那些无谓的、令人困惑的编译警报了。
+
+  ​	这意味着应该永远都不要编写像dangerous或者toArray这类不安全的可变参数方法。<u>每当编译器警告你控制的某个带泛型可变参数的方法可能形成堆污染，就应该检查该方法是否安全</u>。
+
+  ​	这里先提个醒，**泛型可变参数方法在下列条件下是安全的**：
+
+  ​	1、它没有在可变参数数组中保存任何值。
+
+  ​	2、它没有对不被信任的代码开放该数组(或者其克隆程序)。
+
+  ​	以上两个条件只要有任何一条被破坏，就要立即修正它。
+
+  ​	<u>注意，@SafeVarargs注解只能用在无法被覆盖的方法上，因为它不能确保每个可能的覆盖方法都是安全的</u>。<u>在Java8中，该注解只在静态方法和 final实例方法中才是合法的；在Java9中，它在私有的实例方法上也合法了</u>。
+
+  ​	如果不想使用@SafeVarargs注解，也可以采用（E28）的建议，**用一个List参数代替可变参数**(这是一个伪装数组)。下面举例说明这个办法在 flatten方法上的运用。注意，此处只对参数声明做了修改：
+
+  ```java
+  // List as a typesafe alternative to a generic varargs parameter
+  static <T> List<T> flattern(List<List<? extends T>> lists) {
+    List<T> result = new ArrayList<>();
+    for(List<? extends T> list : lists)
+      result.addAll(list);
+    return result;
+  }
+  ```
+
+  ​	随后，这个方法就可以结合静态工厂方法`List.of`一起使用了，允许使用数量可变的参数。注意，使用该方法的前提是用`@SafeVarargs`对`List.of`声明进行了注解：
+
+  ```java
+  audience = flatten(List.of(friends, romans, countrymen));
+  ```
+
+  ​	这种做法的优势在于编译器可以证明该方法是类型安全的。你不必再通过@SafeVarargs注解来证明它的安全性，也不必担心自己是否错误地认定它是安全的。其缺点在于客户端代码有点烦琐，运行起来速度会慢一些。
+
+  ​	这一技巧也适用于无法编写出安全的可变参数方法的情况，比如本条之前提到的toArray方法。其List对应的是List.of方法，因此我们不必编写；Java类库的设计者已经替我们完成了。因此pickTwo方法就变成了下面这样：
+
+  ```java
+  static<T> List<T> pickTwo(T a, T b, T c) {
+    switch(rnd.nextInt(3)) {
+      case 0: return List.of(a, b);
+      case 1: return List.of(a, c);
+      case 2: return List.of(b, c);
+    }
+    throw new AssertionError();
+  }
+  ```
+
+  main方法变成如下：
+
+  ```java
+  public static void main(String[] args) {
+    List<String> attributes = pickTwo("Good", "Fast", "Cheap");
+  }
+  ```
+
+  ​	<u>这样得到的代码就是类型安全的，因为它只使用泛型，没有用到数组</u>。
+
+---
+
++ 小结
+
+  ​	总而言之，可变参数和泛型不能良好地合作，这是因为可变参数设施是构建在顶级数组之上的一个技术露底，泛型数组有不同的类型规则。
+
+  ​	虽然泛型可变参数不是类型安全的，但它们是合法的。<u>如果选择编写带有泛型(或者参数化)可变参数的方法，首先要确保该方法是类型安全的，然后用@SafeVarargs对它进行注解，这样使用起来就不会出现不愉快的情况了</u>。
+
+## E33 优先考虑类型安全的异构容器
+
+P128
