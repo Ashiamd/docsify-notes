@@ -1,4 +1,4 @@
-# 《Effective-Java第三版》-读书笔记
+# 《Effective-Java第三版》-读书笔记-01
 
 > + `1、`、`2、`表示：第1章、第2章
 >
@@ -3987,6 +3987,160 @@ public class Test {
 
   ​	虽然泛型可变参数不是类型安全的，但它们是合法的。<u>如果选择编写带有泛型(或者参数化)可变参数的方法，首先要确保该方法是类型安全的，然后用@SafeVarargs对它进行注解，这样使用起来就不会出现不愉快的情况了</u>。
 
-## E33 优先考虑类型安全的异构容器
+## * E33 优先考虑类型安全的异构容器
 
-P128
++ 概述
+
+  ​	泛型最常用于集合，如`Set<E>`和`Map<K, V>`，以及单个元素的容器，如`ThreadLocal<T>`和 `AtomicReference<T>`。在所有这些用法中，它都<u>充当被参数化了的容器</u>。这样就限制每个容器只能有固定数目的类型参数。一般来说，这种情况正是你想要的。一个Set只有一个类型参数，表示它的元素类型；一个Map有两个类型参数，表示它的键和值类型......
+
+  ​	但是，有时候你会需要更多的灵活性。例如，数据库的行可以有任意数量的列，如果能以类型安全的方式访问所有列就好了。幸运的是，有一种方法可以很容易地做到这一点。这种方法就是<u>将键(key)进行参数化而不是将容器(container)参数化</u>。然后将参数化的键提交给容器来插入或者获取值。用泛型系统来确保值的类型与它的键相符。
+
+  ​	下面简单地示范一下这种方法：以 Favorites类为例，它允许其客户端从任意数量的其他类中，保存并获取一个"最喜爱"的实例。Class对象充当参数化键的部分。之所以可以这样，是因为**类Class被泛型化了。类的类型从字面上来看不再只是简单的Class，而是`Class<T>`**。例如，String.class属于`Class<String>`类型， Integer.class属于`Class<Integer>`类型。<u>当一个类的字面被用在方法中，来传达编译时和运行时的类型信息时，就被称作**类型令牌(type token)**</u>[ Brancha04]
+
+  ​	Favorites类的API很简单。它看起来就像一个简单的映射，除了键(而不是映射)被参数化之外。客户端在设置和获取最喜爱的实例时提交Class对象。下面就是这个API:
+
+  ```java
+  // Typesafe heterogeneous container pattern - API
+  public class Favorites {
+  	public <T> void putFavorite(Class<T> type, T instance);
+    public <T> T getFavorite(Class<T> type);
+  }
+  ```
+
+  ​	下面是一个示例程序，检验一下Favorites类，它将保存、获取并打印一个最喜爱的String、Integer和Class实例：
+
+  ```java
+  // Typesafe heterogeneous container pattern - client
+  public static void main(String[] args) {
+    Favories f = new Favorites();
+    f.putFavorite(String.class, "Java");
+    f.putFavorite(Integer.class, 0xcafebabe);
+    f.putFavorite(Class.class, Favorites.class);
+    String favoriteString = f.getFavorite(String.class);
+    int favoriteInteger = f.getFavorite(Integer.class);
+    Class<?> favoriteClass = f.getFavorite(Class.class);
+    System.out.printf("%s %x %s%n", favoriteString, favoriteInteger, favoriteClass.getName());
+  }
+  ```
+
+  ​	正如所料，这段程序打印出的是 Java cafebabe Fsavorites。注意，有时Java的printf方法与C语言中的不同，C语言中使用`\n`的地方，在Java中应该使用`%n`。这个`%n`会产生适用于特定平台的行分隔符，在许多平台上是`\n`，但是并非所有平台都是如此。
+
+  ​	<small>ps：(自己java试了下printf，`\n`或者`%n`都会换行)</small>
+
+  + Favorites实例是<u>**类型安全(typesafe)**的：当你向它请求String的时候，它从来不会返回一个Integer给你</u>。
+  + 同时它也是<u>**异构的(heterogeneous)**：不像普通的映射，它的所有键都是不同类型的</u>。
+
+  ​	因此，我们将 Favorites称作**类型安全的异构容器**(typesafe heterogeneous container)
+
+  ​	Favorites的实现小得出奇。它的完整实现如下
+
+  ```java
+  // Typesafe heterogeneous container pattern - implementation
+  public class Favorites {
+    private Map<Class<?>, Object> favorites = new HashMap<>();
+    
+    public <T> void putFavorite(Class<T> type, T instance) {
+      favorites.put(Objects.requireNonNull(type), instance);
+    }
+    
+    public <T> T getFavorite(Class<T> type) {
+      return type.cast(favorites.get(type));
+    }
+  }
+  ```
+
+  ​	这里面发生了一些微妙的事情。每个Favorites实例都得到一个称作 favorites的私有`Map<Class<?>,Object>`的支持。你可能认为由于无限制通配符类型的关系，将不能把任何东西放进这个Map中，但事实正好相反。<u>要注意的是通配符类型是嵌套的：它不是属于通配符类型的Map的类型，而是它的键的类型</u>。
+
+  ​	由此可见，每个键都可以有一个不同的参数化类型：一个可以是`Class<String>`，接下来是`Class<Integer>`等。异构就是从这里来的。
+
+  ​	第二件要注意的事情是，favorites Map的值类型只是Object。换句话说，Map并不能保证键和值之间的类型关系，即不能保证每个值都为它的健所表示的类型(通俗地说，就是指键与值的类型并不相同——译者注)。事实上，Java的类型系统还没有强大到足以表达这一点。但我们知道这是事实，并在获取favorite的时候利用了这一点。
+
+  ​	putFavorite方法的实现很简单：它只是把(从指定的Class对象到指定的favorite实例)一个映射放到 favorites中。如前所述，这是放弃了键和值之间的"类型联系"因此无法知道这个值是键的一个实例。但是没关系，因为getFavorites方法能够并且的确重新建立了这种联系。
+
+  ​	<u>getFavorite方法的实现比putFavorite的更难一些。它先从favorites映射中获得与指定 Class对象相对应的值。这正是要返回的对象引用，但它的编译时类型是错误的。它的类型只是 Object( favorites映射的值类型)，我们需要返回一个T。因此，**getfavorite方法的实现利用Class的cast方法，将对象引用动态地转换( dynamically cast)成了Class对象所表示的类型**</u>。
+
+  ​	cast方法是Java的转换操作符的动态模拟。它只检验它的参数是否为Class对象所表示的类型的实例。如果是，就返回参数；否则就抛出ClassCastException异常。我们知道getFavorite中的cast调用永远不会抛出 ClassCastException异常，并假设客户端代码正确无误地进行了编译。也就是说，我们知道favorites映射中的值会始终与键的类型相匹配。
+
+  ​	假设cast方法只返回它的参数，那它能为我们做什么呢？**<u>cast方法的签名充分利用了Class类被泛型化的这个事实。它的返回类型是Class对象的类型参数</u>**：
+
+  ```java
+  public class Class<T> {
+    T cast(Object obj);
+  }
+  
+  // 完整的源代码如下
+  public T cast(Object obj) {
+    if (obj != null && !isInstance(obj))
+      throw new ClassCastException(cannotCastMsg(obj));
+    return (T) obj;
+  }
+  ```
+
+  ​	这正是 getFavorite方法所需要的，也正是让我们不必借助于未受检地转换成T就能确保Favorites类型安全的东西。
+
+  ​	Favorites类有两种局限性值得注意。首先，<u>恶意的客户端可以很轻松地破坏Favorites实例的类型安全，只要以它的**原生态形式**(raw form)使用Class对象</u>。但会造成客户端代码在编译时产生未受检的警告。这与一般的集合实现，如 HashSet和 HashMap并没有什么区别。你可以很容易地利用原生态类型HashSet（E26）将 String放进`HashSet<Integer>`中。也就是说，如果愿意付出一点点代价，就可以拥有运行时的类型安全。<u>确保Favorites永远不违背它的类型约束条件的方式是，让putFavorite方法检验 instance是否真的是type所表示的类型的实例。只需使用一个**动态的转换**</u>，如下代码所示：
+
+  ```java
+  // Achieving runtime type safety with a dynamic cast 
+  public <T> void putFavorite(Class<T> type, T instance) {
+    favorites.put(type, type.cast(instance));
+  }
+  ```
+
+  ​	<u>`java.util.Collections`中有一些集合包装类采用了同样的技巧。它们称作checkedSet、 checkList、 checkedMap，诸如此类</u>。除了一个集合(或者映射)之外，它们的静态工厂还采用一个(或者两个)Class对象。静态工厂属于泛型方法，**确保Class对象和集合的编译时类型相匹配**。包裝类给它们所封装的集合增加了具体化。例如，如果有人试图将Coin放进你的`Collection<Stamp>`，包装类就会在运行时抛出 ClassCastException异常。用这些包装类在混有泛型和原生态类型的应用程序中追溯"是谁把错误的类型元素添加到了集合中"很有帮助。
+  
+  ​	Favorites类的第二种局限性在于它<u>不能用在不可具体化的(non-reifiable)类型中（E28）</u>。换句话说，你可以保存最喜爱的String或者String[]，但不能保存最喜爱的`List<String>`。如果试图保存最喜爱的`List<String>`，程序就不能进行编译。原因在于**<u>你无法为`List<String>`获得一个Class对象</u>**：`List<String>.class`是个语法错误，这也是件好事。**`List<String>`和`List<Integer>`共用一个Class对象，即`List.class`**。
+  
+  ​	<u>如果从"类型的字面"(type literal)上来看，`List<String>.class`和`List<Integer>.class`是合法的，并返回了相同的对象引用，这会破坏 Favorites对象的内部结构。对于这种局限性，还没有完全令人满意的解决办法</u>。
+  
+  ​	Favorites使用的类型令牌(type token)是无限制的：getFavorite和 putFavorite接受任何Class对象。有时可能需要限制那些可以传给方法的类型。这可以通过有限制的类型令牌( bounded type token)来实现，它只是一个类型令牌，利用有限制类型参数（E30）或者有限制通配符（E31），来限制可以表示的类型。
+  
+  ​	**注解API（E39）广泛利用了有限制的类型令牌**。
+  
+  ​	例如，这是一个在运行时读取注解的方法。这个方法来自 AnnotatedElement接口，它通过表示类、方法、域及其他程序元素的反射类型来实现：
+  
+  ```java
+  public <T extends Annotation> T getAnnotation(Class<T> annotationType);
+  ```
+  
+  ​	<u>参数annotationType是一个表示注解类型的有限制的类型令牌</u>。如果元素有这种类型的注解，该方法就将它返回；如果没有，则返回null。**<u>被注解的元素本质上是个类型安全的异构容器，容器的键属于注解类型</u>**。
+  
+  ​	假设你有一个类型为`Class<?>`的对象，并且想将它传给一个需要有限制的类型令牌的方法，例如 getAnnotation。你可以将对象转换成`Class<? extends Annotation>`，但是这种转换是非受检的，因此会产生一条编译时警告（E27）。幸运的是，类Class提供了一个安全(且动态)地执行这种转换的实例方法。该方法称作<u>asSubclass，它将调用它的Class对象转换成用其参数表示的类的一个子类。如果转换成功，该方法返回它的参数；如果失败，则抛出ClassCastException异常</u>。
+  
+  ​	下面示范如何**利用asSubclass方法在编译时读取类型未知的注解**。这个方法编译时没有出现错误或者警告：
+  
+  ```java
+  // Use of asSubclass to safety cast to a bounded type token
+  static Annotation getAnnotation(AnnotatedElement element, String annotationTypeName) {
+    Class<?> annotationType = null; // Unbounded type token
+    try {
+      annotationType = Class.forName(annotationTypeName);
+    } catch (Exception ex) {
+      throw new IllegalArgumentException(ex);
+    }
+    return element.getAnnotation(annotationType.asSubclass(Annotation.class));
+  }
+  ```
+  
+  > asSubclass方法的源码如下：
+  >
+  > ```java
+  > // Class.java
+  > 
+  > @SuppressWarnings("unchecked")
+  > public <U> Class<? extends U> asSubclass(Class<U> clazz) {
+  >   if (clazz.isAssignableFrom(this))
+  >     return (Class<? extends U>) this;
+  >   else
+  >     throw new ClassCastException(this.toString());
+  > }
+  > ```
+
+---
+
++ 小结
+
+  ​	总而言之，**集合API说明了泛型的一般用法，限制每个容器只能有固定数目的类型参数。你可以通过<u>将类型参数放在键上而不是容器上</u>来避开这一限制**。
+
+  ​	对于这种**<u>类型安全的异构容器</u>**，可以用 Class对象作为键。以这种方式使用的Class对象称作**<u>类型令牌</u>**。你也可以使用定制的键类型。例如，用一个 DatabaseRow类型表示一个数据库行(容器)，用泛型`Column<T>`作为它的键。
+
