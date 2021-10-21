@@ -282,6 +282,190 @@
 
 > [EnumSet (Java SE 11 & JDK 11 ) (runoob.com)](https://www.runoob.com/manual/jdk11api/java.base/java/util/EnumSet.html)
 
-## E37 用EnumMap代替序数索引
+## * E37 用EnumMap代替序数索引
 
-P144
++ 概述
+
+  ​	有一种快速的Map实现专门用于枚举键，称作`java.util.EnumMap`。
+
+  ​	**EnumMap构造器采用键类型的Class对象：这是一个有限制的类型令牌（bounded type token），它提供了运行时的泛型信息（E33）**。
+
+---
+
++ 代码举例
+
+  ​	假设有一个类表示用于烹饪的香草：
+
+  ```java
+  class Plant {
+    enum LifeCycle { ANNUAL, PERENNIAL, BIENNIAL }
+    
+    final String name;
+    final LifeCycle lifeCycle;
+    
+    Plant(String name, LifeCycle lifeCycle) {
+      this.name = name;
+      this.lifeCycle = lifeCycle;
+    }
+    
+    @Override public String toString() {
+      return name;
+    }
+  }
+  ```
+
+  ​	假设按照一年生、多年生或者多年生类别对植物进行分类，容易想到需要构建三个集合，每种类型一个，遍历整座花园，将每种香草放到相应的集合中。
+
+  ​	有些程序员会讲这些集合放到一个按照<u>类型的序数</u>进行索引的数组中实现这一点：
+
+  ```java
+  // Using ordinal() to index into an array - DON't DO THIS!
+  Set<Plant>[] plantsByLifeCycle = 
+    (Set<Plant>[]) new Set[Plant.LifeCycle.values().length];
+  for (int i = 0; i < plantsByLifeCycle.length; i++)
+    plantsByLifrCycle[i] = new HashSet<>();
+  
+  for(Plant p : garden)
+    plantsByLifeCycle[p.lifeCycle.ordinal()].add(p);
+  
+  // Print the results
+  for(int i = 0; i < plantsByLifeCycle.length; i++) {
+    System.out.printf("%s: %s%n",
+                     Plant.LifeCycle.values()[i], plantsByLifeCycle[i]);
+  }
+  ```
+
+  ​	上述代码虽可行，但是隐藏许多问题：
+
+  + 数组不能与泛型（E28）兼容，程序需要进行未受检的转换，并且不能正确无误地进行编译。
+  + 当你访问一个按照枚举的序数进行索引的数组时，使用正确的int值就是你的职责了。
+  + int不能提供枚举的类型安全。
+
+  ​	以下使用EnumMap对代码进行改进：
+
+  ```java
+  // Using an EnumMap to associate data with an enum
+  Map<Plant.LifeCycle, Set<Plant>> plantsByLifeCycle = 
+    new EnumMap<>(Plant.LifeCycle.class);
+  for (Plant.LifeCycle lc : Plant.LifeCycle.values())
+    plantsByLifeCycle.put(lc, new HashSet<>());
+  for (Plant p : garden)
+    plantsByLifeCycle.get(p.lifeCycle).add(p);
+  System.out.println(plantsByLifeCycle);
+  ```
+
+  ​	这段程序更简短、更清楚，也更加安全，运行速度方面可以与使用序数的程序相媲美。它没有不安全的转换；不必手工标注这些索引的输出，因为映射键知道如何将自身翻译成可打印字符串的枚举；计算数组索引时也不可能出错。 
+
+  ​	EnumMap在运行速度方面之所以能与通过序数索引的数组相媲美，正是**因为EnuMap在内部使用了这种数组。但是它对程序员隐藏了这种实现细节，集Map的丰富功能和类型安全与数组的快速于一身**。注意 Enummap构造器采用键类型的 Class对象：这是一个有限制的类型令牌(bounded type token)，它提供了运行时的泛型信息（E33）。
+
+  ​	上一段程序可能比用 stream（E45）管理映射要简短得多。下面是基于 stream的最简单的代码，大量复制了上一个示例的行为：
+
+  ```java
+  // Naive stream-based approach - unlikely to produce an EnumMap!
+  System.out.println(Arrays.stream(garden)
+                     .collect(gropingBy(p -> p.lifeCycle)));
+  ```
+
+  ​	这段代码的问题在于它选择自己的映射实现，实际上不会是一个EnumMap，因此<u>与显式EnumMap版本的空间及时间性能并不吻合</u>。为了解决这个问题，要使用有三种参数形式的`Collectors.groupingBy`方法，它允许调用者利用mapFactory参数定义映射实现：
+
+  ```java
+  // Using a stream and an EnumMap to associate data with an enum
+  System.out.println(Arrays.stream(garden))
+    .collect(groupingBy(p -> p.lifeCycle,
+                        () -> new EnumMap<>(LifeCycle.class),toSet()));
+  ```
+
+  ​	<u>在这样一个玩具程序中不值得进行这种优化，但是在大量使用映射的程序中就很重要了</u>。
+
+  ​	基于 stream的代码版本的行为与EnumMap版本的稍有不同。 EnumMap版本总是给每一个植物生命周期都设计一个嵌套映射，基于 stream的版本则仅当花园中包含了一种或多种植物带有该生命周期时才会设计一个嵌套映射。因此，假如花园中包含了一年生和多年生植物，但没有两年生植物，plantByLifeCycle的数量在 EnumMap版本中应该是三种，在基于 stream的两个版本中则都是两种。
+
+  ​	你还可能见到按照序数进行索引（两次）的数组的数组，该序数表示两个枚举值的映射。例如，下面这个程序就是使用这样一个数组将两个阶段映射到一个阶段过渡中（从液体到固体称作凝固，从液体到气体称作沸腾，诸如此类）：
+
+  ```java
+  // Using ordinal() to index array of arrays - DON'T DO THIS!
+  public enum Phase {
+    SOLID, LIQUID, GAS;
+    public enum Transition {
+      MELT, FREEZE, BOIL, CONDENSE, SUBLIME, DEPOSIT;
+      
+      // Rows indexed by from-ordinal, cols by to-ordinal
+      private static final Transition[][] TRANSITIONS = {
+        {null, MELT, SUBLIME},
+        {FREEZE, null, BOIL},
+        {DEPOSIT, CONDENSE, null}
+      };
+      
+      // Returns the phase transition from one phase to another
+      public static Transition from(Phase from, Phase to) {
+        return TRANSITIONS[from.ordinal()][to.ordinal()];
+      }
+    }
+  }
+  ```
+
+  ​	这段程序可行，看起来也比较优雅，但是事实并非如此。就像上面那个比较简单的香草花园的示例一样，编译器无法知道序数和数组索引之间的关系。如果在过渡表中出了错，或者在修改`Phase`或者`Phase.Transition`枚举类型的时候忘记将它更新，程序就会在运行时失败。这种失败的形式可能为 ArrayIndexOutOfBoundsException、NullPointerException或者(更糟糕的是)没有任何提示的错误行为。这张表的大小是阶段数的平方，即使非空项的数量比较少。
+
+  ​	同样，利用 EnumMap依然可以做得更好一些。因为每个阶段过渡都是通过一对阶段枚举进行索引的，最好将这种关系表示为一个映射，这个映射的键是一个枚举(起始阶段)，值为另一个映射，这第二个映射的键为第二个枚举(目标阶段，它的值为结果(阶段过渡，即形成了Map(起始阶段，Map(目标阶段，阶段过渡)这种形式。一个阶段过渡所关联的两个阶段，最好通过"数据与阶段过渡枚举之间的关系"获取，之后用该阶段过渡枚举来初始化嵌套的EnumMap：
+
+  ```java
+  // Using a nested EnumMap to associate data with enum pairs
+  public enum Phase {
+    SOLID, LIQUID, GAS;
+    public enum Transition {
+      MELT(SOLID, LIQUID), FREEZE(LIQUID, SILID),
+      BOIL(LIQUID, GAS), CONDENSE(GAS, LIQUID),
+      SUBLIME(SOLID, GAS), DEPOSIT(GAS, SOLID);
+  
+      private final Phase from;
+      private final Phase to;
+  
+      Transition(Phase from, Phase to) {
+        this.from = from;
+        this.to = to;
+      }
+  
+      // Initialize the phase transition map
+      private static final Map<Phase, Map<Phase, Transition>>
+        m = Stream.of(values()).collect(gropingBy(t -> t.from, () -> new EnumMap<>(Phase.class), toMap(t -> t.to, t -> t, (x, y) -> y, () -> new EnumMap<>(Phase.class))));
+  		
+      public static Transition from(Phase from, Phase to) {
+        return m.get(from).get(to);
+      }
+    }
+  }
+  ```
+
+  ​	初始化阶段过渡映射的代码看起来可能有点复杂。映射的类型为`Map<Phase，Map<Phase， Transition>>`，表示是由键为源Phase(即第一个阶段)、值为另一个映射组成的Map，其中组成值的Map是由键值对目标Phase(即第二个阶段)和Transition组成的。这个映射的映射是利用两个集合的级联顺序进行初始化的。第一个集合按源Phase对过渡进行分组，第二个集合利用从目标Phase到过渡之间的映射创建一个 EnumMap。第个集合中的merge函数`((x，y)->y)`没有用到；只有当我们因为想要获得一个 EnumMap而定义映射工厂时才需要用到它，同时Collectors提供了重叠工厂。本书第2版是利用显式迭代来初始化阶段过渡映射的。其代码更加烦琐，但是的确更易于理解。
+
+  ​	现在假设想要给系统添加一个新的阶段：plasma(离子)或者电离气体。只有两个过渡与这个阶段关联：电离化(ionization)，它将气体变成离子；以及消电离化(deionization)，将离子变成气体。为了更新基于数组的程序，必须给Phase添加一种新常量，给`Phase.Transition`添加两种新常量，用一种新的16个元素的版本取代原来9个元素的数组的数组。如果给数组添加的元素过多或者过少，或者元素放置不妥当，可就麻烦了：程序可以编译，但是会在运行时失败。为了更新基于 EnumMap的版本，所要做的就是必须将PLASMA添加到 Phase列表，并将工IONIZE(GAS， PLASMA)和DEIONIZE(PLASMA，GAS)添加到`Phase.Transition`的列表中：
+
+  ```java
+  // Adding a new phase using the nested EnumMap implementation
+  public enum Phase {
+    SOLID, LIQUID, GAS, PLASMA;
+    public enum Transition {
+      MELT(SOLD, LIQUID), FREEZR(LIQUID, SOLID),
+      BOIL(LIQUID, GAS), CONDENSE(GAS, LIQUID),
+      SUBLIME(SOLID, GAS), DEPOSIT(GAS, SOLID),
+      IONIZE(GAS, PLASMA), DEIONIZE(PLASMA, GAS);
+      ...// Remainder unchanged
+    }
+  }
+  ```
+
+  ​	程序会自行处理所有其他的事情，这样就几乎没有出错的可能。从内部来看，映射的映射被实现成了数组的数组，因此在提升了清晰性、安全性和易维护性的同时，在空间或者时间上也几乎没有多余的开销。
+
+  ​	为了简洁起见，上述范例是用null表明状态没有变化(这里的to和from是相等的)。这并不是好的实践，可能在运行时导致NullPointerException异常。要给这个问题设计个整洁、优雅的解决方案，需要高超的技巧，得到的程序会很长，贬损了本条目的主要精神。
+
+---
+
++ 小结
+
+  ​	总而言之，**最好不要用序数来索引数组，而要使用 EnumMap**。
+
+  ​	如果你所表示的这种关系是多维的，就使用`EnumMap<... , EnumMap<...>>`。应用程序的程序员在一般情况下都不使用`Enum.ordinal`方法，仅仅在极少数情况下才会使用，因此这是一种特殊情况（E35）。
+
+## E38 用接口模拟可拓展的枚举
+
+P148
+
