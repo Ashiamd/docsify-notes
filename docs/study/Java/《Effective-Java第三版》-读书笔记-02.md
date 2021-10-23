@@ -566,4 +566,287 @@
 
 ## E39 注解优先于命名模式
 
-P150
++ 概述
+
+  ​	**根据经验，一般使用命名模式（naming pattern）表明有些程序元素需要通过某种工具或者框架进行特殊处理**。
+
+  ​	例如，在Java4发行版本之前，Jnit测试框架原本要求其用户定要用test作为测试方法名称的开头[Beck04]。**这种方法可行，但是有几个很严重的缺点**。
+
+  + <u>文字拼写错误会导致失败，且没有任何提示</u>。
+
+    例如，假设不小心将一个测试方法命名为 tsetSafetyOverride而不是 testSafetyOverride。 Junit3不会提示，但也不会执行测试，造成错误的安全感。
+
+  + <u>无法确保它们只用于相应的程序元素上</u>。
+
+    例如，假设将某个类称作 TestSafetyMechanisms，是希望JUnt3会自动地测试它所有的方法，而不管它们叫什么名称。 Junit3还是不会提示，但也同样不会执行测试。
+
+  + <u>它们没有提供将参数值与程序元素关联起来的好方法</u>。
+
+    例如，假设想要支持一种测试类别，它只在抛出特殊异常时才会成功。异常类型本质上是测试的一个参数。你可以利用某种具体的命名模式，将异常类型名称编码到测试方法名称中，但是这样的代码很不雅观，也很脆弱（E62）。编译器不知道要去检验准备命名异常的字符串是否真正命名成功。如果命名的类不存在，或者不是一个异常，你也要到试着运行测试时才会发现。
+
+  ​	注解[JLS，9.7]很好地解决了所有这些问题，Jnit从Java4开始使用。<u>在本条目中，我们要编写自己的试验测试框架，展示一下注解的使用方法</u>。假设想要定义一个注解类型来指定简单的测试，它们自动运行，并在抛出异常时失败。以下就是这样的一个注解类型，命名为Test：
+
+  ```java
+  // Marker annotation type declaration
+  import java.lang.annotation.*;
+  /**
+   * Indicates that the annotated method is a test method.
+   * Use only on parameterless static methods.
+   */
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(ElememtType.METHOD)
+  public @interface Test {
+  }
+  ```
+
+  ​	Test注解类型的声明就是它自身通过@Retention和@Target注解进行了注解。
+
+  ​	**注解类型声明中的这种注解被称作元注解(meta-annotation)**。
+
+  + `@Retention(RetentionPolicy.RUNTIME)`元注解表明Test注解在运行时也应该存在，否则测试工具就无法知道Test注解。
+  + `@Target(ElementType. METHOD)`元注解表明，Test注解只在方法声明中才是合法的：它不能运用到类声明、域声明或者其他程序元素上。
+
+  ​	注意Test注解声明上方的注释："Use only on parameterless static method"(只用于无参的静态方法)。如果编译器能够强制这一限制最好，但是它做不到，除非编写一个**注解处理器(annotation processor)**，让它来完成。关于这个主题的更多信息，请参阅 Javax.annotation.processing的文档。在没有这类注解处理器的情况下，如果将Test注解放在实例方法的声明中，或者放在带有一个或者多个参数的方法中，测试程序还是可以编译，让测试工具在运行时来处理这个问题。
+
+  ​	下面就是现实应用中的Test注解，称作**标记注解(marker annotation)**，因为它没有参数，只是"标注"被注解的元素。如果程序员拼错了Test，或者将Test注解应用到程序元素而非方法声明，程序就无法编译：
+
+  ```java
+  // Program containing marker annotations
+  public class Sample {
+    @Test
+    public static void m1() { } // Test should pass
+    public static void m2() { }
+    @Test
+    public static void m3() { // Test should fail
+      throw new RuntimeException("Boom");
+    }
+    public static void m4() { }
+    @Test
+    public void m5() { } // INVALID USE: nonstatic method
+    public static void m6() { }
+    @Test
+    public static void m7() { // Test should fail
+      throw new RuntimeException("Cash");
+    }
+    public static void m8() { }
+  }
+  ```
+
+  ​	Sample类有7个静态方法，其中4个被注解为测试。这4个中有2个抛出了异常m3和m7，另外两个则没有：m1和m5。但是其中一个没有抛出异常的被注解方法：m5，是个实例方法，因此不属于注解的有效使用。总之，Sample包含4项测试：一项会通过，两项会失败，另一项无效。没有用Test注解进行标注的另外4个方法会被测试工具忽略。
+
+  ​	Test注解对 Sample类的语义没有直接的影响。它们只负责提供信息供相关的程序使用。更一般地讲，注解永远不会改变被注解代码的语义，但是使它可以通过工具进行特殊的处理，例如像这种简单的测试运行类：
+
+  ```java
+  // Program to process marker annotations
+  import java.lang.reflect.*;
+  
+  public class RunTests {
+    public static void main(String[] args) throws Exception {
+      int tests = 0;
+      int passed = 0;
+      Class<?> testClass = Class.forName(args[0]);
+      for (Method m : testClass.getDeclaredMethods()) {
+        if(m.isAnnotationPresent(Test.class)) {
+          tests++;
+          try {
+            m.invoke(null);
+            passed++;
+          } catch (InvocationTargetException wrappedExc) {
+            Throwable exc = wrappedExc.getCause();
+            System.out.println(m + " failed: " + exc);
+          } catch (Exception exc) {
+            System.out.println("Invalid @Test: " + m);
+          }
+        }
+      }
+      System.out.printf("Passed: %d, Failed: %d%n", passed, tests - passed);
+    }
+  }
+  ```
+
+  ​	测试运行工具在命令行上使用完全匹配的类名，并通过调用 Method.invoke反射式地运行类中所有标注了Test注解的方法。 isAnnotationPresent方法告知该工具要运行哪些方法。如果测试方法抛出异常，反射机制就会将它封装在InvocationtTargetException中。该工具捕捉到这个异常，并打印失败报告，包含测试方法抛出的原始异常，这些信息是通过getCause方法从InvocationTargetException中提取出来的。
+
+  ​	<u>如果尝试通过反射调用测试方法时抛出InvocationTargetException之外的任何异常，表明编译时没有捕捉到Test注解的无效用法。这种用法包括实例方法的注解，或者带有一个或多个参数的方法的注解，或者不可访问的方法的注解。测试运行类中的第二个catch块捕捉到这些Test用法错误，并打印出相应的错误消息</u>。下面就是 RunTests在Sample上运行时打印的输出:
+
+  ```shell
+  public static void Sample.m3() failed: RuntimeException: Boom Invalid @Test: public void Sample.m5()
+  public static void Sample.m7() failed: RuntimeException: Crash Passed : 1, Failed: 3
+  ```
+
+  ​	现在我们要针对只在抛出特殊异常时才成功的测试添加支持。为此需要一个新的注解类型：
+
+  ```java
+  // Annotation type with a parameter
+  import java.lang.annotation.*;
+  /**
+  * Indicates that the annotated method is a test method that must throw the designated exception to succeed.
+  */
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(ElementType.METHOD)
+  public @interface ExceptionTest {
+    Class<? extends Throwable> value();
+  }
+  ```
+
+  ​	<u>这个注解的参数类型是`Class<? extends Throwable>`。这个通配符类型有些绕口。它在英语中的意思是：某个扩展 Throwable的类的Class对象，它允许注解的用户指定任何异常(或错误)类型</u>。这种用法是有限制的类型令牌(bounded type token)（E33）的一个示例。下面就是实际应用中的这个注解。注意类名称被用作了注解参数的值：
+
+  ```java
+  // Program containing annotations with a parameter
+  public class Sample2 {
+    @ExceptionTest(ArithmeticException.class)
+    public static void m1() { // Test should pass
+      int i = 0;
+      i = i / i;
+    }
+    @ExceptionTest(ArithmeticException.class)
+    public static void m2() { // Should fail (wrong exception)
+      int[] a = new int[0];
+      int i = a[i]; 
+    }
+    @ExceptionTest(ArithmeticException.class)
+    public static void m3() { } // Should fail(no exception)
+  }
+  ```
+
+  ​	现在我们要修改一下测试运行工具来处理新的注解。这其中包括将以下代码添加到main方法中：
+
+  ```java
+  if (m.isAnnotationPresent(ExceptionTest.class)) {
+    tests++;
+    try {
+      m.invoke(null);
+      System.out.printf("Test %s failed: no exception%n", m);
+    } catch (InvocationTargetException wrappedEx) {
+      Class<? extends Throwable> excType = 
+        m.getAnnotation(ExceptionTest.class).value();
+      if(exType.isInstance(exc)) {
+        passed++;
+      } else {
+        System.out.printf("Test %s failed: expected %s, got %s%n", m, excType.getName(), exc);
+      }
+    } catch (Exception exc) {
+      System.out.println("Invalid @Test: " + m);
+    }
+  }
+  ```
+
+  ​	这段代码类似于用来处理Test注解的代码，但有一处不同：这段代码提取了注解参数的值，并用它检验该测试抛出的异常是否为正确的类型。没有显式的转换，因此没有出现ClassCastException的危险。编译过的测试程序确保它的注解参数表示的是有效的异常类型，<u>需要提醒一点：有可能注解参数在编译时是有效的，但是表示特定异常类型的类文件在运行时却不存在。在这种希望很少出现的情况下，测试运行类会抛出 TypeNotPresentException异常</u>。
+
+  ​	将上面的异常测试示例再深入一点，想象测试可以在抛出任何一种指定异常时都能够通过。注解机制有一种工具，使得支持这种用法变得十分容易。假设我们将ExceptionTest注解的参数类型改成Class对象的一个数组：
+
+  ```java
+  // Annotation type with an array parameter
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(ElementType.METHOD)
+  public @interface ExceptionTest {
+    Class<? extends Exception>[] value();
+  }
+  ```
+
+  ​	注解中数组参数的语法十分灵活。它是进行过优化的单元素数组。使用了ExceptionTest新版的数组参数之后，<u>之前的所有 ExceptionTest注解仍然有效，并产生单元素的数组</u>。为了指定多元素的数组，要用花括号将元素包围起来，并用逗号将它们隔开：
+
+  ```java
+  // Code containing an annotation with an array parameter
+  @ExceptionTest({ IndexOutOfBoundsException.class, NullPointerException.class })
+  public static void doublyBad() {
+    List<String> list = new ArrayList<>();
+    
+    // The spec permits this method to throw either
+    // IndexOutOfBoundsException or NullPointerException
+    list.addAll(5, null);
+  }
+  ```
+
+  ​	修改测试运行工具来处理新的ExceptionTest相当简单。下面的代码代替了原本的代码：
+
+  ```java
+  if (m.isAnnotationPresent(ExceptionTest.class)) {
+    tests++;
+    try{
+      m.invoke(null);
+      System.out.printf("Test %s failed: no exception%n", m);
+    } catch (Throwable wrappedExc) {
+      Throwable exc = wrappedExc.getCause();
+      int oldPassed = passed;
+      Class<? extends Exception>[] excTypes = m.getAnnotation(ExceptionTest.class).value();
+      for (Class<? extends Exception> excType : excTypes) {
+        if (excType.isInstance(exc)) {
+          passed++;
+          break;
+        }
+      }
+      if (passed == oldPassed)
+        System.out.printf("Test %s failed: %s %s", m, exc);
+    }
+  }
+  ```
+
+  ​	<u>从Java8开始，还有另一种方法可以进行多值注解。它不是用一个数组参数声明一个注解类型，而是用@Repeatable元注解对注解的声明进行注解，表示该注解可以被重复地应用给单个元素。这个元注解只有一个参数，就是包含注解类型(containing annotation type)的类对象，它唯一的参数是一个注解类型数组[JLS，9.6.3]</u>。下面的注解声明就是把ExceptionTest注解改成使用这个方法之后的版本。注意包含的注解类型必须利用适当的保留策略和目标进行注解，否则声明将无法编译：
+
+  ```java
+  // Repeatable annotation type
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(ElementType.METHOD)
+  @Repeatable(ExceptionTestContainer.class)
+  public @interface ExceptionTest {
+    Class<? extends Exception> value();
+  }
+  
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(ElementType.METHOD)
+  public @interface ExceptionTestContainer {
+    ExceptionTest[] value();
+  }
+  ```
+
+  ​	下面是doublyBad测试方法用重复注解代替数组值注解之后的代码：
+
+  ```java
+  // Code containing a repeated annotation
+  @RetentionTest(IndexOutOfBoundException.class)
+  @RetentionTest(NullPonterException.class)
+  public static void doublyBad() { ... }
+  ```
+
+  ​	**处理可重复的注解要非常小心。重复的注解会产生一个包含注解类型的合成注解**。
+
+  ​	<u>getAnnotationsByType方法掩盖了这个事实，可以用于访问可重复注解类型的重复和非重复的注解</u>。<u>但isAnnotationPresent使它变成了显式的，即重复的注解不是注解类型(而是所包含的注解类型)的一部分</u>。
+
+  ​	<u>如果一个元素具有某种类型的重复注解，并且用isAnnotationPresent方法检验该元素是否具有该类型的注解，会发现它没有。用这种方法检验是否存在注解类型，会导致程序默默地忽略掉重复的注解。同样地，用这种方法检验是否存在包含的注解类型，会导致程序默默地忽略掉非重复的注解</u>。
+
+  ​	为了利用isAnnotationPresent检测重复和非重复的注解，必须检查注解类型及其包含的注解类型。下面是 Runtests程序改成使用ExceptionTest注解时有关部分的代码：
+
+  ```java
+  // Processing repeatable annotations
+  if (m.isAnnotationPresent(ExceptionTest.class)
+     || m.isAnnotationPresent(ExceptionTestContainer.class)) {
+    tests++;
+    try {
+      m.invoke(null);
+      System.out.printf("Test %s failed: no exception%n", m);
+    } catch (Throwable wrappedExc) {
+      Throwable exc = wrappedExc.getCause();
+      int oldPassed = passed;
+      ExceptionTest[] excTests = m.getAnnotationsByType(ExceptionTest.class);
+      for (ExceptionTest excTest : excTests) {
+        if  excTest.value().isInstance(exc)) {
+          passed++;
+          break;
+        }
+      }
+      if(passed == oldPassed)
+        System.out.printf("Test %s failed: %s %n", m, exc);
+    }
+  }
+  ```
+
+  ​	加入可重复的注解，提升了源代码的可读性，逻辑上是将同一个注解类型的多个实例应用到了一个指定的程序元素。如果你觉得它们增强了源代码的可读性就使用它们，但是记住<u>在声明和处理可重复注解的代码中会有更多的样板代码，并且处理可重复的注解容易出错</u>。
+
+  ​	本条目中的测试框架只是一个试验，但它清楚地示范了注解之于命名模式的优越性这只是揭开了注解功能的冰山一角。如果是在编写一个需要程序员给源文件添加信息的工具，就要定义一组适当的注解类型。**既然有了注解，就完全没有理由再使用命名模式了**。
+
+  ​	也就是说，除了"工具铁匠"( toolsmiths，即平台框架程序员)之外，大多数程序员都不必定义注解类型。但是**所有的程序员都应该使用Java平台所提供的预定义的注解类型**（E40和E27）。还要考虑使用IDE或者静态分析工具所提供的任何注解。这种注解可以提升由这些工具所提供的诊断信息的质量。但是要注意这些注解还没有标准化，因此如果变换工具或者形成标准，就有很多工作要做了。
+
+## E40 坚持使用Override注解
+
+P157
+
