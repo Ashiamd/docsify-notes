@@ -465,7 +465,105 @@
 
   ​	如果你所表示的这种关系是多维的，就使用`EnumMap<... , EnumMap<...>>`。应用程序的程序员在一般情况下都不使用`Enum.ordinal`方法，仅仅在极少数情况下才会使用，因此这是一种特殊情况（E35）。
 
-## E38 用接口模拟可拓展的枚举
+## * E38 用接口模拟可拓展的枚举
 
-P148
++ 概述
 
+  ​	从多方面来看，枚举类型优于本书第1版中描述的类型安全枚举模式。第1版所述的模式能实现让一个枚举类型去扩展另一个枚举类型；利用这种语言特性，则不可能做到。
+
+  ​	**枚举的可伸缩性最后证明基本上都不是什么好点子**。
+
+  ​	目前还没有很好的方法来枚举基本类型的所有元素及其扩展。最终，可伸缩性会导致设计和实现的许多方面变得复杂起来。
+
+  ​	<u>对于可伸缩的枚举类型而言，至少有一种具有说服力的用例，这就是操作码(operation code)，也称作 opcode</u>。操作码是指这样的枚举类型：它的元素表示在某种机器上的那些操作，例如（E34）中的 Operation类型，它表示一个简单的计算器中的某些函数。有时要尽可能地让API的用户提供它们自己的操作，这样可以有效地扩展API所提供的操作集。
+
+  ​	幸运的是，有一种很好的方法可以利用枚举类型来实现这种效果。由于枚举类型可以通过给操作码类型和（属于接口的标准实现的)枚举定义接口来实现任意接口，基本的想法就是利用这一事实。例如，以下是（E34）中的Operation类型的扩展版本：
+
+  ```java
+  public interface Operation {
+    double apply(double x, double y);
+  }
+  
+  public enum BasicOperation implements Operation {
+    PLUS("+") {
+      public double apply(double x, double y) { return x + y; }
+    },
+    MINUS("-") {
+      public double apply(double x, double y) { return x - y; }
+    },
+    TIMES("*") {
+      public double apply(double x, double y) { return x * y; }
+    },
+    DIVIDE("/") {
+      public double apply(double x, double y) { return x / y; }
+    };
+    private final String symbol;
+    
+    BasicOepration(String symbol) {
+      this.symbol = symbol;
+    }
+    
+    @Override
+    public String toString() {
+      return symbol;
+    }
+  }
+  ```
+
+  ​	在可以使用基础操作的任何地方，现在都可以使用新的操作，只要API是写成采用接类型(Operation)而非实现(BasicOperation)。注意，在枚举中，不必像在不可扩展的枚举中所做的那样，利用特定于实例的方法实现（E34）来声明抽象的apply方法。因为抽象的方法(apply)是接口(Operation)的一部分。
+
+  ​	不仅可以在任何需要"基本枚举"的地方单独传递一个"扩展枚举"的实例，而且除了那些基本类型的元素之外，还可以传递完整的扩展枚举类型，并使用它的元素。例如，通过(E34)的测试程序版本，体验一下上面定义过的所有扩展过的操作：
+
+  ```java
+  public static void main(String[] args) {
+    double x = Double.parseDounle(args[0]);
+    double y = Double.parseDouble(args[1]);
+    test(ExtendedOperation.class, x, y);
+  }
+  
+  private static <T extends Enum<T> & Operation> void test(
+  Class<T> opEnumType, double x, double y) {
+    for(Operation op : opEnumType.getEnumConstants())
+      System.out.printf("%f %s %f = %f%n", x, op, y, op.apply(x,y));
+  }
+  ```
+
+  ​	注意扩展过的操作类型的类的字面文字（ExtendedOperation.class）从main被传递给了test方法，来描述被扩展操作的集合。这个类的字面文字充当有限制的类型令牌(bounded type token)（E33）。opEnumType**参数中公认很复杂的声明(`<T extends Enum<T> & operation> C1ass<T>`)确保了Class对象既表示枚举又表示Operation的子类型，这正是遍历元素和执行与每个元素相关联的操作时所需要的**。
+
+  ​	第二种方法是传入一个`Collection<? Extends Operation>`，这是个有限制的通配符类型(bounded wildcard type)（E31），而不是传递一个类对象：
+
+  ```java
+  public static void main(String[] args) {
+    double x = Double.parseDouble(args[0]);
+  	double y = Double.parseDouble(args[1]);
+    test(Arrays.asList(ExtendedOperation.values()), x, y);
+  }
+  
+  private static void test(Collection<? extends Operation> opSet, double x, double y) {
+    for (Operation op : opSet)
+      System.out.printf("%f %s %f = %f%n", x, op, y, op.apply(x, y));
+  }
+  ```
+
+  ​	这样得到的代码没有那么复杂，test方法也比较灵活一些：<u>它允许调用者将多个实现类型的操作合并到一起。另一方面，也放弃了在指定操作上使用 EnumSet（E36）和 EnumMap（E37）的功能</u>。
+
+  ​	上面这两段程序运行时带上命令行参数4和2，都会产生如下输出：
+
+  ```shell
+  4.000000 ^ 2.000000 = 16.000000
+  4.000000 % 2.000000 = 0.000000
+  ```
+
+  ​	<u>用接口模拟可伸缩枚举有个小小的不足，即无法将实现从一个枚举类型继承到另一个枚举类型</u>。如果实现代码不依赖于任何状态，就可以将缺省实现（E20）放在接口中。在上述 Operation的示例中，保存和获取与某项操作相关联的符号的逻辑代码，必须复制到BasicOperation和 ExtendedOperation中。在这个例子中是可以的，因为复制的代码非常少。如果共享功能比较多，则可以将它封装在一个辅助类或者静态辅助方法中来避免代码的复制工作。
+
+  ​	本条目所述的模式也在Java类库中得到了应用。例如，`java.nio.file.LinkOption`枚举类型，它同时实现了CopyOption和 OpenOption接口。
+
+---
+
++ 小结
+
+  ​	总而言之，**虽然无法编写可扩展的枚举类型，却可以通过编写接口以及实现该接口的基础枚举类型来对它进行模拟**。这样允许客户端编写自己的枚举(或者其他类型)来实现接口。如果API是根据接口编写的，那么在可以使用基础枚举类型的任何地方，也都可以使用这些枚举。
+
+## E39 注解优先于命名模式
+
+P150
