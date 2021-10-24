@@ -846,7 +846,200 @@
 
   ​	也就是说，除了"工具铁匠"( toolsmiths，即平台框架程序员)之外，大多数程序员都不必定义注解类型。但是**所有的程序员都应该使用Java平台所提供的预定义的注解类型**（E40和E27）。还要考虑使用IDE或者静态分析工具所提供的任何注解。这种注解可以提升由这些工具所提供的诊断信息的质量。但是要注意这些注解还没有标准化，因此如果变换工具或者形成标准，就有很多工作要做了。
 
-## E40 坚持使用Override注解
+> [Java注解处理之反射API_liuxigiant的专栏-CSDN博客](https://blog.csdn.net/liuxigiant/article/details/54296275)
+>
+> [深度学习Java注解 - SegmentFault 思否](https://segmentfault.com/a/1190000022861141)
+>
+> [为什么Java注解元素不能是包装类? - 知乎 (zhihu.com)](https://www.zhihu.com/question/342626971)
 
-P157
+---
+
++ 自己的简易代码测试
+
+  ​	确实平时写注解的场景很少，或者说就算用到，也是很久写一次，不至于每次开发某些东西都需要写，所以注解代码开发，比较容易生疏。
+
+  1. TestAnnotation注解类
+
+     ```java
+     package annotation;
+     
+     import java.lang.annotation.*;
+     
+     // 下面这两行加不加，3. 测试代码的输出都是一样的
+     // @Retention(RetentionPolicy.RUNTIME)
+     // @Target(ElementType.TYPE)
+     @Repeatable(AnnotationTestContainer.class)
+     public @interface TestAnnotation {
+       // 这里用不了Double ，编译器会报错
+         double[] value() default {0,0.1};
+     }
+     ```
+
+  2. AnnotationTestContainer注解容器类
+
+     ```java
+     package annotation;
+     
+     import java.lang.annotation.ElementType;
+     import java.lang.annotation.Retention;
+     import java.lang.annotation.RetentionPolicy;
+     import java.lang.annotation.Target;
+     
+     @Retention(RetentionPolicy.RUNTIME)
+     @Target(ElementType.TYPE)
+     public @interface AnnotationTestContainer {
+         TestAnnotation[] value();
+     }
+     ```
+
+  3. 测试代码
+
+     ```java
+     package annotation;
+     
+     import java.lang.annotation.Annotation;
+     
+     public class AnnotationTest {
+       @TestAnnotation(value = {4.0,3.2})
+       @TestAnnotation(value = {4.0})
+       @TestAnnotation(value = {5.0})
+       @TestAnnotation
+       @TestAnnotation
+       static class Test001 {
+     
+       }
+     
+       public static void main(String[] args) {
+         Test001 test001 = new Test001();
+         Annotation[] annotations = test001.getClass().getAnnotations();
+         // 1
+         System.out.println(annotations.length);
+         // @annotation.AnnotationTestContainer(value=[@annotation.TestAnnotation(value=[4.0, 3.2]), @annotation.TestAnnotation(value=[4.0]), @annotation.TestAnnotation(value=[5.0]), @annotation.TestAnnotation(value=[0.0, 0.1]), @annotation.TestAnnotation(value=[0.0, 0.1])])
+         for(Annotation annotation : annotations){
+           System.out.println(annotation.toString());
+         }
+         Class<Test001> test001Class = Test001.class;
+         TestAnnotation[] annotationsByType = test001Class.getAnnotationsByType(TestAnnotation.class);
+         // @annotation.TestAnnotation(value=[4.0, 3.2])
+         // @annotation.TestAnnotation(value=[4.0])
+         // @annotation.TestAnnotation(value=[5.0])
+         // @annotation.TestAnnotation(value=[0.0, 0.1])
+         // @annotation.TestAnnotation(value=[0.0, 0.1])
+         for(TestAnnotation testAnnotation : annotationsByType) {
+           System.out.println(testAnnotation.toString());
+         }
+         AnnotationTestContainer[] annotationsByType1 = test001Class.getAnnotationsByType(AnnotationTestContainer.class);
+         // @annotation.AnnotationTestContainer(value=[@annotation.TestAnnotation(value=[4.0, 3.2]), @annotation.TestAnnotation(value=[4.0]), @annotation.TestAnnotation(value=[5.0]), @annotation.TestAnnotation(value=[0.0, 0.1]), @annotation.TestAnnotation(value=[0.0, 0.1])])
+         for(AnnotationTestContainer annotationTestContainer: annotationsByType1) {
+           System.out.println(annotationTestContainer);
+         }
+       }
+     }
+     ```
+
+  4. 输出如下：
+
+     ```java
+     1
+     @annotation.AnnotationTestContainer(value=[@annotation.TestAnnotation(value=[4.0, 3.2]), @annotation.TestAnnotation(value=[4.0]), @annotation.TestAnnotation(value=[5.0]), @annotation.TestAnnotation(value=[0.0, 0.1]), @annotation.TestAnnotation(value=[0.0, 0.1])])
+     @annotation.TestAnnotation(value=[4.0, 3.2])
+     @annotation.TestAnnotation(value=[4.0])
+     @annotation.TestAnnotation(value=[5.0])
+     @annotation.TestAnnotation(value=[0.0, 0.1])
+     @annotation.TestAnnotation(value=[0.0, 0.1])
+     @annotation.AnnotationTestContainer(value=[@annotation.TestAnnotation(value=[4.0, 3.2]), @annotation.TestAnnotation(value=[4.0]), @annotation.TestAnnotation(value=[5.0]), @annotation.TestAnnotation(value=[0.0, 0.1]), @annotation.TestAnnotation(value=[0.0, 0.1])])
+     ```
+
+## * E40 坚持使用Override注解
+
++ 概述
+
+  ​	Java类库中包含了几种注解类型。对于传统的程序员而言，其中最重要的就是**@Override注解**。该注解只能用在方法声明中，表示被注解的方法声明覆盖了超类型中的一个方法声明。如果坚持使用这个注解，可以防止一大类的非法错误。
+
+  ​	使用@Override注解，可以让编译器帮助发现重写错误（即自以为重写了，实际是重载的这种错误）。
+
+---
+
++ 代码举例
+
+  ​	例，这里的Bigram类表示一个双字母组或者有序的字母对：
+
+  ```java
+  // Can you spot the bug?
+  public class Bigram {
+    private final char first;
+    private final char second;
+    
+    public Bigram(char first, char second) {
+      this.first = first;
+      this.second = second;
+    }
+    public boolean equals(Bigram b) {
+      return b.first == first && b.second == second;
+    }
+    public int hashCode() {
+      return 31 * first + second;
+    }
+    
+    public static void main(String[] args) {
+      Set<Bigram> s = new HashSet<>();
+      for(int i = 0; i < 10; i++)
+        for(char ch = 'a'; ch <= 'z'; ch++)
+          s.add(new Bigram(ch, ch));
+      System.out.println(s.size());
+    }
+  }	
+  ```
+
+  ​	理想情况下，上述程序将输出26，因为Set里的元素不能重复。实际上，会发现打印260。
+
+  ​	上述代码显然想覆盖equals方法（E10）、hashCode方法（第11章），但实际是重载了equals方法（E52）。
+
+  ​	为了覆盖`Object.equals`，必须定义一个参数为Object类型的equals方法，但是<u>上述代码equals方法的参数并非Object类型，因此Bigram类从Object继承了equals方法。这个euqals方法测试对象的同一性（identity），就\=\=操作符一样</u>。每个bigram的10个备份中，每一个都与其余的9个不同（new的原因），因此Object.equals认为它们不相等，导致程序打印260。
+
+  ​	通过@Override标注`Bigram.equals`，告知编译器我们想覆盖`Object.equals`方法：
+
+  ```java
+  @Override
+  public boolean equals(Bigram b) {
+    return b.first == first && b.second == second;
+  }
+  ```
+
+  ​	如果插入这个注解，尝试重新编译程序，编译器就会产生如下错误信息：
+
+  ```shell
+  Bigram.java:10: method does not override or implement a method from a supertype
+    @Override public boolean equals(Bigram b) {
+    ^
+  ```
+
+  ​	此时就会立刻意识到哪里出错了，重新编写正确的equals实现（E10）：
+
+  ```java
+  @Override public boolean equals(Object o) {
+    if (!(o instanceof Bigram))
+      return false;
+    Bigram b = (Bigram) o;
+    return b.first == first && b.second == second;
+  }
+  ```
+
+  ​	因此，**应该在你想要覆盖超类声明的每个方法声明中使用 Override注解**。这一规则有个小小的例外。如果你在编写一个没有标注为抽象的类，并且确信它覆盖了超类的抽象方法，在这种情况下，就不必将Override注解放在该方法上了。在没有声明为抽象的类中，如果没有覆盖抽象的超类方法，编译器就会发出一条错误消息。但是，你可能希望关注类中所有覆盖超类方法的方法，在这种情况下，也可以放心地标注这些方法。
+
+  ​	*大多数IDE可以设置为在需要覆盖一个方法时自动插入 Override注解。大多数IDE都提供了使用 Override注解的另一种理由。如果启用相应的代码检验功能，当有一个方法没有 Override注解，却覆盖了超类方法时，IDE就会产生一条警告。如果使用了Override注解，这些警告就会提醒你警惕无意识的覆盖。这些警告补充了编译器的错误消息，后者会提醒你警惕无意识的覆盖失败。IDE和编译器可以确保你无一遗漏地覆盖任何你想要覆盖的方法。*
+
+  ​	*Override注解可以用在方法声明中，覆盖来自接口以及类的声明。由于缺省方法的岀现，在接口方法的具体实现上使用 Override，可以确保签名正确，这是一个很好的实践。如果知道接口没有缺省方法，可以选择省略接口方法的具体实现上的 Override注解，以减少混乱。*
+
+  ​	<u>但是在抽象类或者接口中，还是值得标注所有你想要的方法，来覆盖超类或者超接口方法，无论它们是具体的还是抽象的</u>。例如，Set接口没有给Collection接口添加新方法，因此它应该在它的所有方法声明中包括 Override注解，以确保它不会意外地给Collection接口添加任何新方法。
+
+---
+
++ 小结
+
+  ​	总而言之，**如果在你想要的每个方法声明中使用Override注解来覆盖超类声明，编译器就可以替你防止大量的错误**，但有一个例外。在具体的类中，不必标注你确信覆盖了抽象方法声明的方法(虽然这么做也没有什么坏处)。
+
+## E41 用标记接口定义类型
+
+P159
 
