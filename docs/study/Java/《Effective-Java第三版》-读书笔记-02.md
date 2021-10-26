@@ -1078,6 +1078,134 @@
 
 # 7、Lambda和Stream
 
+​	Java8增加了函数接口（functional interface）、Lambda和方法引用（method reference），使得创建函数对象（function objcet）变得容易。
+
+​	与此同时，还增加Stream API，为处理数据元素的序列提供了类库级别的支持。
+
 ## E42 Lambda优先于匿名类
 
-P161
++ 概述
+
+  ​	根据以往的经验，是用带有单个抽象方法的接口（或者，几乎都不是抽象类）作为函数类型（function type）。它们的实例称作函数对象（function object），表示函数或者要采取的动作。
+
+  ​	自从1997年发布JDK1.1以来，创建函数对象的主要方式是通过匿名类（anonymous class，详见E24)。下面是一个按照字符串的长度对字符串列表进行排序的代码片段，它用一个匿名类创建了排序的比较函数（加强排列顺序）：
+
+  ```java
+  // Anonymous class instance as a function object - obsolete!
+  Collection.sort(words, new Comparator<String>() {
+    public int compare(String s1, String s2) {
+      return Integer.compare(s1.length(), s2.length());
+    }
+  })
+  ```
+
+  ​	*匿名类满足了传统的面向对象的设计模式对函数对象的需求，最著名的有策略（Strategy）模式。 Comparator接口代表一种排序的抽象策略（abstract strategy）；上述的匿名类则是为字符串排序的一种具体策略(concrete strategy)。但是，匿名类的烦琐使得在Java中进行函数编程的前景变得十分黯淡。*
+
+  ​	在Java8中，形成了"带有单个抽象方法的接口是特殊的，值得特殊对待"的观念。这些接口现在被称作**函数接口(functional interface)**，Java允许利用Lambda表达式(Lambda expression，简称 Lambda)创建这些接口的实例。 Lambda类似于匿名类的函数，但是比它简洁得多。以下是上述代码用 Lambda代替匿名类之后的样子。样板代码没有了，其行为也十分明确：
+
+  ```java
+  // Lambda expression as function object (replaces anonymous class)
+  Collections.sort(words, (s1, s2) -> Integer.compare(s1.length(), s2.length()));
+  ```
+
+  ​	注意， Lambda的类型(`Comparator<String>`)、其参数的类型（s1和s2，两个都是String）及其返回值的类型(int)，都没有出现在代码中。<u>编译器利用一个称作类型推导(type inference)的过程，根据上下文推断岀这些类型。在某些情况下，编译器无法确定类型，你就必须指定</u>。类型推导的规则很复杂：在JLS[JLS，18]中占了整章的篇幅。几乎没有程序员能够详细了解这些规则，但是没关系。**删除所有 Lambda参数的类型吧，除非它们的存在能够使程序变得更加清晰**。如果编译器产生一条错误消息，告诉你无法推导出Lambda参数的类型，那么你就指定类型。<u>有时候还需要转换返回值或者整个 Lambda表达式，但是这种情况很少见</u>。
+
+  ​	**关于类型推导应该增加一条警告。（E26）告诉你不要使用原生态类型，（E29）说过要支持泛型类型，（E30）说过要支持泛型方法**。<u>在使用 Lambda时，这条建议确实非常重要，因为编译器是从泛型获取到得以执行类型推导的大部分类型信息的。如果你没有提供这些信息，编译器就无法进行类型推导，你就必须在 Lambda中手工指定类型，这样极大地增加了它们的烦琐程度</u>。如果上述代码片段中的变量 words声明为原生态类型List，而不是参数化的类型`List<String>`，它就不会进行编译。
+
+  ​	当然，如果用 Lambda表达式(详见E14和E43)代替比较器构造方法(comparator construction method)，有时这个代码片段中的比较器还会更加简练：
+
+  ```java
+  Collections.sort(words, comparingInt(String::length));
+  ```
+
+  ​	事实上，如果利用Java8在List接口中添加的sort方法，这个代码片段还可以更加简短一些：
+
+  ```java
+  words.sort(comparingInt(String::length));
+  ```
+
+  ​	Java中增加了 Lambda之后，使得之前不能使用函数对象的地方现在也能使用了。例如，以（E34）中的 Operation枚举类型为例。由于每个枚举的apply方法都需要不同的行为，我们用了特定于常量的类主体，并覆盖了每个枚举常量中的apply方法。通过以下代码回顾一下：
+
+  ```java
+  // Enum type with constant-specific class bodies & data (E34)
+  public enum Operation {
+    PLUS("+") {
+      public double apply(double x, double y) { return x + y; }
+    },
+    MINUS("-") {
+      public double apply(double x, double y) { return x - y; }
+    },
+    TIMES("*") {
+      public double apply(double x, double y) { return x * y; }
+    },
+    DIVIDE("/") {
+      public double apply(double x, double y) { return x / y; }
+    };
+    private final String symbol;
+    Operation(String symbol) { this.symbol = symbol; }
+    @Override
+    public abstract double apply(double x, double y);
+  }
+  ```
+
+  ​	由（E34）可知，枚举实例域优先于特定于常量的类主体。 Lambda使得利用前者实现特定于常量的行为变得比用后者来得更加容易了。只要给每个枚举常量的构造器传递一个实现其行为的 Lambda即可。构造器将 Lambda保存在一个实例域中，apply方法再将调用转给 Lambda。由此得到的代码比原来的版本更简单，也更加清晰：
+
+  ```java
+  // Enum with function object fields & constant-specific behavior
+  public enum Operation {
+    PLUS("+", (x, y) -> x + y),
+    MINUS("-", (x, y) -> x - y),
+    TIMES("*", (x, y) -> x * y),
+    DIVIDE("/", (x, y) -> x /y);
+    
+    private final String symbol;
+    private final DoubleBinaryOperator op;
+    
+    Operation(String symbol, DoubleBinaryOperator op) {
+      this.symbol = symbol;
+      this.op = op;
+    }
+    
+    @Override
+    public String toString() { return symbol; }
+    
+    public double apply(double x, double y) {
+      return op.applyAsDouble(x, y);
+    }
+  }
+  ```
+
+  ​	*注意，这里给 Lambda使用了DoubleBinaryOperator接口，代表枚举常量的行为。这是在java.util.function（E44）中预定义的众多函数接口之一。它表示一个带有两个double参数的函数，并返回一个double结果。*
+
+  ​	看看基于 Lambda的 Operation枚举，你可能会想，特定于常量的方法主体已经形同虚设了，但是实际并非如此。与方法和类不同的是， **Lambda没有名称和文档；如果一个计算本身不是自描述的，或者超出了几行，那就不要把它放在一个 Lambda中**。
+
+  + <u>对于 Lambda而言，一行是最理想的，三行是合理的最大极限</u>。如果违背了这个规则，可能对程序的可读性造成严重的危害。
+  + 如果 Lambda很长或者难以阅读，要么找一种方法将它简化，要么重构程序来消除它。
+  + 而且，传入枚举构造器的参数是在静态的环境中计算的。因而，枚举构造器中的 Lambda无法访间枚举的实例成员。
+  + **如果枚举类型带有难以理解的特定于常量的行为，或者无法在几行之内实现，又或者需要访问实例域或方法，那么特定于常量的类主体仍然是首选**。
+
+  ​	同样地，你可能会认为，在 Lambda时代，匿名类已经过时了。这种想法比较接近事实，但是仍有一些工作用 Lambda无法完成，只能用匿名类才能完成。 
+
+  + **Lambda限于函数接口。如果想创建抽象类的实例，可以用匿名类来完成，而不是用 Lambda**。
+
+  + 同样地，可以用匿名类为带有多个抽象方法的接口创建实例。
+
+  + **最后一点， Lambda无法获得对自身的引用**。
+
+    + **<u>在 Lambda中，关键字this是指外围实例，这个通常正是你想要的</u>。**
+    + **在匿名类中，关键字this是指匿名类实例。**
+
+    **如果需要从函数对象的主体内部访问它，就必须使用匿名类**。
+
+  ​	<u>Lambda与匿名类共享你无法可靠地通过实现来序列化和反序列化的属性</u>。因此，**尽可能不要(除非迫不得已)序列化一个 Lambda(或者匿名类实例)**。如果想要可序列化的函数对象，如Comparator，就使用私有静态嵌套类（E24）的实例。
+
+---
+
++ 小结
+
+  ​	总而言之，从Java8开始， Lambda就成了表示小函数对象的最佳方式。**千万不要给函数对象使用匿名类，除非必须创建非函数接口的类型的实例**。同时，还要记住， Lambda使得表示小函数对象变得如此轻松，因此打开了之前从未实践过的在Java中进行函数编程的大门。
+
+## E43 方法引用优先于Lambda
+
+P164
+
