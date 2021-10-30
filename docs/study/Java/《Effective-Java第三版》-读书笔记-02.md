@@ -1269,6 +1269,90 @@
 
   ​	**只要方法引用更加简洁、清晰，就用方法引用；如果方法引用并不简洁，就坚持使用 Lambda**。
 
-## E44 坚持使用标准的函数接口
+## * E44 坚持使用标准的函数接口
 
-P166
++ 概述
+
+  ​	在Java具有 Lambda表达式之后，编写API的最佳实践也做了相应的改变。例如在模板方法(Template Method)模式中，用一个子类覆盖基本类型方法(primitive method)，来限定其超类的行为，这是最不讨人喜欢的。现在的替代方法是提供一个接受函数对象的静态工厂或者构造器，便可达到同样的效果。在大多数情况下，需要编写更多的构造器和方法，以函数对象作为参数。需要非常谨慎地选择正确的函数参数类型。
+
+  ​	以LinkedHashMap为例。每当有新的键添加到映射中时，put就会调用其受保护的removeEldestEntry方法。如果覆盖该方法，便可以用这个类作为缓存。当该方法返回true，映射就会删除最早传入该方法的条目。下列覆盖代码允许映射增长到100个条目，然后每添加一个新的键，就会删除最早的那个条目，始终保持最新的100个条目：
+
+  ```java
+  protected boolean removeEldestEntry(Map.Entry<K,V> eldest) {
+    return size() > 100;
+  }
+  ```
+
+  ​	这个方法很好用，但是用 Lambda可以完成得更漂亮。假如现在编写 LinkedhashMap，它会有一个带函数对象的静态工厂或者构造器。看一下 removeEldestEntry的声明，你可能会以为该函数对象应该带一个Map.Entry\<K，V\>，并且返回一个 boolean，但实际并非如此：removeEldestEntry方法会调用size()，获取映射中的条目数量，这是因为 removeEldestEntry是映射中的一个实例方法。传到构造器的函数对象则不是映射中的实例方法，无法捕捉到，因为调用其工厂或者构造器时，这个映射还不存在。所以，映射必须将它自身传给函数对象，因此必须传入映射及其最早的条目作为 remove方法的参数。声明一个这样的函数接口的代码如下：
+
+  ```java
+  // Unneccessary functional interface; use a standard one instead.
+  @FunctionalInterface interface EledestEntryRomovalFunction<K,V> {
+    boolean remove(Map<K,V> map, Map.Entry<K,V> eldest);
+  }
+  ```
+
+  ​	这个接口可以正常工作，但是不应该使用，因为没必要为此声明一个新的接口。`java.util.function`包已经为此提供了大量标准的函数接口。**只要标准的函数接口能够满足需求，通常应该优先考虑，而不是专门再构建一个新的函数接口**。这样会使API更加容易学习，通过减少它的概念内容，显著提升互操作性优势，因为许多标准的函数接口都提供了有用的默认方法。如 Predicate接口提供了合并断言的方法。对于上述 LinkedHashMap范例，应该优先使用标准的`BiPredicate<Map<K,V>，Map.Entry<K,V>>`接口，而不是定制EldestEntryRemovalFunction接口。
+
+  ​	<u>java.util.Function中共有43个接口。别指望能够全部记住它们，但是如果能记住其中6个基础接口，必要时就可以推断出其余接口了</u>。
+
+  + 基础接口作用于对象引用类型。
+
+  + Operator接口代表其结果与参数类型一致的函数。 
+  + Predicate接口代表带有一个参数并返回一个 boolean的函数。
+  + Function接口代表其参数与返回的类型不一致的函数。
+  + Supplier接口代表没有参数并且返回(或"提供")一个值的函数。
+  + 最后， Consumer代表的是带有一个参数但不返回任何值的函数，相当于消费掉了其参数。
+
+  这6个基础函数接口概述如下：
+
+  | 接口                | 函数签名            | 范例                |
+  | ------------------- | ------------------- | ------------------- |
+  | UnaryOperator\<T\>  | T apply(T t)        | String::toLowerCase |
+  | BinaryOperator\<T\> | T apply(T t1, T t2) | BigInteger::add     |
+  | Predicate\<T\>      | boolean test(T t)   | Collection::isEmpty |
+  | Function\<T,R\>     | R apply(T t)        | Arrays::asList      |
+  | Supplier\<T\>       | T get()             | Instant::now        |
+  | Comsumer\<T\>       | void accept(T t)    | System.out::println |
+
+  ​	这6个基础接口各自还有3种变体，分别可以作用于基本类型int、long和double。它们的命名方式是在其基础接口名称前面加上基本类型而得。因此，以带有int的 predicate接口为例，其变体名称应该是 IntPredicate，LongBinaryOperator是一个二进制运算符带有两个long值参数并返回一个long值。这些变体接口的类型都不是参数化的，除 Function变体外，后者是以返回类型作为参数。例如，`LongFunction<int[]>`表示带有一个long参数，并返回一个int[]数组。
+
+  ​	Function接口还有9种变体，用于结果类型为基本类型的情况。源类型和结果类型始终不一样，因为从类型到自身的函数就是UnaryOperator。如果源类型和结果类型均为基本类型，就是在 Function前面添加格式如 ScrToResult，如 LongToIntFunction(有6种变体)。如果源类型为基本类型，结果类型是一个对象参数，则要在 Function前添加`<Src> ToObj`，如`DoubleToObjFunction`(有3种变体)。
+
+  ​	这三种基础函数接口还有带两个参数的版本，如BiPredicate<T，U>、 BiFunction<T，U，R>和 BiConsumer<T，U>。还有BiFunction变体用于返回三个相关的基本类型：ToIntBiFunction<T， U>，ToLongBiFunction<T， U> 和ToDoubleBiFunction<T，U>。Consumer接口也有带两个参数的变体版本，它们带一个对象引用和一个基本类型：ObjDoubleConsumer\<T\>、 ObjIntConsumer\<T\>和ObjLongConsumer\<T\>。总之，这些基础接口有9种带两个参数的版本。
+
+  ​	最后，还有 BooleanSupplier接口，它是 Supplier接口的一种变体，返回 boolean值。这是在所有的标准函数接口名称中唯一显式提到 boolean类型的，但 boolean返回值是通过 Predicate及其4种变体来支持的。 BooleanSupplier接口和上述段落中提及的42个接口，总计43个标准函数接口。显然，这是个大数目，但是它们之间并非纵横交错。另一方面，你需要的函数接口都替你写好了，它们的名称都是循规蹈矩的，需要的时候并不难找到。
+
+  ​	现有的大多数标准函数接口都只支持基本类型。**千万不要用带包装类型的基础函数接口来代替基本函数接口**。虽然可行，但它破坏了第61条的规则"基本类型优于裝箱基本类型"。使用装箱基本类型进行批量操作处理，最终会导致致命的性能问题。
+
+  ​	现在知道了，通常应该优先使用标准的函数接口，而不是用自己编写的接口。但什么时候应该自己编写接口呢？当然，是在如果没有任何标准的函数接口能够满足你的需求之时，如需要一个带有三个参数的 Predicate接口，或者需要一个抛出受检异常的接口时，当然就需要自己编写啦。但是也有这样的情况：有结构相同的标准函数接口可用，却还是应该自己编写函数接口。
+
+  ​	还是以咱们的老朋友 Comparator\<T>为例吧。它与 ToIntBiFunction<T，T>接口在结构上一致，虽然前者被添加到类库中时，后一个接口已经存在，但如果用后者就错了。 Comparator之所以需要有自己的接口，有三个原因。首先，每当在API中使用时，其名称提供了良好的文档信息，并且被大量使用。其次， Comparator接口对于如何构成个有效的实例，有着严格的条件限制，这构成了它的总则(general contract)。实现该接口相当于承诺遵守其契约。第三，这个接口配置了大量很好用的缺省方法，可以对比较器进行转换和合并。
+
+  ​	**如果你所需要的函数接口与 Comparator一样具有一项或者多项以下特征，则必须认真考虑自己编写专用的函数接口，而不是使用标准的函数接口**：
+
+  + 通用，并且受益于描述性的名称。
+  + 具有与其关联的严格的契约。
+  + 将受益于定制的缺省方法。
+
+  ​	如果决定自己编写函数接口，一定要记住，它是一个接口，因而设计时应当万分谨慎（E21）。
+
+  ​	注意，EldestEntryRemovalFunction接口(详见第199页)是用`@FunctionalInterface`注解进行标注的。这个注解类型本质上与@Override类似。这是一个标注了程序员设计意图的语句，它有三个目的：
+
+  + 告诉这个类及其文档的读者，这个接口是针对Lambda设计的；
+  + 这个接口不会进行编译，除非它只有一个抽象方法；
+  + 避免后续维护人员不小心给该接口添加抽象方法。
+
+  ​	**必须始终用@Functionallnterface注解对自己编写的函数接口进行标注**。
+
+  ​	**最后一点是关于函数接口在API中的使用。不要在相同的参数位置，提供不同的函数接口来进行多次重载的方法，否则可能在客户端导致歧义**。这不仅仅是理论上的问题。比如ExecutorService的submit方法就可能带有Callable\<T\>或者 Runnable，并且还可以编写一个客户端程序，要求进行一次转换，以显示正确的重载（E52）。避免这个问题的最简单方式是，不要编写在同一个参数位置使用不同函数接口的重载。这是该建议的一个特例，详情请见（E52）。
+
+---
+
++ 小结
+
+  ​	总而言之，既然Java有了 Lambda，就必须时刻谨记用 Lambda来设计API。输入时接受函数接口类型，并在输出时返回之。一般来说，最好使用java.util.function.Function中提供的标准接口，但是必须警惕在相对罕见的几种情况下，最好还是自己编写专用的函数接口。
+
+## E45 谨慎使用Stream
+
+P169
