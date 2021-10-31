@@ -1353,6 +1353,199 @@
 
   ​	总而言之，既然Java有了 Lambda，就必须时刻谨记用 Lambda来设计API。输入时接受函数接口类型，并在输出时返回之。一般来说，最好使用java.util.function.Function中提供的标准接口，但是必须警惕在相对罕见的几种情况下，最好还是自己编写专用的函数接口。
 
-## E45 谨慎使用Stream
+## * E45 谨慎使用Stream
 
-P169
++ 概述
+
+  ​	在Java8中增加了 Stream APl，简化了串行或并行的大批量操作。这个API提供了两个关键抽象：Stream（流）代表数据元素有限或无限的顺序， Stream pipeline（流管道）则代表这些元素的一个多级计算。 Stream中的元素可能来自任何位置。常见的来源包括集合数组、文件、正则表达式模式匹配器、伪随机数生成器，以及其他 Stream。 Stream中的数据元素可以是对象引用，或者基本类型值。它支持三种基本类型：int、long和 double。
+
+  ​	一个 Stream pipeline中包含一个源 Stream，接着是0个或者多个中间操作(intermediate operation)和一个终止操作(terminal operation)。每个中间操作都会通过某种方式对Stream进行转换，例如将每个元素映射到该元素的函数，或者过滤掉不满足某些条件的所有元素。所有的中间操作都是将一个 Stream转换成另一个 Stream，其元素类型可能与输入的 Stream一样，也可能不同。终止操作会在最后一个中间操作产生的 Strean上执行一个最终的计算，例如将其元素保存到一个集合中，并返回某一个元素，或者打印出所有元素等。
+
+  ​	**Stream pipeline通常是lazy的：直到调用终止操作时才会开始计算，对于完成终止操作不需要的数据元素，将永远都不会被计算**。正是这种lazy计算，使无限 Stream成为可能。注意，没有终止操作的Stream pipeline将是一个静默的无操作指令，因此千万不能忘记终止操作。
+
+  ​	Stream APl是流式(fluent)的：所有包含 pipeline的调用可以链接成一个表达式。事实上，多个 pipeline也可以链接在一起，成为一个表达式。
+
+  ​	**在默认情况下， Stream pipeline是按顺序运行的。要使 pipeline并发执行，只需在该pipeline的任何 Stream上调用parallel方法即可，但是通常不建议这么做（E48）**。
+
+  ​	Stream API包罗万象，足以用Stream执行任何计算，但是"可以"并不意味着"应该"。如果使用得当， Stream可以使程序变得更加简洁、清晰；如果使用不当，会使程序变得混乱且难以维护。对于什么时候应该使用Stream，并没有硬性的规定，但是可以有所启发。
+
+  ​	以下面的程序为例，它的作用是从词典文件中读取单词，并打印出单词长度符合用户指定的最低值的所有换位词。记住，包含相同的字母，但是字母顺序不同的两个词，称作换位词(anagram)。该程序会从用户指定的词典文件中读取每一个词，并将符合条件的单词放入一个映射中。这个映射键是按字母顺序排列的单词，因此"staple"的键是"aelpst"，"petals"的键也是"aelpst"：这两个词就是换位词，所有换位词的字母排列形式是一样的(有时候也叫 alphagram)。映射值是包含了字母排列形式一致的所有单词。词典读取完成之后，每一个列表就是一个完整的换位词组。随后，程序会遍历映射的values()，预览并打印出单词长度符合极限值的所有列表。
+
+  ```java
+  // Prints all large anagram groups in a dictionary iteratively
+  public class Anagrams {
+    public static void main(String[] args) throws IOException {
+      File dictionary = new File(args[0]);
+      int minGroupSize = Integer.parseInt(args[1]);
+      
+      Map<String, Set<String>> groups = new HashMap<>();
+      try(Scanner s = new Scanner(dictionary)) {
+        while (s.hasNext()) {
+          String word = s.next();
+          groups.computeIfAbsent(alphabetize(word),
+             (unused) -> new TreeSet<>()).add(word);
+        }
+      }
+      for(Set<String> group : groups.values())
+        if(group.size() >= minGroupSize)
+          System.out.println(group.size() + ": " + group);
+    }
+    
+    private static String alphabetize(String s) {
+      char[] a = s.toCharArray();
+      Arrays.sort(a);
+      return new String(a);
+    }
+  }
+  ```
+
+  ​	这个程序中有一个步骤值得注意。被插入到映射中的每一个单词都以粗体显示，这是使用了Java8中新增的 computeIfAbsent方法。<u>这个方法会在映射中查找一个键：如果这个键存在，该方法只会返回与之关联的值。如果键不存在，该方法就会对该键运用指定的函数对象算出一个值，将这个值与键关联起来，并返回计算得到的值。 computeIfAbsent方法简化了将多个值与每个键关联起来的映射实现</u>。
+
+  ​	下面举个例子，它也能解决上述问题，只不过大量使用了 Stream。注意，它的所有程序都是包含在一个表达式中，除了打开词典文件的那部分代码之外。<u>之所以要在另一个表达式中打开词典文件，只是为了使用try-with-resources语句，它可以确保关闭词典文件</u>：
+
+  ```java
+  // Overuse of streams - don't do this!
+  public class Anagrams {
+    public static void main(String[] args) throws IOException {
+      Path dictionary = Paths.get(args[0]);
+      int minGroupSize = Integer.parseInt(args[1]);
+  
+      try(Stream<String> words = Files.lines(dictionary)) {
+        words.collect(
+          groupingBy(word -> word.char().sorted()
+                     .collect(StringBuilder::new,
+                              (sb, c) -> sb.append((char) c),
+                              StringBuilder::apend).toString()))
+          .values().stream()
+          .filter(group -> group.size() >= minGroupSize)
+          .map(group -> group.size() + ": " + group)
+          .forEach(System.out::println);
+      }
+    }
+  }
+  ```
+
+  ​	如果你发现这段代码好难懂，别担心，你并不是唯一有此想法的人。它虽然简短，但是难以读懂，对于那些使用 Stream还不熟练的程序员而言更是如此。滥用 Stream会使程序代码更难以读懂和维护。
+
+  ​	好在还有一种舒适的中间方案。下面的程序解决了同样的问题，它使用了 Stream，但是没有过度使用。结果，与原来的程序相比，这个版本变得既简短又清晰：
+
+  ```java
+  // Tasteful ues of streams enhances clarity and conciseness
+  public class Anagrams {
+    public static void main(String[] args) throws IOException {
+      Path dictionary = Paths.get(args[0]);
+      int minGroupSize = Integer.parseInt(agrs[1]);
+      
+      try(String<String> words = Files.lines(dictionary)) {
+        words.collect(groupingBy(word -> alphabetize(word)))
+          .values().stream()
+          .filter(group -> group.size() >= minGroupSize)
+          .forEach(g -> System.out.println(g.size() + ": " + g));
+      }
+    }
+    // alphabetize method is the same as in original version
+  }
+  ```
+
+  ​	即使你之前没怎么接触过 Stream，这段程序也不难理解。它在try-with-resources块中打开词典文件，获得一个包含了文件中所有代码的 Stream。Stream变量命名为 words，是建议Stream中的每个元素均为单词。这个 Stream中的 pipeline没有中间操作；它的终止操作将所有的单词集合到一个映射中，按照它们的字母排序形式对单词进行分组（E46）。这个映射与前面两个版本中的是完全相同的。随后，在映射的values()视图中打开了一个新的`Stream<List<String>`。当然，这个 Stream中的元素都是换位词分组。 Strean进行了过滤，把所有单词长度小于 minGroupSize的单词都去掉了，最后，通过终止操作的 foreach打印出剩下的分组。
+
+  ​	注意， Lambda参数的名称都是经过精心挑选的。实际上参数应当以group命名，只是这样得到的代码行对于书本而言太宽了。**在没有显式类型的情况下，仔细命名 Lambda参数，这对于 Stream pipeline的可读性至关重要**。
+
+  ​	还要注意单词的字母排序是在一个单独的alphabetize方法中完成的。给操作命名，并且不要在主程序中保留实现细节，这些都增强了程序的可读性。**在 Stream pipeline中使用 helper方法，对于可读性而言，比在迭代化代码中使用更为重要**，因为 pipeline缺乏显式的类型信息和具名临时变量。
+
+  ​	可以重新实现alphabetize方法来使用 Stream，只是基于 Stream的 alphabetize方法没那么清晰，难以正确编写，速度也可能变慢。这些不足是因为<u>Java不支持基本类型的 char Stream(这并不意味着Java应该支持 char stream；也不可能支持)。为了证明用Stream处理char值的各种危险，请看以下代码</u>：
+
+  ```java
+  "Hello world!".chars().forEach(System.out::print);
+  ```
+
+  ​	或许你以为它会输出`Hello world!`，但是运行之后发现，它输出的是721011081081113211911111410810033。<u>这是因为`"Hello world!".chars()`返回的 Stream中的元素，并不是char值，而是int值，因此调用了print的int覆盖</u>。名为 chars的方法，却返回int值的 Stream，这固然会造成困扰。修正方法是利用转换强制调用正确的覆盖：
+
+  ```java
+  Hello world!".chars(， foreach(x-> System. out. print((char) x));
+  ```
+
+  ​	<u>但是，**最好避免利用 Stream来处理char值**。刚开始使用 Stream时，可能会冲动到恨不得将所有的循环都转换成 Stream，但是切记，千万别冲动。这可能会破坏代码的可读性和易维护性。一般来说，即使是相当复杂的任务，最好也结合 Stream和迭代来一起完成，如上面的 Anagrams程序范例所示。因此，**重构现有代码来使用 Stream，并且只在必要的时候才在新代码中使用**</u>。
+
+  ​	如本条目中的范例程序所示， Stream pipeline利用函数对象(一般是 Lambda或者方法引用)来描述重复的计算，而迭代版代码则利用代码块来描述重复的计算。下列工作只能通过代码块，而不能通过函数对象来完成：
+
+  + 从代码块中，可以读取或者修改范围内的任意局部变量；从 Lambda则只能读取final或者有效的final变量[JLS 4.12.4]，并且不能修改任何local变量。
+  + 从代码块中，可以从外围方法中 return、 break或 continue外围循环，或者抛出该方法声明要抛出的任何受检异常；从 Lambda中则完全无法完成这些事情。
+
+  ​	如果某个计算最好要利用上述这些方法来描述，它可能并不太适合 Stream。反之， Stream可以使得完成这些工作变得易如反掌：
+
+  + 统一转换元素的序列
+  + 过滤元素的序列
+  + 利用单个操作(如添加、连接或者计算其最小值)合并元素的顺序
+  + 将元素的序列存放到一个集合中，比如根据某些公共属性进行分组
+  + 搜索满足某些条件的元素的序列
+
+  ​	如果某个计算最好是利用这些方法来完成，它就非常适合使用 Stream。
+
+  ​	<u>**利用 Stream很难完成的一件事情就是，同时从一个 pipeline的多个阶段去访问相应的元素：一旦将一个值映射到某个其他值，原来的值就丢失了**。一种解决办法是将每个值都映射到包含原始值和新值的一个对象对( pair object)，不过这并非万全之策，当 pipeline的多个阶段都需要这些对象对时尤其如此。这样得到的代码将是混乱、繁杂的，违背了 Strean的初衷。最好的解决办法是，当需要访问较早阶段的值时，将映射颠倒过来</u>。
+
+  ​	例如，编写一个打印出前20个梅森素数(Mersenne primes)的程序。解释一下，梅森素数是一个形式为2<sup>p</sup>-1的数字。如果p是一个素数，相应的梅森数字也是素数；那么它就是一个梅森素数。作为 pipeline的第一个 Stream，我们想要的是所有素数。下面的方法将返回(无限) Stream。假设使用的是静态导入，便于访问 BigInteger的静态成员：
+
+  ```java
+  static Stream<BigInteger> primes() {
+    return Stream.interate(TWO, BigInteger::nextProbablePrime);
+  }
+  ```
+
+  ​	方法的名称(primes)是一个复数名词，它描述了 Stream的元素。强烈建议返回Stream的所有方法都采用这种命名惯例，因为可以增强 Stream pipeline的可读性。该方法使用静态工厂Stream.iterate，它有两个参数：Stream中的第一个元素，以及从前一个元素中生成下一个元素的一个函数。下面的程序用于打印出前20个梅森素数。
+
+  ```java
+  public static void main(String[] args) {
+    primes().map(p -> TWO.pow(p.intValueExact()).subtract(ONE))
+      .filter(mersenne -> mersenne.isProbablePrime(50))
+      .limit(20)
+      .forEach(System.out.println);
+  }
+  ```
+
+  ​	这段程序是对上述内容的简单编码示范：它从素数开始，计算岀相应的梅森素数，过滤掉所有不是素数的数字(其中50是个神奇的数字，它控制着这个概率素性测试)，限制最终得到的 Stream为20个元素，并打印出来。
+
+  ​	现在假设想要在每个梅森素数之前加上其指数(p)。这个值只出现在第一个 Stream中，因此在负责输出结果的终止操作中是访问不到的。所幸将发生在第一个中间操作中的映射颠倒过来，便可以很容易地计算出梅森数字的指数。该指数只不过是一个以二进制表示的位数，因此终止操作可以产生所要的结果
+
+  ```java
+  .foreach(mp -> System.out.println(mp.bitLength()+ ": " + mp));
+  ```
+
+  ​	现实中有许多任务并不明确要使用 Stream，还是用迭代。例如有个任务是要将一副新纸牌初始化。假设Card是一个不变值类，用于封装Rank和Suit，这两者都是枚举类型。这项任务代表了所有需要计算从两个集合中选择所有元素对的任务。数学上称之为两个集合的笛卡尔积。这是一个迭代化实现，嵌入了一个for-each循环，大家对此应当都非常熟悉了：
+
+  ```java
+  // Iterative Cartesian product computation
+  private static List<Card> newDeck() {
+    List<Card> result = new ArrayList<>();
+    for(Suit suit : Suit.values())
+      for(Rank rank : Rank.values())
+        result.add(new Card(suit, rank));
+    return result;
+  }
+  ```
+
+  ​	这是一个基于 Stream的实现，利用了中间操作 flatMap。这个操作是将 Stream中的每个元素都映射到一个 Stream中，然后将这些新的 Stream全部合并到一个 Stream(或者将它们扁平化)。注意，这个实现中包含了一个嵌入式的 Lambda，如以下粗体部分所示：
+
+  ```java
+  // Stream-based Cartesian product computation
+  private static List<Card> newDeck() {
+    return Stream.of(Suit.values())
+      .flatMap(suit -> 
+               Stream.of(Rank.values())
+               .map(rank -> new Card(suit, rank)))
+      .collect(toList());
+  }
+  ```
+
+  ​	这两种 new Deck版本哪一种更好？这取决于个人偏好，以及编程环境。第一种版本比较简单，可能感觉比较自然，大部分Java程序员都能够理解和维护，但是有些程序员可能会觉得第二种版本(基于 Stream的)更舒服。这个版本可能更简洁一点，如果已经熟练掌握 Stream和函数编程，理解起来也不难。如果不确定要用哪个版本，或许选择迭代化版本会更加安全一些。如果更喜欢 Stream版本，并相信后续使用这些代码的其他程序员也会喜欢，就应该使用 Stream版本。
+
+---
+
++ 小结
+
+  ​	总之，有些任务最好用 Stream完成，有些则要用迭代。而有许多任务则最好是结合使用这两种方法来一起完成。具体选择用哪一种方法，并没有硬性、速成的规则，但是可以参考一些有意义的启发。在很多时候，会很清楚应该使用哪一种方法;有些时候，则不太明显。**如果实在不确定用 Stream还是用迭代比较好，那么就两种都试试，看看哪一种更好用吧**
+
+## E46 优先选择Stream中无副作用的函数
+
+P174
+
