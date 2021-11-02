@@ -1547,5 +1547,122 @@
 
 ## E46 优先选择Stream中无副作用的函数
 
-P174
++ 概述
+
+  ​	如果刚接触 Stream，可能比较难以掌握其中的窍门。就算只是用 Stream pipeline来表达计算就困难重重。当你好不容易成功了，运行程序之后，却可能感到这么做并没有享受到多大益处。 Strean并不只是一个API，它是一种基于函数编程的模型。为了获得 Strean带来的描述性和速度，有时还有并行性，必须采用范型以及API。
+
+  ​	Stream范型最重要的部分是把计算构造成一系列变型，每一级结果都尽可能靠近上级结果的纯函数(pure function)。纯函数是指其结果只取决于输入的函数：它不依赖任何可变的状态，也不更新任何状态。为了做到这一点，传入Stream操作的任何函数对象，无论是中间操作还是终止操作，都应该是无副作用的。
+
+  ​	有时会看到如下代码片段，它构建了一张表格，显示这些单词在一个文本文件中出现的频率：
+
+  ```java
+  // Uses the streams API but not the paradigm--Don't do this!
+  Map<String, Long> freq = new HashMap<>();
+  try (Stream<String> word = new Scanner(file).tokens()) {
+    words.forEach(word -> {
+      freq.merge(word.toLowerCase(), 1L, Long::sum);
+    });
+  }
+  ```
+
+  ​	以上代码有什么问题吗？它毕竟使用了 Strean、 Lambda和方法引用，并且得出了正确的答案。简而言之，这根本不是 Stream代码；只不过是伪装成 Stream代码的迭代式代码。它并没有享受到 Stream API带来的优势，代码反而更长了点，可读性也差了点，并且比相应的迭代化代码更难维护。因为这段代码利用一个改变外部状态(频率表)的 Lambda，完成了在终止操作的 foreach中的所有工作。 foreach操作的任务不只展示由 Stream执行的计算结果，这在代码中并非好事，改变状态的 Lambda也是如此。那么这段代码应该是什么样的呢？
+
+  ```java
+  // Proper ues of streams to initialize a frequency table
+  Map<String, Long> freq;
+  try(Stream<String> words = new Scanner(file).tokens()) {
+    freq = words.collect(groupingBy(String::toLowerCase, counting()));
+  }
+  ```
+
+  ​	这个代码片段的作用与前一个例了一样，只是正确使用了 Stream API，变得更加简洁、清晰。那么为什么有人会以其他的方式编写呢？这是为了使用他们已经熟悉的工具。Java程序员都知道如何使用 for-each循环，终止操作的forEach也与之类似。但 forEach操作是终止操作中最low的，也是对 Stream最不友好的。它是显式迭代，因而不适合并行。 **forEach操作应该只用于报告 Stream计算的结果，而不是执行计算**。有时候，也可以将 forEach用于其他目的，比如将 Stream计算的结果添加到之前已经存在的集合中去。
+
+  ​	改进过的代码使用了一个收集器(collector)，为了使用 Stream，这是必须了解的一个新概念。Collectors API很吓人：它有39种方法，其中有些方法还带有5个类型参数！好消息是，你不必完全搞懂这个API就能享受它带来的好处。对于初学者，可以忽略Cllector接口，并把收集器当作封装缩减策略的一个黑盒子对象。在这里，缩减的意思是将Stream的元素合并到单个对象中去。收集器产生的对象一般是一个集合(即名称收集器)。
+
+  ​	将Stream的元素集中到一个真正的Collection里去的收集器比较简单。有三个这样的收集器：toList()、 toSet()和toCollection(collectionFactory)。它们分别返回一个列表、一个集合和程序员指定的集合类型。了解了这些，就可以编写Stream pipeline，从频率表中提取排名前十的单词列表了：
+
+  ```java
+  // Pipeline to get a top-ten list of words from a frequency table
+  List<String> topTen = freq.keySet().stream()
+    .sorted(comparing(freq::get).reversed())
+    .limit(10)
+    .collect(toList())
+  ```
+
+  ​	注意，这里没有给 toList方法配上它的Collectors类。**静态导入Collectors的所有成员是惯例也是明智的，因为这样可以提升 Stream pipeline的可读性**。
+
+  ​	这段代码中唯一有技巧的部分是传给 sorted的比较器 `comparing(freq::get).reversed()`。comparing方法是一个比较器构造方法（E14），它带有一个键提取函数。函数读取一个单词，"提取"实际上是一个表查找：有限制的方法引用freq:get在频率表中查找单词，并返回该单词在文件中出现的次数。最后，在比较器上调用 reversed，按频率高低对单词进行排序。后面的事情就简单了，只要限制 Stream为10个单词，并将它们集中到一个列表中即可。
+
+  ​	上一段代码是利用Scanner的Stream方法来获得Stream。这个方法是在Java9中增加的。如果使用的是更早的版本，可以把实现 Iterator的扫描器，翻译成使用了类似于（E47）中适配器的 Stream(streamOf( Iterable\<E\>))。
+
+  ​	Collectors中的另外36种方法又是什么样的呢？它们大多数是为了便于将 Stream集合到映射中，这远比集中到真实的集合中要复杂得多。每个 Stream元素都有一个关联的键和值，多个 Stream元素可以关联同一个键。
+
+  ​	最简单的映射收集器是toMap(keyMapper，valueMapper)，它带有两个函数，其中一个是将 Stream元素映射到键，另一个是将它映射到值。我们采用（E34）fromString实现中的收集器，将枚举的字符串形式映射到枚举本身：
+
+  ```java
+  // Using a toMap collector to make a map from string to enum
+  private static final Map<String, Operation> stringToEnum = 
+    Stream.of(values()).collect(
+  toMap(Object::toString, e -> e));
+  ```
+
+  ​	如果Stream中的每个元素都映射到一个唯一的键，那么这个形式简单的 toMap是很完美的。如果多个 Stream元素映射到同一个键， pipeline就会抛出一个IllegalStateException异常将它终止。
+
+  ​	toMap更复杂的形式，以及groupingBy方法，提供了更多处理这类冲突的策略。其中一种方式是除了给 toMap方法提供了键和值映射器之外，还提供一个合并函数(merge function)。合并函数是一个 BinaryOperator\<V\>，这里的V是映射的值类型。合并函数将与键关联的任何其他值与现有值合并起来，因此，假如合并函数是乘法，得到的值就是与该值映射的键关联的所有值的积。
+
+  ​	带有三个参数的toMap形式，对于完成从键到与键关联的被选元素的映射也是非常有用的。假设有一个 Stream，代表不同歌唱家的唱片，我们想得到一个从歌唱家到最畅销唱片之间的映射。下面这个收集器就可以完成这项任务。
+
+  ```java
+  // Collector to generate a map from key to chosen element for key
+  Map<Artist, Album> toHits = albums.collect(
+  toMap(Album::artist, a->a, maxBy(comparing(Album::sales))));
+  ```
+
+  ​	注意，这个比较器使用了静态工厂方法 maxBy，这是从 BinaryOperator静态导入的。该方法将 Comparator\<T\>转换成一个 BinaryOperator\<T\>，用于计算指定比较器产生的最大值。在这个例子中，比较器是由比较器构造器方法 comparing返回的，它有个键提取函数`Album::sales`。这看起来有点绕，但是代码的可读性良好。不严格地说，它的意思是"将唱片的 Stream转换成一个映射，将每个歌唱家映射到销量最佳的唱片"。这就非常接近问题陈述了。
+
+  ​	带有三个参数的 tmap形式还有另一种用途,即生成一个收集器,当有冲突时强制保留最后更新”(last- write-wins)。对于许多 Stream而言,结果是不确定的,但如果与映射函数的键关联的所有值都相同,或者都是可接受的,那么下面这个收集器的行为就正是你所要的：
+
+  ```java
+  // Collector to impose last-write-wins policy
+  toMap(keyMapper, valuesMapper, (oldVal, newVal) -> newVal)
+  ```
+
+  ​	toMap的第三个也是最后一种形式是，带有第四个参数，这是一个映射工厂，在使用时要指定特殊的映射实现，如 EnumMap或者 TreeMap。
+
+  ​	tmap的前三种版本还有另外的变换形式，命名为 toconcurrentmap，能有效地并行运行，并生成 Concurrenthashmap实例。
+
+  ​	除了toMap方法，Collectors API还提供了groupingBy方法，它返回收集器以生成映射，根据分类函数将元素分门别类。分类函数带有一个元素，并返回其所属的类别。这个类别就是元素的映射键。 groupingBy方法最简单的版本是只有一个分类器，并返回个映射，映射值为每个类别中所有元素的列表。下列代码就是在（E45）的 Anagram程序中用于生成映射(从按字母排序的单词，映射到字母排序相同的单词列表)的收集器：
+
+  ```java
+  words.collect(groupingBy(word -> alphabetize(word)))
+  ```
+
+  ​	如果要让groupingBy返回一个收集器，用它生成一个值而不是列表的映射，除了分类器之外，还可以指定一个下游收集器(downstream collector)。下游收集器从包含某个类别中所有元素的 Stream中生成一个值。这个参数最简单的用法是传入 toSet()，结果生成一个映射，这个映射值为元素集合而非列表。
+
+  ​	另一种方法是传人toCollection(collectionFactory)，允许创建存放各元素类别的集合。这样就可以自由选择自己想要的任何集合类型了。带两个参数的groupingBy版本的另一种简单用法是，传入counting()作为下游收集器。这样会生成一个映射，它将每个类别与该类别中的元素数量关联起来，而不是包含元素的集合。这正是在本条目开头处频率表范例中见到的：
+
+  ```java
+  Map<String, Long> freq = words
+    .collect(groupingBy(String::toLowerCase, couting()));
+  ```
+
+  ​	groupingBy的第三个版本，除下游收集器之外，还可以指定一个映射工厂。*注意，这个方法违背了标准的可伸缩参数列表模式：参数mapFactory要在downStream参数之前，而不是在它之后*。 groupingBy的这个版本可以控制所包围的映射，以及所包围的集合，因此，比如可以定义一个收集器，让它返回值为TreeSets的TreeMap。
+
+  ​	groupingByConcurrent方法提供了 groupingBy所有三种重载的变体。这些变体可以有效地并发运行，生成 ConcurrentHashMap实例。还有一种比较少用到的 groupingBy变体叫作 partitioningBy。除了分类方法之外，它还带一个断言(predicate)，并返回一个键为Boolean的映射。这个方法有两个重载，其中一个除了带有断言之外，还带有下游收集器。
+
+  ​	counting方法返回的收集器仅用作下游收集器。通过在 Stream上的 count方法，直接就有相同的功能，**因此压根没有理由使用collect(counting())**。这个属性还有15种Collectors方法。其中包含9种方法其名称以 summing、 averaging和 summarizing开头(相应的 Stream基本类型上就有相同的功能)。它们还包括 reducing、filtering、mapping、flatMapping和colectingAndThen方法。大多数程序员都能安全地避开这里的大多数方法。从设计的角度来看，这些收集器试图部分复制收集器中Stream的功能，以便下游收集器可以成为“ ministream”。
+
+  ​	目前已经提到了3个Collectors方法。虽然它们都在Collectors中，但是并不包含集合。前两个是minBy和 maxBy，它们有一个比较器，并返回由比较器确定的Stream中的最少元素或者最多元素。它们是Stream接口中min和max方法的粗略概括，也是BinaryOperator中同名方法返回的二进制操作符，与收集器相类似。回顾一下在最畅销唱片范例中用过的BinaryOperator. maxBy方法。
+
+  ​	最后一个Collectors方法是joining，它只在 CharSequence实例的 Stream中操作，例如字符串。它以参数的形式返回一个简单地合并元素的收集器。其中一种参数形式带有一个名为 delimiter(分界符)的 CharSequence参数，它返回一个连接 Stream元素并在相邻元素之间插入分隔符的收集器。如果传入一个逗号作为分隔符，收集器就会返回一个用逗号隔开的值字符串(但要注意，如果 Stream中的任何元素中包含逗号，这个字符串就会引起歧义)。这三种参数形式，除了分隔符之外，还有一个前缀和一个后缀。最终的收集器生成的字符串，会像在打印集合时所得到的那样，如[came，saw， conquered]。
+
+---
+
++ 小结
+
+  ​	总而言之，编写 Stream pipeline的本质是无副作用的函数对象。这适用于传人 Stream及相关对象的所有函数对象。终止操作中的 forEach应该只用来报告由 Stream执行的计算结果，而不是让它执行计算。为了正确地使用 Stream，必须了解收集器。最重要的收集器工厂是 toList、 toSet、 toMap、 groupingBy和 joining。
+
+## E47 Stream要优先用Collection作为返回类型
+
+P179
 
