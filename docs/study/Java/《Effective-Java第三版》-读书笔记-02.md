@@ -1664,5 +1664,156 @@
 
 ## E47 Stream要优先用Collection作为返回类型
 
-P179
++ 概述
 
+  ​	许多方法都返回元素的序列。在Java8之前，这类方法明显的返回类型是集合接口Collection、Set和List；Iterable；以及数组类型。一般来说，很容易确定要返回这其中哪一种类型。标准是一个集合接口。如果某个方法只为for-each循环或者返回序列而存在，无法用它来实现一些Collection方法(一般是contains(Object))，那么就用Iterable接口吧。如果返回的元素是基本类型值，或者有严格的性能要求，就使用数组。在Java8中增加了 Stream，本质上导致给序列化返回的方法选择适当返回类型的任务变得更复杂了。
+
+  ​		或许你曾听说过，现在 Stream是返回元素序列最明显的选择了，但如第45条所述，Stream并没有淘汰迭代：要编写出优秀的代码必须巧妙地将 Stream与迭代结合起来使用。如果一个APⅠ只返回一个 Stream，那些想要用for-each循环遍历返回序列的用户肯定要失望了。因为 Stream接口只在 Iterable接口中包含了唯一一个抽象方法， Stream对于该方法的规范也适用于 Iterable的。唯一可以让程序员避免用for-each循环遍历 Stream的是 Stream无法扩展 Iterable接口。
+
+  ​	遗憾的是，这个问题还没有适当的解决办法。乍看之下，好像给 Stream的 iterator方法传入一个方法引用可以解决。这样得到的代码可能有点杂乱、不清晰，但也不算难以理解：
+
+  ```java
+  // Won't compile, due to limitations on Java's type inference
+  for(ProcessHandle ph : ProcessHandle.allProcesses()::iterator) {
+    // Process the process
+  }
+  ```
+
+  ​	遗憾的是，如果想要编译这段代码，就会得到一条报错的信息：
+
+  ```shell
+  Test.java:6: error: method reference not expected here for (ProcessHandle ph : ProcessHandle.allProcesses()::iterator) {
+  ^
+  ```
+
+  ​	为了使代码能够进行编译，必须将方法引用成适当参数化的Iterable：
+
+  ```java
+  // Hideous workaround to iterate over a stream
+  for (ProcessHandle ph : (Iterable<ProcessHandle>) ProcessHandle.allProcesses()::iterator)
+  ```
+
+  ​	这个客户端代码可行，但是实际使用时过于杂乱、不清晰。更好的解决办法是使用适配器方法。JDK没有提供这样的方法，但是编写起来很容易，使用在上述代码中内嵌的相同方法即可。注意，在适配器方法中没有必要进行转换，因为Java的类型引用在这里正好派上了用场：
+
+  ```java
+  // Adapter from Stream<E> to Iterable<E>
+  public static <E> Iterable<E> iterableOf(Stream<E> stream) {
+    return stream::iterator;
+  }
+  ```
+
+  ​	有了这个适配器，就可以利用for-each语句遍历任何Stream：
+
+  ```java
+  for(ProcessHandle p : iterableOf(ProcessHandle.allProcesses())) {
+    // Process the process
+  }
+  ```
+
+  ​	注意，（E34）中 Anagrams程序的 Stream版本是使用Files.lines方法读取词典，而迭代版本则使用了扫描器(scanner)。 Files.lines方法优于扫描器，因为后者默默地吞掉了在读取文件过程中遇到的所有异常。最理想的方式是在迭代版本中也使用Files.lines。这是程序员在特定情况下所做的一种妥协，比如当API只有 Stream能访问序列，而他们想通过for-each语句遍历该序列的时候。
+
+  ​	反过来说，想要利用 Stream pipeline处理序列的程序员，也会被只提供Iterable的API搞得束手无策。同样地，JDK没有提供适配器，但是编写起来也很容易:
+
+  ```java
+  // Adapter from Iterable<E> to Stream<E>
+  public static <E> Stream<E> streamOf(Iterable<E> iterable) {
+    return StreamSupport.stream(iterable.spliterator(), false);
+  }
+  ```
+
+  ​	如果在编写一个返回对象序列的方法时，就知道它只在 Stream pipeline中使用，当然就可以放心地返回Stream了。同样地，当返回序列的方法只在迭代中使用时，则应该返回Iterable。但如果是用公共的API返回序列，则应该为那些想要编写 Stream pipeline，以及想要编写for-each语句的用户分别提供，除非有足够的理由相信大多数用户都想要使用相同的机制。
+
+  ​	Collection接口是Iterable的一个子类型，它有一个stream方法，因此提供了迭代和stream访问。**对于公共的、返回序列的方法，Collection或者适当的子类型通常是最佳的返回类型**。数组也通过 Arrays.asList和 Stream.of方法提供了简单的迭代和 stream访问。如果返回的序列足够小，容易存储，或许最好返回标准的集合实现，如ArrayList或者HashSet。但是**千万别在内存中保存巨大的序列，将它作为集合返回即可**。
+
+  ​	如果返回的序列很大，但是能被准确表述，可以考虑实现一个专用的集合。假设想要返回一个指定集合的幂集（power set），其中包括它所有的子集。{a，b，c}的幂集是{{}，(a}，{b}，{c}，{a，b}，{a，c}，{b，c}，(a，b，c)}。如果集合中有n个元素，它的幂集就有2n个。因此，不必考虑将幂集保存在标准的集合实现中。但是，有了AbstractList的协助，为此实现定制集合就很容易了。
+
+  ​	技巧在于，用幂集中每个元素的索引作为位向量，在索引中排第n位，表示源集合中第n位元素存在或者不存在。实质上，在二进制数0至2n-1和有n位元素的集合的幂集之间，有一个自然映射。代码如下:
+
+  ```java
+  // Return the power set of an input set as custom collection
+  public class PowerSet {
+    public static final <E> Collection<Set<E>> of(Set<E> s) {
+      List<E> src = new ArrayList<>(s);
+      if(src.size() > 30)
+        throw new IllegalArgumentException("Set too big" + s);
+      return new AbstractList<Set<E>>() {
+        @Override public int size() {
+          return 1 << src.size(); // 2 to the power srcSize
+        }
+        @Override public boolean contains(Object o) {
+          return o instanceof Set && src.containAll((Set) o);
+        }
+        @Override public Set<E> get(int index) {
+          Set<E> result = new HashSet<>();
+          for(int i = 0; index != 0; i++, index >>= 1)
+            if((index & 1) == 1)
+              result.add(src.get(i));
+          return result;
+        }
+      }
+    }
+  }
+  ```
+
+  ​	注意，如果输入值集合中超过30个元素， PowerSet.of会抛出异常。这正是用 Collection而不是用Stream或Iterable作为返回类型的缺点：Collection有一个返回int类型的size方法，它限制返回的序列长度为 Integer. MAX_VALUE或者2<sup>31</sup>-1。如果集合更大，甚至无限大，Collection规范确实允许size方法返回2<sup>31</sup>-1，但这并非是最令人满意的解决方案。
+
+  ​	为了在 AbstractCollection上编写一个Collection实现，除了Iterable必需的那一个方法之外，只需要再实现两个方法：contains和size。这些方法经常很容易编写出高效的实现。如果不可行，或许是因为没有在迭代发生之前先确定序列的内容，返回 Stream或者 Iterable，感觉哪一种更自然即可。如果能选择，可以尝试着分别用两个方法返回。
+
+  ​	**有时候在选择返回类型时，只需要看是否易于实现即可**。例如，要编写一个方法，用它返回一个输入列表的所有(相邻的)子列表。它只用三行代码来生成这些子列表，并将它们放在一个标准的集合中，但存放这个集合所需的内存是源列表大小的平方。这虽然没有幂集那么糟糕，但显然也是无法接受的。像给幂集实现定制的集合那样，确实很烦琐，这个可能还更甚，因为JDK没有提供基本的 Iterator实现来支持。
+
+  ​	但是，实现输入列表的所有子列表的 Stream是很简单的，尽管它确实需要有点洞察力。我们把包含列表第一个元素的子列表称作列表的前缀。例如，(a，b，c)的前缀就是(a)、(a，b)和(a，b，c)。同样地，把包含最后一个元素的子列表称作后缀，因此(a，b，c)的后缀就是(a，b，c)、(b，c)和(c)。考验洞察力的是，列表的子列表不过是前缀的后缀(或者说后缀的前缀)和空列表。这一发现直接带来了一个清晰且相当简洁的实现：
+
+  ```java
+  // Returns a stream of all the sublists of its input list
+  public class SubLists {
+    public static <E> Stream<List<E>> of(List<E> list) {
+      return Stream.concat(Stream.of(Collections.emptyList()),
+                          prefixes(list).flatMap(SubLists::suffixes));
+    }
+    private static <E> Stream<List<E>> prefixes(List<E> list) {
+      return IntStream.rangeClosed(1, list.size())
+        .mapToObj(end -> list.subList(0, end));
+    }
+    private static <E> Stream<List<E>> suffixes(List<E> list) {
+      return IntStream.range(0, list.size())
+        .mapToObj(start -> list.subList(start, list.size()));
+    }
+  }
+  ```
+
+  ​	注意，它用 Stream.concat方法将空列表添加到返回的 Stream。另外还用 flatMap方法（E45）生成了一个包含了所有前缀的所有后缀的Stream。最后，通过映射IntStream.range和IntStream.rangeClosed返回的连续int值的 Stream，生成了前缀和后缀。通俗地讲，这一术语的意思就是指数为整数的标准for循环的 Stream版本。因此，这个子列表实现本质上与明显的嵌套式for循环相类似：
+
+  ```java
+  for (int start = 0; start < src.size(); start++)
+    for (int end = start + 1; end <= src.size(); end++)
+      System.out.println(src.subList(start, end));
+  ```
+
+  ​	这个for循环也可以直接翻译成一个 Stream。这样得到的结果比前一个实现更加简洁，但是可读性稍微差了一点。它本质上与（E45）中笛卡尔积的 Stream代码相类似：
+
+  ```java
+  // Returns a stream of all the sublists of its input list 
+  public static <E> Stream<List<E>> of(List<E> list) {
+    return IntStream.range(0, list.size())
+      .mapToObj(start ->
+               IntStream.rangeClosed(start + 1, list.size())
+               .mapToObj(end -> list.subList(start, end)))
+      .flatMap(x -> x);
+  }
+  ```
+
+  ​	像前面的for循环一样，这段代码也没有发出空列表。为了修正这个错误，也应该使用concat，如前一个版本中那样，或者用rangeClosed调用中的(int)Math.signum(start)代替1。
+
+  ​	子列表的这些 Stream实现都很好，但这两者都需要用户在任何更适合迭代的地方，采用stream-to-Iterable适配器，或者用Stream。Stream-to-Iterable适配器不仅打乱了客户端代码，在作者的机器上循环的速度还降低了2.3倍。专门构建的Collection实现(此处没有展示)相当烦琐，但是运行速度在作者的机器上比基于 Stream的实现快了约1.4倍。
+
+---
+
++ 小结
+
+  ​	总而言之，<u>在编写返回一系列元素的方法时，要记住有些用户可能想要当作 Stream处理，而其他用户可能想要使用迭代。要尽量两边兼顾</u>。
+
+  ​	如果可以返回集合，就返回集合。如果集合中已经有元素，或者序列中的元素数量很少，足以创建一个新的集合，那么就返回个标准的集合，如 ArrayList。否则，就要考虑实现一个定制的集合，如幂集(power set)范例中所示。如果无法返回集合，就返回 Stream或者 Iterable，感觉哪一种更自然即可。如果在未来的Java发行版本中， Stream接口声明被修改成扩展了Iterable接口，就可以放心地返回 Stream了，因为它们允许进行 Stream处理和迭代。
+
+## E48 谨慎使用Stream并行
+
+P182
