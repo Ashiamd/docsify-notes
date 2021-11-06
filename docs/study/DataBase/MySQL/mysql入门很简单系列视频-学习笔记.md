@@ -215,6 +215,8 @@
 >
 > 锁
 >
+> [select for update引发死锁分析 - 活在夢裡 - 博客园 (cnblogs.com)](https://www.cnblogs.com/micrari/p/8029710.html)
+>
 > [求教 For Update 解锁](https://bbs.csdn.net/topics/330034068)
 >
 > [MySQL 共享锁 (lock in share mode)，排他锁 (for update)](https://learnku.com/articles/12800/lock-in-share-mode-mysql-shared-lock-exclusive-lock-for-update)
