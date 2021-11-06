@@ -1993,7 +1993,138 @@
 
   ​	**简而言之，每当编写方法或者构造器的时候，应该考虑它的参数有哪些限制。应该把这些限制写到文档中，并且在这个方法体的开头处，通过显式的检查来实施这些限制**。养成这样的习惯是非常重要的。只要有效性检查有一次失败，你为必要的有效性检查所付出的努力便都可以连本带利地得到偿还了。
 
-## E50 必要时进行保护性拷贝
+## * E50 必要时进行保护性拷贝
 
-P189
++ 概述
 
+  ​	Java用起来如此舒适的一个因素在于，它是一门安全的语言(safe language)。这意味着，它对于缓冲区溢出、数组越界、非法指针以及其他的内存破坏错误都自动免疫，而这些错误却困扰着诸如C和C++这样的不安全语言。在一门安全语言中，在设计类的时候，可以确切地知道，无论系统的其他部分发生什么问题，这些类的约束都可以保持为真。对于那些“把所有内存当作一个巨大的数组来对待”的语言来说，这是不可能的。
+
+  ​	即使在安全的语言中，如果不采取一点措施，还是无法与其他的类隔离开来。**假设类的客户端会尽其所能来破坏这个类的约束条件，因此你必须保护性地设计程序**。实际上，只有当有人试图破坏系统的安全性时，才可能发生这种情形；更有可能的是，对你的API产生误解的程序员，所导致的各种不可预期的行为，只好由类来处理。<u>无论是哪种情况，编写些面对客户的不良行为时仍能保持健壮性的类，这是非常值得投入时间去做的事情</u>。
+
+  ​	如果没有对象的帮助，另一个类不可能修改对象的内部状态，但是对象很容易在无意识的情况下提供这种帮助。例如，以下面的类为例，它声称可以表示一段不可变的时间周期：
+
+  ```java
+  // Broken "immutable" time period class
+  public final class Period {
+    private final Date start;
+    private final Date end;
+    
+    /**
+     * @param start the beginning of the period
+     * @param end the end of the period; must not precede start
+     * @throw IllegalArgumentException if start is after end
+     * @throw NullPointerException if start or end is null
+     */
+    public Period(Date start, Date end) {
+      if(start.compareTo(end) > 0)
+        throw new IllegalArgumentException(start + " after " + end);
+      this.start = start;
+      this.end = end;
+    }
+    
+    public Date start() {
+      return start;
+    }
+    public Date end() {
+      return end;
+    }
+    
+    ... // Remainder omitted
+  }
+  ```
+
+  ​	乍看之下，这个类似乎是不可变的，并且强加了约束条件：周期的起始时间(start)不能在结束时间(end)之后。然而，因为Date类本身是可变的，因此很容易违反这个约束条件：
+
+  ```java
+  // Attack the internals of a Period instance
+  Date start = new Date();
+  Date end = new Date();
+  Period p = new Period(start, end);
+  end.setYear(78); // Modifies internals of p!
+  ```
+
+  ​	从Java8开始，修正这个问题最明显的方式是使用Instant(或LocalDateTime，或者 ZonedDateTime)代替Date，因为Instant(以及另一个java.time类)是不可变的（E17）。**Date已经过时了，不应该在新代码中使用**。也就是说，问题依然存在：有时候，还是需要在API和内部表达式中使用可变的值类型，本条目中讨论的方法正适用于这些情况。
+
+  ​	为了保护Period实例的内部信息避免受到这种攻击，**<u>对于构造器的每个可变参数进行保护性拷贝(defensive copy)是必要的</u>**，并且使用备份对象作为Period实例的组件，而不使用原始的对象：
+
+  ```java
+  // Repaired constructor - makes defensive copies of parameters
+  public Period(Date start, Date end) {
+    this.start = new Date(start.getTime());
+    this.end = new Date(end.getTime());
+    
+    if(this.start.compareTo(this.end) > 0)
+      throw new IllegalArgumentException(this.start + " after " + this.end);
+  }
+  ```
+
+  ​	用了新的构造器之后，上述的攻击对于 Period实例不再有效。**注意，<u>保护性拷贝是在检查参数的有效性(详见第49条)之前进行的，并且有效性检查是针对拷贝之后的对象，而不是针对原始的对象</u>**。虽然这样做看起来有点不太自然，却是必要的。<u>这样做可以避免在"危险阶段"(window of vulnerability)期间从另一个线程改变类的参数，这里的危险阶段是指从检查参数开始，直到拷贝参数之间的时间段。在计算机安全社区中，这被称作Time-Of-Check/Time-Of-Use或者TOCTTOU攻击[Viega01]</u>。
+
+  > [TOCTTOU_百度百科 (baidu.com)](https://baike.baidu.com/item/TOCTTOU/24165127)
+  >
+  > TOCTTOU是time-of-check-to-time-of-use的缩写； TOCTTOU可发音为TOCK too。
+  >
+  > TOCTTOU是指计算机系统的资料与权限等状态的检查与使用之间，因为某特定状态在这段时间已改变所产生的[软件漏洞](https://baike.baidu.com/item/软件漏洞/3879396)。
+
+  ​	同时也请注意，我们没有用Date的clone方法来进行保护性拷贝。<u>因为Date是非final的，不能保证clone方法一定返回类为java.util.Date的对象：它有可能返回专门出于恶意的目的而设计的不可信子类的实例。例如，这样的子类可以在每个实例被创建的时候，把指向该实例的引用记录到一个私有的静态列表中，并且允许攻击者访问这个列表。这将使得攻击者可以自由地控制所有的实例</u>。为了阻止这种攻击，**对于参数类型可以被不可信任方子类化的参数，请不要使用clone方法进行保护性拷贝**。
+
+  ​	虽然替换构造器就可以成功地避免上述的攻击，但是改变Period实例仍然是有可能的，因为它的访问方法提供了对其可变内部成员的访问能力：
+
+  ```java
+  // Second attack on the internals of a Period instance
+  Date start = new Date();
+  Date end = new Date();
+  Period p = new Period(start, end);
+  p.end().setYear(78); // Modifies internals of p!
+  ```
+
+  ​	为了防御这第二种攻击，只需修改这两个访问方法，**使它<u>返回可变内部域的保护性拷贝</u>**：
+
+  ```java
+  // Repaired accessors - make defensive copies of internal fields
+  public Date start() {
+    return new Date(start.getTime());
+  }
+  
+  public Date end() {
+    return new Date(end.getTime());
+  }
+  ```
+
+  ​	采用了新的构造器和新的访问方法之后， Period真正是不可变的了。不管程序员是多么恶意，或者多么不合格，都绝对不会违反“周期的起始时间不能晚于结束时间”这个约束条件。确实如此，因为除了 Period类自身之外，其他任何类都无法访问 Period实例中的任何一个可变域。这些域被真正封装在对象的内部。
+
+  ​	**访问方法与构造器不同，它们在进行保护性拷贝的时候允许使用clone方法**。之所以如此，是因为我们知道， Period内部的Date对象的类型是java.util.Date，而不可能是其他某个潜在的不可信子类。也就是说，<u>基于（E13）中所阐述的原因，一般情况下，最好使用构造器或者静态工厂</u>。
+
+  ​	**参数的保护性拷贝并不仅仅针对不可变类。每当编写方法或者构造器时，如果它允许客户提供的对象进入到内部数据结构中，则有必要考虑一下，客户提供的对象是否有可能是可变的**。
+
+  + 如果是，就要考虑你的类是否能够容忍对象进入数据结构之后发生变化。
+  + 如果答案是否定的，就必须对该对象进行保护性拷贝，并且让拷贝之后的对象而不是原始对象进入到数据结构中。
+
+  ​	例如，如果你正在考虑使用由客户提供的对象引用作为内部Set实例的元素，或者作为内部Map实例的键(key)，就应该意识到，如果这个对象在插入之后再被修改，Set或者Map的约束条件就会遭到破坏。
+
+  ​	**在内部组件被返回给客户端之前，对它们进行保护性拷贝也是同样的道理。不管类是否为不可变的，在把一个指向内部可变组件的引用返回给客户端之前，也应该加倍认真地考虑**。解决方案是，应该返回保护性拷贝。
+
+  ​	记住长度非零的数组总是可变的。
+
+  + 因此，在把内部数组返回给客户端之前，总要进行保护性拷贝。
+  + 另一种解决方案是，<u>给客户端返回该数组的不可变视图(immutable view)</u>。
+
+  ​	这两种方法在（E15）中都已经演示过了。
+
+  ​	可以肯定地说，上述的真正启示在于，**只要有可能都应该使用不可变的对象作为对象内部的组件，这样就不必再为保护性拷贝（E17）操心**。在前面的 Period例子中使用了Instant(或LocalDateTime，或者 ZonedDateTime)，除非使用Java8之前的版本。如果使用的是较早的版本，一种选择是保存Date.getTime()返回的long基本类型，而不是使用Date对象引用。
+
+  ​	<u>保护性拷贝可能会带来相关的性能损失，这种说法并不总是正确的。如果类信任它的调用者不会修改内部的组件，可能因为类及其客户端都是同一个包的双方，那么不进行保护必拷贝也是可以的。在这种情况下，类的文档中就必须清楚地说明，调用者绝不能修改受到影响的参数或者返回值</u>。
+
+  ​	即使跨越包的作用范围，也并不总是适合在将可变参数整合到对象中之前，对它进行保护性拷贝。有一些方法和构造器的调用，要求参数所引用的对象必须有个显式的交接(handoff)过程。当客户端调用这样的方法时，它承诺以后不再直接修改该对象。如果方法或者构造器期望接管一个由客户端提供的可变对象，它就必须在文档中明确地指明这一点。
+
+  ​	**如果类所包含的方法或者构造器的调用需要移交对象的控制权，这个类就无法让自身抵御恶意的客户端**。<u>只有当类和它的客户端之间有着互相的信任，或者破坏类的约束条件不会伤害到除了客户端之外的其他对象时，这种类才是可以接受的</u>。后一种情形的例子是包装类模式（E18）。**根据包装类的本质特征，客户端只需在对象被包装之后直接访问它，就可以破坏包装类的约束条件，但是，这么做往往只会伤害到客户端自己**。
+
+---
+
++ 小结
+
+  ​	简而言之，**如果一个类包含有从客户端得到或者返回到客户端的可变组件，这个类就必须保护性地拷贝这些组件**。<u>如果拷贝的成本受到限制，并且类信任它的客户端不会不恰当地修改组件，就可以在文档中指明客户端的职责是不得修改受到影响的组件，以此来代替保护性拷贝</u>。
+
+## E51 谨慎设计方法签名
+
+P192
