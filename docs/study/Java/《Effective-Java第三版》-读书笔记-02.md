@@ -1908,5 +1908,92 @@
 
 # 8、方法
 
-## E49 检查参数的有效性
+​	本章讨论方法设计的几个方面：
+
++ 如何处理参数和返回值
++ 如何设计方法签名
++ 如何为方法编写文档
+
+​	本章大部分内容既适用于构造器，也适用于普通的方法。与第4章一样，本章的焦点也集中在可用性、健壮性和灵活性上。
+
+## * E49 检查参数的有效性
+
++ 概述
+
+  ​	大多数方法和构造器对于传递给它们的参数值都会有某些限制。例如，索引值必须是非负数，对象引用不能为null，等等，这些都是很常见的。<u>你应该在文档中清楚地指明这些限制，并且在方法体的开头处检查参数，以强制施加这些限制</u>。它是“发生错误之后应该尽快检测岀错误”这一普遍原则的一种特例。如果不能做到这一点，检测到错误的可能性就比较小，即使检测到错误了，也比较难以确定错误的根源。
+
+  ​	如果传递无效的参数值给方法，这个方法在执行之前先对参数进行了检查，那么它很快就会失败，并且清楚地出现适当的异常(exception)。如果这个方法没有检查它的参数，就有可能发生几种情形。该方法可能在处理过程中失败，并且产生令人费解的异常。更糟糕的是，该方法可以正常返回，但是会悄悄地计算出错误的结果。最糟糕的是，该方法可以正常返回，但是却使得某个对象处于被破坏的状态，将来在某个不确定的时候，在某个不相关的点上会引发出错误。换句话说，<u>**没有验证参数的有效性，可能导致违背失败原子性**(failure atomicity)，详见（E76）</u>。
+
+  ​	<u>**对于公有的和受保护的方法，要用Javadoc的@throws标签(tag)在文档中说明违反参数值限制时会抛出的异常（E74）**</u>。这样的异常通常为IllegalArgumentException、IndexOutOfBoundsException或NullPointerException（E72）。一旦在文档中记录了对于方法参数的限制，并且记录了一旦违反这些限制将要抛出的异常，强加这些限制就是非常简单的事情了。下面是一个典型的例子:
+
+  ```java
+  /**
+   * Returns a BigInteger whose value is (this mod m). This method
+   * differs from the remainder method in that it always returns a
+   * non-negative BigInteger
+   * 
+   * @param m the modulus, which must be positive
+   * @return this mod m
+   * @throws ArithmeticException if m is less than or equal to 0
+   */
+  public BigInteger mod(BigInteger m) {
+    if (m.signum() <= 0)
+      throw new ArithmeticException("Modulus <= 0:" + m);
+    ... // Do the computation
+  }
+  ```
+
+  ​	注意，文档注释中并没有说"如果m为null，mod就抛出NullPointerException"，而是作为调用m.signum()的副产物，即使方法正是这么做的。这个异常的文档是建立在外围BigInteger类的类级文档注释中。类级注释运用到该类的所有公有方法中的所有参数。这样可以很好地避免分别在每个方法中给每个NullPointerException建立文档而引起的混乱。它可以结合@Nullable或者类似的注解一起使用，表示某个特殊的参数可以为null，不过这个实践不是标准的，有多个注解可以完成这个作用。
+
+  ​	**在Java7中增加的Objects.requireNonNull方法比较灵活且方便，因此不必再手工进行null检查**。只要你愿意，还可以指定自己的异常详情。这个方法会返回其输入，因此可以在使用一个值的同时执行null检查：
+
+  ```java
+  // Inline use of Java's null-checking facility
+  this.strategy = Objects.requireNonNull(strategy, "strategy");
+  ```
+
+  ​	<u>也可以忽略返回值，并在必要的地方，用 Objects.requireNonNull作为独立的null检查</u>。
+
+  ​	<u>在Java9中增加了检査范围的设施：java.util.Objects。这个设施包含三个方法：checkFromIndexSize、checkFromToIndex和checkIndex。这个设施不像检查null的方法那么灵活。它不允许指定自己的异常详情，而是专门设计用于列表和数组索引的。它不处理关闭的范围(包含其两个端点)。但是如果它所做的正是你需要的，那么就是一个有用的工具</u>。
+
+  ​	**对于未被导出的方法(unexported method)，作为包的创建者，你可以控制这个方法将在哪些情况下被调用，因此你可以，也应该确保只将有效的参数值传递进来**。因此，<u>非公有的方法通常应该使用断言(assertion)来检查它们的参数</u>，具体做法如下所示：
+
+  ```java
+  // Private helper function for a recursive sort
+  private static void sort(long a[], int offset, int length) {
+    assert a != null;
+    assert offset >= 0 && offset <= a.length;
+    assert length >= 0 && length <= a.length - offset;
+    ... // Do the computation
+  }
+  ```
+
+  ​	从本质上讲，这些断言是在声称被断言的条件将会为真，无论外围包的客户端如何使用它。
+
+  + 不同于一般的有效性检查，断言如果失败，将会抛出 AssertionError。
+  + <u>不同于一般的有效性检查，如果它们没有起到作用，本质上也不会有成本开销，除非通过将-ea(或者- enableassertions)标记(flag)传递给Java解释器，来启用它们</u>。
+
+  ​	*关于断言的更多信息，请见Sun的教程[Asserts]。*
+
+  > [Java 之 assert （断言） - 星朝 - 博客园 (cnblogs.com)](https://www.cnblogs.com/jpfss/p/10026877.html)
+
+  ​	**<u>对于有些参数，方法本身没有用到，却被保存起来供以后使用，检验这类参数的有效性尤为重要</u>**。比如，以（E20）中的静态工厂方法为例，它的参数为一个int数组，并返回该数组的List视图。如果这个方法的客户端要传递null，该方法将会抛出一个NullPointerException，因为该方法包含一个显式的条件检查(调用 Objects. requireNonNull)。如果省略了这个条件检查，它就会返回一个指向新建List实例的引用，一旦客户端企图使用这个引用，立即就会抛出NullPointerException。到那时，要想找到List实例的来源可能就非常困难了，从而使得调试工作更加复杂。
+
+  ​	**如前所述，有些参数被方法保存起来供以后使用，构造器正是代表了这种原则的一种特例。检查构造器参数的有效性是非常重要的，这样可以避免构造出来的对象违反了这个类的约束条件**。
+
+  ​	在方法执行它的计算任务之前，应该先检查它的参数，这一规则也有例外。一个很重要的例外是，**在某些情况下，有效性检查工作非常昂贵，或者根本是不切实际的，而且有效性检查已隐含在计算过程中完成**。例如，以为对象列表排序的方法Collections.sort(List)为例，列表中的所有对象都必须是可以相互比较的。在为列表排序的过程中，列表中的每个对象将与其他某个对象进行比较。如果这些对象不能相互比较，其中的某个比较操作就会抛出 ClassCastException，这正是sort方法应该做的事情。因此，提前检查列表中的元素是否可以相互比较，这并没有多大意义。然而，请注意，<u>不加选择地使用这种方法将会导致失去失败原子性( failure atomicity)，详见（E76）</u>。
+
+  ​	**有时候，某些计算会隐式地执行必要的有效性检查，但是如果检查不成功，就会抛出错误的异常**。<u>换句话说，由于无效的参数值而导致计算过程抛出的异常，与文档中标眀这个方法将抛出的异常并不相符。在这种情况下，应该使用（E73）中讲述的**异常转换(exception translation)技术**，将计算过程中抛出的异常转换为正确的异常</u>。
+
+  ​	**<u>请不要由本条目的内容得出这样的结论：对参数的任何限制都是件好事。相反，在设计方法时，应该使它们尽可能通用，并符合实际的需要</u>**。假如方法对于它能接受的所有参数值都能够完成合理的工作，对参数的限制就应该是越少越好。然而，通常情况下，有些限制对于被实现的抽象来说是固有的。
+
+---
+
++ 小结
+
+  ​	**简而言之，每当编写方法或者构造器的时候，应该考虑它的参数有哪些限制。应该把这些限制写到文档中，并且在这个方法体的开头处，通过显式的检查来实施这些限制**。养成这样的习惯是非常重要的。只要有效性检查有一次失败，你为必要的有效性检查所付出的努力便都可以连本带利地得到偿还了。
+
+## E50 必要时进行保护性拷贝
+
+P189
 
