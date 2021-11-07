@@ -2474,7 +2474,154 @@
 
   ​	简而言之，**永远不要返回null，而不返回一个零长度的数组或者集合**。如果返回null，那样会使API更难以使用，也更容易出错，而且没有任何性能优势。
 
-## E55 谨慎返回optional
+## E55 谨慎返回Optional
 
-P202
++ 概述
+
+  ​	在Java8之前，要编写一个在特定环境下无法返回任何值的方法时，有两种方法：要么抛出异常，要么返回null(假设返回类型是一个对象引用类型)。但这两种方法都不够完美。
+
+  + **异常应该根据异常条件保留起来（E69）**。<u>由于创建异常时会捕捉整个堆栈轨迹，因此抛出异常的开销很高</u>。
+  + 返回null没有这些缺点，但它有自身的不足。<u>如果方法返回null，客户端就必须包含特殊的代码来处理返回null的可能性，除非程序员能证明不可能返回null。如果客户端疏忽了，没有检査null返回值，并将null返回值保存在某个数据结构中，那么未来在与这个问题毫不相关的某处代码中，随时有可能发生NullPointerException异常</u>。
+
+  ​	**在Java8中，还有第三种方法可以编写不能返回值的方法。 <u>`Optinal<T>`类代表的是个不可变的容器，它可以存放单个非null的T引用，或者什么内容都没有</u>**。
+
+  + 不包含任何内容的Optional称为空(Empty)。
+  + 非空的Optional中的值称作存在(Present)。
+
+  ​	Optional本质上是一个不可变的集合，最多只能存放一个元素。 `Optional<T>`没有实现`Collection<T>`接口，但原则上是可以的。
+
+  ​	理论上能返回T的方法，实践中也可能无法返回，因此在某些特定的条件下，可以改为声明返回 `Optional<T>`。它允许方法返回空的结果，表明无法返回有效的结果。**返回Optional的方法比抛出异常的方法使用起来更灵活，也更容易，并且比返回null的方法更不容易出错**。
+
+  ​	在（E30）展示过下面这个方法，用来根据元素的自然顺序，计算集合中的最大值。
+
+  ```java
+  // Returns maximum value in collection - throws exception if empty
+  public static <E extends Comparable<E>> E max(Collection<E> c) {
+    if(c.isEmpty())
+      throw new IllegalArgumentException("Empty collection");
+    E result = null;
+    for(E e : c)
+      if(result == null || e.compareTo(result) > 0)
+        result = Objects.requireNonNull(e);
+    return result;
+  }
+  ```
+
+  ​	如果指定的集合为空，这个方法就会抛出IllegalArgumentException。在（E30）中说过，更好的替代方法是返回`Optional<E>`。下面就是修改之后的代码：
+
+  ```java
+  // Returns maxinum value in collections as an Optional<E>
+  public static <E extends Comparable<E>> Optional<E> max(Collection<E> c) {
+    if(c.isEmpty())
+      return Optional.empty();
+    E result = null;
+    for(E e : c)
+      if(result == null || e.compareTo(result) > 0)
+        result = Objects.requireNonNull(e);
+    return Optional.of(result);
+  }
+  ```
+
+  ​	如上所示，返回Optional是很简单的事。只要用适当的静态工厂创建Optional即可。在这个程序中，我们使用了两个Optional：
+
+  + `Optional.empty()`返回一个空的Optional。
+  + `Optional.of(value)`返回一个包含了指定非null值的Optional。将null传入`Optional.of(value)`是一个编程错误。如果这么做，该方法将会抛出NullPointerException。
+  + `Optional.ofNullable(value)`方法接受可能为null的值，当传入null值时就返回一个空的Optional。
+  + **永远不要通过返回Optional的方法返回null，因为它彻底违背了Optional的本意**。
+
+  ​	Stream的许多终止操作都返回Optional。如果重新用Stream编写max方法，让Stream的max操作替我们完成产生Optional的工作(虽然还是需要传入一个显式的比较器)：
+
+  ```java
+  // Returns max val in collection as Optional<E> - uses stream
+  public static <E extends Comparable<E>> Optional<E> max(Collection<E> c) {
+    return c.stream().max(Comparator.naturalOrder());
+  }
+  ```
+
+  ​	<u>那么，如何选择是返回Optional，还是返回null，或是抛出异常呢？**Optional本质上与受检异常（E71）相类似**，因为它们强迫API用户面对没有返回值的现实。抛出未受检的异常，或者返回null，都允许用户忽略这种可能性，从而可能带来灾难性的后果。但是，抛出受检异常需要在客户端添加额外的样板代码</u>。
+
+  ​	如果方法返回Optional，客户端必须做出选择：如果该方法不能返回值时应该采取什么动作。你可以<u>指定一个缺省值</u>：
+
+  ```java
+  // Using an optional to provide a chosen default value
+  String lastWordInLexicon = max(words).orElse("No words...");
+  ```
+
+  ​	<u>或者抛出任何适当的异常</u>。注意此处传入的是一个异常工厂，而不是真正的异常。这避免了创建异常的开销，除非它真正抛出异常：
+
+  ```java
+  // Using an optional to throws a chosen exception
+  Toy myToy = max(toys).orElseThrow(TemperTantrumException::new);
+  ```
+
+  ​	如果你能够证明Optional为非空，就不必指定如果Optional为空要采取什么动作，直接从Optional获得值即可；但是如果你的判断错了，代码就会抛出一个NoSuchElementException：
+
+  ```java
+  // Using optional when you know there's a return value
+  Element lastNobleGas = max(Elements.NOBLE_GASES).get();
+  ```
+
+  ​	**有时候，获取缺省值的开销可能很高，除非十分必要，否则还是希望能够避免这一开销**。对于这类情况，Optional提供了一个带有`Supplier<T>`的方法，只在必要的时候才调用它。这个方法叫orElseGet，但或许应该叫orElseCompute，因为它与三个名称以compute开头的Map方法密切相关。有几个Optional方法可以用来处理更加特殊用例的情况：filter、map、 flatMap和ifPresent。Java9又在其中新增了两个方法or和ifPresentOrElse。如果上述基本方法不适用，可以查看文档寻找更高级的方法，看看它们是否能够完成你所需的任务。
+
+  ​	万一这些方法都无法满足需求，Optional还提供了isPresent()方法，它可以被当作是一个安全阀。当 Optional中包含一个值时，它返回true；当Optional为空时，返回false。该方法可用于对Optional结果执行任意的处理，但要确保正确使用。 <u>isPresent的许多用法都可以用上述任意一种方法取代。这样得到的代码一般会更加简短、清晰，也更符合习惯用法</u>。
+
+  ​	例如，以下代码片段用于打印出一个进程的父进程ID，当该进程没有父进程时打印`N/A`。这里使用了在Java9中引入的ProcessHandle类：
+
+  ```java
+  Optional<ProcessHandle> parentProcess = ph.parent();
+  System.out.prinln("Parent PID: " + (parentProcess.isPresent() ?
+                                      String.valueOf(parentProcess.get().pid()) : "N/A"));
+  ```
+
+  ​	上述代码片段可以用以下的代码代替，这里使用了Optional的map函数：
+
+  ```java
+  System.out.println("Parent PID: " + ph.parent().map(h -> String.valueOf(h.pid())).orElse("N/A"));
+  ```
+
+  ​	当用 Stream编程时，经常会遇到`Stream<Optional<T>>`，为了推动进程还需要个包含了非空Optional中所有元素的`Stream<T>`。如果使用的是Java8版本，可以像这样弥补差距：
+
+  ```java
+  streamOfOptionals
+    .filter(Optional::isPresent)
+    .map(Optional::get);
+  ```
+
+  ​	<u>在Java9中， Optional还配有一个stream()方法。这个方法是一个适配器，如果Optional中有一个值，它就将Optional变成包含一个元素的Stream；如果Optional为空，则其中不包含任何元素</u>。这个方法结合 Stream的flatMap方法（E45），可以简洁地取代上述代码片段，如下：
+
+  ```java
+  streamOfOptionals.flatMap(Optional::stream);
+  ```
+
+  ​	但是并非所有的返回类型都受益于Optional的处理方法。**容器类型包括集合、映射、Stream、数组和 Optional，都不应该被包装在Optional中**。
+
+  + <u>不要返回空的`Optional<List<T>>`，而应该只返回一个空的`List<T>`（E54）。返回空的容器可以让客户端免于处理一个Optional</u>。
+
+  + <u>ProcessHandle类确实有 arguments方法，它返回`Optional<String[]>`，但是应该把这个方法看作是一个不该被模仿的异常</u>。
+
+  ​	那么何时应该声明一个方法来返回`Optional<T>`而不是返回T呢？规则是：**如果无法返回结果并且当没有返回结果时客户端必须执行特殊的处理，那么就应该声明该方法返回`Optional<T>`**。也就是说，返回 `Optional<T>`并非不需要任何成本。
+
+  ​	Optional是一个必须进行分配和初始化的对象，从Optional读取值时需要额外的开销。这使得Optional不适用于一些注重性能的情况。一个特殊的方法是否属于此类，只能通过仔细的测量来确定才行（E67）。
+
+  ​	<u>返回一个包含了基本包装类型的Optional，比返回一个基本类型的开销更高，因为Optional有两级包装，不是0级</u>。因此，类库设计师认为必须为基本类型int、long和doble提供类似`Optional<T>`的方法。这些 Optional类型为：OptionalInt、OptionalLong和OptionalDouble。这些包含了`Optional<T>`中大部分但并非全部的方法。因此，**<u>永远不应该返回基本包装类型的Optional</u>**，“小型的基本类型”( Boolean、Byte、 Character、Short和Float)除外。
+
+  ​	到目前为止，我们已经讨论了返回Optional，以及返回之后对它们的处理方法。之所以还没有讨论到其他可能的用途，是因为**Optional的大部分其他用途都还受到质疑**。
+
+  ​	例如，**<u>永远不应该用Optional作为映射值</u>**。<u>如果这么做，有两种方式来表达一个键的逻辑缺失：要么这个键可以不出现在映射中，要么它可以存在，并映射到一个空的Optional。这些既增加了无谓的复杂度，并极有可能造成混淆和出错</u>。
+
+  ​	更通俗地说，**<u>几乎永远都不适合用Optional作为键、值，或者集合或数组中的元素</u>**。
+
+  ​	这里留下了一个尚未解答的问题：适合将Optional保存在实例域中吗？这个答案散发着"恶臭的气息"：它建议使用包含Optional域的子类。不过有时候它又是有道理的。以（E2）中的NutritionFacts类为例， NutritionFacts实例中包含了许多不必要的域。你不可能给这些域中每一个可能的合并都提供一个子类。而且，这些域有基本类型，导致不方便直接描述这种缺失。NutritionFacts最好的API会从get方法处为每个 Optional域获得Optional，因此将那些Optional作为域保存在对象中的做法会变得很有意义。
+
+---
+
++ 小结
+
+  ​	总而言之，<u>如果发现自己在编写的方法始终无法返回值，并且相信该方法的用户每次在调用它时都要考虑到这种可能性，那么或许就应该返回一个Optional</u>。
+
+  ​	但是，应当注意到与返回Optional相关的真实的性能影响；对于注重性能的方法，最好是返回一个null，或者抛出异常。最后，**尽量不要将Optional用作返回值以外的任何其他用途**。
+
+## E56 为所有导出的API元素编写文档注释
+
+P206
 
