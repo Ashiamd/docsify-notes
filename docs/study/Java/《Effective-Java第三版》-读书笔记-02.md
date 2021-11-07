@@ -2320,4 +2320,75 @@
 
 ## E53 慎用可变参数
 
-P199
++ 概述
+
+  ​	<u>可变参数方法一般称作variable arity method(可匹配不同长度的变量的方法)[JLS，8.4.1]，它接受**0个或者多个**指定类型的参数</u>。
+
+  ​	**可变参数机制<u>首先会创建一个数组，数组的大小为在调用位置所传递的参数数量</u>，然后将参数值传到数组中，最后将数组传递给方法**。
+
+  ​	例如，下面就是一个可变参数方法，带有int参数的一个序列，并返回它们的总和正如你所期望的，sum(1，2，3)的值为6，sum()的值为0：
+
+  ```java
+  // Simple use of varargs
+  static int sum(int... args) {
+    int sum = 0;
+    for (int arg : args)
+      sum += arg;
+    return sum;
+  }
+  ```
+
+  ​	有时候，必须编写需要一个或者多个某种类型参数的方法，而不是需要0个或者多个。例如，假设想要编写一个函数来计算多个参数的最小值。如果客户端没有传递参数，那么这个函数的定义就不太好了。你可以在运行时检查数组长度：
+
+  ```java
+  // The WRONG way to varargs to pass one or more arguments!
+  static int min(int... args) {
+    if (args.length == 0)
+      throw new IllegalArgumentException("Too few arguments");
+    int min = args[0];
+    for(int i = 1; i < args.length; i++)
+      if(args[i] < min)
+        min = args[i];
+    return min;
+  }
+  ```
+
+  ​	这种解决方案有几个问题。其中最严重的问题是，如果客户端调用这个方法时，并没有传递参数进去，它就会在运行时而不是编译时发生失败。另一个问题是，这段代码很不美观。你必须在args中包含显式的有效性检查，除非将min初始化为Integer.MAX_VALUE，否则将无法使用for-each循环，这样的代码也不美观。
+
+  ​	幸运的是，有一种更好的方法可以实现想要的效果。声明该方法带有两个参数，一个是指定类型的正常参数，另一个是这种类型的可变参数。这种解决方案解决了前一个示例中的所有不足：
+
+  ```java
+  // The right way to use varargs to pass one or more arguments
+  static int min(int firstArg, int... remainingArgs) {
+    int min = firstArg;
+    for(int arg : remainingArgs)
+      if(arg < min)
+        min = arg;
+    return min;
+  }
+  ```
+
+  ​	如你所见，当你真正需要让一个方法带有不定数量的参数时，可变参数就非常有效。可变参数是为 printf而设计的，该方法是与可变参数同时添加到Java平台中的，为了核心的反射机制（E65），被改造成利用可变参数。 printf和反射机制都从可变参数中获得了极大的益处。
+
+  ​	在重视性能的情况下，使用可变参数机制要特别小心。每次调用可变参数方法都会导致一次数组分配和初始化。如果凭经验确定无法承受这一成本，但又需要可变参数的灵活性，还有一种模式可以让你如愿以偿。假设确定对某个方法95%的调用会有3个或者更少的参数，就声明该方法的5个重载，每个重载方法带有0至3个普通参数，当参数的数目超过3个时，就使用一个可变参数方法：
+
+  ```java
+  public void foo() { }
+  public void foo(int a1) { }
+  public void foo(int a1, int a2) { }
+  public void foo(int a1, int a2, int a3) { }
+  public void foo(int a1, int a2, int a3, int... rest) { }
+  ```
+
+  ​	现在你知道了，当参数的数目超过3个时，所有调用中只有5%需要创建数组。就像大多数的性能优化一样，这种方法通常不太恰当，但是一旦真正需要它时，它可就帮上大忙了。
+
+  ​	EnumSet类对它的静态工厂使用了这种方法，最大限度地减少创建枚举集合的成本。当时这么做是有必要的，因为枚举集合为位域提供了在性能方面有竞争力的替代方法，这是很重要的（E36）。
+
+---
+
++ 小结
+
+  ​	简而言之，在定义参数数目不定的方法时，可变参数方法是一种很方便的方式。在使用可变参数之前，要先包含所有必要的参数，并且要关注使用可变参数所带来的性能影响。
+
+## E54 返回零长度的数组或者集合，而不是null
+
