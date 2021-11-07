@@ -2390,5 +2390,91 @@
 
   ​	简而言之，在定义参数数目不定的方法时，可变参数方法是一种很方便的方式。在使用可变参数之前，要先包含所有必要的参数，并且要关注使用可变参数所带来的性能影响。
 
-## E54 返回零长度的数组或者集合，而不是null
+## * E54 返回零长度的数组或者集合，而不是null
+
++ 概述
+
+  ​	像下面这样的方法并不少见：
+
+  ```java
+  // Returns null to indicate an empty collection. Don't do this!
+  private final List<Cheese> cheesesInStock = ...;
+  
+  /**
+   * @return a list containing all of the cheeses in the shop,
+   * or null if no cheeses are available for purchase.
+   */
+  public List<Cheese> getCheeses() {
+    return cheesesInStock.isEmpty() ? null : new ArrayList<>(cheesesInStock);
+  }
+  ```
+
+  ​	把没有奶酪(cheese)可买的情况当作是一种特例，这是不合常理的。这样做会要求客户端中必须有额外的代码来处理null返回值，例如：
+
+  ```java
+  List<Cheese> cheeses = shop.getCheeses();
+  if(cheeses != null && cheeses.contains(Cheese.STILTON))
+    System.out.println("Jolly good, just the thing.");
+  ```
+
+  ​	<u>对于一个返回null而不是零长度数组或者集合的方法，几乎每次用到该方法时都需要这种曲折的处理方式。这样做很容易出错，因为编写客户端程序的程序员可能会忘记写这种专门的代码来处理null返回值。这样的错误也许几年都不会被注意到，因为这样的方法通常返回一个或者多个对象。返回null而不是零长度的容器，也会使返回该容器的方法实现代码变得更加复杂</u>。
+
+  ​	有时候会有人认为：null返回值比零长度集合或者数组更好，因为它避免了分配零长度的容器所需要的开销。这种观点是站不住脚的，原因有两点。
+
+  + 第一，在这个级别上担心性能问题是不明智的，除非分析表明这个方法正是造成性能问题的真正源头（E67）。
+  + 第二，不需要分配零长度的集合或者数组，也可以返回它们。下面是返回可能的零长度集的一段典型代码。一般情况下，这些都是必须的：
+
+  ```java
+  // The right way to return a possibly empty collection
+  public List<Cheese> getCheeses() {
+    return new ArrayList<>(cheeseInStock);
+  }
+  ```
+
+  ​	**万一有证据表示分配零长度的集合损害了程序的性能，可以通过重复返回同一个不可变的零长度集合，避免了分配的执行，因为不可变对象可以被自由共享（E17）**。
+
+  ​	下面的代码正是这么做的，它使用了`Collections. emptyList`方法。如果返回的是集合，最好使用`Collections.emptySet`；如果返回的是映射，最好使用`Collections.emptyMap`。但是要记住，这是一个优化，并且几乎用不上。如果你认为确实需要，必须在行动前后分别测试测量性能，确保这么做确实是有帮助的：
+
+  ```java
+  // Optimization - avoids allocating empty collections
+  public List<Cheese> getCheeses() {
+    return cheesesInStock.isEmpty() ? Collections.emptyList() : new ArrayList<>(cheesesInStock);
+  }
+  ```
+
+  ​	数组的情形与集合的情形一样，它永远不会返回null，而是返回零长度的数组。一般来说，应该只返回一个正确长度的数组，这个长度可以为零。注意，我们将一个零长度的数组传递给了toArray方法，以指明所期望的返回类型，即Cheese[]：
+
+  ```java
+  // The right way to return a possibly empty array
+  public Cheese[] getCheeses() {
+    return cheesesInStock.toArray(new Cheese[0]);
+  }
+  ```
+
+  ​	**如果确信分配零长度的数组会伤害性能，可以重复返回同一个零长度的数组，因为所有零长度的数组都是不可变的：**
+
+  ```java
+  // Optimization - avoids allocating empty arrays
+  private static final Cheese[] EMPTY_CHEESE_ARRAY = new Cheese[0];
+  public Cheese[] getCheese() {
+    return cheesesInStock.toArray(EMPTY_CHEESE_ARRAY);
+  }
+  ```
+
+  ​	在优化性能的版本中，我们将同一个零长度的数组传进了每一次的 toArray调用，每当 cheesesInStock为空时，就会从getCheese返回这个数组。**千万不要指望通过预先分配传入toArray的数组来提升性能。研究表明，这样只会适得其反**[Shipilevl6]：
+
+  ```java
+  // Don't do this - preallocating the array harms performance!
+  return cheesesInStock.toArray(new Cheese[cheesesInStock.size()]);
+  ```
+
+---
+
++ 小结
+
+  ​	简而言之，**永远不要返回null，而不返回一个零长度的数组或者集合**。如果返回null，那样会使API更难以使用，也更容易出错，而且没有任何性能优势。
+
+## E55 谨慎返回optional
+
+P202
 
