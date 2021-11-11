@@ -2474,7 +2474,7 @@
 
   ​	简而言之，**永远不要返回null，而不返回一个零长度的数组或者集合**。如果返回null，那样会使API更难以使用，也更容易出错，而且没有任何性能优势。
 
-## E55 谨慎返回Optional
+## * E55 谨慎返回Optional
 
 + 概述
 
@@ -2621,7 +2621,182 @@
 
   ​	但是，应当注意到与返回Optional相关的真实的性能影响；对于注重性能的方法，最好是返回一个null，或者抛出异常。最后，**尽量不要将Optional用作返回值以外的任何其他用途**。
 
-## E56 为所有导出的API元素编写文档注释
+## * E56 为所有导出的API元素编写文档注释
 
-P206
++ 概述
+
+  ​	Java编程环境提供了一种被称为Javadoc的实用工具，使编写API文档更容易。 Javadoc利用特殊格式的文档注释（documentationcomment，通常被写作 doc comment），根据源代码自动产生API文档。
+
+  ​	虽然文档注释还没有正式成为Java编程语言的一部分，但它们已经构成了每个程序员都应该知道的事实API。这些规范的内容在如何编写文档注释（How to Write Doc Comments）的网页上进行了说明[Javadoc-guide]。虽然这个网页在Java4发行版本之后还没有进行更新，但它仍然是个很有价值的资源。
+
+  > 在Java9中新增了一个重要的文档标签:{@index}；在Java8中增加了一个文档标签:{@implSpec}；在Java5中新增了两个文档标签：{@litera1}和{@code}。这些标签在之前提到过的网页上已经没有了，但会在本条目中讨论到。
+
+  ​	**为了正确地编写API文档，必须在每个被导出的类、接口、构造器、方法和域声明之前增加一个文档注释**。如果类是可序列化的，也应该对它的序列化形式编写文档（E87）。如果没有文档注释， Javadoc所能够做的也就是重新生成该声明，作为受影响的APⅠ元素的唯一文档。<u>使用没有文档注释的API是非常痛苦的，也很容易出错。公有的类不能使用缺省构造器，因为无法为它们提供文档注释。为了编写出可维护的代码，还应该为那些没有被导出的类、接口、构造器、方法和域编写文档注释</u>。
+
+  ​	**方法的文档注释应该简洁地描述出它和客户端之间的约定**。除了专门为继承而设计的类中的方法（E19）之外，<u>这个约定应该说明这个方法做了什么，而不是说明它是如何完成这项工作的</u>。
+
+  ​	**文档注释应该列举出这个方法的所有前提条件(precondition)和后置条件(postcondition)**。
+
+  + 所谓前提条件是指为了使客户能够调用这个方法，而必须要满足的条件；
+  + 所谓后置条件是指在调用成功完成之后，哪些条件必须要满足。
+
+  > 一般情况下，前提条件是由@throws标签针对未受检的异常所隐含描述的；每个未受检的异常都对应一个前提违例(precondition violation)。同样地，也可以在一些受影响的参数的@Param标记中指定前提条件。
+
+  ​	<u>除了前提条件和后置条件之外，每个方法还应该在文档中描述它的副作用(side effect)</u>。所谓副作用是指系统状态中可以观察到的变化，它不是为了获得后置条件而明确要求的变化。<u>例如，如果方法启动了后台线程，文档中就应该说明这一点</u>。
+
+  ​	为了完整地描述方法的约定，方法的文档注释应该让每个参数都有一个@param标签，以及一个@return标签(除非这个方法的返回类型为void)，以及对于该方法抛出的每个异常，无论是受检的还是未受检的都应有一个@throws标签（E74）。如果@return标签中的文本与方法的描述一致，就允许省略，具体取决于你所遵循的编码标准。
+
+  ​	按照惯例，跟在@param标签或者@return标签后面的文字应该是一个名词短语，描述了这个参数或者返回值所表示的值。在极少数情况下，也会用算术表达式来代替名词短语，详情请参考BigInteger的例子。<u>跟在@throws标签之后的文字应该包含单词"if"(如果)，紧接着是一个名词短语，它描述了这个异常将在什么样的条件下抛出</u>。按照惯例，@param、@return或者@throws标签后面的短语或者子句都不用句点来结束。下面这个简短的文档注释演示了所有这些习惯做法：
+
+  ```java
+  /**
+   * Returns the element at the specified in this list.
+   *
+   * <p>
+   * This method is <i>not</i> guaranteed to run in constant time. 
+   * In some implementations it may run in time proportional to the element position.
+   * </p>
+   *
+   * @param index index of element to return; must be non-negative and less than
+   * 				the the size of this list
+   * @return the element at the specified position in this list
+   * @throw IndexOutOfBoundsException if the index is out of range
+   *				({@code index < 0 || index >= this.size() })
+   */
+  E get(int index);
+  ```
+
+  ​	注意，这份文档注释中使用了HTML标签(`<P>`和`<i>`)。 Javadoc工具会把文档注释翻译成HTML，文档注释中包含的任意HTML元素都会出现在结果HTML文档中。有时程序员还会把HTML表格嵌入到它们的文档注释中，但是这种做法并不多见。
+
+  ​	还要注意，@throws子句的代码片段中到处使用了 Javadoc的{@code}标签。它有两个作用：<u>造成该代码片段以 code font(代码字体)呈现，并限制HTML标记和嵌套的Javadoc标签在代码片段中进行处理</u>。后一种属性正是允许我们在代码片段中使用小于号(<)，虽然它是一个HTML元字符。为了将一个多行的代码示例包含在文档注释中，要使用包在HTML的`<pre>`标签里面的 Javadoc标签{@code}。换句话说，是先在多行的代码示例前使用字符`<pre>`{@code，然后在代码后面加上 }`</pre>`。这样就可以在代码中保留换行，不需要对HTML元字符进行转义，但@符号并非如此，<u>如果代码使用了注释就必须进行转义</u>。
+
+  ​	最后，要注意这个文档注释中用到了词语“ this list”。按惯例，**当“this”一词被用在实例方法的文档注释中时，它应该始终是指方法调用所在的对象**。
+
+  ​	如（E15）所述，在专门为了继承设计类时，必须在文档中注释它的自用模式(self-use pattern)，便于程序员了解覆盖其方法的语义。这些自用模式应该利用Java8中增加的@implSpec标签进行文档注释。回顾一下，普通的文档注释是描述方法及其客户端之间的约定；相反，@implSpec注释则是描述方法及其子类之间的约定，如果子类继承了该方法，或者通过super调用了方法，则允许子类依赖实现行为。下面是具体的用法范例：
+
+  ```java
+  /**
+   * Returns true if this collection is empty.
+   * 
+   * @implSpec
+   * This implementation returns {@code this.size() == 0}.
+   *
+   * @return true if this collection is empty
+   */
+  public boolean isEmpty() { ... }
+  ```
+
+  > 从Java9开始， Javadoc工具仍然忽略@impiSpec标签，除非传人命令行参数:`-tag "implSpec:a:Implementation Requirements:"`。希望这一点能在后续的发行版本中得到改进。
+
+  ​	HTML元符号，比如小于号（<）、大于号（>）以及"与"号（&），必须采取特殊动作才能正常显示。使用{@literal}标签将它们包围，就能限制HTML标记和嵌套的Javadoc标签的处理。除了它不以代码字体渲染文本之外，其他方面都和{@code}标签一样。例如，该Javadoc片段：
+
+  ```java
+  * A geometric series converges if {@literal |r| < 1}.
+  ```
+
+  ​	它产生了文档："A geometric series converges if |rl<1." {@literal}标签也可以只是括住小于号，而不是整个不等式，所产生的文档是一样的，但是在源代码中见到的文档注释的可读性就会更差。这说明了一条通则:**文档注释在源代码和产生的文档中都应该是易于阅读的**。如果无法让两者都易读，产生的文档的可读性要优先于源代码的可读性。
+
+  ​	每个文档注释的第一句话(如下所示)成了该注释所在元素的概要描述(summary description)。例如，本条目之前的文档注释中的概要描述为“返回这个列表中指定位置上的元素”。概要描述必须独立地描述目标元素的功能。**为了避免混淆，同一个类或者接口中的两个成员或者构造器，不应该具有同样的概要描述**。<u>特别要注意重载的情形，在这种情况下，往往很自然地在描述中使用同样的第一句话(但在文档注释中这是不可接受的)</u>。
+
+  > ​	注意所期待的概要描述中是否包括句点，因为句点会过早地终止这个描述。例如，一个以“ A college degree， such as B.S，M.S. or Ph.D.”开头的文档注释，会产生这样的概要描述"A college degree，such as B.S，M.S.”问题在于，概要描述会在后面紧接着的空格、跳格或者行终结符的第一个句点处(或者在第一个块标签处)结束[Javadoc-ref]。此处，缩写“M.S.”中的第二个句点后面紧接着用了一个空格。最好的解决方法是，用{@literal)标签将讨厌的句点以及所有关联的文本都包起来，使得源代码中的句点后面不再是空格：
+  >
+  > ```java
+  > /**
+  >  * A college degree, such as B.S., {@literal M.S.} or Ph.D.
+  >  */
+  > public class Degree { ... }
+  > ```
+
+  ​	说概要描述是文档注释中的第一个句子(sentence)，这似乎有点误导人。规范指出，概要描述很少是个完整的句子。对于方法和构造器而言，概要描述应该是个完整的动词短语(包含任何对象)，它描述了该方法所执行的动作。例如：
+
+  + ArrayList(int initialCapacity)：用指定的初始容量构造一个空的列表。
+  + Collection.size()：返回该集合中元素的数目。
+
+  ​	如这些示例所示，使用第三人称时态(returns the number)比使用第二人称(return the number)更加确切。
+
+  ​	对于类、接口和域，概要描述应该是一个名词短语，它描述了该类或者接口的实例，或者域本身所代表的事物。例如：
+
+  + Instant：时间轴上的一个瞬时点。
+  + Math.PI：非常接近于PI（圆周长度与直径的比值）的double值。
+
+  ​	Java9在 Javadoc生成的HIML中添加了客户端索引。这个索引简化了在大型API文档集中进行搜索的任务，它采用了页面右上角的搜索框的形式。当你在搜索框中输入时，会出现个下拉菜单，上面显示出相匹配的页面。像类、方法和域这类AP元素，会被自动索引。有时候，会想要索引一些对于API比较重要的其他条件。为此，增加了{@index}标签。如果要索引文档注释中出现的某一个条件，只需将它包在这个标签中即可，如下面这个代码片段所示：
+
+  ```java
+  * This method complies with the {@index IEEE 754} standard.
+  ```
+
+  ​	需要特别小心文档注释中的泛型、枚举和注解。**当为泛型或者方法编写文档时，确保要在文档中说明所有的类型参数**。
+
+  ```java
+  /**
+   * An object that maps key to values. A map cannot contain
+   * duplicate keys. each key can map to at most one value.
+   *
+   * (Remainder omitted)
+   *
+   * @param <K> the type of keys maintained by this map
+   * @param <V> the type of mapped values
+   */
+  public interface Map<K, V> { ... }
+  ```
+
+  ​	**当为枚举类型编写文档时，要确保在文档中说明常量**，以及类型，还有任何公有的方法。注意，如果文档注释很简短，可以将整个注释放在一行上：
+
+  ```java
+  /**
+   * An instrument section of a symphony orchestra.
+   */
+  public enum OrchestraSection {
+    /** Woodwinds, such as flute, clarinet, and oboe. */
+    WOODWIND,
+    
+    /** Brass instruments, such as french horn and trumpet. */
+    BRASS,
+    
+    /** Percussion instruments, such as timpani and cymbals. */
+    PERCUSSION,
+    
+    /** Stringed instruments, such as violin and cello. */
+    STRING;
+  }
+  ```
+
+  ​	**为注解类型编写文档时，要确保在文档中说眀所有成员**，以及类型本身。带有名词短语的文档成员，就当成域一样对待。对于该类型的概要描述，要使用一个动词短语，说明当程序元素具有这种类型的注解时它表示什么意思：
+
+  ```java
+  /**
+   * Indicates that the annotated method is a test method that
+   * must throw the designated exception to pass.
+   */
+  @Retention(RetentionPolicy.RUNTIME)
+  @Target(ElementType.METHOD)
+  public @interface ExceptionTest {
+    /**
+     * The exception that the annotated test method must throw
+     * in order to pass. (The test is permitted to throw any
+     * subtype of the type described by this class object.)
+     */
+    Class<? extends Throwable> value();
+  }
+  ```
+
+  ​	包级私有的文档注释应该放在一个称作package-info.java的文件中。除了这些注释之外， package-info.java中还必须包含包声明，还可以包含这个声明中的注解。同样地，如果选择使用模块系统（E15），应该将模块级的注释放在module-info.java文件中。
+
+  ​	<u>API有两个特征在文档中经常被忽视，即线程安全性和可序列化性。**类或者静态方法是否线程安全，应该在文档中对它的线程安全级别进行说明**，如（E82）所述。如果类是可序列化的，就应该在文档中说明它的序列化形式，如（E87）所述</u>。
+
+  ​	<u>javadoc具有“继承”方法注释的能力。如果一个API元素没有文档注释， Javadoc将会搜索最为适用的文档注释，接口的文档注释将优先于超类的文档注释</u>。搜索算法的细节可以在《TheJavadoc Reference Guide》[Javadoc-ref]中找到。也可以利用{@inheritDoc}标签从超类型中继承文档注释的部分内容。这意味着类还可以重用它所实现的接口的文档注释，而不需要拷贝这些注释。这项机制有可能减轻维护多个几乎相同的文档注释的负担，但使用它需要一些小技巧，并具有一些局限性。关于这一点的详情超出了本书的范围，在此不做讨论。
+
+  ​	关于文档注释有一点需要特别注意。虽然为所有导出的APⅠ元素提供文档注释是必要的，但是这样做并非一劳永逸。对于由多个相互关联的类组成的复杂API，通常有必要用个外部文档来描述该API的总体结构，对文档注释进行补充。如果有这样的文档，相关的类或者包文档注释就应该包含一个对这个外部文档的链接。
+
+  ​	Javadoc遵循本条目提出的许多建议进行自动检测。在Java7中，需要用命令行参数·-Xdoclint·实现这种行为。在Java8和Java9中，检测功能是默认打开的。像 checkstyle这样的IDE插件，会进一步根据这些建议完成检测[Burn01]。通过运行一个HTML有效性检查器( HTML validity checker)来检测由 Javadoc产生的HTML文件，也可以降低文档注释中出错的可能性。这样可以检测出HTML标签的许多不正确用法，以及应该被转义的HTML元字符。 Internet上有几个这类检查器可供下载，并且也可以利用W3C Markup Validation Service[W3C-validator]来进行在线检验HTML。在验证产生的HTML时，要记住，从Java9开始， Javadoc都可以生成HTML5，以及HTML4.01，虽然它默认是生成HTML4.01。如果要用 Javadoc生成HTML5，可以使用命令行参数`-html5`。
+
+  ​	本条目中所述的内容涵盖了基本的惯例。虽然到目前为止，已经过去了15年，编写文档注解最权威的指导仍然是《 How to Write Doc Comments 》[Javadoc-guide]。
+
+  ​	如果遵循本条目中的指导，生成的文档应该能够清晰地描述你的API。但唯一确定了解的方式，就是去**阅读由 Javadoc工具生成的网页**。每一个将被其他人使用的API都值得你这么做。正如测试程序几乎无疑会导致对代码做出修改一样，阅读文档一般至少也会导致对文档注释进行些许的修改。
+
+---
+
++ 小结
+
+  ​	简而言之，要为API编写文档，文档注释是最好、最有效的途径。对于所有可导出的APⅠ元素来说，使用文档注释应该被看作是强制性的要求。要采用一致的风格来遵循标准的约定。记住，<u>在文档注释内部出现任何HTML标签都是允许的，但是HTML元字符必须要经过转义</u>。
 
