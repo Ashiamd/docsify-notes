@@ -1043,5 +1043,148 @@
 
   ​	比如，以表示一副纸牌的对象为例。假设有一个处理发牌操作的方法，它的参数是发手牌的纸牌张数。假设调用者在这个参数中传递的值大于整副纸牌的剩余张数。<u>这种情形既可以被解释为IllegalArgumentException(handSize参数的值太大)，也可以被解释为IllegalStateException(纸牌对象包含的纸牌太少)。在这种情况下，**如果没有可用的参数值，就抛出IllegalStateException，否则就抛出IllegalArgumentException**</u>。
 
-## E73 抛出与抽象对应的异常
+## * E73 抛出与抽象对应的异常
 
++ 概述
+
+  ​	<u>如果方法抛出的异常与它所执行的任务没有明显的联系，这种情形将会使人不知所措。当方法传递由低层抽象抛出的异常时，往往会发生这种情况</u>。除了使人感到困惑之外，这也“污染”了具有实现细节的更高层的API。如果高层的实现在后续的发行版本中发生了变化它所抛出的异常也可能会跟着发生变化，从而潜在地破坏现有的客户端程序。
+
+  ​	为了避免这个问题，<u>**更高层的实现应该捕获低层的异常，同时抛出可以按照高层抽象进行解释的异常**。这种做法称为**异常转译(exception translation)**</u>，如下代码所示：
+
+  ```java
+  // Exception Translation
+  try {
+    ... // Use lower-level abstraction to do our bidding
+  } catch (LowerLevelException e) {
+    throw new HigherLevelException(...);
+  }
+  ```
+
+  ​	下面的异常转译例子取自于AbstractSequentialList类，该类是List接口的一个骨架实现(skeletal implementation)，详见（E20）。在这个例子中，按照`List<E>`接口中get方法的规范要求，异常转译是必需的：
+
+  ```java
+  /**
+   * Returns the element at the specified position in this list.
+   * @throws IndexOutOfBoundsException if the index is out of range
+   *				 ({@code index < 0 || index >= size()}).
+   */
+  public E get(int index) {
+    ListIterator<E> i = listIterator(index);
+    try {
+      return i.next();
+    } catch (NoSuchElementException e) {
+      throw new IndexOutOfBoundsException("Index: " + index);
+    }
+  }
+  ```
+
+  ​	**一种特殊的异常转译形式称为异常链(exception chaining)，如果低层的异常对于调试导致高层异常的问题非常有帮助，使用异常链就很合适**。低层的异常(原因)被传到高层的异常，高层的异常提供访问方法(Throwable的getCause方法)来获得低层的异常：
+
+  ```java
+  // Exception Chaining
+  try {
+    ... // Use lower-level abstraction to do our bidding
+  } catch (LowerLevelException cause) {
+    throw new HigherLevelException(cause);
+  }
+  ```
+
+  ​	高层异常的构造器将原因传到支持链(chaining-aware)的超级构造器，因此它最终将被传给 Throwable的其中一个运行异常链的构造器，例如Throwable(Throwable)：
+
+  ```java
+  // Exception with chaining-aware constructor
+  class HigherLevelException extends Exception {
+    HigherLevelException(Throwable cause) {
+      super(cause);
+    }
+  }
+  ```
+
+  ​	**<u>大多数标准的异常都有支持链的构造器。对于没有支持链的异常，可以利用Throwable的 initCause方法设置原因。异常链不仅让你可以通过程序(用getCause)访问原因，还可以将原因的堆栈轨迹集成到更高层的异常中</u>。**
+
+  ​	**尽管异常转译与不加选择地从低层传递异常的做法相比有所改进，但是也不能滥用它**。
+
+  + <u>如有可能，处理来自低层异常的最好做法是，在调用低层方法之前确保它们会成功执行，从而避免它们抛出异常。有时候，可以在给低层传递参数之前，**检查更高层方法的参数的有效性，从而避免低层方法抛出异常**</u>。
+
+  + 如果无法阻止来自低层的异常，其次的做法是，<u>让更高层来悄悄地处理这些异常，从而将高层方法的调用者与低层的问题隔离开来</u>。在这种情况下，**可以用某种适当的记录机制如java.util.logging)将异常记录下来。这样有助于管理员调查问题，同时又将客户端代码和最终用户与问题隔离开来**。
+
+---
+
++ 个人测试代码
+
+  ```java
+  package throwable;
+  
+  /**
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2021/11/14 10:53 PM
+   */
+  public class ExceptionChainingTest {
+    public static void main(String[] args) {
+      try {
+        try {
+          throw new SonException(new Throwable("son mess"));
+        } catch (SonException sonException) {
+          throw new FatherException(sonException);
+        }
+      } catch (FatherException fatherException) {
+        System.out.println("---1 out ---");
+        System.err.println("---1 err ---");
+        fatherException.printStackTrace();
+        System.out.println("---2 out ---");
+        System.err.println("---2 err ---");
+        fatherException.getCause().printStackTrace();
+        System.out.println("---3 out ---");
+        System.err.println("---3 err ---");
+      }
+    }
+  
+    public static class SonException extends FatherException {
+  
+      SonException(Throwable throwable) {
+        super(throwable);
+      }
+    }
+  
+    public static class FatherException extends RuntimeException {
+      FatherException(Throwable throwable) {
+        super(throwable);
+      }
+    }
+  }
+  ```
+
+  运行结果
+
+  ```shell
+  ---1 out ---
+  ---2 out ---
+  ---3 out ---
+  ---1 err ---
+  throwable.ExceptionChainingTest$FatherException: throwable.ExceptionChainingTest$SonException: java.lang.Throwable: son mess
+  	at throwable.ExceptionChainingTest.main(ExceptionChainingTest.java:13)
+  Caused by: throwable.ExceptionChainingTest$SonException: java.lang.Throwable: son mess
+  	at throwable.ExceptionChainingTest.main(ExceptionChainingTest.java:11)
+  Caused by: java.lang.Throwable: son mess
+  	... 1 more
+  ---2 err ---
+  throwable.ExceptionChainingTest$SonException: java.lang.Throwable: son mess
+  	at throwable.ExceptionChainingTest.main(ExceptionChainingTest.java:11)
+  Caused by: java.lang.Throwable: son mess
+  	... 1 more
+  ---3 err ---
+  ```
+
+---
+
++ 小结
+
+  ​	总而言之，<u>如果不能阻止或者处理来自更低层的异常，一般的做法是使用**异常转译**</u>。
+
+  + 只有在低层方法的规范碰巧可以保证“<u>它所抛出的所有异常对于更髙层也是合适的</u>”情况下，才可以将异常从低层传播到高层。
+
+  + **异常链对高层和低层异常都提供了最佳的功能：它允许抛出适当的高层异常，同时又能捕获低层的原因进行失败分析（E75）**。
+
+## E74 每个方法抛出的所有异常都要建立文档
+
+P245
