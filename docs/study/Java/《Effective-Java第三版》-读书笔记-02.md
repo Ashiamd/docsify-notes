@@ -1361,7 +1361,7 @@
 
   ​	一个 Stream pipeline中包含一个源 Stream，接着是0个或者多个中间操作(intermediate operation)和一个终止操作(terminal operation)。每个中间操作都会通过某种方式对Stream进行转换，例如将每个元素映射到该元素的函数，或者过滤掉不满足某些条件的所有元素。所有的中间操作都是将一个 Stream转换成另一个 Stream，其元素类型可能与输入的 Stream一样，也可能不同。终止操作会在最后一个中间操作产生的 Strean上执行一个最终的计算，例如将其元素保存到一个集合中，并返回某一个元素，或者打印出所有元素等。
 
-  ​	**Stream pipeline通常是lazy的：直到调用终止操作时才会开始计算，对于完成终止操作不需要的数据元素，将永远都不会被计算**。正是这种lazy计算，使无限 Stream成为可能。注意，没有终止操作的Stream pipeline将是一个静默的无操作指令，因此千万不能忘记终止操作。
+  ​	**<u>Stream pipeline通常是lazy的：直到调用终止操作时才会开始计算，对于完成终止操作不需要的数据元素，将永远都不会被计算</u>**。正是这种lazy计算，使无限 Stream成为可能。注意，没有终止操作的Stream pipeline将是一个静默的无操作指令，因此千万不能忘记终止操作。
 
   ​	Stream APl是流式(fluent)的：所有包含 pipeline的调用可以链接成一个表达式。事实上，多个 pipeline也可以链接在一起，成为一个表达式。
 

@@ -267,6 +267,8 @@
 >
 > [深入了解mysql--gap locks,Next-Key Locks](https://blog.csdn.net/qq_20597727/article/details/87308709) <== 推荐阅读
 >
+> [记一次大事务导致的数据库死锁引起线上服务器load飙升的故障_森林里的一天-CSDN博客](https://blog.csdn.net/dtlscsl/article/details/111914461) <= 现实问题，值得学习
+>
 > 
 >
 > MVCC
