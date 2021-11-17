@@ -1345,5 +1345,332 @@
 
 ## E78 同步访问共享的可变数据
 
-P251
++ 概述
+
+  ​	关键字 synchronized可以保证在同一时刻，只有一个线程可以执行某一个方法，或者某一个代码块。许多程序员把同步的概念仅仅理解为一种互斥(mutual exclusion)的方式，即，当一个对象被一个线程修改的时候，可以阻止另一个线程观察到对象内部不一致的状态。按照这种观点，对象被创建的时候处于一致的状态（E17），当有方法访问它的时候，它就被锁定了。这些方法观察到对象的状态，并且可能会引起状态转变(state transition)，即把对象从一种一致的状态转换到另一种一致的状态。正确地使用同步可以保证没有任何方法会看到对象处于不一致的状态中。
+
+  ​	这种观点是正确的，但是它并没有说明同步的全部意义。如果没有同步，一个线程的变化就不能被其他线程看到。同步不仅可以阻止一个线程看到对象处于不一致的状态之中，它还可以保证进入同步方法或者同步代码块的每个线程，都能看到由同一个锁保护的之前所有的修改效果。
+
+  ​	**Java语言规范保证读或者写一个变量是原子的(atomic)，除非这个变量的类型为long或者double[JLS，17.4，17.7]**。换句话说，读取一个非long或double类型的变量，可以保证返回值是某个线程保存在该变量中的，即使多个线程在没有同步的情况下并发地修改这个变量也是如此。
+
+  ​	你可能听说过，为了提高性能，在读或写原子数据的时候，应该避免使用同步。这建议是非常危险而错误的。<u>虽然语言规范保证了线程在读取原子数据的时候，不会看到任意的数值，但是它并不保证一个线程写入的值对于另一个线程将是可见的</u>。**为了在线程之间进行可靠的通信，也为了互斥访问，同步是必要的**。这归因于Java语言规范中的内存模型(memory model)，它规定了一个线程所做的变化何时以及如何变成对其他线程可见[JLS，174; Goetz06，16]。
+
+  ​	如果对共享的可变数据的访问不能同步，其后果将非常可怕，即使这个变量是原子可读写的。以下面这个阻止一个线程妨碍另一个线程的任务为例。<u>Java的类库中提供了Thread.stop方法，但是在很久以前就不提倡使用该方法了，因为它本质上是不安全的——使用它会导致数据遭到破坏</u>。**千万不要使用 Thread.stop方法**。要阻止一个线程妨碍另一个线程，建议的做法是让第一个线程轮询(poll)一个boolean域，这个域一开始为 false，但是可以通过第二个线程设置为true，以表示第一个线程将终止自己。由于boolean域的读和写操作都是原子的，程序员在访问这个域的时候不再需要使用同步：
+
+  ```java
+  // Broken! - How long would you expect this program to run?
+  public class StopThread {
+    private static boolean stopRequested;
+    
+    public static void main(String[] args)
+      throws InterruptedException {
+      Thread backgroundThread = new Thread(() -> {
+        int i = 0;
+        while(!stopRequested)
+          i++;
+      });
+      backgroundThread.start();
+      
+      TimeUnit.SECONDS.sleep(1);
+      stopRequested = true;
+    }
+  }
+  ```
+
+  ​	你可能期待这个程序运行大约一秒钟左右，之后主线程将 stoprRequested设置为true，致使后台线程的循环终止。但是在作者的机器上，<u>这个程序永远不会终止：因为后台线程永远在循环</u>！
+
+  ​	问题在于，由于没有同步，就不能保证后台线程何时“看到”主线程对 stopRequested的值所做的改变。没有同步，虚拟机将以下代码：
+
+  ```java
+  while (!stopRequested)
+    i++;
+  ```
+
+  ​	转变成这样：
+
+  ```java
+  if (!stopRequsted)
+    while(true)
+      i++;
+  ```
+
+  ​	这种优化称作提升(hoisting)，正是 OpenJDK Server VM的工作。结果是一个**活性失败(liveness failure)**：这个程序并没有得到提升。修正这个问题的一种方式是同步访问stop-Requested域。这个程序会如预期般在大约一秒之内终止：
+
+  ```java
+  // Properly synchronized cooperative thread termination
+  public class StopThread {
+    private static boolean stopRequested;
+    
+    private static synchronized void requestStop() {
+      stopRequested = true;
+    }
+    
+    private static synchronized boolean stopRequested() {
+      return stopRequested;
+    }
+    
+    public static void main(String[] args)
+      throws InterruptedException {
+      Thread backgroundThread = new Thread(() -> {
+        int i = 0;
+        while(!stopRequested())
+          i++;
+      });
+      backgroundThread.start();
+      
+      TimeUnit.SECONDS.sleep(1);
+      requestStop();
+    }
+  }
+  ```
+
+  ​	注意写方法(requestStop)和读方法(stopRequested)都被同步了。只同步写方法还不够！**除非读和写操作都被同步，否则无法保证同步能起作用**。<u>有时候，会在某些机器上看到只同步了写(或读)操作的程序看起来也能正常工作，但是在这种情况下，表象具有很大的欺骗性</u>。
+
+  ​	StopThread中被同步方法的动作即使没有同步也是原子的。换句话说，这些方法的同步只是为了它的通信效果，而不是为了互斥访问。虽然循环的每个迭代中的同步开销很小，还是有其他更正确的替代方法，它更加简洁，性能也可能更好。<u>如果stopRequested被声明为volatile，第二种版本的StopThread中的锁就可以省略</u>。<u>虽然volatile修饰符不执行互斥访问，但它可以保证任何一个线程在读取该域的时候都将看到最近刚刚被写入的值</u>：
+
+  ```java
+  // Cooperative thread termination with a volatile field
+  public class StopThread {
+    private static volatile boolean stopRequested;
+    
+    public static void main(String[] args) throws InterruptedException {
+      Thread backgroundThread = new Thread(() -> {
+        int i = 0;
+        while(!stopRequested)
+          i++;
+      });
+      backgroundThread.start();
+      
+      TimeUnit.SECONDS.sleep(1);
+      stopRequested = true;
+    }
+  }
+  ```
+
+  ​	在使用volatile的时候务必要小心。以下面的方法为例，假设它要产生序列号：
+
+  ```java
+  // Broken - requires synchronization!
+  private static volatile int nextSerialNumber = 0;
+  
+  public static int generateSerialNumber() {
+    return nextSerialNumber++;
+  }
+  ```
+
+  ​	这个方法的目的是要确保每个调用都返回不同的值(只要不超过2<sup>32</sup>个调用)。这个方法的状态只包含一个可原子访问的域：nextSerialNumber，这个域的所有可能的值都是合法的。因此，不需要任何同步来保护它的约束条件。然而，<u>如果没有同步，这个方法仍然无法正确地工作</u>。
+
+  ​	**问题在于，增量操作符(++)不是原子的**。它在 nextSerialNυmber域中执行两项操作：首先它读取值，然后写回一个新值，相当于原来的值再加上1。如果第二个线程在第个线程读取旧值和写回新值期间读取这个域，第二个线程就会与第一个线程一起看到同个值，并返回相同的序列号。这就是**安全性失败(safety failure)**：这个程序会计算出错误的结果。
+
+  ​	修正generateSerialNumber方法的一种方法是在它的声明中增加synchronized修饰符。这样可以确保多个调用不会交叉存取，确保每个调用都会看到之前所有调用的效果。旦这么做，就可以且应该从 nextSerialNumber中删除volatile修饰符。<u>为了保护这个方法，要用long代替int，或者在nextSerialNumber要进行包装时抛出异常</u>。
+
+  ​	最好还是遵循（E59）中的建议，使用 AtomicLong类，它是`java.util.concurrent.atomic`的组成部分。这个包为在单个变量上进行免锁定、线程安全的编程提供了基本类型。虽然volatile只提供了同步的通信效果，但这个包还提供了原子性。这正是你想让generateSerialNumber完成的工作，并且它可能比同步版本完成得更好：
+
+  ```java
+  // Lock-free synchronization with java.util.concurrent.atomic
+  private static final AtomicLong nextSerialNum = new AtomicLong();
+  
+  public static long generateSerialNumber() {
+    return nextSerialNum.getAndIncrement();
+  }
+  ```
+
+  ​	避免本条目中所讨论到的问题的最佳办法是不共享可变的数据。要么共享不可变的数据（E17），要么压根不共享。换句话说，**将可变数据限制在单个线程中**。如果采用这一策略，对它建立文档就很重要，以便它可以随着程序的发展而得到维护。深刻地理解正在使用的框架和类库也很重要，因为它们引入了你不知道的线程。
+
+  ​	让一个线程在短时间内修改一个数据对象，然后与其他线程共享，这是可以接受的，它只同步共享对象引用的动作。然后其他线程没有进一步的同步也可以读取对象，只要它没有再被修改。这种对象被称作高效不可变(effectively immutable)[Goetz06，3.5.4]。将这种对象引用从一个线程传递到其他的线程被称作安全发布(safe publication)[Goetz06，3.5.3]。<u>安全发布对象引用有许多种方法：可以将它保存在静态域中，作为类初始化的一部分；可以将它保存在 volatile域、 final域或者通过正常锁定访问的域中；或者可以将它放到并发的集合中（E81）</u>。
+
+---
+
++ 小结
+
+  ​	总而言之，**当多个线程共享可变数据的时候，每个读或者写数据的线程都必须执行同步**。
+
+  + 如果没有同步，就无法保证一个线程所做的修改可以被另一个线程获知。
+  + **未能同步共享可变数据会造成程序的活性失败(liveness failure)和安全性失败(safety failure)**。这样的失败是最难调试的。它们可能是间歇性的，且与时间相关，程序的行为在不同的虚拟机上可能根本不同。
+  + 如果只需要线程之间的交互通信，而不需要互斥，volatile修饰符就是一种可以接受的同步形式，但要正确地使用它可能需要一些技巧。
+
+## * E79 避免过度同步
+
++ 概述
+
+  ​	（E78）告诫过我们缺少同步的危险性。本条目则关注相反的问题。依据情况的不同，**过度同步则可能导致性能降低、死锁，甚至不确定的行为**。
+
+  ​	**为了避免活性失败和安全性失败，在一个被同步的方法或者代码块中，永远不要放弃对客户端的控制**。换句话说，在一个被同步的区域内部，不要调用设计成要被覆盖的方法，或者是由客户端以函数对象的形式提供的方法（E24）。从包含该同步区域的类的角度来看，这样的方法是外来的(alien)。这个类不知道该方法会做什么事情，也无法控制它。<u>根据外来方法的作用，从同步区域中调用它会导致异常、死锁或者数据损坏</u>。
+
+  ​	为了对这个过程进行更具体的说明，以下面的类为例，它实现了一个可以观察到的集合包装(set wrapper)。该类允许客户端在将元素添加到集合中时预订通知。这就是观察者(Observer)模式。为了简洁起见，类在从集合中删除元素时没有提供通知，但要提供通知也是一件很容易的事情。这个类是在（E18）中可重用的ForwardingSet上实现的：
+
+  ```java
+  // Broken - invokes alien method from synchronized block!
+  public class ObservableSet<E> extends ForwardingSet<E> {
+    public ObservableSet(Set<E> set) { super(set);}
+    
+    private final List<SetObserver<E>> observers = new ArrayList<>();
+    
+    public void addObserver(SetObserver<E> observer) {
+      synchronized(observers) {
+        observers.add(observer);
+      }
+    }
+    
+    public boolean removeObserver(SetObserver<E> observer) {
+      synchronized(observers) {
+        return observers.remove(observer);
+      }
+    }
+    
+    private void notifyElementAdded(E element) {
+      synchronized(observers) {
+        for (SetObserver<E> observer : observers)
+          observer.added(this, element);
+      }
+    }
+    
+    @Override public boolean add(E element) {
+      boolean added = super.add(element);
+      if(added)
+        notifyElementAdded(element);
+      return added;
+    }
+    
+    @Override public boolean addAll(Collection<? extends E> c) {
+      boolean result = false;
+      for (E element : c)
+        result != add(element); // Calls notifyElementAdded
+      return result;
+    }
+  }
+  ```
+
+  ​	观察者通过调用 addObserver方法预订通知，通过调用 removeObserver方法取消预订。在这两种情况下，这个回调(callback)接口的实例都会被传递给方法：
+
+  ```java
+  @FunctionalInterface public interface SetObserver<E> {
+    // Invoked when an element is added to observable set
+    void added(ObservableSet<E> set, E element);
+  }
+  ```
+
+  ​	这个接口的结构与`BiConsumer<ObservableSet<E>，E>`一样。我们选择定义一个定制的函数接口，因为该接口和方法名称可以提升代码的可读性，且该接口可以发展整合多个回调。也就是说，还可以设置合理的参数来使用BiConsumer（E44）。
+
+  ​	如果只是粗略地检验一下，ObservableSet会显得很正常。例如，下面的程序打印出0~99的数字:
+
+  ```java
+  public static void main(String[] args) {
+    ObservableSet<Integer> set = new ObservableSet<>(new HashSet<>());
+    
+    set.addObserver((s, e) -> System.out.println(e));
+    
+    for(int i = 0; i < 100; i++)
+      set.add(i);
+  }
+  ```
+
+  ​	现在我们来尝试一些更复杂点的例子。假设我们用一个addObserver调用来代替这个调用，用来替换的那个addObserver调用传递了一个打印Integer值的观察者，这个值被添加到该集合中，如果值为23，这个观察者要将自身删除：
+
+  ```java
+  set.addObserver(new SetObserver<>() {
+    public void added(ObservableSet<Integer> s, Integer e) {
+      System.out.println(e);
+      if(e == 23)
+        s.removeObserver(this);
+    }
+  });
+  ```
+
+  ​	注意，这个调用以一个匿名类 SetObserver实例代替了前一个调用中使用的 lambda。这是因为函数对象需要将自身传给`s.removeObserver`，而 <u>lambda则无法访问它们自己（E42）</u>。
+
+  ​	你可能以为这个程序会打印数字0~23，之后观察者会取消预订，程序会悄悄地完成它的工作。实际上却是打印出数字0~23，然后抛出 ConcurrentModificationException。问题在于，当 notifyElementAdded调用观察者的added方法时，它正处于遍历observers列表的过程中。 added方法调用可观察集合的removeObserver方法，从而调用`observers.remove`。现在我们有麻烦了。我们正企图<u>在遍历列表的过程中，将一个元素从列表中删除，这是非法的</u>。 notifyElementAdded方法中的迭代是在一个同步的块中，可以防止并发的修改，但是无法防止迭代线程本身回调到可观察的集合中，也无法防止修改它的observers列表。
+
+  ​	现在我们要尝试一些比较奇特的例子：我们来编写一个试图取消预订的观察者，但是不直接调用 removeObserver，它用另一个线程的服务来完成。这个观察者使用了一个executor service（E80）：
+
+  ```java
+  // Observer that uses a background thread needlessly
+  set.addObserver(new SetObserver<>() {
+    public void added(ObservableSet<Integer> s, Integer e) {
+      System.out.println(e);
+      if(e == 23) {
+        ExecutorService exec = Executors.newSingleThreadExecutor();
+        try {
+          exec.submit(() -> s.removeObserver(this)).get();
+        } catch(ExecutionException | InterruptedException ex) {
+          throw new AssertionError(ex);
+        } finally {
+          exec.shutdown();
+        }
+      }
+    }
+  });
+  ```
+
+  ​	顺便提一句，注意看<u>这个程序在一个catch子句中捕获了两个不同的异常类型。这个机制是在Java7中增加的，不太正式地称之为多重捕获(multi-catch)</u>。它可以极大地提升代码的清晰度，行为与多异常类型相同的程序，其篇幅可以大幅减少。
+
+  ​	<u>运行这个程序时，没有遇到异常，而是遭遇了死锁。后台线程调用`s.removeObserver`，它企图锁定 observers，但它无法获得该锁，因为主线程已经有锁了。在这期间，主线程直在等待后台线程来完成对观察者的删除，这正是造成死锁的原因</u>。
+
+  ​	这个例子是刻意编写用来示范的，因为观察者实际上没理由使用后台线程，但这个问题却是真实的。<u>从同步区域中调用外来方法，在真实的系统中已经造成了许多死锁，例如GUI工具箱</u>。
+
+  ​	在前面这两个例子中(异常和死锁)，我们都还算幸运。调用外来方法(added)时，同步区域(observers)所保护的资源处于一致的状态。假设当同步区域所保护的约束条件暂时无效时，你要从同步区域中调用一个外来方法。由于Java程序设计语言中的锁是可重入的(reentrant)，这种调用不会死锁。就像在第一个例子中一样，它会产生一个异常，因为调用线程已经有这个锁了，因此当该线程试图再次获得该锁时会成功，尽管概念上不相关的另一项操作正在该锁所保护的数据上进行着。这种失败的后果可能是灾难性的。从本质上来说，这个锁没有尽到它的职责。<u>可重入的锁简化了多线程的面向对象程序的构造，但是它们可能会将活性失败变成安全性失败</u>。
+
+  ​	幸运的是，通过将外来方法的调用移出同步的代码块来解决这个问题通常并不太困难。对于 notifyElementAdded方法，这还涉及给observers列表拍张“快照”，然后没有锁也可以安全地遍历这个列表了。经过这一修改，前两个例子运行起来便再也不会出现异常或者死锁了：
+
+  ```java
+  // Alien method moved outside of synchronized block - open calls
+  private void notifyElementAdded(E element) {
+    List<SetObserver<E>> snapshot = null;
+    synchronized(observers) {
+      snapshot = new ArrayList<>(observers);
+    }
+    for(SetObserver<E> observer : snapshot)
+      observer.added(this, element);
+  }
+  ```
+
+  ​	事实上，要将外来方法的调用移出同步的代码块，还有一种更好的方法。Java类库提供了一个并发集合(concurrent collection)，详见（E81），称作 CopyOnWriteArrayList，这是专门为此定制的。这个 <u>CopyOnWriteArrayList是 ArrayList的一种变体，它通过重新拷贝整个底层数组，在这里实现所有的写操作。由于内部数组永远不改动，因此迭代不需要锁定，速度也非常快</u>。如果大量使用， CopyOnWriteArrayList的性能将大受影响，但是对于观察者列表来说却是很好的，因为它们几乎不改动，并且经常被遍历。
+
+  ​	如果将这个列表改成使用CopyOnWriteArrayList，就不必改动 Observables的add和addAll方法。下面是这个类的其余代码。注意其中并没有任何显式的同步：
+
+  ```java
+  // Thread-safe observable set with CopyOnWriteArrayList
+  private final List<SetObserver<E>> observers = new CopyOnWriteArrayList<>();
+  
+  public void addObserver(SetObserver<E> observer) {
+    observers.add(observer);
+  }
+  
+  public boolean removeObserver(SetObserver<E> observer) {
+    return observers.remove(observer);
+  }
+  
+  private void notifyElementAdded(E element) {
+    for (SetObserver<E> observer : observers)
+      observer.added(this, element);
+  }
+  ```
+
+  ​	<u>在同步区域之外被调用的外来方法被称作“开放调用”(open call)</u> [Goetz06，10.1.4]。除了可以避免失败之外，开放调用还可以极大地增加并发性。外来方法的运行时间可能为任意时长。如果在同步区域内调用外来方法，其他线程对受保护资源的访问就会遭到不必要的拒绝。	
+
+  ​	**通常来说，应该在同步区域內做尽可能少的工作**。获得锁，检查共亨数据，根据需要转换数据，然后释放锁。如果你必须要执行某个很耗时的动作，则应该设法把这个动作移到同步区域的外面，而不违背（E78）中的指导方针。
+
+  ​	本条目的第一部分是关于正确性的。接下来，我们要简单地讨论一下性能。虽然自Java平台早期以来，同步的成本已经下降了，但更重要的是，永远不要过度同步。<u>在这个多核的时代，过度同步的实际成本并不是指获取锁所花费的CPU时间；而是指失去了并行的机会，以及**因为需要确保每个核都有一个一致的内存视图而导致的延迟**。过度同步的另项潜在开销在于，它会限制虚拟机优化代码执行的能力</u>。
+
+  ​	如果正在编写一个可变的类，有两种选择：省略所有的同步，如果想要并发使用，就允许客户端在必要的时候从外部同步，或者通过内部同步，使这个类变成是线程安全的（E82），你还可以因此获得明显比从外部锁定整个对象更高的并发性。`java.util`中的集合(除了已经废弃的 Vector和 Hashtable之外)采用了前一种方法，而`java.util.concurrent`中的集合则采用了后一种方法（E81）。
+
+  ​	在Java平台出现的早期，许多类都违背了这些指导方针。例如，StringBuffer实例几乎总是被用于单个线程之中，而它们执行的却是内部同步。为此，StringBuffer基本上都由StringBuilder代替，它是一个非同步的StringBuffer。同样地，<u>`java.util.Random`中线程安全的伪随机数生成器，被`java.util.concurrent.ThreadlocalRandom`中同步的实现取代</u>，主要也是出于上述原因。<u>**当你不确定的时候，就不要同步类，而应该建立文档，注明它不是线程安全的**</u>。
+
+  ​	如果你在内部同步了类，就可以使用不同的方法来实现高并发性，例如分拆锁、分离锁和非阻塞并发控制。这些方法都超出了本书的讨论范围，但有其他著作对此进行了阐述[Goetz06， Herlihy12]。
+
+  ​	<u>如果方法修改了静态域，并且该方法很可能要被多个线程调用，那么也必须在内部同步对这个域的访问(除非这个类能够容忍不确定的行为)</u>。多线程的客户端要在这种方法上执行外部同步是不可能的，因为其他不相关的客户端不需要同步也能调用该方法。**域本质上就是一个全局变量，即使是私有的也一样，因为它可以被不相关的客户端读取和修改**。（E78）中的 generateSerialNumber方法使用的nextSerialNumber域就是这样的一个例子。
+
+---
+
++ 小结
+
+  ​	总而言之，**为了避免死锁和数据破坏，千万不要从同步区域内部调用外来方法**。
+
+  ​	**更通俗地讲，要尽量将同步区域内部的工作量限制到最少**。
+
+  ​	当你在设计一个可变类的时候，要考虑一下它们是否应该自己完成同步操作。在如今这个多核的时代，这比永远不要过度同步来得更重要。只有当你有足够的理由一定要在内部同步类的时候，才应该这么做，同时还应该将这个决定清楚地写到文档中（E82）。
+
+## E80 executor、task和stream优先于线程
+
+P260
 
