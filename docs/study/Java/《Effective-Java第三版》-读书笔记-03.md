@@ -1672,5 +1672,55 @@
 
 ## E80 executor、task和stream优先于线程
 
-P260
++ 概述
+
+  ​	本书第1版中阐述了简单的工作队列(work queue)（E49）的代码。这个类允许客户端按队列等待由后台线程异步处理的工作项目。当不再需要这个工作队列时，客户端可以调用一个方法，让后台线程在完成了已经在队列中的所有工作之后，优雅地终止自己。这个实现几乎就像一件玩具，但即使如此，它还是需要一整页精细的代码，一不小心，就容易出现安全问题或者导致活性失败。幸运的是，你再也不需要编写这样的代码了。
+
+  ​	到本书第二版出版的时候，Java平台中已经增加了`java.util.concurrent`。这个包中包含了一个 Executor Framework，它是一个很灵活的基于接口的任务执行工具。它创建了一个在各方面都比本书第一版更好的工作队列，却只需要这一行代码：
+
+  ```java
+  ExecutorService exec = Executor.newSingleThreadExecutor();
+  ```
+
+  ​	下面是为执行而提交一个runnable的方法：
+
+  ```java
+  exec.execute(runnable);
+  ```
+
+  ​	下面是告诉executor如何优雅地终止（如果你没有这么做，虚拟机可能不会退出）：
+
+  ```java
+  exec.shutdown();
+  ```
+
+  ​	<u>你可以利用executor service完成更多的工作。例如，可以等待完成一项特殊的任务(就如E79中的get方法一样)，你可以等待一个任务集合中的任何任务或者所有任务完成(利用 invokeAny或者 invokeAll方法)，可以等待 executor service优雅地完成终止(利用 awaitTermination方法)，可以在任务完成时逐个地获取这些任务的结果(利用ExecutorCompletionService)，可以调度在某个特殊的时间段定时运行或者阶段性地运行的任务(利用ScheduledThreadPoolExecutor)，等等</u>。
+
+  ​	如果想让不止一个线程来处理来自这个队列的请求，只要调用一个不同的静态工厂这个工厂创建了一种不同的executor service，称作**线程池(thread pool)**。你可以用固定或者可变数目的线程创建一个线程池。`java.util.concurrent.Executors`类包含了静态工厂，能为你提供所需的大多数executor。然而，<u>如果你想来点特别的，可以直接使用ThreadPoolExecutor类。这个类允许你控制线程池操作的几乎每个方面</u>。
+
+  ​	为特殊的应用程序选择 executor service是很有技巧的。
+
+  + 如果编写的是小程序，或者是轻量负载的服务器，使用`Executors.newCachedThreadPool`通常是个不错的选择，因为它不需要配置，并且一般情况下能够正确地完成工作。
+  + 但是对于大负载的服务器来说，缓存的线程池就不是很好的选择了！<u>在缓存的线程池中，被提交的任务没有排成队列，而是直接交给线程执行。如果没有线程可用，就创建一个新的线程。如果服务器负载得太重，以致它所有的CPU都完全被占用了，当有更多的任务时，就会创建更多的线程，这样只会使情况变得更糟</u>。因此，在大负载的产品服务器中，最好使用`ExecutorsNewFixedThreadPool`，它为你提供了一个包含固定线程数目的线程池，或者为了最大限度地控制它，就直接使用`ThreadPoolExecutor`类。
+
+  ​	**<u>不仅应该尽量不要编写自己的工作队列，而且还应该尽量不直接使用线程</u>**。
+
+  + **<u>当直接使用线程时，Thread是既充当工作单元，又是执行机制</u>**。
+
+  + **<u>在Executor Framework中，工作单元和执行机制是分开的</u>**。
+
+    + 现在关键的抽象是工作单元，称作任务(task)。任务有两种：Runnable及其近亲Callable（它与Runnable类似，但它会返回值，并且能够抛出任意的异常）。
+    + 执行任务的通用机制是 executor service。如果你从任务的角度来看问题，并让一个executor service替你执行任务，在选择适当的执行策略方面就获得了极大的灵活性。
+
+    ​	**从本质上讲， Executor Framework所做的工作是执行， Collections Framework所做的工作是聚合(aggregation)**。
+
+  ​	在Java7中，Executor framework得到了扩展，它可以支持 fork-join任务了，这些任务是通过一种称作 fork-join池的特殊executor服务运行的。 fork-join任务用 ForkJoinTask实例表示，可以被分成更小的子任务，<u>包含 ForkJoinPool的线程不仅要处理这些任务，还要**从另一个线程中“偷”任务**，以确保所有的线程保持忙碌，从而提髙CPU使用率、提高吞吐量，并降低延迟</u>。 
+
+  ​	fork-join任务的编写和调优是很有技巧的。**并发的stream（E48）是在 fork join池上编写的，我们不费什么力气就能享受到它们的性能优势，前提是假设它们正好适用于我们手边的任务**。
+
+  ​	Executor framework的完整处理方法超出了本书的讨论范围，但是有兴趣的读者可以参阅**《Java Concurrency in Practice》**一书[Goetz06]。
+
+## E81 并发工具优先于wait和notify
+
+P261
 
