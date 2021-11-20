@@ -2405,7 +2405,211 @@
 
   ​	<u>选择错误的序列化形式对于一个类的复杂性和性能都会有永久的负面影响</u>。
 
-## E88 保护性地编写readObject方法
+## * E88 保护性地编写readObject方法
 
-P284
++ 概述
+
+  ​	第50条介绍了一个不可变的日期范围类，它包含可变的私有Date域。该类通过在其构造器和访问方法(accessor)中保护性地拷贝Date对象，极力地维护其约束条件和不可变性。该类如下代码所示：
+
+  ```java
+  // Immutable class that uses defensive copying
+  public final class Period {
+    private final Date start;
+    private final Date end;
+    
+    public Period(Date start, Date end) {
+      this.start = new Date(start.getTime());
+      this.end() = new Date(end.getTime());
+      if (this.start.compareTo(this.end) > 0)
+        throw new IllegalArgumentException(start + " after " + end);
+    }
+    public Date start() { return new Date(start.getTime()); }
+    public Date end() { return new Date(end.getTime()); }
+    public String toString() { return start + " - " + end; }
+  	... // Remainder omitted
+  }
+  ```
+
+  ​	假设决定要把这个类做成可序列化的。因为Period对象的物理表示法正好反映了它的逻辑数据内容，所以，使用默认的序列化形式并没有什么不合理的（E87）。因此为了使这个类成为可序列化的，似乎你所需要做的也就是在类的声明中增加`implements Serializable`字样。然而，如果你真的这样做，那么这个类将不再保证它的关键约束了。
+
+  ​	问题在于，readObject方法实际上相当于另一个公有的构造器，如同其他的构造器一样，<u>它也要求警惕同样的所有注意事项</u>。**构造器必须检查其参数的有效性（E49），并且在必要的时候对参数进行保护性拷贝（E50），同样地，readObject方法也需要这样做**。如果readoObject方法无法做到这两者之一，对于攻击者来说，要违反这个类的约束条件相对就比较简单了。
+
+  ​	<u>不严格地说， readObject方法是一个“用字节流作为唯一参数”的构造器</u>。在正常使用的情况下，对一个正常构造的实例进行序列化可以产生字节流。但是，当面对一个人工仿造的字节流时， readObject产生的对象会违反它所属的类的约束条件，这时问题就产生了。这种字节流可以用来创建一个不可能的对象(impossible object)，这是利用普通的构造器无法创建的。
+
+  ​	假设我们仅仅在Period类的声明中加上了`implements Serializable`字样。那么这个不完整的程序将产生一个 Period实例，它的结束时间比起始时间还要早。对于高阶位byte值设置的转换，是因为Java缺乏byte字面量，并且不幸地决定给byte类型做标签，这两个因素联合产生的后果：
+
+  ```java
+  public class BogusPeriod {
+    // Byte stream couldn't have come from a real Period instance!
+    private static final byte[] serialzedForm = {
+      (byte)0xac,(byte)oxed, 0x00, 0x05, 0x73, 0x72, 0x00, 0x06, 
+      0x50, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x40, 0x7e, (byte)0xf8,
+      0x2b, 0x4f, 0x46, (byte)oxc0, (byte)0xf4, 0x02, 0x00, 0x02,
+      0x4c, 0x00, 0x03, 0x65, 0x6e, 0x64, 0x74, 0x00, 0x10, 0x4c,
+      0x6a, 0x61, 0x76, 0x61, 0x2f, 0x75, 0x74, 0x69, 0x6c, 0x2f,
+      0x44, 0x61, 0x74, 065, 0x3b, 0x4c, 0x00, 0x05, 0x73, 0x74, 
+      0x61, 0x72, 0x74, 0x71, 0x00, 0x7e, 0x00, 0x01, 0x78, 0x70, 
+      0x73, 0x72, 0x00, 0x0e, 0x6a, 0x61, 0x76, 0x61, 0x2e, 0x75, 
+      0x74, 0x69, 0x6c, 0x2e, 0x44, 0x61, 0x74, 0x65, 0x68, 0x6a, 
+      (byte)0x81, 0x01, 0x4b, 0x59, 0x74, 0x19, 0x03, 0x00, 0x00, 
+      0x78, 0x70, 0x77, 0x08, 0x00, 0x00, 0x00, 0x66, (byte)0xdf,
+      0x6e, 0x1e, 0x00, 0x78, 0x73, 0x71, 0x00, 0x7e, 0x00, 0x03, 
+      0x77, 0x08, 0x00, 0x00, 0x00, (byte)0xd5, 0x17, 0x69, 0x22,
+      0x00, 0x78
+    };
+  
+    public static void main(String[] args) {
+      Period p = (Period) deserialize(serializedForm);
+      System.out.println(p);
+    }
+  
+    // Returns the object with the specified serialized form
+    static Object deserialize(byte[] sf) {
+      try {
+        return new ObjectInputStream(
+          new ByteArrayInputStream(sf)).readObject();
+      } catch (IOException | ClassNoFoundException e) {
+        throw new IllegalArgumentException(e);
+      }
+    }
+  }
+  ```
+
+  ​	被用来初始化serializedForm的byte数组常量是这样产生的：首先对一个正常的Period实例进行序列化，然后对得到的字节流进行手工编辑。对于这个例子而言，字节流的细节并不重要，但是如果你很好奇，可以在《Java Object Serialization Specification》[Serialization，6]中查到有关序列化字节流格式的描述信息。如果运行这个程序，它会打印出“Fri Jan 0112:00:00 PST 1999 - Sun Jan 0112:00:00 PST 1984”。只要把 Period声明成可序列化的，就会使我们创建出违反其类约束条件的对象。
+
+  ​	为了修正这个问题，<u>可以为 Period提供一个readObject方法，该方法首先调用defaultReadObject，然后检查被反序列化之后的对象的有效性</u>。如果有效性检査失败，readObject方法就抛出一个InvalidObjectException异常，使反序列化过程不能成功地完成：
+
+  ```java
+  // readObject method with validity checking - insufficient!
+  private void readObject(ObjectInputStream s)
+    throws IOException, ClassNoFoundException {
+    s.defaultReadObject();
+    
+    // Check that our invariants are statisfied
+    if(start.compareTo(end) > 0)
+      throw new InvalidObjectException(start + " after " + end);
+  }
+  ```
+
+  ​	尽管这样的修正避免了攻击者创建无效的Period实例，但是，这里仍然隐藏着一个更为微妙的问题。通过伪造字节流，要想创建可变的Period实例仍是有可能的，做法是：字节流以一个有效的Period实例开头，然后附加上两个额外的引用，指向 Period实例中的两个私有的Date域。攻击者从 ObjectInputStream中读取 Period实例，然后读取附加在其后面的“恶意编制的对象引用”。这些对象引用使得攻击者能够访问到Period对象内部的私有Date域所引用的对象。通过改变这些Date实例，攻击者可以改变Period实例。下面的类演示了这种攻击：
+
+  ```java
+  public class MutablePeriod {
+    // A period instance
+    public final Period period;
+  
+    // period's start field, to which we shouldn't have access
+    public final Date start;
+  
+    // period's end field, to which we shouldn't have access
+    public final Date end;
+    public MutablePeriod() {
+      try {
+        ByteArrayOutputStream bos = 
+          new ByteArrayOutputStream();
+        ObjectOutputStream out = 
+          new ObjectOutputStream(bos);
+  
+        // Serialize a valid Period instance
+        out.writeObject(new Period(new Date(), new Date()));
+  
+        bytep[] ref = { 0x71, 0, 0x7e, 0, 5 }; // Ref #5
+        bos.write(ref); // The start field
+        ref[4] = 4; // Red # 4
+        bos.write(ref); // The end field
+  
+        // Deserialize Period and "stolen" Date references
+        ObjectInputStream in = new ObjectInputStream(
+          new ByteArrayInputStream(bos.toByteArray()));
+        period = (Period) in.readObject();
+        start = (Date) in.readObject();
+        end = (Date) in.readObject();
+      } catch (IOException | ClassNotFoundException e) {
+        throw new AssertionError(e);
+      }
+    }
+  }
+  ```
+
+  ​	要查看正在进行的攻击，请运行以下程序：
+
+  ```java
+  public static void main(String[] args) {
+    MutablePeriod mp = new MutablePeriod();
+    Period p = mp.period;
+    Date pEnd = mp.end;
+    
+    // Let's turn back the clock
+    pEnd.setYear(78);
+    System.out.println(p);
+    
+    // Bring back the 60s!
+    pEnd.setYear(69);
+    System.out.println(p);
+  }
+  ```
+
+  ​	在作者的机器上，运行这个程序，产生的输出结果如下：
+
+  ```shell
+  Web Nov 22 00:21:29 PST 2017 - Wed Nov 22 00:21:29 PST 1978
+  Web Nov 22 00:21:29 PST 2017 - Sat Nov 22 00:21:29 PST 1969
+  ```
+
+  ​	虽然 Period实例被创建之后，它的约東条件没有被破坏，但是要随意地修改它的内部组件仍然是有可能的。一旦攻击者获得了一个可变的 Period实例，就可以将这个实例传递给一个“安全性依赖于Period的不可变性”的类，从而造成更大的危害。这种推断并不牵强：<u>实际上，有许多类的安全性就是依赖于 String的不可变性</u>。
+
+  ​	问题的根源在于， Period的readObject方法并没有完成足够的保护性拷贝。**当一个对象被反序列化的时候，对于客户端不应该拥有的对象引用，如果哪个域包含了这样的对象引用，就必须要做保护性拷贝，这是非常重要的**。因此，<u>**对于每个可序列化的不可变类，如果它包含了私有的可变组件，那么在它的 readObject方法中，必须要对这些组件进行保护性拷贝**</u>。
+
+  ​	下面的readObject方法可以确保Period类的约束条件不会遭到破坏，以保持它的不可变性：
+
+  ```java
+  // readObject method with defensive copying and validity checking
+  private void readObject(ObjectInputStream s)
+    throws IOException, ClassNoFoundException {
+    s.defaultReadObject();
+    
+    // Defensively copy our mutable components
+    start = new Date(start.getTime());
+    end = new Date(end.getTime());
+    
+    // Check that our invariants are statisfied
+    if(start.compareTo(end) > 0)
+      throw new InvalidObjectException(start + " after " + end);
+  }
+  ```
+
+  ​	注意，保护性拷贝是在有效性检查之前进行的，而且我们没有使用Date的clone方法来执行保护性拷贝。这两个细节对于保护Period类免受攻击是必要的（E50）。同时也要注意到，对于 final域，保护性拷贝是不可能的。为了使用readObject方法，我们必须要将start和end域做成非final的。这是很遗憾的，但是这还算是相对比较好的做法。有了这个新的readObject方法，并去掉了start和end域的final修饰符之后，MutablePeriod类将不再有效。此时，上面的攻击程序会产生如下输出：
+
+  ```shell
+  Web Nov 22 00:23:41 PST 2017 - Wed Nov 22 00:23:41 PST 2017
+  Web Nov 22 00:23:41 PST 2017 - Sat Nov 22 00:23:41 PST 2017
+  ```
+
+  ​	**有一个简单的“石蕊”测试，可以用来确定默认的 readObject方法是否可以被接受**。
+
+  ​	测试方法：<u>增加一个公有的构造器，其参数对应于该对象中每个非瞬时的域，并且无论参数的值是什么，都是不进行检查就可以保存到相应的域中的</u>。
+
+  + 对于这样的做法，你是否会感到很舒适？如果你对这个问题的回答是否定的，就必须提供一个显式的 readObject方法，并且它必须执行构造器所要求的所有有效性检查和保护性拷贝。
+  + <u>另一种方法是，可以使用**序列化代理模式(serialization proxy pattern)**，详见（E90）。强烈建议使用这个模式，因为它分担了安全反序列化的部分工作</u>。
+
+  ​	对于非final的可序列化的类，在readObject方法和构造器之间还有其他类似的地方。<u>**与构造器一样， readObject方法不可以调用可被覆盖的方法，无论是直接调用还是间接调用都不可以**（E19）</u>。如果违反了这条规则，并且覆盖了该方法，被覆盖的方法将在子类的状态被反序列化之前先运行。程序很可能会失败[Bloch05， Puzzle91]
+
+---
+
++ 小结
+
+  ​	总而言之，**在编写readObject方法的时候，都要这样想：<u>你正在编写一个公有的构造器，无论给它传递什么样的字节流，它都必须产生一个有效的实例</u>**。不要假设这个字节流定代表着一个真正被序列化过的实例。
+
+  ​	虽然在本条目的例子中，类使用了默认的序列化形式，但是，所有讨论到的有可能发生的问题也同样适用于使用自定义序列化形式的类。下面以摘要的形式给出一些指导方针，有助于编写出更加健壮的 readObject方法：
+
+  + **对于对象引用域必须保持为私有的类，要保护性地拷贝这些域中的每个对象。不可变类的可变组件就属于这一类别**。
+  + 对于任何约束条件，如果检查失败，则抛出一个InvalidObjectException异常。**这些检查动作应该跟在所有的保护性拷贝之后**。
+  + <u>如果整个对象图在被反序列化之后必须进行验证，就应该使用ObjectInputValidation接口(本书没有讨论)</u>。
+  + **<u>无论是直接方式还是间接方式，都不要调用类中任何可被覆盖的方法</u>**。
+
+## E89 对于实例控制，枚举类型优先于readResolve
+
+P289
+
+​	
 
