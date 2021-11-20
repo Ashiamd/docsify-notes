@@ -1929,7 +1929,117 @@
 
   ​	**如果你编写的是无条件的线程安全类，就应该考虑使用私有锁对象来代替同步的方法**。这样可以防止客户端程序和子类的不同步干扰，让你能够在后续的版本中灵活地对并发控制采用更加复杂的方法。
 
-## E83 慎用延迟初始化
+## * E83 慎用延迟初始化
 
-P268
++ 概述
+
+  ​	<u>延迟初始化(lazy initialization)是指延迟到需要域的值时才将它初始化的行为。如果永远不需要这个值，这个域就永远不会被初始化。这种方法**既适用于静态域，也适用于实例域**</u>。
+
+  ​	**虽然延迟初始化主要是一种优化，但它也可以用来破坏类中的有害循环和实例初始化**[Bloch05. puzzle 51]。
+
+  ​	**就像大多数的优化一样，对于延迟初始化，最好建议“除非绝对必要，否则就不要这么做”（E67**）。
+
+  ​	延迟初始化就像一把双刃剑。它降低了初始化类或者创建实例的开销，却增加了访问被延迟初始化的域的开销。根据延迟初始化的域的哪个部分最终需要初始化、初始化这些域要多少开销，以及每个域多久被访问一次，**延迟初始化(就像其他的许多优化样)实际上降低了性能**。
+
+  ​	<u>也就是说，延迟初始化有它的好处。如果域只在类的实例部分被访问，并且初始化这个域的开销很髙，可能就值得进行延迟初始化。要确定这一点，唯一的办法就是测量类在用和不用延迟初始化时的性能差别。</u>
+
+  ​	当有多个线程时，延迟初始化是需要技巧的。如果两个或者多个线程共享一个延迟初始化的域，采用某种形式的同步是很重要的，否则就可能造成严重的Bug（E78）。本条目中讨论的所有初始化方法都是线程安全的。
+
+  ​	**在大多数情况下，正常的初始化要优先于延迟初始化**。下面是正常初始化的实例域的一个典型声明。注意其中使用了final修饰符（E17）:
+
+  ```java
+  // Normal initialization of an instance field
+  private final FieldType field = computeFieldValue();
+  ```
+
+  ​	**如果利用延迟优化来破坏初始化的循环，就要使用同步访问方法**，因为它是最简单最清楚的替代方法：
+
+  ```java
+  // Lazy initalization of instance field - synchronized accessor
+  private FieldType field;
+  
+  private synchronized FieldType getField() {
+    if (field == null)
+      field = computeFieldValue();
+    return field;
+  }
+  ```
+
+  ​	这两种习惯模式(正常的初始化和使用了同步访问方法的延迟初始化)应用到静态域上时保持不变，除了给域和访问方法声明添加了static修饰符之外。
+
+  ​	**如果出于性能的考虑而需要对静态域使用延迟初始化，就使用 lazy initialization holder class模式**。这种模式(也称作initialize-on-demand holder class idiom)保证了类要到被用到的时候才会被初始化[JLS，12.4.1]。如下所示：
+
+  ```java
+  // Lazy initialization holder class idiom for static fields
+  private static class FieldHolder {
+    static final FieldType field = computeFieldValue();
+  }
+  private static FieldType getField() { return FieldHolder.field; } 
+  ```
+
+  ​	当getField方法第一次被调用时，它第一次读取FieldHolder.field，导致FieldHolder类得到初始化。**这种模式的魅力在于， getField方法没有被同步，并且只执行一个域访问，因此延迟初始化实际上并没有增加任何访问成本**。<u>现代的VM将在初始化该类的时候，同步域的访问。一旦这个类被初始化，虚拟机将修补代码，以便后续对该域的访问不会导致任何测试或者同步</u>。
+
+  ​	**如果出于性能的考虑而需要对实例域使用延迟初始化，就使用双重检查模式( double-check idiom)**。
+
+  ​	**<u>这种模式避免了在域被初始化之后访问这个域时的锁定开销（E79</u>**）。
+
+  ​	这种模式背后的思想是：两次检查域的值，因此名字叫双重检查(double- check)，第一次检查时没有锁定，看看这个域是否被初始化了；第二次检查时有锁定。只有当第二次检查时表明这个域没有被初始化，才会对这个域进行初始化。因为如果域已经被初始化就不会有锁定，这个域被声明为volatile就很重要了（E78）。下面就是这种习惯模式：
+
+  ```java
+  // Double-check idiom for lazy initailzation of instance fields
+  private volatile FieldType field;
+  
+  private FieldType getField() {
+    FieldType result = field;
+    if(result == null) { // First check (no locking)
+      synchronized(this) {
+        if(field == null) // Second check(with locking)
+          field = result = computeFieldValue();
+      }
+    }
+    return result;
+  }
+  ```
+
+  ​	这段代码可能看起来似乎有些费解。**<u>尤其对于需要用到局部变量result可能有点不解。这个变量的作用是确保field只在已经被初始化的情况下读取一次</u>**。虽然这不是严格需要，但是可以提升性能，并且因为给低级的并发编程应用了一些标准，因此更加优雅。<u>在作者的机器上，上述的方法比没用局部变量的方法快了大约1.4倍</u>。
+
+  ​	虽然也可以对静态域应用双重检査模式，但是没有理由这么做，因为lazy initialization holder class idiom是更好的选择。
+
+  ​	双重检査模式的两个变量值得一提。<u>有时可能需要延迟初始化一个可以接受重复初始化的实例域。如果处于这种情况，就可以使用双重检查模式的一个变量，它负责分配第二次检査。没错，它就是**单重检查模式(single- check idiom)**</u>。
+
+  ​	下面就是这样的一个例子。注意field仍然被声明为volatile：
+
+  ```java
+  // Single-check idiom - can cause repeated initialization!
+  private volatile FieldType field;
+  
+  private FieldType getField() {
+    FieldType result = field;
+    if(result == null)
+      field = result = computeFieldValue();
+    return result;
+  }
+  ```
+
+  ​	**本条目中讨论的所有初始化方法都适用于基本类型的域，以及对象引用域**。
+
+  ​	<u>当双重检查模式(double-check idiom)或者单重检査模式(single-check idiom)应用到数值型的基本类型域时，就会用0来检査这个域(这是数值型基本变量的默认值)，而不是用null</u>。
+
+  ​	如果你不在意是否每个线程都重新计算域的值，并且域的类型为基本类型，<u>而不是long或者double类型</u>，就可以选择从单重检査模式的域声明中删除volatile修饰符。这种变体称之为racy single-check idiom。<u>它加快了某些架构上的域访问，代价是增加了额外的初始化(直到访问该域的每个线程都进行一次初始化)。这显然是一种特殊的方法，不适合于日常的使用</u>。
+
+---
+
++ 小结
+
+  ​	总而言之，**大多数的域应该正常地进行初始化，而不是延迟初始化**。
+
+  ​	如果为了达到性能目标，或者<u>为了破坏有害的初始化循环</u>，而必须延迟初始化一个域，就可以使用相应的延迟初始化方法。
+
+  + 对于实例域，就使用双重检查模式(double-check idiom)。
+  + 对于静态域，则使用lazy initialization holder class idiom。
+  + 对于可以接受重复初始化的实例域，也可以考虑使用单重检查模式(single- check idiom)。
+
+## E84 不要依赖于线程调度器
+
+P271
 
