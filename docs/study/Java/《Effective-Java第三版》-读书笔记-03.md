@@ -2607,9 +2607,265 @@
   + <u>如果整个对象图在被反序列化之后必须进行验证，就应该使用ObjectInputValidation接口(本书没有讨论)</u>。
   + **<u>无论是直接方式还是间接方式，都不要调用类中任何可被覆盖的方法</u>**。
 
-## E89 对于实例控制，枚举类型优先于readResolve
+## * E89 对于实例控制，枚举类型优先于readResolve
 
-P289
++ 概述
 
-​	
+  ​	（E3）讲述了 Singleton(单例)模式,并且给出了以下这个 Singleton类的示例。这个类限制了对其构造器的访问，以确保永远只创建一个实例：
 
+  ```java
+  public class Elvis {
+    public static final Elvis INSTANCE = new Elvis();
+    private Elvis() { ... }
+    
+    public void leavTheBuilding() { ... }
+  }
+  ```
+
+  ​	正如在（E3）中提到的，如果这个类的声明中加上了`implements Serializable`的字样，它就不再是一个单例。无论该类使用了默认的序列化形式，还是自定义的序列化形式（E87），都没有关系；也跟它是否提供了显式的readObject方法（E88）无关。<u>任何一个 readObject方法，不管提显式的还是默认的，都会返回一个新建的实例，这个新建的实例不同于该类初始化时创建的实例</u>。
+
+  ​	readResolve特性允许你用readObject创建的实例代替另一个实例[Serialization, 3.7]。**对于一个正在被反序列化的对象，如果它的类定义了一个readResolve方法，并且具备正确的声明，那么在反序列化之后，新建对象上的readResolve方法就会被调用。然后，该方法返回的对象引用将被返回，取代新建的对象**。<u>在这个特性的绝大多数用法中指向新建对象的引用不需要再被保留，因此立即成为垃圾回收的对象</u>。
+
+  ​	如果Evis类要实现Serializable接口，下面的readResolve方法就足以保证它的单例属性：
+
+  ```java
+  // readResolve for instance control - you can do better!
+  private Object readResolve() {
+    // Return the one true Elvis and let the garbage collector
+    // take care of the Elvis impersonator.
+    return INSTANCE;
+  }
+  ```
+
+  ​	<u>该方法忽略了被反序列化的对象，只返回该类初始化时创建的那个特殊的Elvis实例</u>。因此，Elvis实例的序列化形式并不需要包含任何实际的数据；所有的实例域都应该被声明为瞬吋的。
+
+  ​	**事实上，如果依赖readResolve进行实例控制，带有对象引用类型的所有实例域则都必须声明为transient**。
+
+  ​	否则，那种破釜沉舟式的攻击者，就有可能在readResolve方法被运行之前，保护指向反序列化对象的引用，采用的方法类似于在（E88）中提到过的 MutalPeriod攻击。
+
+  ​	<u>这种攻击有点复杂，但是背后的思想却很简单。**如果单例包含一个非瞬时的对象引用域，这个域的内容就可以在单例的readResolve方法运行之前被反序列化**。当对象引用域的内容被反序列化时，它就允许一个精心制作的流“盜用”指向最初被反序列化的单例的引用</u>。
+
+  ​	以下是它更详细的工作原理。首先，编写一个“盗用者”类，它既有readResolve方法，又有实例域，实例域指向被序列化的单例的引用，“盜用者”类就“潜伏”在其中。在序列化流中，用“盗用者”类的实例代替单例的瞬时域。你现在就有了一个循环：单例包含“盗用者”类，“盗用者”类则引用这个单例。
+
+  ​	由于单例包含“盗用者”类，当这个单例被反序列化时，“盗用者”类的 readResolve方法先运行。因此，当“盗用者”的 readResolve方法运行时，它的实例域仍然引用被部分反序列化(并且也还没有被解析)的Singleton。
+
+  ​	“盗用者”的 readResolve方法从它的实例域中将引用复制到静态域中，以便该引用可以在readResolve方法运行之后被访问到。然后这个方法为它所藏身的那个域返回个正确的类型值。如果没有这么做，当序列化系统试着将“盗用者”引用保存到这个域中时，虚拟机就会抛出ClassCastException。
+
+  ​	为了更具体地说明这一点，我们以下面这个有问题的单例为例：
+
+  ```java
+  // Broken singleton - has nontransient object reference field!
+  public class Elvis implements Serializable {
+    public static final Elvis INSTANCE = new Elvis();
+    private Elvis(){}
+    
+    private String[] favoriteSongs = {"Hound Dog", "Heartbreak Hotel"};
+    public void printFavorites() {
+      System.out.println(Arrays.toString(favoriteSongs));
+    }
+    private Object readResolve() {
+      return INSTANCE;
+    }
+  }
+  ```
+
+  ​	如下"盗用者"类，是根据上述的描述构造的：
+
+  ```java
+  public class ElvisStealer implements Serializable {
+    static Elvis impersonator;
+    private Elvis payload;
+    
+    private Object readResolve() {
+      // Save a reference to the "unresolved" Elvis instance
+      impersonator = payload;
+      
+      // Return object of correct type for favoriteSongs field
+      return new String[] { "A Fool Such as I"};
+    }
+    private static final long serialVersionUID = 0;
+  }
+  ```
+
+  ​	下面是一个不完整的程序，它反序列化一个手工制作的流，为那个有缺陷的单例产生两个截然不同的实例。这个程序中省略了反序列化方法，因为它与（E88）中的一样：
+
+  ```java
+  public class ElvisImpersonator {
+    // Byte stream couldn't have come from a real Elvis instance!
+    private static final byte[] serializedForm = {
+      (byte)0xac, (byte)0xed, 0x00, 0x05, 0x73, 0x72, 0x00, 0x05,
+      0x45, 0x6c, 0x76, 0x69, 0x73, (byte)0x84, (byte)0xe6,
+      (byte)0x93, 0x33, (byte)0xc3, (byte)0xf4, (byte)0x8b,
+      0x32, 0x02, 0x00, 0x01, 0x4c, 0x00, 0x0d, 0x66, 0x61, 0x76,
+      0x6f, 0x72, 0x69, 0x74, 0x65, 0x53, 0x6f, 0x6e, 0x67, 0x73,
+      0x74, 0x00, 0x12, 0x4c, 0x6a, 0x61, 0x76, 0x61, 0x2f, 0x6c, 
+      0x61, 0x6e, 0x67, 0x2f, 0x4f, 0x62, 0x6a, 0x65, 0x63, 0x74,
+      0x3b, 0x78, 0x70, 0x73, 0x72, 0x00, 0x0c, 0x45, 0x6C, 0x76,
+      0x69, 0x73, 0x53, 0x74, 0x65, 0x61, 0x6c, 0x65, 0x72, 0x00, 
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 
+      0x4c, 0x00, 0x07, 0x70, 0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 
+      0x74, 0x00, 0x07, 0x4c, 0x45, 0x6c, 0x76,0x69, 0x73, 0x3b,
+      0x78, 0x70, 0x71, 0x00, 0x7e, 0x00, 0x02
+    };
+  
+    public static void main(String[] args) {
+      // Initializes ElvisStealer.impersonator and returns
+      // the real Elvis (which is Elvis.INSTANCE)
+      Elvis elvis = (Elvis) deserialize(serializedForm);
+      Elvis impersonator = ElvisStealer.impersonator;
+  
+      elvis.printFavorites();
+      impersonator.printFavorites();
+    }
+  }
+  ```
+
+  ​	运行这个程序会产生如下输出，最终证明可以创建两个截然不同的E1vis实例(包含两种不同的音乐品位)
+
+  ```java
+  [Hound Dog， Heartbreak Hotel]
+  [A Fool Such as I]
+  ```
+
+  ​	通过将 favoritesongs域声明为 transient，可以修正这个问题，但是最好把Elvis做成是一个单元素的枚举类型（E3）。就如ElvisStealer攻击所示范的，用 readResolve方法防止“临时”被反序列化的实例受到攻击者的访问，这种方法很脆弱，需要万分谨慎。
+
+  ​	<u>如果将一个可序列化的实例受控的类编写成枚举，Java就可以绝对保证除了所声明的常量之外，不会有其他实例，除非攻击者恶意地使用了享受特权的方法，如`AccessibleObject.setAccessible`</u>。能够做到这一点的任何一位攻击者，已经具备了足够的特权来执行任意的本地代码，后果不堪设想。将Elvis写成枚举的例子如下所示：
+
+  ```java
+  // Enum singleton - the preferred approach
+  public enum Elvis {
+    INSTANCE;
+    private String[] favoriteSongs = 
+    { "Hound Dog", "Heartbreak Hotel" };
+    public void printFavorites() {
+      System.out.println(Arrays.toString(favoriteSongs));
+    }
+  }
+  ```
+
+  ​	用readResolve进行实例控制并不过时。<u>如果必须编写可序列化的实例受控的类，在编译时还不知道它的实例，你就无法将类表示成一个枚举类型</u>。
+
+  ​	**readresolve的可访问性(accessibility)很重要**。
+
+  + <u>如果把readResolve方法放在个final类上，它就应该是私有的</u>。
+  + 如果把readResolve方法放在一个非final类上，就必须认真考虑它的可访问性。
+    + 如果它是私有的，就不适用于任何子类。
+    + 如果它是包级私有的，就只适用于同一个包中的子类。
+    + 如果它是受保护的或者公有的，就适用于所有没有覆盖它的子类。
+    + <u>如果readResolve方法是受保护的或者是公有的，并且子类没有覆盖它，对序列化过的子类实例进行反序列化，就会产生一个超类实例，这样有可能导致ClassCastException异常</u>。
+
+---
+
++ 小结
+
+  ​	总而言之，应该尽可能地使用枚举类型来实施实例控制的约束条件。如果做不到，同时又需要一个既可序列化又是实例受控的类，就必须提供一个readResolve方法，并确保该类的所有实例域都为基本类型，或者是瞬时的。
+
+## * E90 考虑用序列化代理代替序列化实例
+
++ 概述
+
+  ​	正如（E85）和（E86）中提到的，以及本章一直在讨论的，决定实现Serializable接口，会增加出错和出现安全问题的可能性，因为它允许利用语言之外的机制来创建实例，而不是用普通的构造器。然而，有一种方法可以极大地减少这些风险。这种方法就是序列化代理模式(serialization proxy pattern)。
+
+  ​	序列化代理模式相当简单。<u>首先，为可序列化的类设计一个私有的静态嵌套类，精确地表示外围类的实例的逻辑状态。这个嵌套类被称作序列化代理(serialization proxy)，它应该有一个单独的构造器，其参数类型就是那个外围类。这个构造器只从它的参数中复制数据：它不需要进行任何一致性检查或者保护性拷贝。从设计的角度来看，序列化代理的默认序列化形式是外围类最好的序列化形式。外围类及其序列代理都必须声明实现Serializable接口</u>。
+
+  ​	例如，以（E50）中编写的不可变的Period类为例，它在（E88）中被做成可序列化的。以下是这个类的一个序列化代理。 Period类是如此简单，以致它的序列化代理有着与类完全相同的域：
+
+  ```java
+  // Serialization proxy for Period class
+  private static class SerializationProxy implements Serializable {
+    private final Date start;
+    private final Date end;
+  
+    SerializatoinProxy(Period p) {
+      this.start = p.start;
+      this.end = p.end;
+    }
+    
+    private static final long serialVersionUID = 
+      1515411564645L; // Any number will do (Item 87)
+  }
+  ```
+
+  ​	接下来，将下面的 writeReplace方法添加到外围类中。通过序列化代理，这个方法可以被逐字地复制到任何类：
+
+  ```java
+  // writeReplace method for the serialization proxy pattern
+  private Object writeReplace() {
+    return new SerializationProxy(this);
+  }
+  ```
+
+  ​	<u>这个方法的存在导致序列化系统产生一个SerializationProxy实例，代替外围类的实例。换句话说， **writeReplace方法在序列化之前，将外围类的实例转变成了它的序列化代理**</u>。
+
+  ​	<u>有了writeReplace方法之后，序列化系统永远不会产生外围类的序列化实例，但是攻击者有可能伪造，企图违反该类的约束条件。为了防御此类攻击，只要在外围类中添加如下readObject方法即可</u>：
+
+  ```java
+  // readObject method for the serialization proxy pattern
+  private void readObject(ObjectInputStream stream)
+    throw InvalidObjectException {
+    throw new InvalidObjectException("Proxy required");
+  }
+  ```
+
+  ​	<u>最后，在SerializationProxy类中提供一个readResolve方法，它返回一个逻辑上相当的外围类的实例。这个方法的出现，导致序列化系统在反序列化时将序列化代理转变回外围类的实例</u>。
+
+  ​	这个readResolve方法仅仅利用它的公有API创建外围类的一个实例，这正是该模式的魅力所在。**它极大地消除了序列化机制中语言本身之外的特征，因为反序列化实例是利用与任何其他实例相同的构造器、静态工厂和方法而创建的**。<u>这样你就不必单独确保被反序列化的实例一定要遵守类的约束条件。如果该类的静态工厂或者构造器建立了这些约束条件，并且它的实例方法在维持着这些约束条件，你就可以确信序列化也会维持这些约束条件</u>。
+
+  ​	以下是上述Period.SerializationProxy的readResolve方法：
+
+  ```java
+  // readResolve method for Period.SerializationProxy
+  private Object readResolve() {
+    return new Period(start, end); // Uses public constructor
+  }
+  ```
+
+  ​	**正如保护性拷贝方法一样（E88），序列化代理方法可以阻止伪字节流的攻击（E88）以及内部域的盜用攻击（E88）**。
+
+  + <u>与前两种方法不同，这种方法允许 Period类的域为final的，为了确保 Period类真正是不可变的（E17），这一点很有必要</u>。
+  + **与前两种方法不同的还有，这种方法不需要太费心思。你不必知道哪些域可能受到狡猾的序列化攻击的威胁，你也不必显式地执行有效性检查，作为反序列化的部分**。
+
+  ​	还有另外一种方法，使用这种方法时，序列化代理模式的功能比保护性拷贝的更加强大。**<u>序列化代理模式允许反序列化实例有着与原始序列化实例不同的类</u>**。你可能认为这在实际应用中没有什么作用，其实不然。
+
+  ​	<u>以EnumSet的情况为例（E37）。这个类没有公有的构造器，只有静态工厂。从客户端的角度来看，它们返回EnumSet实例，但是在目前的 OpenJDK实现中，它们是返回两种子类之一，具体取决于底层枚举类型的大小。如果底层的枚举类型有64个或者少于64个的元素，静态工厂就返回一个 RegularEnumSet;否则，它们就返回一个JumboEnumSet</u>。
+
+  ​	现在考虑这种情况：如果序列化一个枚举集合，它的枚举类型有60个元素，然后给这个枚举类型再增加5个元素，之后反序列化这个枚举集合。当它被序列化的时候，是一个RegularEnumSet实例，但是一旦它被反序列化，它最好是一个JumboEnumSet实例。实际发生的情况正是如此，因为**<u>Enumset使用序列化代理模式</u>**。如果你有兴趣，可以看看如下的 EnumSet序列化代理，它实际上就这么简单:
+
+  ```java
+  // EnumSet's serialization proxy
+  private static class SerializationProxy <E extends Enum<E>>
+    implements Serializable {
+    // The element type of this enum set.
+    private final Class<E> elementType;
+    
+    // The elements contained in this enum set.
+    private final Enum<?>[] elements;
+    
+    SerializatoinProxy(EnumSet<E> set) {
+      elementType = set.elementType;
+      elements = set.toArray(new Enum<?>[0]);
+    }
+    
+    private Object readResolve() {
+      EnumSet<E> result = EnumSet.noneOf(elementType);
+      for (Enum<?> e : elements)
+        result.add((E) e);
+      return result;
+    }
+    
+    private static final long serialVersionUID = 362491234563181265L;
+  }
+  ```
+
+  ​	序列化代理模式有两个局限性。
+
+  + **它不能与可以被客户端扩展的类相兼容**（E19）。
+  + **它也不能与对象图中包含循环的某些类相兼容**：如果你企图从一个对象的序列化代理的readResolve方法内部调用这个对象中的方法，就会得到一个ClassCastException异常，<u>因为你还没有这个对象，只有它的序列化代理</u>。
+
+  ​	最后一点，序列化代理模式所增强的功能和安全性并不是没有代价的。<u>在作者的机器上，通过序列化代理来序列化和反序列化Period实例的开销，比用保护性拷贝进行的开销增加了14</u>%。
+
+---
+
++ 小结
+
+  ​	总而言之，**当你发现自己必须在一个不能被客户端扩展的类上编写readObject或者writeObject方法时，就应该考虑使用序列化代理模式**。<u>要想稳健地将带有重要约束条件的对象序列化时，这种模式可能是最容易的方法</u>。
