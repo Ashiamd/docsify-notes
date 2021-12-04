@@ -12,5 +12,11 @@
 >
 > [plugins - How to create a pluginable Java program? - Stack Overflow](https://stackoverflow.com/questions/25449/how-to-create-a-pluginable-java-program)
 >
-> [OSGi Working Group | The Eclipse Foundation](https://www.osgi.org/) <= 强烈推荐（前提：懂Java）
+> [OSGi Working Group | The Eclipse Foundation](https://www.osgi.org/) <= 强烈推荐（前提：懂Java），然而好像说大部分场景被淘汰。
+>
+> [Java9模块化（Jigsaw）初识 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/29563164) <= 某种意义上，模块化就是轻量版OSGI
+>
+> [Java9模块化（Jigsaw）初识 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/29563164)
+>
+> [Java 9 正式发布，终落地 Jigsaw 项目 - 太原中软 - 博客园 (cnblogs.com)](https://www.cnblogs.com/taiyuanzhongruan/p/7591899.html)
 
