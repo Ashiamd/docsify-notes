@@ -19,4 +19,12 @@
 > [Java9模块化（Jigsaw）初识 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/29563164)
 >
 > [Java 9 正式发布，终落地 Jigsaw 项目 - 太原中软 - 博客园 (cnblogs.com)](https://www.cnblogs.com/taiyuanzhongruan/p/7591899.html)
+>
+> [Java 9中的模块系统的优缺点是什么？ - 经验笔记 (nhooo.com)](https://www.nhooo.com/note/qa03fv.html)
+>
+> [JDK9的新特性:JPMS模块化 - flydean - 博客园 (cnblogs.com)](https://www.cnblogs.com/flydean/p/jdk9-java-module-jpms.html)	<= 较具体的语法和使用介绍
+>
+> [JAVA代码热部署，在线不停服动态更新 - CM4J - 博客园 (cnblogs.com)](https://www.cnblogs.com/cm4j/p/hot_deploy.html) <= 推荐
+>
+> [JAVA热部署，通过agent进行代码增量热替换！！！ - 张玉龙 - 博客园 (cnblogs.com) ](https://www.cnblogs.com/zyl2016/p/13666945.html)<= 强烈推荐
 
