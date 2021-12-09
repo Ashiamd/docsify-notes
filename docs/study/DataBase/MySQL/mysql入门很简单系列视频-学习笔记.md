@@ -269,6 +269,10 @@
 >
 > [记一次大事务导致的数据库死锁引起线上服务器load飙升的故障_森林里的一天-CSDN博客](https://blog.csdn.net/dtlscsl/article/details/111914461) <= 现实问题，值得学习
 >
+> [mysql意向锁_luzhensmart的专栏-CSDN博客_mysql意向锁](https://blog.csdn.net/luzhensmart/article/details/87905553)
+>
+> [MySQL死锁系列-常见加锁场景分析 (toutiao.com)](https://www.toutiao.com/i6831549261650330125/?wid=1638655068270)	<=	强烈推荐阅读
+>
 > 
 >
 > MVCC
