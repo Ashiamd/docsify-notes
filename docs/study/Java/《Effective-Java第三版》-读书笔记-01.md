@@ -2870,7 +2870,7 @@ public class Test {
   	stamp.cancel();
   ```
 
-  ​	如本书中经常提到的，**出错之后应该尽快发现，最好是编译时就发现**。在本例中，直到运行时才发现错误,已经出错很久了，而且它在代码中所处的位置，距离包含错误的这部分代码已经很远了。一旦发现 ClassCastException，就必须搜索代码，查找将coin放进stamp集合的方法调用。此时编译器帮不上忙，因为它无法理解这种注释"Contains only Stamp instances"(只包含 Stamp实例)。
+  ​	如本书中经常提到的，**出错之后应该尽快发现，最好是编译时就发现**。在本例中，直到运行时才发现错误，已经出错很久了，而且它在代码中所处的位置，距离包含错误的这部分代码已经很远了。一旦发现 ClassCastException，就必须搜索代码，查找将coin放进stamp集合的方法调用。此时编译器帮不上忙，因为它无法理解这种注释"Contains only Stamp instances"(只包含 Stamp实例)。
 
   ​	有了泛型之后，类型声明中可以包含以下信息，而不是注释：
 
@@ -3018,7 +3018,7 @@ public class Test {
 
 + 概述
 
-  ​	用泛型编程时会遇到许多编译器警告：非受检转换警告(unchecked cast warning)、非受检方法调用警告、非受检参数化可变参数类型警告(unchecked parameterized vararg type warning)，以及非受检转换警告( unchecked conversion warning)。当你越来越熟悉泛型之后遇到的警告也会越来越少，但是<u>不要期待一开始用泛型编写代码就可以正确地进行编译</u>。
+  ​	用泛型编程时会遇到许多编译器警告：非受检转换警告(unchecked cast warning)、非受检方法调用警告、非受检参数化可变参数类型警告(unchecked parameterized vararg type warning)，以及非受检转换警告(unchecked conversion warning)。当你越来越熟悉泛型之后遇到的警告也会越来越少，但是<u>不要期待一开始用泛型编写代码就可以正确地进行编译</u>。
 
   ​	有许多非受检警告很容易消除。例如，假设意外地编写了这样一个声明：
 
