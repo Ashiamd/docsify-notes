@@ -37,4 +37,10 @@
 > A exist B，先计算A，然后笛卡尔积（B内循环，A外循环）
 >
 > not in内外表都不会用到索引，而not exists能用到索引，所以后者任何情况都比前者好
+>
+> 
+>
+> 分布式事务
+>
+> [终于有人把“TCC分布式事务”实现原理讲明白了！ - 阿里-马云的学习笔记 - 博客园 (cnblogs.com)](https://www.cnblogs.com/alimayun/p/12057142.html)
 
