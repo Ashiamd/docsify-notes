@@ -3648,7 +3648,7 @@ public class Test {
   numberStack.popAll(objects);
   ```
 
-  ​	如果试着用上述的popAll版本编译这段客户端代码，就会得到一个非常类似于第次用 pushAll时所得到的错误：`Collection<Object>`不是`Collection<Number>`的子类型。
+  ​	如果试着用上述的popAll版本编译这段客户端代码，就会得到一个非常类似于第一次用 pushAll时所得到的错误：`Collection<Object>`不是`Collection<Number>`的子类型。
 
   ​	这一次通配符类型同样提供了一种解决办法。popAll的输入参数类型不应该为"E的集合"，而应该为"E的某种超类的集合"(这里的超类是确定的，**因此E是它自身的一个超类型**[JLS，4.10])。
 
