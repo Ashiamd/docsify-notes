@@ -1428,4 +1428,983 @@ Ownership affects how lots of other parts of Rust work, so we’ll talk about th
 
 # 5. Using Structs to Structure Related Data
 
-> [Using Structs to Structure Related Data - The Rust Programming Language (rust-lang.org)](https://doc.rust-lang.org/book/ch05-00-structs.html)
+A *struct*, or *structure*, is a custom data type that lets you name and package together multiple related values that make up a meaningful group. If you’re familiar with an object-oriented language, a *struct* is like an object’s data attributes. In this chapter, we’ll compare and contrast tuples with structs. We’ll demonstrate how to define and instantiate structs. We’ll discuss how to define associated functions, especially the kind of associated functions called *methods*, to specify behavior associated with a struct type. Structs and enums (discussed in Chapter 6) are the building blocks for creating new types in your program’s domain to take full advantage of Rust’s compile time type checking.
+
+## 5.1 Defining and Instantiating Structs
+
+we define the names and types of the pieces of data, which we call *fields*.
+
+```rust
+struct User {
+  active: bool,
+  username: String,
+  email: String,
+  sign_in_count: u64,
+}
+```
+
+实例化struct时，不需要严格按照声明`fields`的顺序给字段赋值。
+
+```rust
+let user1 = User {
+  email: String::from("someone@example.com"),
+  username: String::from("someusername123"),
+  active: true,
+  sign_in_count: 1,
+};
+```
+
+当struct实例声明为可变`mut`时，可以对里面的字段重新赋值。
+
+```rust
+let mut user1 = User {
+  email: String::from("someone@example.com"),
+  username: String::from("someusername123"),
+  active: true,
+  sign_in_count: 1,
+};
+
+user1.email = String::from("anotheremail@example.com");
+```
+
+> **注意：Rust不允许声明部分fields可变mutable，只能声明整个实例可变**。
+
+Struct实例作为函数返回值-用例：
+
+```rust
+fn build_user(email: String, username: String) -> User {
+  User {
+    email: email,
+    username: username,
+    active: true,
+    sign_in_count: 1,
+  }
+}
+```
+
+### Using the Field Init Shorthand when Variables and Fields Have the Same Name
+
+ we can use the *field init shorthand* syntax to rewrite `build_user` so that it behaves exactly the same but doesn’t have the repetition of `email` and `username`.
+
+当参数名和Struct字段名一致时，可以使用Struct支持的*filed init shorthand* syntax，直接给Struct实例的字段赋值，如下：
+
+```rust
+fn build_user(email: String, username: String) -> User {
+  User {
+    email,
+    username,
+    active: true,
+    sign_in_count: 1,
+  }
+}
+```
+
+### Creating Instances From Other Instances With Struct Update Syntax
+
+如果创建新的Struct实例，与已有的Struct实例仅部分字段值不同，则可以使用*struct update syntax*。
+
+当我们不使用*struct update syntax*时，申明一个类似user1的Struct实例，需要如下操作：
+
+```rust
+let user2 = User {
+  active: user1.active,
+  username: user1.username,
+  email: String::from("another@example.com"),
+  sign_in_count: user1.sign_in_count,
+};
+```
+
+Using struct update syntax, we can achieve the same effect with less code, as shown in Listing 5-7. The syntax `..` specifies that the remaining fields not explicitly set should have the same value as the fields in the given instance.
+
+```rust
+let user2 = User {
+  email: String::from("another@example.com"),
+  ..user1
+};
+```
+
+Listing 5-7: Using struct update syntax to set a new `email` value for a `User` instance but use the rest of the values from `user1`
+
+注意，由于*move*所有权的原因，这里user2中两个没有实现`Copy` **trait**的字段（email和username），其中一个字段username是从user1那move过来的，所以导致user1不能再访问（所有权让给user2了）。除非这里emaiil和username都是user2自己重新赋值的，那么剩下的两个字段（active、sign_in_count）由于都实现了`Copy` **trait**，所以是copy过来的，user1就还能访问。
+
+> **Note that the struct update syntax is like assignment with `=` because it moves the data**, just as we saw in the [“Ways Variables and Data Interact: Move” section](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html#ways-variables-and-data-interact-move). **In this example, we can no longer use `user1` after creating `user2` because the `String` in the `username` field of `user1` was moved into `user2`**. If we had given `user2` new `String` values for both `email` and `username`, and thus only used the `active` and `sign_in_count` values from `user1`, then `user1` would still be valid after creating `user2`. **The types of `active` and `sign_in_count` are types that implement the `Copy` trait**, so the behavior we discussed in the [“Stack-Only Data: Copy” section](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html#stack-only-data-copy) would apply.
+
+### Using Tuple Structs without Named Fields to Create Different Types
+
+To define a tuple struct, start with the `struct` keyword and the struct name followed by the types in the tuple. For example, here are definitions and usages of two tuple structs named `Color` and `Point`:
+
+```rust
+struct Color(i32, i32, i32);
+struct Point(i32, i32, i32);
+
+let black = Color(0, 0, 0);
+let origin = Point(0, 0, 0);
+```
+
+注意，这里Color和Point虽然拥有同样的字段类型的定义，但不是同一种类型。一个Struct就是一个类型。
+
+tuple struct和tuple类型，都可以通过`.`和下标来访问字段。
+
+### Unit-Like Structs Without Any Fields
+
+就像Unit Tuple`()`似的，Rust也允许定义没有字段的Struct `struct 名;`。
+
+You can also define structs that don’t have any fields! These are called *unit-like structs* because they behave similarly to `()`, the unit type that we mentioned in [“The Tuple Type”](https://doc.rust-lang.org/book/ch03-02-data-types.html#the-tuple-type) section.
+
+**Unit-like structs can be useful in situations in which you need to implement a trait on some type but don’t have any data that you want to store in the type itself**. We’ll discuss traits in Chapter 10.  
+
+```rust
+struct AlwaysEqual;
+
+let subject = AlwaysEqual;
+```
+
+Imagine we’ll be implementing behavior for this type that every instance is always equal to every instance of every other type, perhaps to have a known result for testing purposes. We wouldn’t need any data to implement that behavior!
+
+### Ownership of Struct Data
+
+In the `User` struct definition in Listing 5-1, we used the owned `String` type rather than the `&str` string slice type. This is a deliberate choice because we want instances of this struct to own all of its data and for that data to be valid for as long as the entire struct is valid.
+
+**It’s possible for structs to store references to data owned by something else, but to do so requires the use of *lifetimes***, a Rust feature that we’ll discuss in Chapter 10. **Lifetimes ensure that the data referenced by a struct is valid for as long as the struct is.** Let’s say you try to store a reference in a struct without specifying lifetimes, like this, which won’t work:
+
+```rust
+struct User {
+  username: &str,
+  email: &str,
+  sign_in_count: u64,
+  active: bool,
+}
+
+fn main() {
+  let user1 = User {
+    email: "someone@example.com",
+    username: "someusername123",
+    active: true,
+    sign_in_count: 1,
+  };
+}
+```
+
+```shell
+The compiler will complain that it needs lifetime specifiers:
+
+
+$ cargo run
+   Compiling structs v0.1.0 (file:///projects/structs)
+error[E0106]: missing lifetime specifier
+ --> src/main.rs:2:15
+  |
+2 |     username: &str,
+  |               ^ expected named lifetime parameter
+  |
+help: consider introducing a named lifetime parameter
+  |
+1 | struct User<'a> {
+2 |     username: &'a str,
+  |
+
+error[E0106]: missing lifetime specifier
+ --> src/main.rs:3:12
+  |
+3 |     email: &str,
+  |            ^ expected named lifetime parameter
+  |
+help: consider introducing a named lifetime parameter
+  |
+1 | struct User<'a> {
+2 |     username: &str,
+3 |     email: &'a str,
+  |
+
+error: aborting due to 2 previous errors
+
+For more information about this error, try `rustc --explain E0106`.
+error: could not compile `structs`
+
+To learn more, run the command again with --verbose.
+In Chapter 10, we’ll discuss how to fix these errors so you can store references in structs, but for now, we’ll fix errors like these using owned types like String instead of references like &str.
+```
+
+## 5.2 An Example Program Using Structs
+
+最原始的计算宽高乘积，直接使用function
+
+```rust
+fn main() {
+  let width1 = 30;
+  let height1 = 50;
+
+  println!(
+    "The area of the rectangle is {} square pixels.",
+    area(width1, height1)
+  );
+}
+
+fn area(width: u32, height: u32) -> u32 {
+  width * height
+}
+```
+
+### Refactoring with Tuples
+
+使用1个tuple代替原本的两个入参，然而这样两个参数没有名字，可读性降低。
+
+```rust
+fn main() {
+  let rect1 = (30, 50);
+
+  println!(
+    "The area of the rectangle is {} square pixels.",
+    area(rect1)
+  );
+}
+
+fn area(dimensions: (u32, u32)) -> u32 {
+  dimensions.0 * dimensions.1
+}
+```
+
+### Refactoring with Structs: Adding More Meaning
+
+使用struct实现
+
+```rust
+struct Rectangle {
+  width: u32,
+  height: u32,
+}
+
+fn main() {
+  let rect1 = Rectangle {
+    width: 30,
+    height: 50,
+  };
+
+  println!(
+    "The area of the rectangle is {} square pixels.",
+    area(&rect1)
+  );
+}
+
+fn area(rectangle: &Rectangle) -> u32 {
+  rectangle.width * rectangle.height
+}
+```
+
+### Adding Useful Functionality with Derived Traits
+
+```rust
+struct Rectangle {
+  width: u32,
+  height: u32,
+}
+
+fn main() {
+  let rect1 = Rectangle {
+    width: 30,
+    height: 50,
+  };
+
+  println!("rect1 is {}", rect1);
+}
+```
+
+When we compile this code, we get an error with this core message:
+
+```shell
+error[E0277]: `Rectangle` doesn't implement `std::fmt::Display`
+```
+
+**The `println!` macro can do many kinds of formatting, and by default, the curly brackets tell `println!` to use formatting known as `Display`: output intended for direct end user consumption**. The primitive types we’ve seen so far implement `Display` by default, because there’s only one way you’d want to show a `1` or any other primitive type to a user. But with structs, the way `println!` should format the output is less clear because there are more display possibilities: Do you want commas or not? Do you want to print the curly brackets? Should all the fields be shown? Due to this ambiguity, **Rust doesn’t try to guess what we want, and structs don’t have a provided implementation of `Display`**.
+
+```rust
+#[derive(Debug)]
+struct Rectangle {
+  width: u32,
+  height: u32,
+}
+
+fn main() {
+  let rect1 = Rectangle {
+    width: 30,
+    height: 50,
+  };
+
+  println!("rect1 is {:?}", rect1);
+}
+```
+
+Now when we run the program, we won’t get any errors, and we’ll see the following output:
+
+```rust
+$ cargo run
+Compiling rectangles v0.1.0 (file:///projects/rectangles)
+  Finished dev [unoptimized + debuginfo] target(s) in 0.48s
+  Running `target/debug/rectangles`
+  rect1 is Rectangle { width: 30, height: 50 }
+```
+
+When we use the `{:#?}` style in the example, the output will look like this:
+
+```shell
+$ cargo run
+   Compiling rectangles v0.1.0 (file:///projects/rectangles)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.48s
+     Running `target/debug/rectangles`
+rect1 is Rectangle {
+    width: 30,
+    height: 50,
+}
+```
+
+Another way to print out a value using the `Debug` format is by using the [`dbg!` macro](https://doc.rust-lang.org/std/macro.dbg.html) . **The `dbg!` macro takes ownership of an expression, prints the file and line number of where that `dbg!` macro call occurs in your code along with the resulting value of that expression, and returns ownership of the value**. Calling the `dbg!` macro prints to the standard error console stream (`stderr`), as opposed to `println!` which prints to the standard output console stream (`stdout`). We’ll talk more about `stderr` and `stdout` in the [“Writing Error Messages to Standard Error Instead of Standard Output” section in Chapter 12](https://doc.rust-lang.org/book/ch12-06-writing-to-stderr-instead-of-stdout.html). Here’s an example where we’re interested in the value that gets assigned to the `width` field, as well as the value of the whole struct in `rect1`:
+
+```rust
+#[derive(Debug)]
+struct Rectangle {
+  width: u32,
+  height: u32,
+}
+
+fn main() {
+  let scale = 2;
+  let rect1 = Rectangle {
+    width: dbg!(30 * scale),
+    height: 50,
+  };
+
+  dbg!(&rect1);
+}
+```
+
+We can put `dbg!` around the expression `30 * scale` and, because `dbg!` returns ownership of the expression’s value, the `width` field will get the same value as if we didn’t have the `dbg!` call there. We don’t want `dbg!` to take ownership of `rect1`, so we use a reference to `dbg!` in the next call. Here’s what the output of this example looks like:
+
+```shell
+$ cargo run
+   Compiling rectangles v0.1.0 (file:///projects/rectangles)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.61s
+     Running `target/debug/rectangles`
+[src/main.rs:10] 30 * scale = 60
+[src/main.rs:14] &rect1 = Rectangle {
+    width: 60,
+    height: 50,
+}
+```
+
+We can see the first bit of output came from *src/main.rs* line 10, where we’re debugging the expression `30 * scale`, and its resulting value is 60 (the `Debug` formatting implemented for integers is to print only their value). The `dbg!` call on line 14 of *src/main.rs* outputs the value of `&rect1`, which is the `Rectangle` struct. This output uses the pretty `Debug` formatting of the `Rectangle` type. The `dbg!` macro can be really helpful when you’re trying to figure out what your code is doing!
+
+> In addition to the `Debug` trait, Rust has provided a number of traits for us to use with the `derive` attribute that can add useful behavior to our custom types. Those traits and their behaviors are listed in [Appendix C](https://doc.rust-lang.org/book/appendix-03-derivable-traits.html). We’ll cover how to implement these traits with custom behavior as well as how to create your own traits in Chapter 10. There are also many attributes other than `derive`; for more information, see [the “Attributes” section of the Rust Reference](https://doc.rust-lang.org/reference/attributes.html).
+
+## 5.3 Method Syntax
+
+method和function类似的，都是以`fn`声明，并且接受参数，可以有返回值。不同的是，**methods定义在struct（或enum或trait object，Chapters6 and Chapters17）的上下文中，并且第一个参数永远是self，表示struct实例自身**。
+
+### Defining Methods
+
+Let’s change the `area` function that has a `Rectangle` instance as a parameter and instead make an `area` **method** defined on the `Rectangle` struct, as shown in Listing 5-13.
+
+```rust
+#[derive(Debug)]
+struct Rectangle {
+  width: u32,
+  height: u32,
+}
+
+impl Rectangle {
+  fn area(&self) -> u32 {
+    self.width * self.height
+  }
+}
+
+fn main() {
+  let rect1 = Rectangle {
+    width: 30,
+    height: 50,
+  };
+
+  println!(
+    "The area of the rectangle is {} square pixels.",
+    rect1.area()
+  );
+}
+```
+
+Listing 5-13: Defining an `area` method on the `Rectangle` struct
+
+To define the function within the context of `Rectangle`, we start an `impl` (implementation) block for `Rectangle`. **Everything within this `impl` block will be associated with the `Rectangle` type**. Then we move the `area` function within the `impl` curly brackets and change the first (and in this case, only) parameter to be `self` in the signature and everywhere within the body. In `main`, where we called the `area` function and passed `rect1` as an argument, we can instead use *method syntax* to call the `area` method on our `Rectangle` instance. The method syntax goes after an instance: we add a dot followed by the method name, parentheses, and any arguments.
+
+In the signature for `area`, we use `&self` instead of `rectangle: &Rectangle`. **The `&self` is actually short for `self: &Self`. Within an `impl` block, the type `Self` is an alias for the type that the `impl` block is for**. **<u>Methods must have a parameter named `self` of type `Self` for their first parameter, so Rust lets you abbreviate this with only the name `self` in the first parameter spot</u>**. Note that we still need to use the `&` in front of the `self` shorthand to indicate this method borrows the `Self` instance, just as we did in `rectangle: &Rectangle`. Methods can take ownership of `self`, borrow `self` immutably as we’ve done here, or borrow `self` mutably, just as they can any other parameter.
+
+这里使用`&self`和function版本`&Rectangle`类似的，不获取实例的所有权。**如果我们需要修改实例，则使用`&mut self`作为第一个参数**。
+
+Rust允许声明一个和struct字段名一致的method方法，如下method和field都存在`width`：
+
+```rust
+impl Rectangle {
+  fn width(&self) -> bool {
+    self.width > 0
+  }
+}
+
+fn main() {
+  let rect1 = Rectangle {
+    width: 30,
+    height: 50,
+  };
+
+  if rect1.width() {
+    println!("The rectangle has a nonzero width; it is {}", rect1.width);
+  }
+}
+```
+
+>  **Where’s the `->` Operator?**
+>
+> In C and C++, two different operators are used for calling methods: you use `.` if you’re calling a method on the object directly and `->` if you’re calling the method on a pointer to the object and need to dereference the pointer first. In other words, if `object` is a pointer, `object->something()` is similar to `(*object).something()`.
+>
+> Rust doesn’t have an equivalent to the `->` operator; **instead, Rust has a feature called *automatic referencing and dereferencing***. Calling methods is one of the few places in Rust that has this behavior.
+>
+> Here’s how it works: when you call a method with `object.something()`, **Rust automatically adds in `&`, `&mut`, or `*` so `object` matches the signature of the method**. In other words, the following are the same:
+>
+> ```rust
+> p1.distance(&p2);
+> (&p1).distance(&p2);
+> ```
+>
+> The first one looks much cleaner. **This automatic referencing behavior works because methods have a clear receiver—the type of `self`**. Given the receiver and name of a method, Rust can figure out definitively whether the method is reading (`&self`), mutating (`&mut self`), or consuming (`self`). **The fact that Rust makes borrowing implicit for method receivers is a big part of making ownership ergonomic in practice**.
+
+### Methods with More Parameters
+
+```rust
+impl Rectangle {
+  fn area(&self) -> u32 {
+    self.width * self.height
+  }
+
+  fn can_hold(&self, other: &Rectangle) -> bool {
+    self.width > other.width && self.height > other.height
+  }
+}
+```
+
+```rust
+fn main() {
+  let rect1 = Rectangle {
+    width: 30,
+    height: 50,
+  };
+  let rect2 = Rectangle {
+    width: 10,
+    height: 40,
+  };
+  let rect3 = Rectangle {
+    width: 60,
+    height: 45,
+  };
+
+  println!("Can rect1 hold rect2? {}", rect1.can_hold(&rect2));
+  println!("Can rect1 hold rect3? {}", rect1.can_hold(&rect3));
+}
+```
+
+### Associated Functions
+
+**All functions defined within an `impl` block are called *associated functions* because they’re associated with the type named after the `impl`**. 
+
+**We can define associated functions that don’t have `self` as their first parameter (and thus are not methods) because they don’t need an instance of the type to work with**. We’ve already used one function like this, the `String::from` function, that’s defined on the `String` type.
+
+Associated functions that aren’t methods are often used for constructors that will return a new instance of the struct.
+
+Associated Functions经常用于对象的构造函数
+
+```rust
+impl Rectangle {
+  fn square(size: u32) -> Rectangle {
+    Rectangle {
+      width: size,
+      height: size,
+    }
+  }
+}
+```
+
+**To call this associated function, we use the `::` syntax with the struct name**; `let sq = Rectangle::square(3);` is an example. This function is namespaced by the struct: **the `::` syntax is used for both associated functions and namespaces created by modules**. We’ll discuss modules in Chapter 7.
+
+### Multiple `impl` Blocks
+
+Each struct is allowed to have multiple `impl` blocks. For example, Listing 5-15 is equivalent to the code shown in Listing 5-16, which has each method in its own `impl` block.
+
+```rust
+impl Rectangle {
+  fn area(&self) -> u32 {
+    self.width * self.height
+  }
+}
+
+impl Rectangle {
+  fn can_hold(&self, other: &Rectangle) -> bool {
+    self.width > other.width && self.height > other.height
+  }
+}
+```
+
+Listing 5-16: Rewriting Listing 5-15 using multiple `impl` blocks
+
+There’s no reason to separate these methods into multiple `impl` blocks here, but this is valid syntax. We’ll see a case in which multiple `impl` blocks are useful in Chapter 10, where we discuss generic types and traits.
+
+# 6. Enums and Pattern Matching
+
+In this chapter we’ll look at *enumerations*, also referred to as *enums*. Enums allow you to define a type by enumerating its possible *variants*. First, we’ll define and use an enum to show how an enum can encode meaning along with data. Next, we’ll explore a particularly useful enum, called `Option`, which expresses that a value can be either something or nothing. Then we’ll look at how pattern matching in the `match` expression makes it easy to run different code for different values of an enum. Finally, we’ll cover how the `if let` construct is another convenient and concise idiom available to you to handle enums in your code.
+
+Enums are a feature in many languages, but their capabilities differ in each language. Rust’s enums are most similar to *algebraic data types* in functional languages, such as F#, OCaml, and Haskell.
+
+## 6.1 Defining an Enum
+
+```rust
+enum IpAddrKind {
+  V4,
+  V6,
+}
+```
+
+`IpAddrKind` is now a custom data type that we can use elsewhere in our code.
+
+### Enum Values
+
+```rust
+enum IpAddrKind {
+  V4,
+  V6,
+}
+
+struct IpAddr {
+  kind: IpAddrKind,
+  address: String,
+}
+
+let home = IpAddr {
+  kind: IpAddrKind::V4,
+  address: String::from("127.0.0.1"),
+};
+
+let loopback = IpAddr {
+  kind: IpAddrKind::V6,
+  address: String::from("::1"),
+};
+```
+
+Listing 6-1: Storing the data and `IpAddrKind` variant of an IP address using a `struct`
+
+We can represent the same concept in a more concise way using just an enum, rather than an enum inside a struct, by putting data directly into each enum variant. This new definition of the `IpAddr` enum says that both `V4` and `V6` variants will have associated `String` values:
+
+```rust
+enum IpAddr {
+  V4(String),
+  V6(String),
+}
+
+let home = IpAddr::V4(String::from("127.0.0.1"));
+
+let loopback = IpAddr::V6(String::from("::1"));
+```
+
+**There’s another advantage to using an enum rather than a struct: each variant can have different types and amounts of associated data**. Version four type IP addresses will always have four numeric components that will have values between 0 and 255. If we wanted to store `V4` addresses as four `u8` values but still express `V6` addresses as one `String` value, we wouldn’t be able to with a struct. Enums handle this case with ease:
+
+```rust
+enum IpAddr {
+  V4(u8, u8, u8, u8),
+  V6(String),
+}
+
+let home = IpAddr::V4(127, 0, 0, 1);
+
+let loopback = IpAddr::V6(String::from("::1"));
+```
+
+We’ve shown several different ways to define data structures to store version four and version six IP addresses. However, as it turns out, wanting to store IP addresses and encode which kind they are is so common that [the standard library has a definition we can use!](https://doc.rust-lang.org/std/net/enum.IpAddr.html) Let’s look at how the standard library defines `IpAddr`: it has the exact enum and variants that we’ve defined and used, but it embeds the address data inside the variants in the form of two different structs, which are defined differently for each variant:
+
+```rust
+
+struct Ipv4Addr {
+  // --snip--
+}
+
+struct Ipv6Addr {
+  // --snip--
+}
+
+enum IpAddr {
+  V4(Ipv4Addr),
+  V6(Ipv6Addr),
+}
+```
+
+> This code illustrates that you can put any kind of data inside an enum variant: strings, numeric types, or structs, for example. You can even include another enum! Also, standard library types are often not much more complicated than what you might come up with.
+>
+> **Note that even though the standard library contains a definition for `IpAddr`, we can still create and use our own definition without conflict because we haven’t brought the standard library’s definition into our scope**. We’ll talk more about bringing types into scope in Chapter 7.
+
+Let’s look at another example of an enum in Listing 6-2: this one has a wide variety of types embedded in its variants.
+
+```rust
+enum Message {
+  Quit,
+  Move { x: i32, y: i32 },
+  Write(String),
+  ChangeColor(i32, i32, i32),
+}
+```
+
+Listing 6-2: A `Message` enum whose variants each store different amounts and types of values
+
+This enum has four variants with different types:
+
+- `Quit` has no data associated with it at all.
+- `Move` has named fields like a struct does.
+- `Write` includes a single `String`.
+- `ChangeColor` includes three `i32` values.
+
+Defining an enum with variants such as the ones in Listing 6-2 is similar to defining different kinds of struct definitions, <u>except the enum doesn’t use the `struct` keyword and all the variants are grouped together under the `Message` type</u>. The following structs could hold the same data that the preceding enum variants hold:
+
+```rust
+struct QuitMessage; // unit struct
+struct MoveMessage {
+    x: i32,
+    y: i32,
+}
+struct WriteMessage(String); // tuple struct
+struct ChangeColorMessage(i32, i32, i32); // tuple struct
+```
+
+<u>But if we used the different structs, which each have their own type, we couldn’t as easily define a function to take any of these kinds of messages as we could with the `Message` enum defined in Listing 6-2, which is a single type</u>.
+
+There is one more similarity between enums and structs: just as we’re able to define methods on structs using `impl`, **we’re also able to define methods on enums**. Here’s a method named `call` that we could define on our `Message` enum:
+
+```rust
+impl Message {
+  fn call(&self) {
+    // method body would be defined here
+  }
+}
+
+let m = Message::Write(String::from("hello"));
+m.call();
+```
+
+Let’s look at another enum in the standard library that is very common and useful: `Option`.
+
+### The `Option` Enum and Its Advantages Over Null Values
+
+**This section explores a case study of `Option`, which is another enum defined by the standard library**. The `Option` type is used in many places because it encodes the very common scenario in which a value could be something or it could be nothing.
+
+**Rust doesn’t have the null feature that many other languages have.** *Null* is a value that means there is no value there. In languages with null, variables can always be in one of two states: null or not-null.
+
+The problem isn’t really with the concept but with the particular implementation. As such, **Rust does not have nulls, but it does have an enum that can encode the concept of a value being present or absent. This enum is `Option<T>`**, and it is [defined by the standard library](https://doc.rust-lang.org/std/option/enum.Option.html) as follows:
+
+```rust
+enum Option<T> {
+  None,
+  Some(T),
+}
+```
+
+The `Option<T>` enum is so useful that it’s even included in the prelude; you don’t need to bring it into scope explicitly. **In addition, so are its variants: you can use `Some` and `None` directly without the `Option::` prefix**. **The `Option<T>` enum is still just a regular enum, and `Some(T)` and `None` are still variants of type `Option<T>`**.
+
+The `<T>` syntax is a feature of Rust we haven’t talked about yet. It’s a generic type parameter, and we’ll cover generics in more detail in Chapter 10. For now, all you need to know is that `<T>` means the `Some` variant of the `Option` enum can hold one piece of data of any type, and that each concrete type that gets used in place of `T` makes the overall `Option<T>` type a different type. Here are some examples of using `Option` values to hold number types and string types:
+
+```rust
+let some_number = Some(5);
+let some_string = Some("a string");
+
+let absent_number: Option<i32> = None;
+```
+
+**The type of `some_number` is `Option<i32>`. The type of `some_string` is `Option<&str>`, which is a different type. Rust can infer these types because we’ve specified a value inside the `Some` variant**. For `absent_number`, Rust requires us to annotate the overall `Option` type: the compiler can’t infer the type that the corresponding `Some` variant will hold by looking only at a `None` value. Here, we tell Rust that we mean for `absent_number` to be of type `Option<i32>`.
+
+When we have a `Some` value, we know that a value is present and the value is held within the `Some`. When we have a `None` value, in some sense, it means the same thing as null: we don’t have a valid value. So why is having `Option<T>` any better than having null?
+
+**In short, because `Option<T>` and `T` (where `T` can be any type) are different types, the compiler won’t let us use an `Option<T>` value as if it were definitely a valid value**. For example, this code won’t compile because it’s trying to add an `i8` to an `Option<i8>`:
+
+```rust
+let x: i8 = 5;
+let y: Option<i8> = Some(5);
+
+let sum = x + y;
+```
+
+```shell
+$ cargo run
+   Compiling enums v0.1.0 (file:///projects/enums)
+error[E0277]: cannot add `Option<i8>` to `i8`
+ --> src/main.rs:5:17
+  |
+5 |     let sum = x + y;
+  |                 ^ no implementation for `i8 + Option<i8>`
+  |
+  = help: the trait `Add<Option<i8>>` is not implemented for `i8`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `enums` due to previous error
+```
+
+Not having to worry about incorrectly assuming a not-null value helps you to be more confident in your code. In order to have a value that can possibly be null, you must explicitly opt in by making the type of that value `Option<T>`. Then, when you use that value, you are required to explicitly handle the case when the value is null. **<u>Everywhere that a value has a type that isn’t an `Option<T>`, you *can* safely assume that the value isn’t null</u>**. This was a deliberate design decision for Rust to limit null’s pervasiveness and increase the safety of Rust code.
+
+> So, how do you get the `T` value out of a `Some` variant when you have a value of type `Option<T>` so you can use that value? The `Option<T>` enum has a large number of methods that are useful in a variety of situations; you can check them out in [its documentation](https://doc.rust-lang.org/std/option/enum.Option.html). Becoming familiar with the methods on `Option<T>` will be extremely useful in your journey with Rust.
+
+## 6.2 The `match` Control Flow Operator
+
+**Rust has an extremely powerful control flow operator called `match` that allows you to compare a value against a series of patterns and then execute code based on which pattern matches**. <u>Patterns can be made up of literal values, variable names, wildcards, and many other things; Chapter 18 covers all the different kinds of patterns and what they do</u>. The power of `match` comes from the expressiveness of the patterns and the fact that the compiler confirms that all possible cases are handled.
+
+```rust
+enum Coin {
+  Penny,
+  Nickel,
+  Dime,
+  Quarter,
+}
+
+fn value_in_cents(coin: Coin) -> u8 {
+  match coin {
+    Coin::Penny => 1,
+    Coin::Nickel => 5,
+    Coin::Dime => 10,
+    Coin::Quarter => 25,
+  }
+}
+```
+
+Listing 6-3: An enum and a `match` expression that has the variants of the enum as its patterns
+
+When the `match` expression executes, it compares the resulting value against the pattern of each arm, in order. **If a pattern matches the value, the code associated with that pattern is executed. If that pattern doesn’t match the value, execution continues to the next arm**, much as in a coin-sorting machine. We can have as many arms as we need: in Listing 6-3, our `match` has four arms.
+
+*(类似其他语言的case switch，但是不用手动break)*
+
+**The code associated with each arm is an expression**, and the resulting value of the expression in the matching arm is the value that gets returned for the entire `match` expression.
+
+Curly brackets typically aren’t used if the match arm code is short, as it is in Listing 6-3 where each arm just returns a value. **If you want to run multiple lines of code in a match arm, you can use curly brackets.** For example, the following code would print “Lucky penny!” every time the method was called with a `Coin::Penny` but would still return the last value of the block, `1`:
+
+```rust
+fn value_in_cents(coin: Coin) -> u8 {
+  match coin {
+    Coin::Penny => {
+      println!("Lucky penny!");
+      1
+    }
+    Coin::Nickel => 5,
+    Coin::Dime => 10,
+    Coin::Quarter => 25,
+  }
+}
+```
+
+### Patterns that Bind to Values
+
+Another useful feature of match arms is that **they can bind to the parts of the values that match the pattern**. This is how we can extract values out of enum variants.
+
+As an example, let’s change one of our enum variants to hold data inside it. From 1999 through 2008, the United States minted quarters with different designs for each of the 50 states on one side. No other coins got state designs, so only quarters have this extra value. We can add this information to our `enum` by changing the `Quarter` variant to include a `UsState` value stored inside it, which we’ve done here in Listing 6-4.
+
+```rust
+#[derive(Debug)] // so we can inspect the state in a minute
+enum UsState {
+  Alabama,
+  Alaska,
+  // --snip--
+}
+
+enum Coin {
+  Penny,
+  Nickel,
+  Dime,
+  Quarter(UsState),
+}
+```
+
+Listing 6-4: A `Coin` enum in which the `Quarter` variant also holds a `UsState` value
+
+In the match expression for this code, we add a variable called `state` to the pattern that matches values of the variant `Coin::Quarter`. **When a `Coin::Quarter` matches, the `state` variable will bind to the value of that quarter’s state**. Then we can use `state` in the code for that arm, like so:
+
+```rust
+fn value_in_cents(coin: Coin) -> u8 {
+  match coin {
+    Coin::Penny => 1,
+    Coin::Nickel => 5,
+    Coin::Dime => 10,
+    Coin::Quarter(state) => {
+      println!("State quarter from {:?}!", state);
+      25
+    }
+  }
+}
+```
+
+### Matching with `Option<T>`
+
+In the previous section, we wanted to get the inner `T` value out of the `Some` case when using `Option<T>`; we can also handle `Option<T>` using `match` as we did with the `Coin` enum! Instead of comparing coins, we’ll compare the variants of `Option<T>`, but the way that the `match` expression works remains the same.
+
+Let’s say we want to write a function that takes an `Option<i32>` and, if there’s a value inside, adds 1 to that value. If there isn’t a value inside, the function should return the `None` value and not attempt to perform any operations.
+
+This function is very easy to write, thanks to `match`, and will look like Listing 6-5.
+
+```rust
+fn plus_one(x: Option<i32>) -> Option<i32> {
+  match x {
+    None => None,
+    Some(i) => Some(i + 1),
+  }
+}
+
+let five = Some(5);
+let six = plus_one(five);
+let none = plus_one(None);
+```
+
+Listing 6-5: A function that uses a `match` expression on an `Option<i32>`
+
+Combining `match` and enums is useful in many situations. You’ll see this pattern a lot in Rust code: `match` against an enum, bind a variable to the data inside, and then execute code based on it. It’s a bit tricky at first, but once you get used to it, you’ll wish you had it in all languages. It’s consistently a user favorite.
+
+### Matches Are Exhaustive
+
+There’s one other aspect of `match` we need to discuss. Consider this version of our `plus_one` function that has a bug and won’t compile:
+
+```rust
+    fn plus_one(x: Option<i32>) -> Option<i32> {
+        match x {
+            Some(i) => Some(i + 1),
+        }
+    }
+```
+
+We didn’t handle the `None` case, so this code will cause a bug. Luckily, it’s a bug Rust knows how to catch. If we try to compile this code, we’ll get this error:
+
+```shell
+$ cargo run
+   Compiling enums v0.1.0 (file:///projects/enums)
+error[E0004]: non-exhaustive patterns: `None` not covered
+   --> src/main.rs:3:15
+    |
+3   |         match x {
+    |               ^ pattern `None` not covered
+    |
+    = help: ensure that all possible cases are being handled, possibly by adding wildcards or more match arms
+    = note: the matched value is of type `Option<i32>`
+
+For more information about this error, try `rustc --explain E0004`.
+error: could not compile `enums` due to previous error
+```
+
+Rust knows that we didn’t cover every possible case and even knows which pattern we forgot! Matches in Rust are *exhaustive*: we must exhaust every last possibility in order for the code to be valid. Especially in the case of `Option<T>`, when Rust prevents us from forgetting to explicitly handle the `None` case, it protects us from assuming that we have a value when we might have null, thus making the billion-dollar mistake discussed earlier impossible.
+
+### Catch-all Patterns and the `_` Placeholder
+
+Let’s look at an example where we want to take special actions for a few particular values, but for all other values take one default action. Imagine we’re implementing a game where if you get a value of 3 on a dice roll, your player doesn’t move, but instead gets a new fancy hat. If you roll a 7, your player loses a fancy hat. For all other values, your player moves that number of spaces on the game board. Here’s a `match` that implements that logic, with the result of the dice roll hardcoded rather than a random value, and all other logic represented by functions without bodies because actually implementing them is out of scope for this example:
+
+```rust
+let dice_roll = 9;
+match dice_roll {
+  3 => add_fancy_hat(),
+  7 => remove_fancy_hat(),
+  other => move_player(other),
+}
+
+fn add_fancy_hat() {}
+fn remove_fancy_hat() {}
+fn move_player(num_spaces: u8) {}
+```
+
+For the first two arms, the patterns are the literal values 3 and 7. **For the last arm that covers every other possible value, the pattern is the variable we’ve chosen to name `other`.** The code that runs for the `other` arm uses the variable by passing it to the `move_player` function.
+
+This code compiles, even though we haven’t listed all the possible values a `u8` can have, because **the last pattern will match all values not specifically listed**. This catch-all pattern meets the requirement that `match` must be exhaustive. **<u>Note that we have to put the catch-all arm last because the patterns are evaluated in order. Rust will warn us if we add arms after a catch-all because those later arms would never match!</u>**
+
+**Rust also has a pattern we can use when we don’t want to use the value in the catch-all pattern: `_`, which is a special pattern that matches any value and does not bind to that value. This tells Rust we aren’t going to use the value, so Rust won’t warn us about an unused variable**.
+
+Let’s change the rules of the game to be that if you roll anything other than a 3 or a 7, you must roll again. **We don’t need to use the value in that case, so we can change our code to use `_` instead of the variable named `other`**:
+
+```rust
+let dice_roll = 9;
+match dice_roll {
+  3 => add_fancy_hat(),
+  7 => remove_fancy_hat(),
+  _ => reroll(),
+}
+
+fn add_fancy_hat() {}
+fn remove_fancy_hat() {}
+fn reroll() {}
+```
+
+If we change the rules of the game one more time, so that nothing else happens on your turn if you roll anything other than a 3 or a 7, we can express that by using **the unit value** (the empty tuple type we mentioned in [“The Tuple Type”](https://doc.rust-lang.org/book/ch03-02-data-types.html#the-tuple-type) section) as the code that goes with the `_` arm:
+
+```rust
+let dice_roll = 9;
+match dice_roll {
+  3 => add_fancy_hat(),
+  7 => remove_fancy_hat(),
+  _ => (),
+}
+
+fn add_fancy_hat() {}
+fn remove_fancy_hat() {}
+```
+
+There’s more about patterns and matching that we’ll cover in [Chapter 18](https://doc.rust-lang.org/book/ch18-00-patterns.html). For now, we’re going to move on to the `if let` syntax, which can be useful in situations where the `match` expression is a bit wordy.
+
+## 6.3 Concise Control Flow with `if let`
+
+**The `if let` syntax lets you combine `if` and `let` into a less verbose way to handle values that match one pattern while ignoring the rest.** Consider the program in Listing 6-6 that matches on an `Option<u8>` value in the `config_max` variable but only wants to execute code if the value is the `Some` variant.
+
+```rust
+fn main() {
+  let config_max = Some(3u8);
+  match config_max {
+    Some(max) => println!("The maximum is configured to be {}", max),
+    _ => (),
+  }
+}
+```
+
+Listing 6-6: A `match` that only cares about executing code when the value is `Some`
+
+If the value is `Some`, we want to print out the value in the `Some` variant, which we do by binding the value to the variable `max` in the pattern. We don’t want to do anything with the `None` value. To satisfy the `match` expression, we have to add `_ => ()` after processing just one variant, which is annoying boilerplate code to add.
+
+Instead, we could write this in a shorter way using `if let`. The following code behaves the same as the `match` in Listing 6-6:
+
+```rust
+fn main() {
+  let config_max = Some(3u8);
+  if let Some(max) = config_max {
+    println!("The maximum is configured to be {}", max);
+  }
+}
+```
+
+**The syntax `if let` takes a pattern and an expression separated by an equal sign. It works the same way as a `match`, where the expression is given to the `match` and the pattern is its first arm**. In this case, the pattern is `Some(max)`, and the `max` binds to the value inside the `Some`. We can then use `max` in the body of the `if let` block in the same way as we used `max` in the corresponding `match` arm. The code in the `if let` block isn’t run if the value doesn’t match the pattern.
+
+> Using `if let` means less typing, less indentation, and less boilerplate code. However, you lose the exhaustive checking that `match` enforces. Choosing between `match` and `if let` depends on what you’re doing in your particular situation and whether gaining conciseness is an appropriate trade-off for losing exhaustive checking.
+
+**In other words, you can think of `if let` as syntax sugar for a `match` that runs code when the value matches one pattern and then ignores all other values**.
+
+**We can include an `else` with an `if let`. The block of code that goes with the `else` is the same as the block of code that would go with the `_` case in the `match` expression that is equivalent to the `if let` and `else`**. Recall the `Coin` enum definition in Listing 6-4, where the `Quarter` variant also held a `UsState` value. If we wanted to count all non-quarter coins we see while also announcing the state of the quarters, we could do that with a `match` expression like this:
+
+```rust
+let mut count = 0;
+match coin {
+  Coin::Quarter(state) => println!("State quarter from {:?}!", state),
+  _ => count += 1,
+}
+```
+
+Or we could use an `if let` and `else` expression like this:
+
+```rust
+let mut count = 0;
+if let Coin::Quarter(state) = coin {
+  println!("State quarter from {:?}!", state);
+} else {
+  count += 1;
+}
+```
+
+If you have a situation in which your program has logic that is too verbose to express using a `match`, remember that `if let` is in your Rust toolbox as well.
+
+# 7. Managing Growing Projects with Packages, Crates, and Modules
+
+> [Managing Growing Projects with Packages, Crates, and Modules - The Rust Programming Language (rust-lang.org)](https://doc.rust-lang.org/book/ch07-00-managing-growing-projects-with-packages-crates-and-modules.html)
