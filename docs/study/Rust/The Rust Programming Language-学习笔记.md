@@ -2407,4 +2407,99 @@ If you have a situation in which your program has logic that is too verbose to e
 
 # 7. Managing Growing Projects with Packages, Crates, and Modules
 
-> [Managing Growing Projects with Packages, Crates, and Modules - The Rust Programming Language (rust-lang.org)](https://doc.rust-lang.org/book/ch07-00-managing-growing-projects-with-packages-crates-and-modules.html)
+The programs we’ve written so far have been in one module in one file. As a project grows, you can organize code by splitting it into multiple modules and then multiple files. A package can contain multiple binary crates and optionally one library crate. As a package grows, you can extract parts into separate crates that become external dependencies. This chapter covers all these techniques. For very large projects of a set of interrelated packages that evolve together, Cargo provides workspaces, which we’ll cover in the [“Cargo Workspaces”](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html) section in Chapter 14.
+
+Rust has a number of features that allow you to manage your code’s organization, including which details are exposed, which details are private, and what names are in each scope in your programs. These features, sometimes collectively referred to as the *module system*, include:
+
+- **Packages:** A Cargo feature that lets you build, test, and share crates
+- **Crates:** A tree of modules that produces a library or executable
+- **Modules** and **use:** Let you control the organization, scope, and privacy of paths
+- **Paths:** A way of naming an item, such as a struct, function, or module
+
+## 7.1 Packages and Crates
+
+The first parts of the module system we’ll cover are packages and crates. A crate is a binary or library. The *crate root* is a source file that the Rust compiler starts from and makes up the root module of your crate (we’ll explain modules in depth in the [“Defining Modules to Control Scope and Privacy”](https://doc.rust-lang.org/book/ch07-02-defining-modules-to-control-scope-and-privacy.html) section). A *package* is one or more crates that provide a set of functionality. A package contains a *Cargo.toml* file that describes how to build those crates.
+
+Several rules determine what a package can contain. **A package can contain at most one library crate. It can contain as many binary crates as you’d like, but it must contain at least one crate (either library or binary)**.
+
+Let’s walk through what happens when we create a package. First, we enter the command `cargo new`:
+
+```shell
+$ cargo new my-project
+     Created binary (application) `my-project` package
+$ ls my-project
+Cargo.toml
+src
+$ ls my-project/src
+main.rs
+```
+
+When we entered the command, Cargo created a *Cargo.toml* file, giving us a **package**. Looking at the contents of *Cargo.toml*, there’s no mention of *src/main.rs* because Cargo follows a convention that ***src/main.rs* is the crate root of a binary crate with the same name as the package**. Likewise, Cargo knows that **if the package directory contains *src/lib.rs*, the package contains a library crate with the same name as the package, and *src/lib.rs* is its crate root**. Cargo passes the crate root files to `rustc` to build the library or binary.
+
+Here, we have a package that only contains *src/main.rs*, meaning it only contains a binary crate named `my-project`. <u>If a package contains *src/main.rs* and *src/lib.rs*, it has two crates: a library and a binary, both with the same name as the package</u>. **A package can have multiple binary crates by placing files in the *src/bin* directory: each file will be a separate binary crate**.
+
+A crate will group related functionality together in a scope so the functionality is easy to share between multiple projects. For example, the `rand` crate we used in [Chapter 2](https://doc.rust-lang.org/book/ch02-00-guessing-game-tutorial.html#generating-a-random-number) provides functionality that generates random numbers. We can use that functionality in our own projects by bringing the `rand` crate into our project’s scope. All the functionality provided by the `rand` crate is accessible through the crate’s name, `rand`.
+
+<u>Keeping a crate’s functionality in its own scope clarifies whether particular functionality is defined in our crate or the `rand` crate and prevents potential conflicts</u>. For example, the `rand` crate provides a trait named `Rng`. We can also define a `struct` named `Rng` in our own crate. Because a crate’s functionality is namespaced in its own scope, when we add `rand` as a dependency, the compiler isn’t confused about what the name `Rng` refers to. <u>In our crate, it refers to the `struct Rng` that we defined. We would access the `Rng` trait from the `rand` crate as `rand::Rng`</u>.
+
+Let’s move on and talk about the module system!
+
+## 7.2 Defining Modules to Control Scope and Privacy
+
+In this section, we’ll talk about modules and other parts of the module system, namely *paths* that allow you to name items; the `use` keyword that brings a path into scope; and the `pub` keyword to make items public. We’ll also discuss the `as` keyword, external packages, and the glob operator. For now, let’s focus on modules!
+
+*Modules* let us organize code within a crate into groups for readability and easy reuse. **Modules also control the *privacy* of items, which is whether an item can be used by outside code (*public*) or is an internal implementation detail and not available for outside use (*private*)**.
+
+Create a new library named `restaurant` by running `cargo new --lib restaurant`; then put the code in Listing 7-1 into *src/lib.rs* to define some modules and function signatures.
+
+Filename: src/lib.rs
+
+```rust
+mod front_of_house {
+  mod hosting {
+    fn add_to_waitlist() {}
+
+    fn seat_at_table() {}
+  }
+
+  mod serving {
+    fn take_order() {}
+
+    fn serve_order() {}
+
+    fn take_payment() {}
+  }
+}
+```
+
+Listing 7-1: A `front_of_house` module containing other modules that then contain functions
+
+We define a module by starting with the `mod` keyword and then specify the name of the module (in this case, `front_of_house`) and place curly brackets around the body of the module. Inside modules, we can have other modules, as in this case with the modules `hosting` and `serving`. Modules can also hold definitions for other items, such as structs, enums, constants, traits, or—as in Listing 7-1—functions.
+
+By using modules, we can group related definitions together and name why they’re related. Programmers using this code would have an easier time finding the definitions they wanted to use because they could navigate the code based on the groups rather than having to read through all the definitions. Programmers adding new functionality to this code would know where to place the code to keep the program organized.
+
+**Earlier, we mentioned that *src/main.rs* and *src/lib.rs* are called crate roots. The reason for their name is that the contents of either of these two files form a module named `crate` at the root of the crate’s module structure, known as the *module tree***.
+
+Listing 7-2 shows the module tree for the structure in Listing 7-1.
+
+```shell
+crate
+ └── front_of_house
+     ├── hosting
+     │   ├── add_to_waitlist
+     │   └── seat_at_table
+     └── serving
+         ├── take_order
+         ├── serve_order
+         └── take_payment
+```
+
+Listing 7-2: The module tree for the code in Listing 7-1
+
+This tree shows how some of the modules nest inside one another (for example, `hosting` nests inside `front_of_house`). The tree also shows that some modules are *siblings* to each other, meaning they’re defined in the same module (`hosting` and `serving` are defined within `front_of_house`). To continue the family metaphor, if module A is contained inside module B, we say that module A is the *child* of module B and that module B is the *parent* of module A. **Notice that the entire module tree is rooted under the implicit module named `crate`**.
+
+The module tree might remind you of the filesystem’s directory tree on your computer; this is a very apt comparison! Just like directories in a filesystem, you use modules to organize your code. And just like files in a directory, we need a way to find our modules.
+
+## 7.3 Paths for Referring to an Item in the Module Tree
+
+> [Paths for Referring to an Item in the Module Tree - The Rust Programming Language (rust-lang.org)](https://doc.rust-lang.org/book/ch07-03-paths-for-referring-to-an-item-in-the-module-tree.html)
