@@ -2502,4 +2502,1291 @@ The module tree might remind you of the filesystem’s directory tree on your co
 
 ## 7.3 Paths for Referring to an Item in the Module Tree
 
-> [Paths for Referring to an Item in the Module Tree - The Rust Programming Language (rust-lang.org)](https://doc.rust-lang.org/book/ch07-03-paths-for-referring-to-an-item-in-the-module-tree.html)
+To show Rust where to find an item in a module tree, we use a path in the same way we use a path when navigating a filesystem. If we want to call a function, we need to know its path.
+
+A path can take two forms:
+
+- An ***absolute path*** starts from a crate root by using a crate name or a literal `crate`.
+- A ***relative path*** starts from the current module and uses `self`, `super`, or an identifier in the current module.
+
+Both absolute and relative paths are followed by one or more identifiers separated by double colons (`::`).
+
+Let’s return to the example in Listing 7-1. How do we call the `add_to_waitlist` function? This is the same as asking, what’s the path of the `add_to_waitlist` function? In Listing 7-3, we simplified our code a bit by removing some of the modules and functions. We’ll show two ways to call the `add_to_waitlist` function from a new function `eat_at_restaurant` defined in the crate root. The `eat_at_restaurant` function is part of our library crate’s public API, so we mark it with the `pub` keyword. In the [”Exposing Paths with the `pub` Keyword”](https://doc.rust-lang.org/book/ch07-03-paths-for-referring-to-an-item-in-the-module-tree.html#exposing-paths-with-the-pub-keyword) section, we’ll go into more detail about `pub`. Note that this example won’t compile just yet; we’ll explain why in a bit.
+
+Filename: src/lib.rs
+
+```rust
+mod front_of_house {
+  mod hosting {
+    fn add_to_waitlist() {}
+  }
+}
+
+pub fn eat_at_restaurant() {
+  // Absolute path
+  crate::front_of_house::hosting::add_to_waitlist();
+
+  // Relative path
+  front_of_house::hosting::add_to_waitlist();
+}
+```
+
+Listing 7-3: Calling the `add_to_waitlist` function using absolute and relative paths
+
+The first time we call the `add_to_waitlist` function in `eat_at_restaurant`, we use an absolute path. The `add_to_waitlist` function is defined in the same crate as `eat_at_restaurant`, which means we can use the `crate` keyword to start an absolute path.
+
+After `crate`, we include each of the successive modules until we make our way to `add_to_waitlist`. You can imagine a filesystem with the same structure, and we’d specify the path `/front_of_house/hosting/add_to_waitlist` to run the `add_to_waitlist` program; using the `crate` name to start from the crate root is like using `/` to start from the filesystem root in your shell.
+
+The second time we call `add_to_waitlist` in `eat_at_restaurant`, we use a relative path. The path starts with `front_of_house`, the name of the module defined at the same level of the module tree as `eat_at_restaurant`. Here the filesystem equivalent would be using the path `front_of_house/hosting/add_to_waitlist`. Starting with a name means that the path is relative.
+
+Choosing whether to use a relative or absolute path is a decision you’ll make based on your project. The decision should depend on whether you’re more likely to move item definition code separately from or together with the code that uses the item. For example, if we move the `front_of_house` module and the `eat_at_restaurant` function into a module named `customer_experience`, we’d need to update the absolute path to `add_to_waitlist`, but the relative path would still be valid. However, if we moved the `eat_at_restaurant` function separately into a module named `dining`, the absolute path to the `add_to_waitlist` call would stay the same, but the relative path would need to be updated. <u>Our preference is to specify absolute paths because it’s more likely to move code definitions and item calls independently of each other</u>.
+
+Let’s try to compile Listing 7-3 and find out why it won’t compile yet! The error we get is shown in Listing 7-4.
+
+```shell
+$ cargo build
+   Compiling restaurant v0.1.0 (file:///projects/restaurant)
+error[E0603]: module `hosting` is private
+ --> src/lib.rs:9:28
+  |
+9 |     crate::front_of_house::hosting::add_to_waitlist();
+  |                            ^^^^^^^ private module
+  |
+note: the module `hosting` is defined here
+ --> src/lib.rs:2:5
+  |
+2 |     mod hosting {
+  |     ^^^^^^^^^^^
+
+error[E0603]: module `hosting` is private
+  --> src/lib.rs:12:21
+   |
+12 |     front_of_house::hosting::add_to_waitlist();
+   |                     ^^^^^^^ private module
+   |
+note: the module `hosting` is defined here
+  --> src/lib.rs:2:5
+   |
+2  |     mod hosting {
+   |     ^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0603`.
+error: could not compile `restaurant` due to 2 previous errors
+```
+
+Listing 7-4: Compiler errors from building the code in Listing 7-3
+
+The error messages say that module `hosting` is private. In other words, we have the correct paths for the `hosting` module and the `add_to_waitlist` function, but **Rust won’t let us use them because it doesn’t have access to the private sections**.
+
+Modules aren’t useful only for organizing your code. They also define Rust’s *privacy boundary*: the line that encapsulates the implementation details external code isn’t allowed to know about, call, or rely on. **So, if you want to make an item like a function or struct private, you put it in a module**.
+
+**The way privacy works in Rust is that all items (functions, methods, structs, enums, modules, and constants) are private by default**. <u>Items in a parent module can’t use the private items inside child modules, but items in child modules can use the items in their ancestor modules. The reason is that child modules wrap and hide their implementation details, but the child modules can see the context in which they’re defined</u>. To continue with the restaurant metaphor, think of the privacy rules as being like the back office of a restaurant: what goes on in there is private to restaurant customers, but office managers can see and do everything in the restaurant in which they operate.
+
+Rust chose to have the module system function this way so that hiding inner implementation details is the default. That way, you know which parts of the inner code you can change without breaking outer code. But **you can expose inner parts of child modules’ code to outer ancestor modules by using the `pub` keyword to make an item public**.
+
+### Exposing Paths with the `pub` Keyword
+
+Let’s return to the error in Listing 7-4 that told us the `hosting` module is private. We want the `eat_at_restaurant` function in the parent module to have access to the `add_to_waitlist` function in the child module, so we mark the `hosting` module with the `pub` keyword, as shown in Listing 7-5.
+
+Filename: src/lib.rs
+
+```rust
+mod front_of_house {
+  pub mod hosting {
+    fn add_to_waitlist() {}
+  }
+}
+
+pub fn eat_at_restaurant() {
+  // Absolute path
+  crate::front_of_house::hosting::add_to_waitlist();
+
+  // Relative path
+  front_of_house::hosting::add_to_waitlist();
+}
+```
+
+Listing 7-5: Declaring the `hosting` module as `pub` to use it from `eat_at_restaurant`
+
+Unfortunately, the code in Listing 7-5 still results in an error, as shown in Listing 7-6.
+
+```rust
+$ cargo build
+   Compiling restaurant v0.1.0 (file:///projects/restaurant)
+error[E0603]: function `add_to_waitlist` is private
+ --> src/lib.rs:9:37
+  |
+9 |     crate::front_of_house::hosting::add_to_waitlist();
+  |                                     ^^^^^^^^^^^^^^^ private function
+  |
+note: the function `add_to_waitlist` is defined here
+ --> src/lib.rs:3:9
+  |
+3 |         fn add_to_waitlist() {}
+  |         ^^^^^^^^^^^^^^^^^^^^
+
+error[E0603]: function `add_to_waitlist` is private
+  --> src/lib.rs:12:30
+   |
+12 |     front_of_house::hosting::add_to_waitlist();
+   |                              ^^^^^^^^^^^^^^^ private function
+   |
+note: the function `add_to_waitlist` is defined here
+  --> src/lib.rs:3:9
+   |
+3  |         fn add_to_waitlist() {}
+   |         ^^^^^^^^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0603`.
+error: could not compile `restaurant` due to 2 previous errors
+```
+
+Listing 7-6: Compiler errors from building the code in Listing 7-5
+
+What happened? Adding the `pub` keyword in front of `mod hosting` makes the module public. With this change, if we can access `front_of_house`, we can access `hosting`. But the *contents* of `hosting` are still private; **making the module public doesn’t make its contents public. The `pub` keyword on a module only lets code in its ancestor modules refer to it**.
+
+The errors in Listing 7-6 say that the `add_to_waitlist` function is private. **The privacy rules apply to structs, enums, functions, and methods as well as modules**.
+
+Let’s also make the `add_to_waitlist` function public by adding the `pub` keyword before its definition, as in Listing 7-7.
+
+Filename: src/lib.rs
+
+```rust
+mod front_of_house {
+    pub mod hosting {
+        pub fn add_to_waitlist() {}
+    }
+}
+
+pub fn eat_at_restaurant() {
+    // Absolute path
+    crate::front_of_house::hosting::add_to_waitlist();
+
+    // Relative path
+    front_of_house::hosting::add_to_waitlist();
+}
+```
+
+Listing 7-7: Adding the `pub` keyword to `mod hosting` and `fn add_to_waitlist` lets us call the function from `eat_at_restaurant`
+
+Now the code will compile! Let’s look at the absolute and the relative path and double-check why adding the `pub` keyword lets us use these paths in `add_to_waitlist` with respect to the privacy rules.
+
+In the absolute path, we start with `crate`, the root of our crate’s module tree. Then the `front_of_house` module is defined in the crate root. **The `front_of_house` module isn’t public, but because the `eat_at_restaurant` function is defined in the same module as `front_of_house` (that is, `eat_at_restaurant` and `front_of_house` are siblings), we can refer to `front_of_house` from `eat_at_restaurant`.** Next is the `hosting` module marked with `pub`. We can access the parent module of `hosting`, so we can access `hosting`. Finally, the `add_to_waitlist` function is marked with `pub` and we can access its parent module, so this function call works!
+
+In the relative path, the logic is the same as the absolute path except for the first step: rather than starting from the crate root, the path starts from `front_of_house`. The `front_of_house` module is defined within the same module as `eat_at_restaurant`, so the relative path starting from the module in which `eat_at_restaurant` is defined works. Then, because `hosting` and `add_to_waitlist` are marked with `pub`, the rest of the path works, and this function call is valid!
+
+### Starting Relative Paths with `super`
+
+We can also construct relative paths that begin in the parent module by using `super` at the start of the path. This is like starting a filesystem path with the `..` syntax. Why would we want to do this?
+
+Consider the code in Listing 7-8 that models the situation in which a chef fixes an incorrect order and personally brings it out to the customer. The function `fix_incorrect_order` calls the function `serve_order` by specifying the path to `serve_order` starting with `super`:
+
+```rust
+fn serve_order() {}
+
+mod back_of_house {
+    fn fix_incorrect_order() {
+        cook_order();
+        super::serve_order();
+    }
+
+    fn cook_order() {}
+}
+```
+
+Listing 7-8: Calling a function using a relative path starting with `super`
+
+The `fix_incorrect_order` function is in the `back_of_house` module, so we can use `super` to go to the parent module of `back_of_house`, which in this case is `crate`, the root. From there, we look for `serve_order` and find it. Success! We think the `back_of_house` module and the `serve_order` function are likely to stay in the same relationship to each other and get moved together should we decide to reorganize the crate’s module tree. Therefore, we used `super` so we’ll have fewer places to update code in the future if this code gets moved to a different module.
+
+### Making Structs and Enums Public
+
++ **struct声明pub时，内部的所有fields默认还是private，需要单独声明pub；**
+
++ **enum声明pub时，内部所有enum variants默认pub**
+
+We can also use `pub` to designate structs and enums as public, but there are a few extra details. **If we use `pub` before a struct definition, we make the struct public, but the struct’s fields will still be private**. We can make each field public or not on a case-by-case basis. In Listing 7-9, we’ve defined a public `back_of_house::Breakfast` struct with a public `toast` field but a private `seasonal_fruit` field. This models the case in a restaurant where the customer can pick the type of bread that comes with a meal, but the chef decides which fruit accompanies the meal based on what’s in season and in stock. The available fruit changes quickly, so customers can’t choose the fruit or even see which fruit they’ll get.
+
+Filename: src/lib.rs
+
+```rust
+mod back_of_house {
+    pub struct Breakfast {
+        pub toast: String,
+        seasonal_fruit: String,
+    }
+
+    impl Breakfast {
+        pub fn summer(toast: &str) -> Breakfast {
+            Breakfast {
+                toast: String::from(toast),
+                seasonal_fruit: String::from("peaches"),
+            }
+        }
+    }
+}
+
+pub fn eat_at_restaurant() {
+    // Order a breakfast in the summer with Rye toast
+    let mut meal = back_of_house::Breakfast::summer("Rye");
+    // Change our mind about what bread we'd like
+    meal.toast = String::from("Wheat");
+    println!("I'd like {} toast please", meal.toast);
+
+    // The next line won't compile if we uncomment it; we're not allowed
+    // to see or modify the seasonal fruit that comes with the meal
+    // meal.seasonal_fruit = String::from("blueberries");
+}
+```
+
+Listing 7-9: A struct with some public fields and some private fields
+
+Because the `toast` field in the `back_of_house::Breakfast` struct is public, in `eat_at_restaurant` we can write and read to the `toast` field using dot notation. Notice that we can’t use the `seasonal_fruit` field in `eat_at_restaurant` because `seasonal_fruit` is private. Try uncommenting the line modifying the `seasonal_fruit` field value to see what error you get!
+
+Also, note that because `back_of_house::Breakfast` has a private field, the struct needs to provide a public associated function that constructs an instance of `Breakfast` (we’ve named it `summer` here). If `Breakfast` didn’t have such a function, we couldn’t create an instance of `Breakfast` in `eat_at_restaurant` because we couldn’t set the value of the private `seasonal_fruit` field in `eat_at_restaurant`.
+
+**In contrast, if we make an enum public, all of its variants are then public**. We only need the `pub` before the `enum` keyword, as shown in Listing 7-10.
+
+Filename: src/lib.rs
+
+```rust
+mod back_of_house {
+    pub enum Appetizer {
+        Soup,
+        Salad,
+    }
+}
+
+pub fn eat_at_restaurant() {
+    let order1 = back_of_house::Appetizer::Soup;
+    let order2 = back_of_house::Appetizer::Salad;
+}
+```
+
+Listing 7-10: Designating an enum as public makes all its variants public
+
+Because we made the `Appetizer` enum public, we can use the `Soup` and `Salad` variants in `eat_at_restaurant`. Enums aren’t very useful unless their variants are public; **it would be annoying to have to annotate all enum variants with `pub` in every case, so the default for enum variants is to be public. Structs are often useful without their fields being public, so struct fields follow the general rule of everything being private by default unless annotated with `pub`**.
+
+There’s one more situation involving `pub` that we haven’t covered, and that is our last module system feature: the `use` keyword. We’ll cover `use` by itself first, and then we’ll show how to combine `pub` and `use`.
+
+## 7.4 Bringing Paths into Scope with the `use` Keyword
+
+It might seem like the paths we’ve written to call functions so far are inconveniently long and repetitive. For example, in Listing 7-7, whether we chose the absolute or relative path to the `add_to_waitlist` function, every time we wanted to call `add_to_waitlist` we had to specify `front_of_house` and `hosting` too. **Fortunately, there’s a way to simplify this process. We can bring a path into a scope once and then call the items in that path as if they’re local items with the `use` keyword**.
+
+In Listing 7-11, we bring the `crate::front_of_house::hosting` module into the scope of the `eat_at_restaurant` function so we only have to specify `hosting::add_to_waitlist` to call the `add_to_waitlist` function in `eat_at_restaurant`.
+
+Filename: src/lib.rs
+
+```rust
+mod front_of_house {
+    pub mod hosting {
+        pub fn add_to_waitlist() {}
+    }
+}
+
+use crate::front_of_house::hosting;
+
+pub fn eat_at_restaurant() {
+    hosting::add_to_waitlist();
+    hosting::add_to_waitlist();
+    hosting::add_to_waitlist();
+}
+```
+
+Listing 7-11: Bringing a module into scope with `use`
+
+**Adding `use` and a path in a scope is similar to creating a symbolic link in the filesystem**. By adding `use crate::front_of_house::hosting` in the crate root, `hosting` is now a valid name in that scope, just as though the `hosting` module had been defined in the crate root. Paths brought into scope with `use` also check privacy, like any other paths.
+
+**You can also bring an item into scope with `use` and a relative path**. Listing 7-12 shows how to specify a relative path to get the same behavior as in Listing 7-11.
+
+Filename: src/lib.rs
+
+```rust
+mod front_of_house {
+    pub mod hosting {
+        pub fn add_to_waitlist() {}
+    }
+}
+
+use self::front_of_house::hosting;
+
+pub fn eat_at_restaurant() {
+    hosting::add_to_waitlist();
+    hosting::add_to_waitlist();
+    hosting::add_to_waitlist();
+}
+```
+
+Listing 7-12: Bringing a module into scope with `use` and a relative path
+
+### Creating Idiomatic `use` Paths
+
+In Listing 7-11, you might have wondered why we specified `use crate::front_of_house::hosting` and then called `hosting::add_to_waitlist` in `eat_at_restaurant` rather than specifying the `use` path all the way out to the `add_to_waitlist` function to achieve the same result, as in Listing 7-13.
+
+Filename: src/lib.rs
+
+```rust
+mod front_of_house {
+    pub mod hosting {
+        pub fn add_to_waitlist() {}
+    }
+}
+
+use crate::front_of_house::hosting::add_to_waitlist;
+
+pub fn eat_at_restaurant() {
+    add_to_waitlist();
+    add_to_waitlist();
+    add_to_waitlist();
+}
+```
+
+Listing 7-13: Bringing the `add_to_waitlist` function into scope with `use`, which is unidiomatic
+
+Although both Listing 7-11 and 7-13 accomplish the same task, Listing 7-11 is the idiomatic way to bring a function into scope with `use`. **Bringing the function’s parent module into scope with `use` means we have to specify the parent module when calling the function. Specifying the parent module when calling the function makes it clear that the function isn’t locally defined while still minimizing repetition of the full path**. <u>The code in Listing 7-13 is unclear as to where `add_to_waitlist` is defined.</u>
+
+**On the other hand, when bringing in structs, enums, and other items with `use`, it’s idiomatic to specify the full path**. Listing 7-14 shows the idiomatic way to bring the standard library’s `HashMap` struct into the scope of a binary crate.
+
+Filename: src/main.rs
+
+```rust
+use std::collections::HashMap;
+
+fn main() {
+    let mut map = HashMap::new();
+    map.insert(1, 2);
+}
+```
+
+Listing 7-14: Bringing `HashMap` into scope in an idiomatic way
+
+There’s no strong reason behind this idiom: it’s just the convention that has emerged, and folks have gotten used to reading and writing Rust code this way.
+
+**The exception to this idiom is if we’re bringing two items with the same name into scope with `use` statements, because Rust doesn’t allow that**. Listing 7-15 shows how to bring two `Result` types into scope that have the same name but different parent modules and how to refer to them.
+
+Filename: src/lib.rs
+
+```rust
+use std::fmt;
+use std::io;
+
+fn function1() -> fmt::Result {
+    // --snip--
+}
+
+fn function2() -> io::Result<()> {
+    // --snip--
+}
+```
+
+Listing 7-15: Bringing two types with the same name into the same scope requires using their parent modules.
+
+As you can see, **using the parent modules distinguishes the two `Result` types**. If instead we specified `use std::fmt::Result` and `use std::io::Result`, we’d have two `Result` types in the same scope and Rust wouldn’t know which one we meant when we used `Result`.
+
+### Providing New Names with the `as` Keyword
+
+**There’s another solution to the problem of bringing two types of the same name into the same scope with `use`: after the path, we can specify `as` and a new local name, or alias, for the type**. Listing 7-16 shows another way to write the code in Listing 7-15 by renaming one of the two `Result` types using `as`.
+
+Filename: src/lib.rs
+
+```rust
+use std::fmt::Result;
+use std::io::Result as IoResult;
+
+fn function1() -> Result {
+    // --snip--
+}
+
+fn function2() -> IoResult<()> {
+    // --snip--
+}
+```
+
+Listing 7-16: Renaming a type when it’s brought into scope with the `as` keyword
+
+In the second `use` statement, we chose the new name `IoResult` for the `std::io::Result` type, which won’t conflict with the `Result` from `std::fmt` that we’ve also brought into scope. Listing 7-15 and Listing 7-16 are considered idiomatic, so the choice is up to you!
+
+### Re-exporting Names with `pub use`
+
+**When we bring a name into scope with the `use` keyword, the name available in the new scope is private**. To enable the code that calls our code to refer to that name as if it had been defined in that code’s scope, we can combine `pub` and `use`. **This technique is called *re-exporting* because we’re bringing an item into scope but also making that item available for others to bring into their scope**.
+
+Listing 7-17 shows the code in Listing 7-11 with `use` in the root module changed to `pub use`.
+
+Filename: src/lib.rs
+
+```rust
+mod front_of_house {
+    pub mod hosting {
+        pub fn add_to_waitlist() {}
+    }
+}
+
+pub use crate::front_of_house::hosting;
+
+pub fn eat_at_restaurant() {
+    hosting::add_to_waitlist();
+    hosting::add_to_waitlist();
+    hosting::add_to_waitlist();
+}
+```
+
+Listing 7-17: Making a name available for any code to use from a new scope with `pub use`
+
+By using `pub use`, external code can now call the `add_to_waitlist` function using `hosting::add_to_waitlist`. If we hadn’t specified `pub use`, the `eat_at_restaurant` function could call `hosting::add_to_waitlist` in its scope, but external code couldn’t take advantage of this new path.
+
+Re-exporting is useful when the internal structure of your code is different from how programmers calling your code would think about the domain. For example, in this restaurant metaphor, the people running the restaurant think about “front of house” and “back of house.” But customers visiting a restaurant probably won’t think about the parts of the restaurant in those terms. With `pub use`, we can write our code with one structure but expose a different structure. Doing so makes our library well organized for programmers working on the library and programmers calling the library.
+
+### Using External Packages
+
+In Chapter 2, we programmed a guessing game project that used an external package called `rand` to get random numbers. To use `rand` in our project, we added this line to *Cargo.toml*:
+
+Filename: Cargo.toml
+
+```toml
+rand = "0.8.3"
+```
+
+Adding `rand` as a dependency in *Cargo.toml* tells Cargo to download the `rand` package and any dependencies from [crates.io](https://crates.io/) and make `rand` available to our project.
+
+Then, to bring `rand` definitions into the scope of our package, we added a `use` line starting with the name of the crate, `rand`, and listed the items we wanted to bring into scope. Recall that in the [“Generating a Random Number”](https://doc.rust-lang.org/book/ch02-00-guessing-game-tutorial.html#generating-a-random-number) section in Chapter 2, we brought the `Rng` trait into scope and called the `rand::thread_rng` function:
+
+```rust
+use rand::Rng;
+
+fn main() {
+    let secret_number = rand::thread_rng().gen_range(1..101);
+}
+```
+
+**Members of the Rust community have made many packages available at [crates.io](https://crates.io/), and pulling any of them into your package involves these same steps: listing them in your package’s *Cargo.toml* file and using `use` to bring items from their crates into scope.**
+
+**Note that the standard library (`std`) is also a crate that’s external to our package**. Because the standard library is shipped with the Rust language, we don’t need to change *Cargo.toml* to include `std`. But we do need to refer to it with `use` to bring items from there into our package’s scope. For example, with `HashMap` we would use this line:
+
+```rust
+use std::collections::HashMap;
+```
+
+**This is an absolute path starting with `std`, the name of the standard library crate**.
+
+### Using Nested Paths to Clean Up Large `use` Lists
+
+If we’re using multiple items defined in the same crate or same module, listing each item on its own line can take up a lot of vertical space in our files. For example, these two `use` statements we had in the Guessing Game in Listing 2-4 bring items from `std` into scope:
+
+Filename: src/main.rs
+
+```rust
+// --snip--
+use std::cmp::Ordering;
+use std::io;
+// --snip--
+```
+
+Instead, **we can use nested paths to bring the same items into scope in one line**. We do this by specifying the common part of the path, followed by two colons, and then curly brackets around a list of the parts of the paths that differ, as shown in Listing 7-18.
+
+Filename: src/main.rs
+
+```rust
+// --snip--
+use std::{cmp::Ordering, io};
+// --snip--
+```
+
+Listing 7-18: Specifying a nested path to bring multiple items with the same prefix into scope
+
+In bigger programs, bringing many items into scope from the same crate or module using nested paths can reduce the number of separate `use` statements needed by a lot!
+
+**We can use a nested path at any level in a path, which is useful when combining two `use` statements that share a subpath**. For example, Listing 7-19 shows two `use` statements: one that brings `std::io` into scope and one that brings `std::io::Write` into scope.
+
+Filename: src/lib.rs
+
+```rust
+use std::io;
+use std::io::Write;
+```
+
+Listing 7-19: Two `use` statements where one is a subpath of the other
+
+The common part of these two paths is `std::io`, and that’s the complete first path. **To merge these two paths into one `use` statement, we can use `self` in the nested path**, as shown in Listing 7-20.
+
+Filename: src/lib.rs
+
+```rust
+use std::io::{self, Write};
+```
+
+Listing 7-20: Combining the paths in Listing 7-19 into one `use` statement
+
+This line brings `std::io` and `std::io::Write` into scope.
+
+### The Glob Operator
+
+**If we want to bring *all* public items defined in a path into scope, we can specify that path followed by `*`**, the glob operator:
+
+```rust
+use std::collections::*;
+```
+
+This `use` statement brings all public items defined in `std::collections` into the current scope. Be careful when using the glob operator! Glob can make it harder to tell what names are in scope and where a name used in your program was defined.
+
+**The glob operator is often used when testing to bring everything under test into the `tests` module**; we’ll talk about that in the [“How to Write Tests”](https://doc.rust-lang.org/book/ch11-01-writing-tests.html#how-to-write-tests) section in Chapter 11. The glob operator is also sometimes used as part of the prelude pattern: see [the standard library documentation](https://doc.rust-lang.org/std/prelude/index.html#other-preludes) for more information on that pattern.
+
+## 7.5 Separating Modules into Different Files
+
+> [Rust:mod、crate、super、self、pub use等模块系统用法梳理_Julia & Rust & Python-CSDN博客_rust super](https://blog.csdn.net/wowotuo/article/details/107591501)
+
+So far, all the examples in this chapter defined multiple modules in one file. When modules get large, you might want to move their definitions to a separate file to make the code easier to navigate.
+
+For example, let’s start from the code in Listing 7-17 and move the `front_of_house` module to its own file *src/front_of_house.rs* by changing the crate root file so it contains the code shown in Listing 7-21. **In this case, the crate root file is *src/lib.rs*, but this procedure also works with binary crates whose crate root file is *src/main.rs***.
+
+Filename: src/lib.rs
+
+```rust
+mod front_of_house;
+
+pub use crate::front_of_house::hosting;
+
+pub fn eat_at_restaurant() {
+    hosting::add_to_waitlist();
+    hosting::add_to_waitlist();
+    hosting::add_to_waitlist();
+}
+```
+
+Listing 7-21: Declaring the `front_of_house` module whose body will be in *src/front_of_house.rs*
+
+And *src/front_of_house.rs* gets the definitions from the body of the `front_of_house` module, as shown in Listing 7-22.
+
+Filename: src/front_of_house.rs
+
+```rust
+pub mod hosting {
+    pub fn add_to_waitlist() {}
+}
+```
+
+Listing 7-22: Definitions inside the `front_of_house` module in *src/front_of_house.rs*
+
+**Using a semicolon after `mod front_of_house` rather than using a block tells Rust to load the contents of the module from another file with the same name as the module**. To continue with our example and extract the `hosting` module to its own file as well, we change *src/front_of_house.rs* to contain only the declaration of the `hosting` module:
+
+Filename: src/front_of_house.rs
+
+```rust
+pub mod hosting;
+```
+
+Then we create a *src/front_of_house* directory and a file *src/front_of_house/hosting.rs* to contain the definitions made in the `hosting` module:
+
+Filename: src/front_of_house/hosting.rs
+
+```rust
+pub fn add_to_waitlist() {}
+```
+
+The module tree remains the same, and the function calls in `eat_at_restaurant` will work without any modification, even though the definitions live in different files. This technique lets you move modules to new files as they grow in size.
+
+Note that the `pub use crate::front_of_house::hosting` statement in *src/lib.rs* also hasn’t changed, nor does `use` have any impact on what files are compiled as part of the crate. **The `mod` keyword declares modules, and Rust looks in a file with the same name as the module for the code that goes into that module**.
+
+### Summary
+
+Rust lets you split a package into multiple crates and a crate into modules so you can refer to items defined in one module from another module. You can do this by specifying absolute or relative paths. These paths can be brought into scope with a `use` statement so you can use a shorter path for multiple uses of the item in that scope. Module code is private by default, but you can make definitions public by adding the `pub` keyword.
+
+In the next chapter, we’ll look at some collection data structures in the standard library that you can use in your neatly organized code.
+
+# 8. Common Collections
+
+Rust’s standard library includes a number of very useful data structures called *collections*. Most other data types represent one specific value, but collections can contain multiple values. **Unlike the built-in array and tuple types, the data these collections point to is stored on the heap**, which means the amount of data does not need to be known at compile time and can grow or shrink as the program runs. Each kind of collection has different capabilities and costs, and choosing an appropriate one for your current situation is a skill you’ll develop over time. In this chapter, we’ll discuss three collections that are used very often in Rust programs:
+
+- A *vector* allows you to store a variable number of values next to each other.
+- A *string* is a collection of characters. We’ve mentioned the `String` type previously, but in this chapter we’ll talk about it in depth.
+- A *hash map* allows you to associate a value with a particular key. It’s a particular implementation of the more general data structure called a *map*.
+
+To learn about the other kinds of collections provided by the standard library, see [the documentation](https://doc.rust-lang.org/std/collections/index.html).
+
+We’ll discuss how to create and update vectors, strings, and hash maps, as well as what makes each special.
+
+## 8.1 Storing Lists of Values with Vectors
+
+The first collection type we’ll look at is `Vec<T>`, also known as a *vector*. Vectors allow you to store more than one value in a single data structure that puts all the values next to each other in memory. **Vectors can only store values of the same type**. They are useful when you have a list of items, such as the lines of text in a file or the prices of items in a shopping cart.
+
+### Creating a New Vector
+
+To create a new, empty vector, we can call the `Vec::new` function, as shown in Listing 8-1.
+
+```rust
+let v: Vec<i32> = Vec::new();
+```
+
+Listing 8-1: Creating a new, empty vector to hold values of type `i32`
+
+<u>Note that we added a type annotation here. Because we aren’t inserting any values into this vector, Rust doesn’t know what kind of elements we intend to store</u>. This is an important point. Vectors are implemented using generics; we’ll cover how to use generics with your own types in Chapter 10. For now, know that the `Vec<T>` type provided by the standard library can hold any type, and when a specific vector holds a specific type, the type is specified within angle brackets. In Listing 8-1, we’ve told Rust that the `Vec<T>` in `v` will hold elements of the `i32` type.
+
+**In more realistic code, Rust can often infer the type of value you want to store once you insert values, so you rarely need to do this type annotation. It’s more common to create a `Vec<T>` that has initial values, and Rust provides the `vec!` macro for convenience**. The macro will create a new vector that holds the values you give it. Listing 8-2 creates a new `Vec<i32>` that holds the values `1`, `2`, and `3`. The integer type is `i32` because that’s the default integer type, as we discussed in the [“Data Types”](https://doc.rust-lang.org/book/ch03-02-data-types.html#data-types) section of Chapter 3.
+
+```rust
+let v = vec![1, 2, 3];
+```
+
+Listing 8-2: Creating a new vector containing values
+
+Because we’ve given initial `i32` values, Rust can infer that the type of `v` is `Vec<i32>`, and the type annotation isn’t necessary. Next, we’ll look at how to modify a vector.
+
+### Updating a Vector
+
+To create a vector and then add elements to it, we can use the `push` method, as shown in Listing 8-3.
+
+```rust
+let mut v = Vec::new();
+
+v.push(5);
+v.push(6);
+v.push(7);
+v.push(8);
+```
+
+Listing 8-3: Using the `push` method to add values to a vector
+
+As with any variable, if we want to be able to change its value, we need to make it mutable using the `mut` keyword, as discussed in Chapter 3. **The numbers we place inside are all of type `i32`, and Rust infers this from the data, so we don’t need the `Vec<i32>` annotation**.
+
+### Dropping a Vector Drops Its Elements
+
+**Like any other `struct`, a vector is freed when it goes out of scope**, as annotated in Listing 8-4.
+
+```rust
+{
+  let v = vec![1, 2, 3, 4];
+
+  // do stuff with v
+} // <- v goes out of scope and is freed here
+```
+
+Listing 8-4: Showing where the vector and its elements are dropped
+
+**When the vector gets dropped, all of its contents are also dropped, meaning those integers it holds will be cleaned up**. This may seem like a straightforward point but can get a bit more complicated when you start to introduce references to the elements of the vector. Let’s tackle that next!
+
+### Reading Elements of Vectors
+
+Now that you know how to create, update, and destroy vectors, knowing how to read their contents is a good next step. There are two ways to reference a value stored in a vector. In the examples, we’ve annotated the types of the values that are returned from these functions for extra clarity.
+
+Listing 8-5 shows both methods of **accessing a value in a vector, either with indexing syntax or the `get` method.**
+
+```rust
+let v = vec![1, 2, 3, 4, 5];
+
+let third: &i32 = &v[2];
+println!("The third element is {}", third);
+
+match v.get(2) {
+  Some(third) => println!("The third element is {}", third),
+  None => println!("There is no third element."),
+}
+```
+
+Listing 8-5: Using indexing syntax or the `get` method to access an item in a vector
+
+Note two details here. First, we use the index value of `2` to get the third element: vectors are indexed by number, starting at zero. **Second, the two ways to get the third element are by using `&` and `[]`, which gives us a reference, or by using the `get` method with the index passed as an argument, which gives us an `Option<&T>`**.
+
+Rust has two ways to reference an element so you can choose how the program behaves when you try to use an index value that the vector doesn’t have an element for. As an example, let’s see what a program will do if it has a vector that holds five elements and then tries to access an element at index 100, as shown in Listing 8-6.
+
+```rust
+let v = vec![1, 2, 3, 4, 5];
+
+let does_not_exist = &v[100];
+let does_not_exist = v.get(100);
+```
+
+Listing 8-6: Attempting to access the element at index 100 in a vector containing five elements
+
+**When we run this code, the first `[]` method will cause the program to panic because it references a nonexistent element**. This method is best used when you want your program to crash if there’s an attempt to access an element past the end of the vector.
+
+**When the `get` method is passed an index that is outside the vector, it returns `None` without panicking**. You would use this method if accessing an element beyond the range of the vector happens occasionally under normal circumstances. <u>Your code will then have logic to handle having either `Some(&element)` or `None`, as discussed in Chapter 6</u>. For example, the index could be coming from a person entering a number. <u>If they accidentally enter a number that’s too large and the program gets a `None` value, you could tell the user how many items are in the current vector and give them another chance to enter a valid value</u>. That would be more user-friendly than crashing the program due to a typo!
+
+When the program has a valid reference, the borrow checker enforces the ownership and borrowing rules (covered in Chapter 4) to ensure this reference and any other references to the contents of the vector remain valid. **<u>Recall the rule that states you can’t have mutable and immutable references in the same scope</u>**. That rule applies in Listing 8-7, where we hold an immutable reference to the first element in a vector and try to add an element to the end, which won’t work if we also try to refer to that element later in the function:
+
+```rust
+let mut v = vec![1, 2, 3, 4, 5];
+
+let first = &v[0];
+
+v.push(6);
+
+println!("The first element is: {}", first);
+```
+
+Listing 8-7: Attempting to add an element to a vector while holding a reference to an item
+
+Compiling this code will result in this error:
+
+```console
+$ cargo run
+   Compiling collections v0.1.0 (file:///projects/collections)
+error[E0502]: cannot borrow `v` as mutable because it is also borrowed as immutable
+ --> src/main.rs:6:5
+  |
+4 |     let first = &v[0];
+  |                  - immutable borrow occurs here
+5 | 
+6 |     v.push(6);
+  |     ^^^^^^^^^ mutable borrow occurs here
+7 | 
+8 |     println!("The first element is: {}", first);
+  |                                          ----- immutable borrow later used here
+
+For more information about this error, try `rustc --explain E0502`.
+error: could not compile `collections` due to previous error
+```
+
+The code in Listing 8-7 might look like it should work: why should a reference to the first element care about what changes at the end of the vector? **This error is due to the way vectors work: adding a new element onto the end of the vector might require allocating new memory and copying the old elements to the new space, if there isn’t enough room to put all the elements next to each other where the vector currently is. <u>In that case, the reference to the first element would be pointing to deallocated memory. The borrowing rules prevent programs from ending up in that situation</u>**.
+
+> Note: For more on the implementation details of the `Vec<T>` type, see [“The Rustonomicon”](https://doc.rust-lang.org/nomicon/vec/vec.html).
+
+### Iterating over the Values in a Vector
+
+If we want to access each element in a vector in turn, we can iterate through all of the elements rather than use indices to access one at a time. Listing 8-8 shows how to **use a `for` loop to get immutable references to each element in a vector** of `i32` values and print them.
+
+```rust
+    let v = vec![100, 32, 57];
+    for i in &v {
+        println!("{}", i);
+    }
+```
+
+Listing 8-8: Printing each element in a vector by iterating over the elements using a `for` loop
+
+We can also iterate over mutable references to each element in a mutable vector in order to make changes to all the elements. The `for` loop in Listing 8-9 will add `50` to each element.
+
+```rust
+    let mut v = vec![100, 32, 57];
+    for i in &mut v {
+        *i += 50;
+    }
+```
+
+Listing 8-9: Iterating over mutable references to elements in a vector
+
+**To change the value that the mutable reference refers to, we have to use the dereference operator (`*`) to get to the value in `i` before we can use the `+=` operator.** We’ll talk more about the dereference operator in the [“Following the Pointer to the Value with the Dereference Operator”](https://doc.rust-lang.org/book/ch15-02-deref.html#following-the-pointer-to-the-value-with-the-dereference-operator) section of Chapter 15.
+
+### Using an Enum to Store Multiple Types
+
+At the beginning of this chapter, we said that vectors can only store values that are the same type. This can be inconvenient; there are definitely use cases for needing to store a list of items of different types. **<u>Fortunately, the variants of an enum are defined under the same enum type, so when we need to store elements of a different type in a vector, we can define and use an enum</u>**!
+
+For example, say we want to get values from a row in a spreadsheet in which some of the columns in the row contain integers, some floating-point numbers, and some strings. We can define an enum whose variants will hold the different value types, and then **all the enum variants will be considered the same type: that of the enum.** Then we can create a vector that holds that enum and so, ultimately, holds different types. We’ve demonstrated this in Listing 8-10.
+
+```rust
+    enum SpreadsheetCell {
+        Int(i32),
+        Float(f64),
+        Text(String),
+    }
+
+    let row = vec![
+        SpreadsheetCell::Int(3),
+        SpreadsheetCell::Text(String::from("blue")),
+        SpreadsheetCell::Float(10.12),
+    ];
+```
+
+Listing 8-10: Defining an `enum` to store values of different types in one vector
+
+**Rust needs to know what types will be in the vector at compile time so it knows exactly how much memory on the heap will be needed to store each element**. A secondary advantage is that we can be explicit about what types are allowed in this vector. If Rust allowed a vector to hold any type, there would be a chance that one or more of the types would cause errors with the operations performed on the elements of the vector. Using an enum plus a `match` expression means that Rust will ensure at compile time that every possible case is handled, as discussed in Chapter 6.
+
+When you’re writing a program, if you don’t know the exhaustive set of types the program will get at runtime to store in a vector, the enum technique won’t work. Instead, you can use a trait object, which we’ll cover in Chapter 17.
+
+Now that we’ve discussed some of the most common ways to use vectors, be sure to review [the API documentation](https://doc.rust-lang.org/std/vec/struct.Vec.html) for all the many useful methods defined on `Vec<T>` by the standard library. For example, in addition to `push`, a `pop` method removes and returns the last element. Let’s move on to the next collection type: `String`!
+
+## 8.2 Storing UTF-8 Encoded Text with Strings
+
+We talked about strings in Chapter 4, but we’ll look at them in more depth now. New Rustaceans commonly get stuck on strings for a combination of three reasons: Rust’s propensity for exposing possible errors, strings being a more complicated data structure than many programmers give them credit for, and **UTF-8**. These factors combine in a way that can seem difficult when you’re coming from other programming languages.
+
+**It’s useful to discuss strings in the context of collections because strings are implemented as a collection of bytes, plus some methods to provide useful functionality when those bytes are interpreted as text**. In this section, we’ll talk about the operations on `String` that every collection type has, such as creating, updating, and reading. We’ll also discuss the ways in which `String` is different from the other collections, namely how indexing into a `String` is complicated by the differences between how people and computers interpret `String` data.
+
+### What Is a String?
+
+We’ll first define what we mean by the term *string*. **Rust has only one string type in the core language, which is the string slice `str` that is usually seen in its borrowed form `&str`**. In Chapter 4, we talked about *string slices*, which are references to some UTF-8 encoded string data stored elsewhere. String literals, for example, are stored in the program’s binary and are therefore string slices.
+
+**The `String` type, which is provided by Rust’s standard library rather than coded into the core language, is a growable, mutable, owned, UTF-8 encoded string type**. When Rustaceans refer to “strings” in Rust, they usually mean the `String` and the string slice `&str` types, not just one of those types. Although this section is largely about `String`, both types are used heavily in Rust’s standard library, and both `String` and string slices are UTF-8 encoded.
+
+Rust’s standard library also includes a number of other string types, such as `OsString`, `OsStr`, `CString`, and `CStr`. Library crates can provide even more options for storing string data. See how those names all end in `String` or `Str`? They refer to owned and borrowed variants, just like the `String` and `str` types you’ve seen previously. These string types can store text in different encodings or be represented in memory in a different way, for example. We won’t discuss these other string types in this chapter; see their API documentation for more about how to use them and when each is appropriate.
+
+### Creating a New String
+
+Many of the same operations available with `Vec<T>` are available with `String` as well, starting with the `new` function to create a string, shown in Listing 8-11.
+
+```rust
+let mut s = String::new();
+```
+
+Listing 8-11: Creating a new, empty `String`
+
+This line creates a new empty string called `s`, which we can then load data into. **Often, we’ll have some initial data that we want to start the string with. For that, we use the `to_string` method, which is available on any type that implements the `Display` trait, as string literals do**. Listing 8-12 shows two examples.
+
+```rust
+let data = "initial contents";
+
+let s = data.to_string();
+
+// the method also works on a literal directly:
+let s = "initial contents".to_string();
+```
+
+Listing 8-12: Using the `to_string` method to create a `String` from a string literal
+
+This code creates a string containing `initial contents`.
+
+We can also use the function `String::from` to create a `String` from a string literal. The code in Listing 8-13 is equivalent to the code from Listing 8-12 that uses `to_string`.
+
+```rust
+let s = String::from("initial contents");
+```
+
+Listing 8-13: Using the `String::from` function to create a `String` from a string literal
+
+Because strings are used for so many things, we can use many different generic APIs for strings, providing us with a lot of options. Some of them can seem redundant, but they all have their place! <u>In this case, `String::from` and `to_string` do the same thing, so which you choose is a matter of style</u>.
+
+Remember that **strings are UTF-8 encoded**, so we can include any properly encoded data in them, as shown in Listing 8-14.
+
+```rust
+let hello = String::from("السلام عليكم");
+let hello = String::from("Dobrý den");
+let hello = String::from("Hello");
+let hello = String::from("שָׁלוֹם");
+let hello = String::from("नमस्ते");
+let hello = String::from("こんにちは");
+let hello = String::from("안녕하세요");
+let hello = String::from("你好");
+let hello = String::from("Olá");
+let hello = String::from("Здравствуйте");
+let hello = String::from("Hola");
+```
+
+Listing 8-14: Storing greetings in different languages in strings
+
+All of these are valid `String` values.
+
+### Updating a String
+
+A `String` can grow in size and its contents can change, just like the contents of a `Vec<T>`, if you push more data into it. In addition, you can conveniently use the `+` operator or the `format!` macro to concatenate `String` values.
+
+#### Appending to a String with `push_str` and `push`
+
+**We can grow a `String` by using the `push_str` method to append a string slice**, as shown in Listing 8-15.
+
+```rust
+let mut s = String::from("foo");
+s.push_str("bar");
+```
+
+Listing 8-15: Appending a string slice to a `String` using the `push_str` method
+
+After these two lines, `s` will contain `foobar`. <u>The `push_str` method takes a string slice because we don’t necessarily want to take ownership of the parameter</u>. For example, the code in Listing 8-16 shows that it would be unfortunate if we weren’t able to use `s2` after appending its contents to `s1`.
+
+```rust
+let mut s1 = String::from("foo");
+let s2 = "bar";
+s1.push_str(s2);
+println!("s2 is {}", s2);
+```
+
+Listing 8-16: Using a string slice after appending its contents to a `String`
+
+If the `push_str` method took ownership of `s2`, we wouldn’t be able to print its value on the last line. However, this code works as we’d expect!
+
+**The `push` method takes a single character as a parameter and adds it to the `String`**. Listing 8-17 shows code that adds the letter “l” to a `String` using the `push` method.
+
+```rust
+let mut s = String::from("lo");
+s.push('l');
+```
+
+Listing 8-17: Adding one character to a `String` value using `push`
+
+As a result of this code, `s` will contain `lol`.
+
+#### Concatenation with the `+` Operator or the `format!` Macro
+
+Often, you’ll want to combine two existing strings. One way is to use the `+` operator, as shown in Listing 8-18.
+
+```rust
+let s1 = String::from("Hello, ");
+let s2 = String::from("world!");
+let s3 = s1 + &s2; // note s1 has been moved here and can no longer be used
+```
+
+Listing 8-18: Using the `+` operator to combine two `String` values into a new `String` value
+
+The string `s3` will contain `Hello, world!` as a result of this code. The reason `s1` is no longer valid after the addition and the reason we used a reference to `s2` has to do with the signature of the method that gets called when we use the `+` operator. **The `+` operator uses the `add` method**, whose signature looks something like this:
+
+```rust
+fn add(self, s: &str) -> String {
+```
+
+This isn’t the exact signature that’s in the standard library: in the standard library, `add` is defined using generics. Here, we’re looking at the signature of `add` with concrete types substituted for the generic ones, which is what happens when we call this method with `String` values. We’ll discuss generics in Chapter 10. This signature gives us the clues we need to understand the tricky bits of the `+` operator.
+
+First, `s2` has an `&`, meaning that we’re adding a *reference* of the second string to the first string because of the `s` parameter in the `add` function: we can only add a `&str` to a `String`; we can’t add two `String` values together. But wait—the type of `&s2` is `&String`, not `&str`, as specified in the second parameter to `add`. So why does Listing 8-18 compile?
+
+**The reason we’re able to use `&s2` in the call to `add` is that the compiler can *coerce* the `&String` argument into a `&str`**. When we call the `add` method, <u>Rust uses a *deref coercion*, which here turns `&s2` into `&s2[..]`</u>. We’ll discuss deref coercion in more depth in Chapter 15. Because `add` does not take ownership of the `s` parameter, `s2` will still be a valid `String` after this operation.
+
+Second, we can see in the signature that `add` takes ownership of `self`, <u>because `self` does *not* have an `&`. This means `s1` in Listing 8-18 will be moved into the `add` call and no longer be valid after that</u>. So although `let s3 = s1 + &s2;` looks like it will copy both strings and create a new one, this statement actually takes ownership of `s1`, appends a copy of the contents of `s2`, and then returns ownership of the result. **In other words, it looks like it’s making a lot of copies but isn’t; the implementation is more efficient than copying**.
+
+If we need to concatenate multiple strings, the behavior of the `+` operator gets unwieldy:
+
+```rust
+    let s1 = String::from("tic");
+    let s2 = String::from("tac");
+    let s3 = String::from("toe");
+
+    let s = s1 + "-" + &s2 + "-" + &s3;
+```
+
+At this point, `s` will be `tic-tac-toe`. With all of the `+` and `"` characters, it’s difficult to see what’s going on. For more complicated string combining, we can **use the `format!` macro**:
+
+```rust
+    let s1 = String::from("tic");
+    let s2 = String::from("tac");
+    let s3 = String::from("toe");
+
+    let s = format!("{}-{}-{}", s1, s2, s3);
+```
+
+This code also sets `s` to `tic-tac-toe`. The `format!` macro works in the same way as `println!`, but instead of printing the output to the screen, it returns a `String` with the contents. The version of the code using `format!` is much easier to read, and **the code generated by the `format!` macro uses references so that this call doesn’t take ownership of any of its parameters**.
+
+### Indexing into Strings
+
+In many other programming languages, accessing individual characters in a string by referencing them by index is a valid and common operation. However, if you try to access parts of a `String` using indexing syntax in Rust, you’ll get an error. Consider the invalid code in Listing 8-19.
+
+```rust
+let s1 = String::from("hello");
+let h = s1[0];
+```
+
+Listing 8-19: Attempting to use indexing syntax with a String
+
+This code will result in the following error:
+
+```console
+$ cargo run
+   Compiling collections v0.1.0 (file:///projects/collections)
+error[E0277]: the type `String` cannot be indexed by `{integer}`
+ --> src/main.rs:3:13
+  |
+3 |     let h = s1[0];
+  |             ^^^^^ `String` cannot be indexed by `{integer}`
+  |
+  = help: the trait `Index<{integer}>` is not implemented for `String`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `collections` due to previous error
+```
+
+The error and the note tell the story: Rust strings don’t support indexing. But why not? To answer that question, we need to discuss how Rust stores strings in memory.
+
+#### Internal Representation
+
+**A `String` is a wrapper over a `Vec<u8>`**. Let’s look at some of our properly encoded UTF-8 example strings from Listing 8-14. First, this one:
+
+```rust
+let hello = String::from("Hola");
+```
+
+**In this case, `len` will be 4, which means the vector storing the string “Hola” is 4 bytes long**. Each of these letters takes 1 byte when encoded in **UTF-8**. But what about the following line? (Note that this string begins with the capital Cyrillic letter Ze, not the Arabic number 3.)
+
+```rust
+let hello = String::from("Здравствуйте");
+```
+
+Asked how long the string is, you might say 12. However, Rust’s answer is 24: that’s the number of bytes it takes to encode “Здравствуйте” in **UTF-8**, because each Unicode scalar value in that string takes 2 bytes of storage. Therefore, an index into the string’s bytes will not always correlate to a valid Unicode scalar value. To demonstrate, consider this invalid Rust code:
+
+```rust
+let hello = "Здравствуйте";
+let answer = &hello[0];
+```
+
+What should the value of `answer` be? Should it be `З`, the first letter? When encoded in UTF-8, the first byte of `З` is `208` and the second is `151`, so `answer` should in fact be `208`, but `208` is not a valid character on its own. Returning `208` is likely not what a user would want if they asked for the first letter of this string; however, that’s the only data that Rust has at byte index 0. Users generally don’t want the byte value returned, even if the string contains only Latin letters: if `&"hello"[0]` were valid code that returned the byte value, it would return `104`, not `h`. To avoid returning an unexpected value and causing bugs that might not be discovered immediately, **Rust doesn’t compile this code at all and prevents misunderstandings early in the development process**.
+
+#### Bytes and Scalar Values and Grapheme Clusters! Oh My!
+
+**Another point about UTF-8 is that there are actually three relevant ways to look at strings from Rust’s perspective: as bytes, scalar values, and grapheme clusters (the closest thing to what we would call *letters*)**.
+
+If we look at the Hindi word “नमस्ते” written in the Devanagari script, it is stored as a vector of `u8` values that looks like this:
+
+```text
+[224, 164, 168, 224, 164, 174, 224, 164, 184, 224, 165, 141, 224, 164, 164,
+224, 165, 135]
+```
+
+That’s 18 bytes and is how computers ultimately store this data. If we look at them as Unicode scalar values, which are what <u>Rust’s `char` type</u> is, those bytes look like this:
+
+```text
+['न', 'म', 'स', '्', 'त', 'े']
+```
+
+There are six `char` values here, but the fourth and sixth are not letters: they’re diacritics that don’t make sense on their own. Finally, if we look at them as <u>grapheme clusters</u>, we’d get what a person would call the four letters that make up the Hindi word:
+
+```text
+["न", "म", "स्", "ते"]
+```
+
+Rust provides different ways of interpreting the raw string data that computers store so that each program can choose the interpretation it needs, no matter what human language the data is in.
+
+**A final reason Rust doesn’t allow us to index into a `String` to get a character is that indexing operations are expected to always take constant time (O(1)). But it isn’t possible to guarantee that performance with a `String`, because Rust would have to walk through the contents from the beginning to the index to determine how many valid characters there were.**
+
+### Slicing Strings
+
+**Indexing into a string is often a bad idea because it’s not clear what the return type of the string-indexing operation should be: a byte value, a character, a grapheme cluster, or a string slice**. Therefore, Rust asks you to be more specific if you really need to use indices to create string slices. To be more specific in your indexing and indicate that you want a string slice, rather than indexing using `[]` with a single number, **you can use `[]` with a range to create a string slice containing particular bytes**:
+
+```rust
+let hello = "Здравствуйте";
+
+let s = &hello[0..4];
+```
+
+Here, `s` will be a `&str` that contains the first 4 bytes of the string. <u>Earlier, we mentioned that each of these characters was 2 bytes, which means `s` will be `Зд`.</u>
+
+**What would happen if we used `&hello[0..1]`? The answer: Rust would panic at runtime in the same way as if an invalid index were accessed in a vector**:
+
+```console
+$ cargo run
+   Compiling collections v0.1.0 (file:///projects/collections)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.43s
+     Running `target/debug/collections`
+thread 'main' panicked at 'byte index 1 is not a char boundary; it is inside 'З' (bytes 0..2) of `Здравствуйте`', src/main.rs:4:14
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+```
+
+You should use ranges to create string slices with caution, because doing so can crash your program.
+
+### Methods for Iterating Over Strings
+
+Fortunately, you can access elements in a string in other ways.
+
+**If you need to perform operations on individual Unicode scalar values, the best way to do so is to use the `chars` method**. Calling `chars` on “नमस्ते” separates out and returns six values of type `char`, and you can iterate over the result to access each element:
+
+```rust
+for c in "नमस्ते".chars() {
+    println!("{}", c);
+}
+```
+
+This code will print the following:
+
+```text
+न
+म
+स
+्
+त
+े
+```
+
+The `bytes` method returns each raw byte, which might be appropriate for your domain:
+
+```rust
+for b in "नमस्ते".bytes() {
+    println!("{}", b);
+}
+```
+
+This code will print the 18 bytes that make up this `String`:
+
+```text
+224
+164
+// --snip--
+165
+135
+```
+
+But be sure to remember that valid Unicode scalar values may be made up of more than 1 byte.
+
+**Getting grapheme clusters from strings is complex, so this functionality is not provided by the standard library. Crates are available on [crates.io](https://crates.io/) if this is the functionality you need**.
+
+### Strings Are Not So Simple
+
+To summarize, strings are complicated. Different programming languages make different choices about how to present this complexity to the programmer. **Rust has chosen to make the correct handling of `String` data the default behavior for all Rust programs, which means programmers have to put more thought into handling UTF-8 data upfront**. This trade-off exposes more of the complexity of strings than is apparent in other programming languages, but it prevents you from having to handle errors involving non-ASCII characters later in your development life cycle.
+
+Let’s switch to something a bit less complex: hash maps!
+
+## 8.3 Storing Keys with Associated Values in Hash Maps
+
+The last of our common collections is the *hash map*. The type `HashMap<K, V>` stores a mapping of keys of type `K` to values of type `V`. It does this via a *hashing function*, which determines how it places these keys and values into memory. Many programming languages support this kind of data structure, but they often use a different name, such as hash, map, object, hash table, dictionary, or associative array, just to name a few.
+
+> We’ll go over the basic API of hash maps in this section, but many more goodies are hiding in the functions defined on `HashMap<K, V>` by the standard library. As always, check the standard library documentation for more information.
+
+### Creating a New Hash Map
+
+You can create an empty hash map with `new` and add elements with `insert`. In Listing 8-20, we’re keeping track of the scores of two teams whose names are Blue and Yellow. The Blue team starts with 10 points, and the Yellow team starts with 50.
+
+```rust
+use std::collections::HashMap;
+
+let mut scores = HashMap::new();
+
+scores.insert(String::from("Blue"), 10);
+scores.insert(String::from("Yellow"), 50);
+```
+
+Listing 8-20: Creating a new hash map and inserting some keys and values
+
+**Note that we need to first `use` the `HashMap` from the collections portion of the standard library.** Of our three common collections, this one is the least often used, so it’s not included in the features brought into scope automatically in the prelude. **Hash maps also have less support from the standard library; there’s no built-in macro to construct them, for example**.
+
+**Just like vectors, hash maps store their data on the heap**. This `HashMap` has keys of type `String` and values of type `i32`. **Like vectors, hash maps are homogeneous: all of the keys must have the same type, and all of the values must have the same type**.
+
+Another way of constructing a hash map is by using iterators and the `collect` method on a vector of tuples, where each tuple consists of a key and its value. We’ll be going into more detail about iterators and their associated methods in the [”Processing a Series of Items with Iterators” section of Chapter 13](https://doc.rust-lang.org/book/ch13-02-iterators.html). The `collect` method gathers data into a number of collection types, including `HashMap`. For example, if we had the team names and initial scores in two separate vectors, we could use the `zip` method to create an iterator of tuples where “Blue” is paired with 10, and so forth. Then we could use the `collect` method to turn that iterator of tuples into a hash map, as shown in Listing 8-21.
+
+```rust
+    use std::collections::HashMap;
+
+    let teams = vec![String::from("Blue"), String::from("Yellow")];
+    let initial_scores = vec![10, 50];
+
+    let mut scores: HashMap<_, _> =
+        teams.into_iter().zip(initial_scores.into_iter()).collect();
+```
+
+Listing 8-21: Creating a hash map from a list of teams and a list of scores
+
+**The type annotation `HashMap<_, _>` is needed here because it’s possible to `collect` into many different data structures and Rust doesn’t know which you want unless you specify**. For the parameters for the key and value types, however, we use underscores, and Rust can infer the types that the hash map contains based on the types of the data in the vectors. In Listing 8-21, the key type will be `String` and the value type will be `i32`, just as the types were in Listing 8-20.
+
+### Hash Maps and Ownership
+
+**For types that implement the `Copy` trait, like `i32`, the values are copied into the hash map. For owned values like `String`, the values will be moved and the hash map will be the owner of those values**, as demonstrated in Listing 8-22.
+
+```rust
+use std::collections::HashMap;
+
+let field_name = String::from("Favorite color");
+let field_value = String::from("Blue");
+
+let mut map = HashMap::new();
+map.insert(field_name, field_value);
+// field_name and field_value are invalid at this point, try using them and
+// see what compiler error you get!
+```
+
+Listing 8-22: Showing that keys and values are owned by the hash map once they’re inserted
+
+We aren’t able to use the variables `field_name` and `field_value` after they’ve been moved into the hash map with the call to `insert`.
+
+<u>If we insert references to values into the hash map, the values won’t be moved into the hash map</u>. **The values that the references point to must be valid for at least as long as the hash map is valid.** We’ll talk more about these issues in the [“Validating References with Lifetimes”](https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html#validating-references-with-lifetimes) section in Chapter 10.
+
+### Accessing Values in a Hash Map
+
+We can get a value out of the hash map by providing its key to the `get` method, as shown in Listing 8-23.
+
+```rust
+use std::collections::HashMap;
+
+let mut scores = HashMap::new();
+
+scores.insert(String::from("Blue"), 10);
+scores.insert(String::from("Yellow"), 50);
+
+let team_name = String::from("Blue");
+let score = scores.get(&team_name);
+```
+
+Listing 8-23: Accessing the score for the Blue team stored in the hash map
+
+Here, `score` will have the value that’s associated with the Blue team, and the result will be `Some(&10)`. **The result is wrapped in `Some` because `get` returns an `Option<&V>`; if there’s no value for that key in the hash map, `get` will return `None`**. The program will need to handle the `Option` in one of the ways that we covered in Chapter 6.
+
+We can iterate over each key/value pair in a hash map in a similar manner as we do with vectors, using a `for` loop:
+
+```rust
+use std::collections::HashMap;
+
+let mut scores = HashMap::new();
+
+scores.insert(String::from("Blue"), 10);
+scores.insert(String::from("Yellow"), 50);
+
+for (key, value) in &scores {
+  println!("{}: {}", key, value);
+}
+```
+
+This code will print each pair in an arbitrary order:
+
+```text
+Yellow: 50
+Blue: 10
+```
+
+### Updating a Hash Map
+
+Although the number of keys and values is growable, each key can only have one value associated with it at a time. When you want to change the data in a hash map, you have to decide how to handle the case when a key already has a value assigned. You could replace the old value with the new value, completely disregarding the old value. You could keep the old value and ignore the new value, only adding the new value if the key *doesn’t* already have a value. Or you could combine the old value and the new value. Let’s look at how to do each of these!
+
+#### Overwriting a Value
+
+If we insert a key and a value into a hash map and then insert that same key with a different value, the value associated with that key will be replaced. Even though the code in Listing 8-24 calls `insert` twice, the hash map will only contain one key/value pair because we’re inserting the value for the Blue team’s key both times.
+
+```rust
+use std::collections::HashMap;
+
+let mut scores = HashMap::new();
+
+scores.insert(String::from("Blue"), 10);
+scores.insert(String::from("Blue"), 25);
+
+println!("{:?}", scores);
+```
+
+Listing 8-24: Replacing a value stored with a particular key
+
+This code will print `{"Blue": 25}`. The original value of `10` has been overwritten.
+
+#### Only Inserting a Value If the Key Has No Value
+
+It’s common to check whether a particular key has a value and, if it doesn’t, insert a value for it. Hash maps have a special API for this called `entry` that takes the key you want to check as a parameter. The return value of the `entry` method is an enum called `Entry` that represents a value that might or might not exist. Let’s say we want to check whether the key for the Yellow team has a value associated with it. If it doesn’t, we want to insert the value 50, and the same for the Blue team. Using the `entry` API, the code looks like Listing 8-25.
+
+```rust
+use std::collections::HashMap;
+
+let mut scores = HashMap::new();
+scores.insert(String::from("Blue"), 10);
+
+scores.entry(String::from("Yellow")).or_insert(50);
+scores.entry(String::from("Blue")).or_insert(50);
+
+println!("{:?}", scores);
+```
+
+Listing 8-25: Using the `entry` method to only insert if the key does not already have a value
+
+**The `or_insert` method on `Entry` is defined to return a mutable reference to the value for the corresponding `Entry` key if that key exists, and if not, inserts the parameter as the new value for this key and returns a mutable reference to the new value**. This technique is much cleaner than writing the logic ourselves and, in addition, plays more nicely with the borrow checker.
+
+Running the code in Listing 8-25 will print `{"Yellow": 50, "Blue": 10}`. The first call to `entry` will insert the key for the Yellow team with the value 50 because the Yellow team doesn’t have a value already. The second call to `entry` will not change the hash map because the Blue team already has the value 10.
+
+#### Updating a Value Based on the Old Value
+
+Another common use case for hash maps is to look up a key’s value and then update it based on the old value. For instance, Listing 8-26 shows code that counts how many times each word appears in some text. We use a hash map with the words as keys and increment the value to keep track of how many times we’ve seen that word. If it’s the first time we’ve seen a word, we’ll first insert the value 0.
+
+```rust
+use std::collections::HashMap;
+
+let text = "hello world wonderful world";
+
+let mut map = HashMap::new();
+
+for word in text.split_whitespace() {
+  let count = map.entry(word).or_insert(0);
+  *count += 1;
+}
+
+println!("{:?}", map);
+```
+
+Listing 8-26: Counting occurrences of words using a hash map that stores words and counts
+
+This code will print `{"world": 2, "hello": 1, "wonderful": 1}`. The `split_whitespace` method iterates over sub-slices, separated by whitespace, of the value in `text`. **The `or_insert` method returns a mutable reference (`&mut V`) to the value for the specified key**. Here we store that mutable reference in the `count` variable, so in order to assign to that value, we must first dereference `count` using the asterisk (`*`). The mutable reference goes out of scope at the end of the `for` loop, so all of these changes are safe and allowed by the borrowing rules.
+
+### Hashing Functions
+
+**By default, `HashMap` uses a hashing function called SipHash that can provide resistance to Denial of Service (DoS) attacks involving hash tables** [1](https://doc.rust-lang.org/book/ch08-03-hash-maps.html#siphash). This is not the fastest hashing algorithm available, but the trade-off for better security that comes with the drop in performance is worth it. If you profile your code and find that the default hash function is too slow for your purposes, you can switch to another function by specifying a different *hasher*. A hasher is a type that implements the `BuildHasher` trait. We’ll talk about traits and how to implement them in Chapter 10. You don’t necessarily have to implement your own hasher from scratch; **[crates.io](https://crates.io/) has libraries shared by other Rust users that provide hashers implementing many common hashing algorithms.**
+
+> [SipHash - wiki](https://en.wikipedia.org/wiki/SipHash)
+>
+> [漫谈非加密哈希算法 - SegmentFault 思否](https://segmentfault.com/a/1190000010990136)
+>
+> [什么是哈希洪水攻击（Hash-Flooding Attack）？ - 知乎 (zhihu.com)](https://www.zhihu.com/question/286529973/answer/676981827)
+
+# 9. Error Handling
+
+> [Error Handling - The Rust Programming Language (rust-lang.org)](https://doc.rust-lang.org/book/ch09-00-error-handling.html)
