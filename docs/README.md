@@ -18,6 +18,7 @@
 * [Java](https://ashiamd.github.io/docsify-notes/#/study/Java/README.md)
 * [Python](https://ashiamd.github.io/docsify-notes/#/study/Python/README.md)
 * [Scala](https://ashiamd.github.io/docsify-notes/#/study/Scala/README.md)
+* [Rust](https://ashiamd.github.io/docsify-notes/#/study/Rust/README.md)
 * [BigData](https://ashiamd.github.io/docsify-notes/#/study/BigData/README.md)
 * [SpringBoot](https://ashiamd.github.io/docsify-notes/#/study/SpringBoot/README.md)
 * [SpringCloud](https://ashiamd.github.io/docsify-notes/#/study/SpringCloud/README.md)

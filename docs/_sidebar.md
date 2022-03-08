@@ -7,6 +7,7 @@
     * [**Java**](/study/Java/README)
     * [**Python**](/study/Python/README)
     * [**Scala**](/study/Scala/README.md)
+    * [**Rust**](/study/Rust/README.md)
     * [**BigData**](/study/BigData/README.md)
     * [**SpringBoot**](/study/SpringBoot/README)
     * [**SpringCloud**](/study/SpringCloud/README)
