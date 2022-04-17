@@ -277,7 +277,7 @@
 
 ​	那么**维度组合的方式具体有多少种呢？它的计算公式是2<sup>N</sup> （N=维度数量）**。
 
-​	可以做一次简单的计算，例如5个维度的组合方式会有2<sup>5</sup></sup> =32种，而9个维度的组合方式则会多达2<sup>9</sup> =512种，这是一种指数级的增长方式。**维度组合的爆炸会直接导致数据膨胀，有时候这种膨胀可能会多达10～20倍**。
+​	可以做一次简单的计算，例如5个维度的组合方式会有2<sup>5</sup> =32种，而9个维度的组合方式则会多达2<sup>9</sup> =512种，这是一种指数级的增长方式。**维度组合的爆炸会直接导致数据膨胀，有时候这种膨胀可能会多达10～20倍**。
 
 ### 1.6.3 * 自我突破的OLAPServer时期
 
@@ -345,7 +345,7 @@
 ​	ClickHouse作为一款高性能OLAP数据库，虽然足够优秀，但也不是万能的。我们不应该把它用于任何OLTP事务性操作的场景，因为它有以下几点不足。
 
 + 不支持事务
-+ 不擅长根据主键按行粒度进行查询（虽然支持），故不应该把ClickHouse当作Key-Value数据库使用
++ 不擅长根据主键按行粒度进行查询（虽然支持），故**不应该把ClickHouse当作Key-Value数据库使用**
 + 不擅长按行删除数据（虽然支持）
 
 ​	这些弱点并不能视为ClickHouse的缺点，事实上其他同类高性能的OLAP数据库同样也不擅长上述的这些方面。因为对于一款OLAP数据库而言，上述这些能力并不是重点，只能说这是为了极致查询性能所做的权衡。
@@ -376,7 +376,7 @@
 >
 >     1. 低硬件成本：完全使用 x86 架构的 PC Server，不需要昂贵的 Unix 服务器和磁盘阵列；
 >     2. **集群架构与部署：完全并行的 MPP + Shared Nothing 的分布式架构，采用 Non-Master 部署，节点对等的扁平结构；**
->     3. 海量数据分布压缩存储：可处理 PB 级别以上的结构化数据，采用 hash分布、random 存储策略进行数据存储；同时采用先进的压缩算法，减少存储数据所需的空间，可以将所用空间减少 1~20 倍，并相应地提高 I/O 性能；
+>     3. 海量数据分布压缩存储：可处理 PB 级别以上的结构化数据，采用 hash分布、random 存储策略进行数据存储；同时采用先进的**压缩**算法，减少存储数据所需的空间，可以将所用空间减少 1~20 倍，并相应地提高 I/O 性能；
 >     4. 数据加载高效性：基于策略的数据加载模式，集群整体加载速度可达2TB/h；
 >     5. 高扩展、高可靠：支持集群节点的扩容和缩容，支持全量、增量的备份/恢复;
 >     6. 高可用、易维护：数据通过副本提供冗余保护，自动故障探测和管理，自动同步元数据和业务数据。提供图形化工具，以简化管理员对数据库的管理工作；
@@ -560,7 +560,7 @@ SELECT A1，A2，A3，A4，A5 FROM A
 
 ### 2.1.6 * 多线程与分布式
 
-> + **计算移动比数据移动更加划算**
+> + <u>**计算移动比数据移动更加划算**</u>
 > + [对ClickHouse分片和分区的简单理解 - 简书 (jianshu.com)](https://www.jianshu.com/p/178a01e0ae6e)
 >   + **分区**是表的分区，具体的DDL操作关键词是 `PARTITION BY`，指的是一个表按照某一列数据（比如日期）进行分区，对应到最终的结果就是不同分区的数据会写入不同的文件中。
 >   + **分片**复用了数据库的分区，相当于在原有的分区下，作为第二层分区， 是在不同节点/机器上的体现。
@@ -573,11 +573,13 @@ SELECT A1，A2，A3，A4，A5 FROM A
 
 ​	如果一个篮子装不下所有的鸡蛋，那么就多用几个篮子来装，这就是分布式设计中分而治之的基本思想。同理，如果一台服务器性能吃紧，那么就利用多台服务的资源协同处理。为了实现这一目标，首先需要在数据层面实现数据的分布式。
 
-​	因为**==在分布式领域，存在一条金科玉律——计算移动比数据移动更加划算==**。
+​	因为**==在分布式领域，存在一条金科玉律——<u>计算移动比数据移动更加划算</u>==**。
 
-​	**在各服务器之间，通过网络传输数据的成本是高昂的，所以相比移动数据，更为聪明的做法是预先将数据分布到各台服务器，将数据的计算查询直接下推到数据所在的服务器。**
+​	**<u>在各服务器之间，通过网络传输数据的成本是高昂的，所以相比移动数据，更为聪明的做法是预先将数据分布到各台服务器，将数据的计算查询直接下推到数据所在的服务器</u>。**
 
 ​	**ClickHouse在数据存取方面，既支持分区（纵向扩展，利用多线程原理），也支持分片（横向扩展，利用分布式原理），可以说是将多线程和分布式的技术应用到了极致**。
+
+![img](https://upload-images.jianshu.io/upload_images/21274876-eaf1f19566246fa1.png?imageMogr2/auto-orient/strip|imageView2/2/w/1200/format/webp)
 
 ### 2.1.7 * 多主架构
 
@@ -989,6 +991,14 @@ SELECT A1，A2，A3，A4，A5 FROM A
       ​	在使用浮点数的时候，应当要意识到它是有限精度的。假如，分别对Float32和Float64写入超过有效精度的数值，下面我们看看会发生什么。例如，将拥有20位小数的数值分别写入Float32和Float64，此时结果就会出现数据误差：
       
       ```shell
+      :) SELECT toFloat32('0.12345678901234567890') as a , toTypeName(a)
+      ┌──────a─┬─toTypeName(toFloat32('0.12345678901234567890'))─┐
+      │ 0.12345679 │ Float32 │
+      └────────┴───────────────────────────────┘
+      :) SELECT toFloat64('0.12345678901234567890') as a , toTypeName(a)
+      ┌────────────a─┬─toTypeName(toFloat64('0.12345678901234567890'))─┐
+      │ 0.12345678901234568 │ Float64 │
+      └─────────────┴──────────────────────────────┘
       ```
       
       可以发现，Float32从小数点后第8位起及Float64从小数点后第17位起，都产生了数据溢出。
@@ -998,17 +1008,28 @@ SELECT A1，A2，A3，A4，A5 FROM A
       + 正无穷：
       
         ```shell
+        :) SELECT 0.8/0
+        ┌─divide(0.8, 0)─┐
+        │ inf │
+        └──────────┘
         ```
       
       + 负无穷：
       
         ```shell
-        
+        :) SELECT -0.8/0
+        ┌─divide(-0.8, 0)─┐
+        │ -inf │
+        └───────────┘
         ```
       
       + 非数字：
       
         ```shell
+        :) SELECT 0/0
+        ┌─divide(0, 0)──┐
+        │ nan │
+        └──────────┘
         ```
       
    3. Decimal
@@ -1028,13 +1049,54 @@ SELECT A1，A2，A3，A4，A5 FROM A
       | Decimal64(S)  | Decimal(10~18，S) | -1\*10^(18-S)到1\*10^(18-S) |
       | Decimal128(S) | Decimal(19~38，S) | -1\*10^(38-S)到1\*10^(38-S) |
 
-      .....
+      ​	在使用两个不同精度的定点数进行四则运算的时候，它们的小数点位数S会发生变化。<u>在进行加法运算时，S取最大值</u>。例如下面的查询，toDecimal64(2,4)与toDecimal32(2,2)相加后S=4：
 
-      ....
-
-      .....
-
-      需要补全内容。。
+      ```shell
+      :) SELECT toDecimal64(2,4) + toDecimal32(2,2)
+      ┌─plus(toDecimal64(2, 4), toDecimal32(2, 2))─┐
+      │ 4.0000 │
+      └───────────────────────────┘
+      ```
+      
+      ​	<u>在进行减法运算时，其规则与加法运算相同，S同样会取最大值</u>。例如toDecimal32(4,4)与toDecimal64(2,2)相减后S=4：
+      
+      ```shell
+      :) SELECT toDecimal32(4,4) - toDecimal64(2,2)
+      ┌─minus(toDecimal32(4, 4), toDecimal64(2, 2))┐
+      │ 2.0000 │
+      └────────────────────────────┘
+      ```
+      
+      ​	<u>在进行乘法运算时，S取两者S之和</u>。例如下面的查询，toDecimal64(2,4)与toDecimal32(2,2)相乘后S=4+2=6：
+      
+      ```shell
+      :) SELECT toDecimal64(2,4) * toDecimal32(2,2)
+      ┌─multiply(toDecimal64(2, 4), toDecimal32(2, 2))┐
+      │ 4.000000 │
+      └─────────────────────────────┘
+      ```
+      
+      ​	<u>在进行除法运算时，S取被除数的值，此时要求被除数S必须大于除数S，否则会报错</u>。例如toDecimal64(2,4)与toDecimal32(2,2)相除后S=4：
+      
+      ```shell
+      :) SELECT toDecimal64(2,4) / toDecimal32(2,2)
+      ┌─divide(toDecimal64(2, 4), toDecimal32(2, 2))┐
+      │ 1.0000 │
+      └───────────────────────────┘
+      ```
+      
+      ​	最后进行一番总结：对于不同精度定点数之间的四则运算，其精度S的变化会遵循表4-5所示的规则。
+      
+      ​	表4-5 定点数四则运算后，精度变化的规则：
+      
+      | 名称 | 规则                           |
+      | ---- | ------------------------------ |
+      | 加法 | S = max(S1, S2)                |
+      | 减法 | S = max(S1, S2)                |
+      | 乘法 | S = S1 + S2 (S1范围 >= S2范围) |
+      | 除法 | S = S1 (S1为被除数，S1/S2)     |
+      
+      ​	在使用定点数时还有一点值得注意：<u>由于现代计算器系统只支持32位和64位CPU，所以Decimal128是在软件层面模拟实现的，它的速度会明显慢于Decimal32与Decimal64</u>。
 
 2. 字符串类型
 
@@ -1042,41 +1104,606 @@ SELECT A1，A2，A3，A4，A5 FROM A
 
    1. String
 
-      ​	字符串由String定义，长度不限。因此在使用String的时候无须声明大小。它完全代替了传统意义上数据库的Varchar、Text、Clob和Blob等字符类型。String类型不限定字符集，因为它根本就没有这个概念，所以可以将任意编码的字符串存入其中。但是为了程序的规范性和可维护性，在同一套程序中应该遵循使用统一的编码，例如“统一保持UTF-8编码”就是一种很好的约定。
+      ​	字符串由String定义，长度不限。因此在使用String的时候无须声明大小。它完全代替了传统意义上数据库的Varchar、Text、Clob和Blob等字符类型。String类型**不限定字符集**，因为它根本就没有这个概念，所以可以将任意编码的字符串存入其中。<u>但是为了程序的规范性和可维护性，在同一套程序中应该遵循使用统一的编码，例如“统一保持UTF-8编码”就是一种很好的约定</u>。
 
    2. FixedString
 
-      ​	FixedString类型和传统意义上的Char类型有些类似，对于一些字符有明确长度的场合，可以使用固定长度的字符串。定长字符串通过FixedString(N)声明，其中N表示字符串长度。但与Char不同的是，FixedString使用null字节填充末尾字符，而Char通常使用空格填充。比如在下面的例子中，字符串‘abc’虽然只有3位，但长度却是5，因为末尾有2位空字符填充：
+      ​	FixedString类型和传统意义上的Char类型有些类似，对于一些字符有明确长度的场合，可以使用<u>固定长度的字符串</u>。定长字符串通过FixedString(N)声明，其中N表示字符串长度。<u>但与Char不同的是，FixedString使用null字节填充末尾字符，而Char通常使用空格填充</u>。比如在下面的例子中，字符串‘abc’虽然只有3位，但长度却是5，因为末尾有2位空字符填充：
 
       ```shell
+      :) SELECT toFixedString('abc',5) , LENGTH(toFixedString('abc',5)) AS LENGTH
+      ┌─toFixedString('abc', 5)─┬─LENGTH─┐
+      │ abc │ 5 │
+      └────────────────┴──────┘
       ```
 
    3. UUID
 
-      ​	UUID是一种数据库常见的主键类型，在ClickHouse中直接把它作为一种数据类型。UUID共有32位，它的格式为8-4-4-4-12。如果一个UUID类型的字段在写入数据时没有被赋值，则会依照格式使用0填充，例如：
+      ​	UUID是一种数据库常见的主键类型，在ClickHouse中直接把它作为一种数据类型。UUID共有32位，它的格式为8-4-4-4-12。<u>如果一个UUID类型的字段在写入数据时没有被赋值，则会依照格式使用0填充</u>，例如：
 
       ```shell
+      CREATE TABLE UUID_TEST (
+      c1 UUID,
+      c2 String
+      ) ENGINE = Memory;
+      --第一行UUID有值
+      INSERT INTO UUID_TEST SELECT generateUUIDv4(),'t1'
+      --第二行UUID没有值
+      INSERT INTO UUID_TEST(c2) VALUES('t2')
+      :) SELECT * FROM UUID_TEST
+      ┌─────────────────────c1─┬─c2─┐
+      │ f36c709e-1b73-4370-a703-f486bdd22749 │ t1 │
+      └───────────────────────┴────┘
+      ┌─────────────────────c1─┬─c2─┐
+      │ 00000000-0000-0000-0000-000000000000 │ t2 │
+      └───────────────────────┴────┘
       ```
-
+      
       ​	可以看到，第二行没有被赋值的UUID被0填充了。
 
 3. 时间类型
 
    ​	时间类型分为DateTime、DateTime64和Date三类。ClickHouse目前没有时间戳类型。时间类型最高的精度是秒，也就是说，**如果需要处理毫秒、微秒等大于秒分辨率的时间，则只能借助UInt类型实现**。
 
-   ....
+   1. DateTime
 
-   ....
+      DateTime类型包含时、分、秒信息，精确到秒，支持使用字符串形式写入：
 
-   ...
-
-   需要补充内容，，，
+      ```shell
+      CREATE TABLE Datetime_TEST (
+      c1 Datetime
+      ) ENGINE = Memory
+      --以字符串形式写入
+      INSERT INTO Datetime_TEST VALUES('2019-06-22 00:00:00')
+      SELECT c1, toTypeName(c1) FROM Datetime_TEST
+      ┌──────────c1─┬─toTypeName(c1)─┐
+      │ 2019-06-22 00:00:00 │ DateTime │
+      └─────────────┴───────────┘
+      ```
+   
+   2. DateTime64
+   
+      DateTime64可以记录亚秒，它在DateTime之上增加了精度的设置，例如：
+   
+      ```shell
+      CREATE TABLE Datetime64_TEST (
+      c1 Datetime64(2)
+      ) ENGINE = Memory
+      --以字符串形式写入
+      INSERT INTO Datetime64_TEST VALUES('2019-06-22 00:00:00')
+      SELECT c1, toTypeName(c1) FROM Datetime64_TEST
+      ┌─────────────c1─┬─toTypeName(c1)─┐
+      │ 2019-06-22 00:00:00.00 │ DateTime │
+      └───────────────┴──────────┘
+      ```
+   
+   3. Date
+   
+      Date类型不包含具体的时间信息，只精确到天，它同样也支持字符串形式写入：
+   
+      ```shell
+      CREATE TABLE Date_TEST (
+      c1 Date
+      ) ENGINE = Memory
+      --以字符串形式写入
+      INSERT INTO Date_TEST VALUES('2019-06-22')
+      SELECT c1, toTypeName(c1) FROM Date_TEST
+      ┌─────────c1─┬─toTypeName(c1)─┐
+      │ 2019-06-22 │ Date │
+      └───────────┴──────────┘
+      ```
 
 ### 4.1.2 复合类型
 
+​	除了基础数据类型之外，ClickHouse还提供了数组、元组、枚举和嵌套四类复合类型。这些类型通常是其他数据库原生不具备的特性。拥有了复合类型之后，ClickHouse的数据模型表达能力更强了。
+
+1. Array
+
+   数组有两种定义形式，常规方式array(T)：
+
+   ```shell
+   SELECT array(1, 2) as a , toTypeName(a)
+   ┌─a───┬─toTypeName(array(1, 2))─┐
+   │ [1,2] │ Array(UInt8) │
+   └─────┴────────────────┘
+   ```
+
+   或者简写方式[T]：
+
+   ```shell
+   SELECT [1, 2]
+   ```
+
+   通过上述的例子可以发现，在查询时并不需要主动声明数组的元素类型。因为**ClickHouse的数组拥有类型推断的能力，推断依据：以最小存储代价为原则，即使用最小可表达的数据类型**。例如在上面的例子中，array(1,2)会通过自动推断将UInt8作为数组类型。<u>但是数组元素中如果存在Null值，则元素类型将变为Nullable</u>，例如：
+
+   ```shell
+   SELECT [1, 2, null] as a , toTypeName(a)
+   ┌─a──────┬─toTypeName([1, 2, NULL])─┐
+   │ [1,2,NULL] │ Array(Nullable(UInt8)) │
+   └────────┴─────────────────┘
+   ```
+
+   细心的读者可能已经发现，<u>在同一个数组内可以包含多种数据类型，例如数组[1,2.0]是可行的。但各类型之间必须兼容，例如数组[1,'2']则会报错</u>。
+
+   <u>在定义表字段时，数组需要指定明确的元素类型</u>，例如：
+
+   ```shell
+   CREATE TABLE Array_TEST (
+   c1 Array(String)
+   ) engine = Memory
+   ```
+
+2. Tuple
+
+   元组类型由1～n个元素组成，每个元素之间允许设置不同的数据类型，且彼此之间不要求兼容。<u>元组同样支持类型推断，其推断依据仍然以最小存储代价为原则</u>。与数组类似，元组也可以使用两种方式定义，常规方式tuple(T)：
+
+   ```shell
+   SELECT tuple(1,'a',now()) AS x, toTypeName(x)
+   ┌─x─────────────────┬─toTypeName(tuple(1, 'a', now()))─┐
+   │ (1,'a','2019-08-28 21:36:32') │ Tuple(UInt8, String, DateTime) │
+   └───────────────────┴─────────────────────┘
+   ```
+
+   或者简写方式（T）：
+
+   ```shell
+   SELECT (1,2.0,null) AS x, toTypeName(x)
+   ┌─x──────┬─toTypeName(tuple(1, 2., NULL))───────┐
+   │ (1,2,NULL) │ Tuple(UInt8, Float64, Nullable(Nothing)) │
+   └───────┴──────────────────────────┘
+   ```
+
+   在定义表字段时，元组也需要指定明确的元素类型：
+
+   ```shell
+   CREATE TABLE Tuple_TEST (
+   c1 Tuple(String,Int8)
+   ) ENGINE = Memory;
+   ```
+
+   元素类型和泛型的作用类似，可以进一步保障数据质量。在数据写入的过程中会进行类型检查。例如，写入`INSERT INTO Tuple_TEST VALUES(('abc',123))`是可行的，而写入`INSERT INTO Tuple_TEST VALUES(('abc','efg'))`则会报错。
+
+3. Enum
+
+   ​	ClickHouse支持枚举类型，这是一种在定义常量时经常会使用的数据类型。ClickHouse提供了Enum8和Enum16两种枚举类型，它们除了取值范围不同之外，别无二致。<u>枚举固定使用(String:Int)Key/Value键值对的形式定义数据，所以Enum8和Enum16分别会对应(String:Int8)和(String:Int16)</u>，例如：
+
+   ```shell
+   CREATE TABLE Enum_TEST (
+   c1 Enum8('ready' = 1, 'start' = 2, 'success' = 3, 'error' = 4)
+   ) ENGINE = Memory;
+   ```
+
+   ​	在定义枚举集合的时候，有几点需要注意。首先，Key和Value是不允许重复的，要保证唯一性。其次，Key和Value的值都不能为Null，但Key允许是空字符串。在写入枚举数据的时候，只会用到Key字符串部分，例如：
+
+   ```shell
+   INSERT INTO Enum_TEST VALUES('ready');
+   INSERT INTO Enum_TEST VALUES('start');
+   ```
+
+   ​	数据在写入的过程中，会对照枚举集合项的内容逐一检查。如果Key字符串不在集合范围内则会抛出异常，比如执行下面的语句就会出错：
+
+   ```shell
+   INSERT INTO Enum_TEST VALUES('stop');
+   ```
+
+   ​	<u>可能有人会觉得，完全可以使用String代替枚举，为什么还需要专门的枚举类型呢？这是出于性能的考虑。因为虽然枚举定义中的Key属于String类型，但是**在后续对枚举的所有操作中（包括排序、分组、去重、过滤等），会使用Int类型的Value值**</u>。
+
+4. Nested
+
+   ​	嵌套类型，顾名思义是一种嵌套表结构。<u>一张数据表，可以定义任意多个嵌套类型字段，但每个字段的嵌套层级只支持一级，即嵌套表内不能继续使用嵌套类型</u>。对于简单场景的层级关系或关联关系，使用嵌套类型也是一种不错的选择。例如，下面的nested_test是一张模拟的员工表，它的所属部门字段就使用了嵌套类型：
+
+   ```sql
+   CREATE TABLE nested_test (
+     name String,
+     age UInt8 ,
+     dept Nested(
+       id UInt8,
+       name String
+     )
+   ) ENGINE = Memory;
+   ```
+
+   ​	ClickHouse的嵌套类型和传统的嵌套类型不相同，导致在初次接触它的时候会让人十分困惑。以上面这张表为例，如果按照它的字面意思来理解，会很容易理解成nested_test与dept是一对一的包含关系，其实这是错误的。不信可以执行下面的语句，看看会是什么结果：
+
+   ```shell
+   INSERT INTO nested_test VALUES ('nauu',18, 10000, '研发部');
+   Exception on client:
+   Code: 53. DB::Exception: Type mismatch in IN or VALUES section. Expected:
+   Array(UInt8). Got: UInt64
+   ```
+
+   ​	注意上面的异常信息，它提示期望写入的是一个Array数组类型。
+
+   ​	现在大家应该明白了，<u>嵌套类型本质是一种多维数组的结构。嵌套表中的每个字段都是一个数组，并且行与行之间数组的长度无须对齐</u>。所以需要把刚才的INSERT语句调整成下面的形式：
+
+   ```sql
+   INSERT INTO nested_test VALUES ('bruce' , 30 , [10000,10001,10002], ['研发部','技
+   术支持中心','测试部']);
+   --行与行之间,数组长度无须对齐
+   INSERT INTO nested_test VALUES ('bruce' , 30 , [10000,10001], ['研发部','技术支持中
+   心']);
+   ```
+
+   ​	需要注意的是，<u>在同一行数据内每个数组字段的长度必须相等</u>。例如，在下面的示例中，由于行内数组字段的长度没有对齐，所以会抛出异常：
+
+   ```sql
+   INSERT INTO nested_test VALUES ('bruce' , 30 , [10000,10001], ['研发部','技术支持中
+   心',
+   '测试部']);
+   DB::Exception: Elements 'dept.id' and 'dept.name' of Nested data structure 'dept'
+   (Array columns) have different array sizes..
+   ```
+
+   ​	在访问嵌套类型的数据时需要使用点符号，例如：
+
+   ```shell
+   SELECT name, dept.id, dept.name FROM nested_test
+   ┌─name─┬─dept.id──┬─dept.name─────────────┐
+   │ bruce │ [16,17,18] │ ['研发部','技术支持中心','测试部'] │
+   └────┴───────┴────────────────────┘
+   ```
+
 ### 4.1.3 特殊类型
+
+​	ClickHouse还有一类不同寻常的数据类型，我将它们定义为特殊类型。
+
+1. Nullable
+
+   ​	准确来说，Nullable并不能算是一种独立的数据类型，它更像是一种辅助的修饰符，需要与基础数据类型一起搭配使用。<u>Nullable类型与Java8的Optional对象有些相似，它表示某个基础数据类型可以是Null值</u>。其具体用法如下所示：
+
+   ```shell
+   CREATE TABLE Null_TEST (
+   c1 String,
+   c2 Nullable(UInt8)
+   ) ENGINE = TinyLog;
+   通过Nullable修饰后c2字段可以被写入Null值：
+   INSERT INTO Null_TEST VALUES ('nauu',null)
+   INSERT INTO Null_TEST VALUES ('bruce',20)
+   SELECT c1 , c2 ,toTypeName(c2) FROM Null_TEST
+   ┌─c1───┬───c2─┬─toTypeName(c2)─┐
+   │ nauu │ NULL │ Nullable(UInt8) │
+   │ bruce │ 20 │ Nullable(UInt8) │
+   └─────┴──────┴───────────┘
+   ```
+
+   ​	**在使用Nullable类型的时候还有两点值得注意：首先，它只能和基础类型搭配使用，不能用于数组和元组这些复合类型，也不能作为索引字段；其次，应该慎用Nullable类型，包括Nullable的数据表，不然会使查询和写入性能变慢**。<u>因为在正常情况下，每个列字段的数据会被存储在对应的[Column].bin文件中。如果一个列字段被Nullable类型修饰后，会额外生成一个[Column].null.bin文件专门保存它的Null值。这意味着在读取和写入数据时，需要一倍的额外文件操作</u>。
+
+2. Domain
+
+   ​	域名类型分为IPv4和IPv6两类，本质上它们是对整型和字符串的进一步封装。IPv4类型是基于UInt32封装的，它的具体用法如下所示：
+
+   ```shell
+   CREATE TABLE IP4_TEST (
+   url String,
+   ip IPv4
+   ) ENGINE = Memory;
+   INSERT INTO IP4_TEST VALUES ('www.nauu.com','192.0.0.0')
+   SELECT url , ip ,toTypeName(ip) FROM IP4_TEST
+   ┌─url──────┬─────ip─┬─toTypeName(ip)─┐
+   │ www.nauu.com │ 192.0.0.0 │ IPv4 │
+   └────────┴───────┴──────────┘
+   ```
+
+   ​	细心的读者可能会问，直接使用字符串不就行了吗？为何多此一举呢？我想至少有如下两个原因。
+
+   1. 出于便捷性的考量，例如IPv4类型支持格式检查，格式错误的IP数据是无法被写入的，例如：
+
+      ```shell
+      INSERT INTO IP4_TEST VALUES ('www.nauu.com','192.0.0')
+      Code: 441. DB::Exception: Invalid IPv4 value.
+      ```
+
+   2. 出于性能的考量，同样以IPv4为例，IPv4使用UInt32存储，相比String更加紧凑，占用的空间更小，查询性能更快。IPv6类型是基于FixedString(16)封装的，它的使用方法与IPv4别无二致，此处不再赘述。
+
+   ​	<u>在使用Domain类型的时候还有一点需要注意，虽然它从表象上看起来与String一样，但Domain类型并不是字符串，所以它不支持隐式的自动类型转换</u>。如果需要返回IP的字符串形式，则需要显式调用IPv4NumToString或IPv6NumToString函数进行转换。
 
 ## 4.2 如何定义数据表
 
+​	在知晓了ClickHouse的主要数据类型之后，接下来我们开始介绍DDL操作及定义数据的方法。DDL查询提供了数据表的创建、修改和删除操作，是最常用的功能之一。
 
+### 4.2.1 数据库
 
+​	数据库起到了命名空间的作用，可以有效规避命名冲突的问题，也为后续的数据隔离提供了支撑。任何一张数据表，都必须归属在某个数据库之下。创建数据库的完整语法如下所示：
+
+```sql
+CREATE DATABASE IF NOT EXISTS db_name [ENGINE = engine]
+```
+
+​	其中，IF NOT EXISTS表示如果已经存在一个同名的数据库，则会忽略后续的创建过程；[ENGINE=engine]表示数据库所使用的引擎类型（是的，你没看错，<u>数据库也支持设置引擎</u>）。
+
+​	数据库目前一共支持5种引擎，如下所示。
+
++ <u>Ordinary：默认引擎，在绝大多数情况下我们都会使用默认引擎，使用时无须刻意声明。在此数据库下可以使用任意类型的表引擎</u>。
++ Dictionary：字典引擎，此类数据库会自动为所有数据字典创建它们的数据表，关于数据字典的详细介绍会在第5章展开。
++ Memory：<u>内存引擎，用于存放临时数据。此类数据库下的数据表只会停留在内存中，不会涉及任何磁盘操作，当服务重启后数据会被清除</u>。
++ Lazy：日志引擎，此类数据库下只能使用Log系列的表引擎，关于Log表引擎的详细介绍会在第8章展开。
++ MySQL：MySQL引擎，此类数据库下会自动拉取远端MySQL中的数据，并为它们创建MySQL表引擎的数据表，关于MySQL表引擎的详细介绍会在第8章展开。
+
+​	在绝大多数情况下都只需使用默认的数据库引擎。例如执行下面的语句，即能够创建属于我们的第一个数据库：
+
+```shell
+CREATE DATABASE DB_TEST
+```
+
+​	默认数据库的实质是物理磁盘上的一个文件目录，所以在语句执行之后，ClickHouse便会在安装路径下创建DB_TEST数据库的文件目录：
+
+```shell
+# pwd
+/chbase/data
+# ls
+DB_TEST default system
+```
+
+​	与此同时，在metadata路径下也会一同创建用于恢复数据库的DB_TEST.sql文件：
+
+```shell
+# pwd
+/chbase/data/metadata
+# ls
+DB_TEST DB_TEST.sql default system
+```
+
+​	使用SHOW DATABASES查询，即能够返回ClickHouse当前的数据库列表：
+
+```shell
+SHOW DATABASES
+┌─name───┐
+│ DB_TEST │
+│ default │
+│ system │
+└───────┘
+```
+
+​	使用USE查询可以实现在多个数据库之间进行切换，而通过SHOW TABLES查询可以查看当前数据库的数据表列表。删除一个数据库，则需要用到下面的DROP查询。
+
+```sql
+DROP DATABASE [IF EXISTS] db_name
+```
+
+### 4.2.2 数据表
+
+​	ClickHouse数据表的定义语法，是在标准SQL的基础之上建立的，所以熟悉数据库的读者们在看到接下来的语法时，应该会感到很熟悉。ClickHouse目前提供了三种最基本的建表方法，其中，第一种是常规定义方法，它的完整语法如下所示：
+
+```sql
+CREATE TABLE [IF NOT EXISTS] [db_name.]table_name (
+  name1 [type] [DEFAULT|MATERIALIZED|ALIAS expr],
+  name2 [type] [DEFAULT|MATERIALIZED|ALIAS expr],
+  省略…
+) ENGINE = engine
+```
+
+​	使用`[db_name.]`参数可以为数据表指定数据库，如果不指定此参数，则默认会使用default数据库。例如执行下面的语句：
+
+```sql
+CREATE TABLE hits_v1 (
+  Title String,
+  URL String ,
+  EventTime DateTime
+) ENGINE = Memory;
+```
+
+​	上述语句将会在default默认的数据库下创建一张内存表。注意末尾的ENGINE参数，它被用于指定数据表的引擎。表引擎决定了数据表的特性，也决定了数据将会被如何存储及加载。例如示例中使用的Memory表引擎，是ClickHouse最简单的表引擎，数据只会被保存在内存中，在服务重启时数据会丢失。我们会在后续章节详细介绍数据表引擎，此处暂不展开。
+
+​	第二种定义方法是复制其他表的结构，具体语法如下所示：
+
+```sql
+CREATE TABLE [IF NOT EXISTS] [db_name1.]table_name AS [db_name2.] table_name2
+[ENGINE = engine]
+```
+
+​	这种方式<u>支持在不同的数据库之间复制表结构</u>，例如下面的语句：
+
+```sql
+--创建新的数据库
+CREATE DATABASE IF NOT EXISTS new_db
+--将default.hits_v1的结构复制到new_db.hits_v1
+CREATE TABLE IF NOT EXISTS new_db.hits_v1 AS default.hits_v1 ENGINE = TinyLog
+```
+
+​	上述语句将会把`default.hits_v1`的表结构原样复制到`new_db.hits_v1`，并且**ENGINE表引擎可以与原表不同**。
+
+​	第三种定义方法是通过SELECT子句的形式创建，它的完整语法如下：
+
+```sql
+CREATE TABLE [IF NOT EXISTS] [db_name.]table_name ENGINE = engine AS SELECT …
+```
+
+​	在这种方式下，不仅会根据SELECT子句建立相应的表结构，同时还会将SELECT子句查询的数据顺带写入，例如执行下面的语句：
+
+```sql
+CREATE TABLE IF NOT EXISTS hits_v1_1 ENGINE = Memory AS SELECT * FROM hits_v1
+```
+
+​	上述语句会将`SELECT * FROM hits_v1`的查询结果一并写入数据表。
+
+​	ClickHouse和大多数数据库一样，使用DESC查询可以返回数据表的定义结构。如果想删除一张数据表，则可以使用下面的DROP语句：
+
+```sql
+DROP TABLE [IF EXISTS] [db_name.]table_name
+```
+
+### 4.2.3 默认值表达式
+
+​	表字段支持三种默认值表达式的定义方法，分别是DEFAULT、MATERIALIZED和ALIAS。<u>无论使用哪种形式，表字段一旦被定义了默认值，它便不再强制要求定义数据类型，因为ClickHouse会根据默认值进行类型推断</u>。如果同时对表字段定义了数据类型和默认值表达式，则以明确定义的数据类型为主，例如下面的例子：
+
+```sql
+CREATE TABLE dfv_v1 (
+  id String,
+  c1 DEFAULT 1000,
+  c2 String DEFAULT c1
+) ENGINE = TinyLog
+```
+
+​	c1字段没有定义数据类型，默认值为整型1000；c2字段定义了数据类型和默认值，且默认值等于c1，现在写入测试数据：
+
+```sql
+INSERT INTO dfv_v1(id) VALUES ('A000')
+```
+
+​	在写入之后执行以下查询：
+
+```shell
+SELECT c1, c2, toTypeName(c1), toTypeName(c2) from dfv_v1
+┌──c1─┬─c2──┬─toTypeName(c1)─┬─toTypeName(c2)─┐
+│ 1000 │ 1000 │ UInt16 │ String │
+└────┴────┴───────────┴──────────┘
+```
+
+​	由查询结果可以验证，默认值的优先级符合我们的预期，其中c1字段根据默认值被推断为UInt16；而c2字段由于同时定义了数据类型和默认值，所以它最终的数据类型来自明确定义的String。
+
+​	默认值表达式的三种定义方法之间也存在着不同之处，可以从如下三个方面进行比较。
+
+1. 数据写入：<u>在数据写入时，只有DEFAULT类型的字段可以出现在INSERT语句中</u>。而MATERIALIZED和ALIAS都不能被显式赋值，它们只能依靠计算取值。例如试图为MATERIALIZED类型的字段写入数据，将会得到如下的错误。
+
+   ```shell
+   DB::Exception: Cannot insert column URL, because it is MATERIALIZED column..
+   ```
+
+2. 数据查询：在数据查询时，<u>只有DEFAULT类型的字段可以通过SELECT *返回</u>。而MATERIALIZED和ALIAS类型的字段不会出现在SELECT *查询的返回结果集中。
+
+3. 数据存储：在数据存储时，<u>只有DEFAULT和MATERIALIZED类型的字段才支持持久化</u>。如果使用的表引擎支持物理存储（例如TinyLog表引擎），那么这些列字段将会拥有物理存储。而<u>ALIAS类型的字段不支持持久化，它的取值总是需要依靠计算产生，数据不会落到磁盘</u>。
+
+   ​	可以使用ALTER语句修改默认值，例如：
+
+   ```sql
+   ALTER TABLE [db_name.]table MODIFY COLUMN col_name DEFAULT value
+   ```
+
+   ​	<u>修改动作并不会影响数据表内先前已经存在的数据。但是默认值的修改有诸多限制，例如在合并树表引擎中，它的主键字段是无法被修改的；而某些表引擎则完全不支持修改（例如TinyLog）</u>。
+
+### 4.2.4 * 临时表
+
+​	ClickHouse也有临时表的概念，创建临时表的方法是在普通表的基础之上添加TEMPORARY关键字，它的完整语法如下所示：
+
+```sql
+CREATE TEMPORARY TABLE [IF NOT EXISTS] table_name (
+  name1 [type] [DEFAULT|MATERIALIZED|ALIAS expr],
+  name2 [type] [DEFAULT|MATERIALIZED|ALIAS expr],
+)
+```
+
+​	相比普通表而言，临时表有如下两点特殊之处：
+
++ <u>它的生命周期是会话绑定的，所以它只支持Memory表引擎，如果会话结束，数据表就会被销毁</u>；
++ <u>临时表不属于任何数据库，所以在它的建表语句中，既没有数据库参数也没有表引擎参数</u>。
+
+​	针对第二个特殊项，读者心中难免会产生一个疑问：既然临时表不属于任何数据库，如果临时表和普通表名称相同，会出现什么状况呢？接下来不妨做个测试。首先在DEFAULT数据库创建测试表并写入数据：
+
+```sql
+CREATE TABLE tmp_v1 (
+  title String
+) ENGINE = Memory;
+INSERT INTO tmp_v1 VALUES ('click')
+```
+
+​	接着创建一张名称相同的临时表并写入数据：
+
+```sql
+CREATE TEMPORARY TABLE tmp_v1 (createtime Datetime)
+INSERT INTO tmp_v1 VALUES (now())
+```
+
+​	现在查询tmp_v1看看会发生什么：
+
+```sql
+SELECT * FROM tmp_v1
+┌──────createtime─┐
+│ 2019-08-30 10:20:29 │
+└─────────────┘
+```
+
+​	通过返回结果可以得出结论：**临时表的优先级是大于普通表的。当两张数据表名称相同的时候，会优先读取临时表的数据**。
+
+​	<u>在ClickHouse的日常使用中，通常不会刻意使用临时表。它更多被运用在ClickHouse的内部，是数据在集群间传播的载体</u>。
+
+### 4.2.5 * 分区表
+
+​	**数据分区（partition）**和**数据分片（shard）**是完全不同的两个概念。数据分区是针对本地数据而言的，是数据的一种纵向切分。而数据分片是数据的一种横向切分（第10章会详细介绍）。**数据分区对于一款OLAP数据库而言意义非凡：借助数据分区，在后续的查询过程中能够跳过不必要的数据目录，从而提升查询的性能**。<u>合理地利用分区特性，还可以变相实现数据的更新操作，因为数据分区支持删除、替换和重置操作。假设数据表按照月份分区，那么数据就可以按月份的粒度被替换更新</u>。
+
+​	<u>分区虽好，但不是所有的表引擎都可以使用这项特性，目前只有**合并树（MergeTree）家族系列的表引擎**才支持数据分区</u>。接下来通过一个简单的例子演示分区表的使用方法。首先由PARTITION BY指定分区键，例如下面的数据表partition_v1使用了日期字段作为分区键，并将其格式化为年月的形式：
+
+```sql
+CREATE TABLE partition_v1 (
+  ID String,
+  URL String,
+  EventTime Date
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(EventTime)
+ORDER BY ID
+```
+
+​	接着写入不同月份的测试数据：
+
+```sql
+INSERT INTO partition_v1 VALUES
+('A000','www.nauu.com', '2019-05-01'),
+('A001','www.brunce.com', '2019-06-02')
+```
+
+​	最后通过system.parts系统表，查询数据表的分区状态：
+
+```sql
+SELECT table,partition,path from system.parts WHERE table = 'partition_v1'
+┌─table─────┬─partition─┬─path─────────────────────────┐
+│ partition_v1 │ 201905 │ /chbase/data/default/partition_v1/201905_1_1_0/│
+│ partition_v1 │ 201906 │ /chbase/data/default/partition_v1/201906_2_2_0/│
+└─────────┴────────┴─────────────────────────────┘
+```
+
+​	可以看到，partition_v1按年月划分后，目前拥有两个数据分区，且每个分区都对应一个独立的文件目录，用于保存各自部分的数据。
+
+​	合理设计分区键非常重要，通常会按照数据表的查询场景进行针对性设计。例如在刚才的示例中数据表按年月分区，如果后续的查询按照分区键过滤，例如：
+
+```sql
+SELECT * FROM partition_v1 WHERE EventTime ='2019-05-01'
+```
+
+​	那么在后续的查询过程中，可以利用分区索引跳过6月份的分区目录，只加载5月份的数据，从而带来查询的性能提升。
+
+​	当然，**使用不合理的分区键也会适得其反，分区键不应该使用粒度过细的数据字段**。<u>例如，按照小时分区，将会带来分区数量的急剧增长，从而导致性能下降</u>。关于数据分区更详细的原理说明，将会在第6章进行。
+
+### 4.2.6 * 视图
+
+​	ClickHouse拥有普通和物化两种视图，其中物化视图拥有独立的存储，而普通视图只是一层简单的查询代理。创建普通视图的完整语法如下所示：
+
+```sql
+CREATE VIEW [IF NOT EXISTS] [db_name.]view_name AS SELECT ...
+```
+
+​	<u>普通视图不会存储任何数据，它只是一层单纯的SELECT查询映射，起着简化查询、明晰语义的作用，对查询性能不会有任何增强</u>。假设有一张普通视图view_tb_v1，它是基于数据表tb_v1创建的，那么下面的两条SELECT查询是完全等价的：
+
+```sql
+--普通表
+SELECT * FROM tb_v1
+-- tb_v1的视图
+SELECT * FROM view_tb_v1
+```
+
+​	**物化视图支持表引擎，数据保存形式由它的表引擎决定**，创建物化视图的完整语法如下所示：
+
+```sql
+CREATE [MATERIALIZED] VIEW [IF NOT EXISTS] [db.]table_name [TO[db.]name] [ENGINE
+= engine] [POPULATE] AS SELECT ...
+```
+
+​	**物化视图创建好之后，如果源表被写入新数据，那么物化视图也会同步更新**。POPULATE修饰符决定了物化视图的初始化策略：<u>如果使用了POPULATE修饰符，那么在创建视图的过程中，会连带将源表中已存在的数据一并导入，如同执行了SELECT INTO一般；反之，如果不使用POPULATE修饰符，那么物化视图在创建之后是没有数据的，它只会同步在此之后被写入源表的数据</u>。**物化视图目前并不支持同步删除，如果在源表中删除了数据，物化视图的数据仍会保留**。
+
+​	**物化视图本质是一张特殊的数据表**，例如使用SHOW TABLE查看数据表的列表：
+
+```sql
+SHOW TABLES
+┌─name────────┐
+│ .inner.view_test2 │
+│ .inner.view_test3 │
+└───────────┘
+```
+
+​	由上可以发现，物化视图也在其中，它们是使用了.inner.特殊前缀的数据表，所以删除视图的方法是直接使用DROP TABLE查询，例如：
+
+```sql
+DROP TABLE view_name
+```
+
+## 4.3 数据表的基本操作
+
+P146
