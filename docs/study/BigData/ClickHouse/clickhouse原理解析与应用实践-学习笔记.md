@@ -440,7 +440,7 @@
 
 + 分布式管理：提供集群模式，能够自动管理多个数据库节点。
 
-​	这里只列举了一些最具代表性的功能，但已然足以表明为什么Click House称得上是DBMS了。
+​	这里只列举了一些最具代表性的功能，但已然足以表明为什么ClickHouse称得上是DBMS了。
 
 ### 2.1.2 列式存储与数据压缩
 
@@ -623,7 +623,7 @@ SELECT A1，A2，A3，A4，A5 FROM A
 
 ​	**DataType虽然负责序列化相关工作，但它并不直接负责数据的读取，而是转由从Column或Field对象获取**。
 
-​	在DataType的实现类中，聚合了相应数据类型的Column对象和Field对象。例如，DataTypeString会引用字符串类型的ColumnString，而DataTypeArray则会引用数组类型的ColumnArray，以此类推。
+​	<u>在DataType的实现类中，聚合了相应数据类型的Column对象和Field对象</u>。例如，DataTypeString会引用字符串类型的ColumnString，而DataTypeArray则会引用数组类型的ColumnArray，以此类推。
 
 ### 2.2.3 * Block与Block流
 
@@ -638,7 +638,7 @@ SELECT A1，A2，A3，A4，A5 FROM A
 ​	IBlockInputStream接口总共有60多个实现类，它们涵盖了ClickHouse数据摄取的方方面面。这些实现类大致可以分为三类：
 
 1. 第一类**用于处理数据定义的DDL操作**，例如DDLQueryStatusInputStream等；
-2. 第二类**用于处理关系运算的相关操作**，例如LimitBlockInput-Stream、JoinBlockInputStream及AggregatingBlockInputStream等；
+2. 第二类**用于处理关系运算的相关操作**，例如LimitBlockInputStream、JoinBlockInputStream及AggregatingBlockInputStream等；
 3. 第三类则是**与表引擎呼应**，每一种表引擎都拥有与之对应的BlockInputStream实现，例如MergeTreeBaseSelect-BlockInputStream（MergeTree表引擎）、TinyLogBlockInputStream（TinyLog表引擎）及KafkaBlockInputStream（Kafka表引擎）等。
 
 ​	IBlockOutputStream的设计与IBlockInputStream如出一辙。IBlockOutputStream接口同样也定义了若干写入数据的write虚方法。它的实现类比IBlockInputStream要少许多，一共只有20多种。这些实现类基本用于表引擎的相关处理，负责将数据写入下一环节或者最终目的地，例如MergeTreeBlockOutputStream、TinyLogBlockOutputStream及StorageFileBlock-OutputStream等。
@@ -1524,7 +1524,7 @@ DROP TABLE [IF EXISTS] [db_name.]table_name
 
 ### 4.2.3 默认值表达式
 
-​	表字段支持三种默认值表达式的定义方法，分别是DEFAULT、MATERIALIZED和ALIAS。<u>无论使用哪种形式，表字段一旦被定义了默认值，它便不再强制要求定义数据类型，因为ClickHouse会根据默认值进行类型推断</u>。如果同时对表字段定义了数据类型和默认值表达式，则以明确定义的数据类型为主，例如下面的例子：
+​	表字段支持三种默认值表达式的定义方法，分别是DEFAULT、MATERIALIZED和ALIAS。<u>无论使用哪种形式，表字段一旦被定义了默认值，它便不再强制要求定义数据类型，因为ClickHouse会根据默认值进行类型推断</u>。**如果同时对表字段定义了数据类型和默认值表达式，则以明确定义的数据类型为主**，例如下面的例子：
 
 ```sql
 CREATE TABLE dfv_v1 (
@@ -1698,7 +1698,7 @@ SHOW TABLES
 └───────────┘
 ```
 
-​	由上可以发现，物化视图也在其中，它们是使用了.inner.特殊前缀的数据表，所以删除视图的方法是直接使用DROP TABLE查询，例如：
+​	由上可以发现，物化视图也在其中，它们是使用了`.inner.`特殊前缀的数据表，所以删除视图的方法是直接使用DROP TABLE查询，例如：
 
 ```sql
 DROP TABLE view_name
@@ -1706,4 +1706,440 @@ DROP TABLE view_name
 
 ## 4.3 数据表的基本操作
 
-P146
+​	<u>目前只有MergeTree、Merge和Distributed这三类表引擎支持ALTER查询</u>，如果现在还不明白这些表引擎的作用也不必担心，目前只需简单了解这些信息即可，后面会有专门章节对它们进行介绍。
+
+### 4.3.1 追加新字段
+
+​	假如需要对一张数据表追加新的字段，可以使用如下语法：
+
+`ALTER TABLE tb_name ADD COLUMN [IF NOT EXISTS] name [type] [default_expr] [AFTER name_after]`
+
+​	例如，在数据表的末尾增加新字段：
+
+`ALTER TABLE testcol_v1 ADD COLUMN OS String DEFAULT 'mac'`
+
+​	或是通过AFTER修饰符，在指定字段的后面增加新字段：
+
+`ALTER TABLE testcol_v1 ADD COLUMN IP String AFTER ID`
+
+​	<u>对于数据表中已经存在的旧数据而言，新追加的字段会使用默认值补全</u>。
+
+### 4.3.2 修改数据类型
+
+​	如果需要改变表字段的数据类型或者默认值，需要使用下面的语法：
+
+```sql
+ALTER TABLE tb_name MODIFY COLUMN [IF EXISTS] name [type] [default_expr]
+```
+
+​	<u>修改某个字段的数据类型，实质上会调用相应的**toType**转型方法</u>。<u>如果当前的类型与期望的类型不能兼容，则修改操作将会失败</u>。例如，将String类型的IP字段修改为IPv4类型是可行的：
+
+```sql
+ALTER TABLE testcol_v1 MODIFY COLUMN IP IPv4
+```
+
+​	而尝试将String类型转为UInt类型就会出现错误：
+
+```shell
+ALTER TABLE testcol_v1 MODIFY COLUMN OS UInt32
+DB::Exception: Cannot parse string 'mac' as UInt32: syntax error at begin of
+string.
+```
+
+### 4.3.3 修改备注
+
+​	做好信息备注是保持良好编程习惯的美德之一，所以如果你还没有为列字段添加备注信息，那么就赶紧行动吧。追加备注的语法如下所示：
+
+```sql
+ALTER TABLE tb_name COMMENT COLUMN [IF EXISTS] name 'some comment'
+```
+
+​	例如，为ID字段增加备注：
+
+```sql
+ALTER TABLE testcol_v1 COMMENT COLUMN ID '主键ID'
+```
+
+​	使用DESC查询可以看到上述增加备注的操作已经生效：
+
+```sql
+DESC testcol_v1
+┌─name─────┬─type──┬─comment─┐
+│ ID │ String │ 主键ID │
+└─────────┴─────┴──────┘
+```
+
+### 4.3.4 删除已有字段
+
+​	假如要删除某个字段，可以使用下面的语句：
+
+```sql
+ALTER TABLE tb_name DROP COLUMN [IF EXISTS] name
+```
+
+​	例如，执行下面的语句删除URL字段：
+
+```sql
+ALTER TABLE testcol_v1 DROP COLUMN URL
+```
+
+​	上述列字段在被删除之后，它的数据也会被连带删除。进一步来到testcol_v1的数据目录查验，会发现URL的数据文件已经被删除了;
+
+### * 4.3.5 移动数据表
+
+​	在Linux系统中，mv命令的本意是将一个文件从原始位置A移动到目标位置B，但是如果位置A与位置B相同，则可以变相实现重命名的作用。ClickHouse的RENAME查询就与之有着异曲同工之妙，RENAME语句的完整语法如下所示：
+
+```sql
+RENAME TABLE [db_name11.]tb_name11 TO [db_name12.]tb_name12,
+[db_name21.]tb_name21 TO [db_name22.]tb_name22, ...
+```
+
+​	RENAME可以修改数据表的名称，如果将原始数据库与目标数据库设为不同的名称，那么就可以实现数据表在两个数据库之间移动的效果。例如在下面的例子中，testcol_v1从default默认数据库被移动到了db_test数据库，同时数据表被重命名为testcol_v2：
+
+```sql
+RENAME TABLE default.testcol_v1 TO db_test.testcol_v2
+```
+
+​	**需要注意的是，<u>数据表的移动只能在单个节点的范围内</u>。换言之，数据表移动的目标数据库和原始数据库必须处在同一个服务节点内，而不能是集群中的远程节点**。
+
+### 4.3.6 清空数据表
+
+​	假设需要将表内的数据全部清空，而不是直接删除这张表，则可以使用TRUNCATE语句，它的完整语法如下所示：
+
+```sql
+TRUNCATE TABLE [IF EXISTS] [db_name.]tb_name
+```
+
+​	例如执行下面的语句，就能将db_test.testcol_v2的数据一次性清空：
+
+```sql
+TRUNCATE TABLE db_test.testcol_v2
+```
+
+## 4.4 数据分区的基本操作
+
+​	了解并善用数据分区益处颇多，熟练掌握它的使用方法，可以为后续的程序设计带来极大的灵活性和便利性，**目前只有MergeTree系列的表引擎支持数据分区**。
+
+### 4.4.1 查询分区信息
+
+​	ClickHouse内置了许多system系统表，用于查询自身的状态信息。其中parts系统表专门用于查询数据表的分区信息。例如执行下面的语句，就能够得到数据表partition_v2的分区状况：
+
+```sql
+SELECT partition_id,name,table,database FROM system.parts WHERE table =
+'partition_v2'
+┌─partition_id─┬─name───────┬─table─────┬─database┐
+│ 201905 │ 201905_1_1_0_6 │ partition_v2 │ default │
+│ 201910 │ 201910_3_3_0_6 │ partition_v2 │ default │
+│ 201911 │ 201911_4_4_0_6 │ partition_v2 │ default │
+│ 201912 │ 201912_5_5_0_6 │ partition_v2 │ default │
+└──────────┴──────────┴─────────┴──────┘
+```
+
+​	如上所示，目前partition_v2共拥有4个分区，其中partition_id或者name等同于分区的主键，可以基于它们的取值确定一个具体的分区。
+
+### 4.4.2 删除指定分区
+
+​	合理地设计分区键并利用分区的删除功能，就能够达到数据更新的目的。删除一个指定分区的语法如下所示：
+
+```sql
+ALTER TABLE tb_name DROP PARTITION partition_expr
+```
+
+​	假如现在需要更新partition_v2数据表整个7月份的数据，则可以先将7月份的分区删除：
+
+```sql
+ALTER TABLE partition_v2 DROP PARTITION 201907
+```
+
+​	然后将整个7月份的新数据重新写入，就可以达到更新的目的：
+
+```sql
+INSERT INTO partition_v2 VALUES ('A004-update','www.bruce.com', '2019-07-02'),…
+```
+
+​	查验数据表，可以看到7月份的数据已然更新：
+
+```sql
+SELECT * from partition_v2 ORDER BY EventTime
+┌─ID───────┬─URL──────┬ EventTime ┐
+│ A001 │ www.nauu.com │ 2019-05-02 │
+│ A002 │ www.nauu1.com │ 2019-06-02 │
+│ A004-update │ www.bruce.com │ 2019-07-02 │
+└─────────┴─────────┴───────┘
+```
+
+### * 4.4.3 复制分区数据
+
+​	<u>**ClickHouse支持将A表的分区数据复制到B表**，这项特性可以用于快速数据写入、多表间数据同步和备份等场景</u>，它的完整语法如下：
+
+```sql
+ALTER TABLE B REPLACE PARTITION partition_expr FROM A
+```
+
+​	不过需要注意的是，并不是任意数据表之间都能够相互复制，它们还需要满足两个前提条件：
+
++ **两张表需要拥有相同的分区键**；
+
++ **它们的表结构完全相同**。
+
+​	假设数据表partition_v2与先前的partition_v1分区键和表结构完全相同，那么应先在partition_v1中写入一批8月份的新数据：
+
+```sql
+INSERT INTO partition_v1 VALUES ('A006-v1','www.v1.com', '2019-08-05'),('A007-
+v1','www.v1.com', '2019-08-20')
+```
+
+​	再执行下面的语句：
+
+```sql
+ALTER TABLE partition_v2 REPLACE PARTITION 201908 FROM partition_v1
+```
+
+​	即能够将partition_v1的整个201908分区中的数据复制到partition_v2：
+
+```sql
+SELECT * from partition_v2 ORDER BY EventTime
+┌─ID───────┬─URL──────┬─EventTime─┐
+│ A000 │ www.nauu.com │ 2019-05-01 │
+│ A001 │ www.nauu.com │ 2019-05-02 │
+省略…
+│ │ │ │
+│ A004-update │ www.bruce.com │ 2019-07-02 │
+│ A006-v1 │ www.v1.com │ 2019-08-05 │
+│ A007-v1 │ www.v1.com │ 2019-08-20 │
+└─────────┴─────────┴───────┘
+```
+
+### 4.4.4 重置分区数据
+
+​	如果数据表某一列的数据有误，需要将其重置为初始值，此时可以使用下面的语句实现：
+
+```sql
+ALTER TABLE tb_name CLEAR COLUMN column_name IN PARTITION partition_expr
+```
+
+​	对于默认值的含义，笔者遵循如下原则：
+
++ **如果声明了默认值表达式，则以表达式为准**；
++ **否则以相应数据类型的默认值为准**。
+
+​	例如，执行下面的语句会重置partition_v2表内201908分区的URL数据重置。
+
+```sql
+ALTER TABLE partition_v2 CLEAR COLUMN URL in PARTITION 201908
+```
+
+​	查验数据后会发现，URL字段已成功被全部重置为空字符串了（String类型的默认值）。
+
+```sql
+SELECT * from partition_v2
+┌─ID────┬─URL─┬──EventTime┐
+│ A006-v1 │ │ 2019-08-05 │
+│ A007-v1 │ │ 2019-08-20 │
+└──────┴────┴────────┘
+```
+
+### * 4.4.5 卸载与装载分区
+
+​	<u>表分区可以通过DETACH语句卸载，分区被卸载后，它的物理数据并没有删除，而是被转移到了当前数据表目录的detached子目录下。而装载分区则是反向操作，它能够将detached子目录下的某个分区重新装载回去</u>。卸载与装载这一对伴生的操作，常用于分区数据的**迁移**和**备份**场景。卸载某个分区的语法如下所示：
+
+```sql
+ALTER TABLE tb_name DETACH PARTITION partition_expr
+```
+
+​	例如，执行下面的语句能够将partition_v2表内整个8月份的分区卸载：
+
+```sql
+ALTER TABLE partition_v2 DETACH PARTITION 201908
+```
+
+​	此时再次查询这张表，会发现其中2019年8月份的数据已经没有了。而进入partition_v2的磁盘目录，则可以看到被卸载的分区目录已经被移动到了detached目录中：
+
+```shell
+# pwd
+/chbase/data/data/default/partition_v2/detached
+# ll
+total 4
+drwxr-x---. 2 clickhouse clickhouse 4096 Aug 31 23:16 201908_4_4_0
+```
+
+​	记住，**一旦分区被移动到了detached子目录，就代表它已经脱离了ClickHouse的管理，ClickHouse并不会主动清理这些文件**。这些分区文件会一直存在，除非我们主动删除或者使用ATTACH语句重新装载它们。装载某个分区的完整语法如下所示：
+
+```sql
+ALTER TABLE tb_name ATTACH PARTITION partition_expr
+```
+
+​	再次执行下面的语句，就可以将刚才已被卸载的201908分区重新装载回去：
+
+```sql
+ALTER TABLE partition_v2 ATTACH PARTITION 201908
+```
+
+### 4.4.6 备份与还原分区
+
+​	关于分区数据的备份，可以通过**FREEZE**与**FETCH**实现，由于目前还缺少相关的背景知识，所以笔者把它留到第11章专门介绍。
+
+## * 4.5 分布式DDL执行
+
+​	ClickHouse支持集群模式，一个集群拥有1到多个节点。<u>CREATE、ALTER、DROP、RENMAE及TRUNCATE这些DDL语句，都**支持分布式执行**</u>。<u>这意味着，如果在集群中任意一个节点上执行DDL语句，那么集群中的每个节点都会以相同的顺序执行相同的语句</u>。这项特性意义非凡，它就如同批处理命令一样，省去了需要依次去单个节点执行DDL的烦恼。
+
+​	将一条普通的DDL语句转换成分布式执行十分简单，只需加上`ON CLUSTER cluster_name`声明即可。例如，执行下面的语句后将会对ch_cluster集群内的所有节点广播这条DDL语句：
+
+```sql
+CREATE TABLE partition_v3 ON CLUSTER ch_cluster(
+ID String,
+URL String,
+EventTime Date
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(EventTime)
+ORDER BY ID
+```
+
+​	当然，如果现在执行这条语句是不会成功的。因为到目前为止还没有配置过ClickHouse的集群模式，目前还不存在一个名为ch_cluster的集群，这部内容会放到第10章展开说明。
+
+## * 4.6 数据的写入
+
+​	INSERT语句支持三种语法范式，三种范式各有不同，可以根据写入的需求灵活运用。其中，第一种是使用VALUES格式的常规语法：
+
+```sql
+INSERT INTO [db.]table [(c1, c2, c3…)] VALUES (v11, v12, v13…), (v21, v22, v23…),
+...
+```
+
+​	其中，c1、c2、c3是列字段声明，可省略。VALUES后紧跟的是由元组组成的待写入数据，通过下标位与列字段声明一一对应。数据支持批量声明写入，多行数据之间使用逗号分隔。例如执行下面的语句，将批量写入多条数据：
+
+```sql
+INSERT INTO partition_v2 VALUES ('A0011','www.nauu.com', '2019-10-01'),
+('A0012','www.nauu.com', '2019-11-20'),('A0013','www.nauu.com', '2019-12-20')
+```
+
+​	在使用VALUES格式的语法写入数据时，**支持加入表达式或函数**，例如：
+
+```sql
+INSERT INTO partition_v2 VALUES ('A0014',toString(1+2), now())
+```
+
+​	第二种是使用指定格式的语法：
+
+```sql
+INSERT INTO [db.]table [(c1, c2, c3…)] FORMAT format_name data_set
+```
+
+​	ClickHouse支持多种数据格式（更多格式可参见官方手册），以常用的CSV格式写入为例：
+
+```sql
+INSERT INTO partition_v2 FORMAT CSV \
+'A0017','www.nauu.com', '2019-10-01' \
+'A0018','www.nauu.com', '2019-10-01'
+```
+
+​	第三种是使用SELECT子句形式的语法：
+
+```sql
+INSERT INTO [db.]table [(c1, c2, c3…)] SELECT ...
+```
+
+​	通过SELECT子句可将查询结果写入数据表，假设需要将partition_v1的数据写入partition_v2，则可以使用下面的语句：
+
+```sql
+INSERT INTO partition_v2 SELECT * FROM partition_v1
+```
+
+​	**在通过SELECT子句写入数据的时候，同样也支持加入表达式或函数**，例如：
+
+```sql
+INSERT INTO partition_v2 SELECT 'A0020', 'www.jack.com', now()
+```
+
+​	<u>虽然VALUES和SELECT子句的形式都支持声明表达式或函数，但是表达式和函数会带来额外的性能开销，从而导致写入性能的下降。所以如果追求极致的写入性能，就应该尽可能避免使用它们</u>。
+
+​	在第2章曾介绍过，**ClickHouse内部所有的数据操作都是面向Block数据块的，所以INSERT查询最终会将数据转换为Block数据块**。也正因如此，INSERT语句在单个数据块的写入过程中是具有原子性的。在默认的情况下，每个数据块最多可以写入1048576行数据（由max_insert_block_size参数控制）。也就是说，**如果一条INSERT语句写入的数据少于max_insert_block_size行，那么这批数据的写入是具有<u>原子性</u>的，即要么全部成功，要么全部失败**。需要注意的是，**<u>只有在ClickHouse服务端处理数据的时候才具有这种原子写入的特性</u>**，例如使用JDBC或者HTTP接口时。因为**max_insert_block_size参数在使用CLI命令行或者INSERT SELECT子句写入时是不生效的**。
+
+## * 4.7 数据的删除与修改
+
+> [【ClickHouse】Clickhouse中update/delete的使用_半塘少年的博客-CSDN博客_clickhouse update](https://blog.csdn.net/qq_41893274/article/details/117093168)
+
+​	ClickHouse提供了DELETE和UPDATE的能力，这类操作被称为Mutation查询，它可以看作ALTER语句的变种。虽然Mutation能最终实现修改和删除，但不能完全以通常意义上的UPDATE和DELETE来理解，我们必须清醒地认识到它的不同：
+
++ 首先，**Mutation语句是一种“很重”的操作，更适用于批量数据的修改和删除**；
++ 其次，**它不支持事务**，一旦语句被提交执行，就会立刻对现有数据产生影响，**无法回滚**；
++ 最后，**Mutation语句的执行是一个异步的后台过程**，语句被提交之后就会立即返回。所以这并不代表具体逻辑已经执行完毕，它的**具体执行进度需要通过system.mutations系统表查询**。
+
+​	DELETE语句的完整语法如下所示：
+
+```sql
+ALTER TABLE [db_name.]table_name DELETE WHERE filter_expr
+```
+
+​	数据删除的范围由WHERE查询子句决定。例如，执行下面语句可以删除partition_v2表内所有ID等于A003的数据：
+
+```sql
+ALTER TABLE partition_v2 DELETE WHERE ID = 'A003'
+```
+
+​	由于演示的数据很少，DELETE操作给人的感觉和常用的OLTP数据库无异。但是我们心中应该要明白这是一个异步的后台执行动作。
+
+​	再次进入数据目录，让我们看看删除操作是如何实现的：
+
+```shell
+# pwd
+/chbase/data/data/default/partition_v2
+# ll
+total 52
+drwxr-x---. 2 clickhouse clickhouse 4096 Jul 6 15:03 201905_1_1_0
+drwxr-x---. 2 clickhouse clickhouse 4096 Jul 6 15:03 201905_1_1_0_6
+省略…
+drwxr-x---. 2 clickhouse clickhouse 4096 Jul 6 15:03 201909_5_5_0
+drwxr-x---. 2 clickhouse clickhouse 4096 Jul 6 15:03 201909_5_5_0_6
+drwxr-x---. 2 clickhouse clickhouse 4096 Jul 6 15:02 detached
+-rw-r-----. 1 clickhouse clickhouse 1 Jul 6 15:02 format_version.txt
+-rw-r-----. 1 clickhouse clickhouse 89 Jul 6 15:03 mutation_6.txt
+```
+
+​	可以发现，在执行了DELETE操作之后数据目录发生了一些变化。每一个原有的数据目录都额外增加了一个同名目录，并且在末尾处增加了_6的后缀。此外，目录下还多了一个名为mutation_6.txt的文件，mutation_6.txt文件的内容如下所示：
+
+```shell
+# cat mutation_6.txt
+format version: 1
+create time: 2019-07-06 15:03:27
+commands: DELETE WHERE ID = \'A003\'
+```
+
+​	原来mutation_6.txt是一个日志文件，它完整地记录了这次DELETE操作的执行语句和时间，而文件名的后缀_6与新增目录的后缀对应。那么后缀的数字从何而来呢？继续查询system.mutations系统表，一探究竟：
+
+```sql
+SELECT database, table ,mutation_id, block_numbers.number as num ,is_done FROM
+system.mutations
+┌─database─┬─table─────┬─mutation_id───┬─num──┬─is_done─┐
+│ default │ partition_v2 │ mutation_6.txt │ [6] │ 1 │
+└───────┴────────┴──────────┴─────┴──────┘
+```
+
+​	至此，整个Mutation操作的逻辑就比较清晰了。每执行一条ALTER DELETE语句，都会在mutations系统表中生成一条对应的执行计划，当is_done等于1时表示执行完毕。与此同时，在数据表的根目录下，会以mutation_id为名生成与之对应的日志文件用于记录相关信息。而**数据删除的过程是以数据表的每个分区目录为单位，将所有目录重写为新的目录**，新目录的命名规则是在原有名称上加上`system.mutations.block_numbers.number`。数据在重写的过程中会将需要删除的数据去掉。旧的数据目录并不会立即删除，而是会被标记成非激活状态（active为0）。等到MergeTree引擎的下一次合并动作触发时，这些非激活目录才会被真正从物理意义上删除。
+
+​	数据修改除了需要指定具体的列字段之外，整个逻辑与数据删除别无二致，它的完整语法如下所示：
+
+```sql
+ALTER TABLE [db_name.]table_name UPDATE column1 = expr1 [, ...] WHERE filter_expr
+```
+
+​	**UPDATE支持在一条语句中同时定义多个修改字段，<u>分区键和主键不能作为修改字段</u>**。例如，执行下面的语句即能够根据WHERE条件同时修改partition_v2内的URL和OS字段：
+
+```sql
+ALTER TABLE partition_v2 UPDATE URL = 'www.wayne.com',OS = 'mac' WHERE ID IN
+(SELECT ID FROM partition_v2 WHERE EventTime = '2019-06-01')
+```
+
+## 4.8 本章小结
+
+​	通过对本章的学习，我们知道了ClickHouse的数据类型是由**基础类型**、**复合类型**和**特殊类型**组成的。基础类型相比常规数据库显得精简干练；复合类型很实用，常规数据库通常不具备这些类型；而特殊类型的使用场景较少。同时我们也掌握了数据库、数据表、临时表、分区表和视图的基本操作以及对元数据和分区的基本操作。最后我们还了解到在ClickHouse中如何写入、修改和删除数据。本章的内容为介绍后续知识点打下了坚实的基础。下一章我们将介绍数据字典。
+
+# 5. 数据字典
+
+​	数据字典是ClickHouse提供的一种非常简单、实用的存储媒介，它以键值和属性映射的形式定义数据。字典中的数据会主动或者被动（数据是在ClickHouse启动时主动加载还是在首次查询时惰性加载由参数设置决定）加载到内存，并**支持动态更新**。<u>由于字典数据**常驻内存**的特性，所以它非常适合保存常量或经常使用的维度表数据，以避免不必要的JOIN查询</u>。
+
+​	数据字典分为内置与扩展两种形式，顾名思义，内置字典是ClickHouse默认自带的字典，而外部扩展字典是用户通过自定义配置实现的字典。<u>在正常情况下，字典中的数据只能通过字典函数访问（ClickHouse特别设置了一类字典函数，专门用于字典数据的取用）</u>。但是也有一种例外，那就是使用特殊的字典表引擎。**在字典表引擎的帮助下，可以将数据字典挂载到一张代理的数据表下，从而实现数据表与字典数据的JOIN查询**。关于字典表引擎的更多细节与使用方法将会在后续章节着重介绍。
+
+## 5.1 内置字典
+
+P169
