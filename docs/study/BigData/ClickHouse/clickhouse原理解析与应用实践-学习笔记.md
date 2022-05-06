@@ -2138,8 +2138,1074 @@ ALTER TABLE partition_v2 UPDATE URL = 'www.wayne.com',OS = 'mac' WHERE ID IN
 
 ​	数据字典是ClickHouse提供的一种非常简单、实用的存储媒介，它以键值和属性映射的形式定义数据。字典中的数据会主动或者被动（数据是在ClickHouse启动时主动加载还是在首次查询时惰性加载由参数设置决定）加载到内存，并**支持动态更新**。<u>由于字典数据**常驻内存**的特性，所以它非常适合保存常量或经常使用的维度表数据，以避免不必要的JOIN查询</u>。
 
-​	数据字典分为内置与扩展两种形式，顾名思义，内置字典是ClickHouse默认自带的字典，而外部扩展字典是用户通过自定义配置实现的字典。<u>在正常情况下，字典中的数据只能通过字典函数访问（ClickHouse特别设置了一类字典函数，专门用于字典数据的取用）</u>。但是也有一种例外，那就是使用特殊的字典表引擎。**在字典表引擎的帮助下，可以将数据字典挂载到一张代理的数据表下，从而实现数据表与字典数据的JOIN查询**。关于字典表引擎的更多细节与使用方法将会在后续章节着重介绍。
+​	数据字典分为**内置**与**扩展**两种形式，顾名思义，内置字典是ClickHouse默认自带的字典，而外部扩展字典是用户通过自定义配置实现的字典。<u>在正常情况下，字典中的数据只能通过字典函数访问（ClickHouse特别设置了一类字典函数，专门用于字典数据的取用）</u>。但是也有一种例外，那就是使用特殊的字典表引擎。**在字典表引擎的帮助下，可以将数据字典挂载到一张代理的数据表下，从而实现数据表与字典数据的JOIN查询**。关于字典表引擎的更多细节与使用方法将会在后续章节着重介绍。
 
 ## 5.1 内置字典
 
-P169
+​	ClickHouse目前只有一种内置字典——Yandex.Metrica字典。从名称上可以看出，这是用在ClickHouse自家产品上的字典，而它的设计意图是快速存取geo地理数据。但较为遗憾的是，由于版权原因Yandex并没有将geo地理数据开放出来。这意味着ClickHouse目前的内置字典，只是提供了字典的定义机制和取数函数，而没有内置任何现成的数据。所以内置字典的现状较为尴尬，需要遵照它的字典规范自行导入数据。
+
+### 5.1.1 内置字典配置说明
+
+​	内置字典在默认的情况下是禁用状态，需要开启后才能使用。开启它的方式也十分简单，只需将config.xml文件中path_to_regions_hierarchy_file和path_to_regions_names_files两项配置打开。
+
+```xml
+<path_to_regions_hierarchy_file>
+  /opt/geo/regions_hierarchy.txt
+</path_to_regions_hierarchy_file>
+<path_to_regions_names_files>
+  /opt/geo/
+</path_to_regions_names_files>
+```
+
+​	这两项配置是惰性加载的，只有当字典首次被查询的时候才会触发加载动作。填充Yandex.Metrica字典的geo地理数据由两组模型组成，可以分别理解为地区数据的主表及维度表。这两组模型的数据分别由上述两项配置指定，现在依次介绍它们的具体用法。
+
+1. path_to_regions_hierarchy_file
+
+   ​	path_to_regions_hierarchy_file等同于区域数据的主表，由1个regions_hierarchy.txt和多个regions_hierarchy_[name].txt区域层次的数据文件共同组成，缺一不可。其中[name]表示区域标识符，与i18n类似。这些TXT文件内的数据需要使用TabSeparated格式定义，其数据模型的格式如表5-1所示。
+
+   表5-1 regions_hierarchy数据模型说明
+
+   | 名称             | 类型   | 是否必填 | 说明                                                         |
+   | ---------------- | ------ | -------- | ------------------------------------------------------------ |
+   | Region ID        | UInt32 | 是       | 区域ID                                                       |
+   | Parent Region ID | UInt32 | 是       | 上级区域ID                                                   |
+   | Region Type      | UInt8  | 是       | 区域类型：<br/>1：continent<br/>3：country<br/>4：federal district<br/>5：region<br/>6：city |
+   | Population       | UInt32 | 否       | 人口                                                         |
+
+2. path_to_regions_names_files
+
+   ​	path_to_regions_names_files等同于区域数据的维度表，记录了与区域ID对应的区域名称。维度数据使用6个regions_names_[name].txt文件保存，其中[name]表示区域标识符与regions_hierarchy_[name].txt对应，目前包括ru、en、ua、by、kz和tr。上述这些区域的数据文件必须全部定义，这是因为内置字典在初次加载时，会一次性加载上述6个区域标识的数据文件。如果缺少任何一个文件就会抛出异常并导致初始化失败。
+
+   ​	这些TXT文件内的数据同样需要使用TabSeparated格式定义，其数据模型的格式如表5-2所示。
+
+   表5-2 regions_names数据模型说明
+
+   | 名称        | 类型   | 是否必填 | 说明     |
+   | ----------- | ------ | -------- | -------- |
+   | Region ID   | UInt32 | 是       | 区域ID   |
+   | Parent Name | String | 是       | 区域名称 |
+
+### 5.1.2 使用内置字典
+
+​	在知晓了内置字典的开启方式和Yandex.Metrica字典的数据模型之后，就可以配置字典的数据并使用它们了。首先，在/opt路径下新建geo目录：
+
+```shell
+# mkdir /opt/geo
+```
+
+​	接着，进入本书附带的演示代码，找到数据字典目录。为了便于读者测试，事先已经准备好了一份测试数据，将下列用于测试的数据文件复制到刚才已经建好的/opt/geo目录下：
+
+```shell
+/opt/geo
+# ll
+total 36
+-rw-r--r--. 1 root root 3096 Jul 7 20:38 regions_hierarchy_ru.txt
+-rw-r--r--. 1 root root 3096 Jul 7 20:38 regions_hierarchy.txt
+-rw-r--r--. 1 root root 3957 Jul 7 19:44 regions_names_ar.txt
+-rw-r--r--. 1 root root 3957 Jul 7 19:44 regions_names_by.txt
+-rw-r--r--. 1 root root 3957 Jul 7 19:44 regions_names_en.txt
+-rw-r--r--. 1 root root 3957 Jul 7 19:44 regions_names_kz.txt
+-rw-r--r--. 1 root root 3957 Jul 7 19:44 regions_names_ru.txt
+-rw-r--r--. 1 root root 3957 Jul 7 19:44 regions_names_tr.txt
+-rw-r--r--. 1 root root 3957 Jul 7 19:44 regions_names_ua.txt
+```
+
+​	最后，找到config.xml并按照5.1.1节介绍的方法开启内置字典。
+
+​	至此，内置字典就已经全部设置好了，执行下面的语句就能够访问字典中的数据：
+
+```sql
+SELECT regionToName(toUInt32(20009))
+┌─regionToName(toUInt32(20009))─┐
+│ Buenos Aires Province │
+└────────────────────┘
+```
+
+​	可以看到，对于Yandex.Metrica字典数据的访问，这里用到了regionToName函数。类似这样的函数还有很多，在ClickHouse中它们被称为Yandex.Metrica函数。关于这套函数的更多用法，请参阅官方手册。
+
+## 5.2 外部扩展字典
+
+​	外部扩展字典是以插件形式注册到ClickHouse中的，由用户自行定义数据模式及数据来源。目前扩展字典支持7种类型的内存布局和4类数据来源。相比内容十分有限的内置字典，扩展字典才是更加常用的功能。
+
+### 5.2.1 准备字典数据
+
+​	在接下来的篇幅中，会逐个介绍每种扩展字典的使用方法，包括它们的配置形式、数据结构及创建方法，但是在此之前还需要进行一些准备工作。为了便于演示，此处事先准备了三份测试数据，它们均使用CSV格式。其中，第一份是企业组织数据，它将用于flat、hashed、cache、complex_key_hashed和complex_key_cache字典的演示场景。这份数据拥有id、code和name三个字段，数据格式如下所示：
+
+```shell
+1,"a0001","研发部"
+2,"a0002","产品部"
+3,"a0003","数据部"
+4,"a0004","测试部"
+5,"a0005","运维部"
+6,"a0006","规划部"
+7,"a0007","市场部"
+```
+
+​	第二份是销售数据，它将用于range_hashed字典的演示场景。这份数据拥有id、start、end和price四个字段，数据格式如下所示：
+
+```shell
+1,2016-01-01,2017-01-10,100
+2,2016-05-01,2017-07-01,200
+3,2014-03-05,2018-01-20,300
+4,2018-08-01,2019-10-01,400
+5,2017-03-01,2017-06-01,500
+6,2017-04-09,2018-05-30,600
+7,2018-06-01,2019-01-25,700
+8,2019-08-01,2019-12-12,800
+```
+
+​	最后一份是asn数据，它将用于演示ip_trie字典的场景。这份数据拥有ip、asn和country三个字段，数据格式如下所示：
+
+```shell
+"82.118.230.0/24","AS42831","GB"
+"148.163.0.0/17","AS53755","US"
+"178.93.0.0/18","AS6849","UA"
+"200.69.95.0/24","AS262186","CO"
+"154.9.160.0/20","AS174","US"
+```
+
+> 你可以从下面的地址获取到上述三份数据：
+>
+> https://github.com/nauu/clickhousebook/dict/plugin/testdata/organization.csv
+>
+> https://github.com/nauu/clickhousebook/dict/plugin/testdata/sales.csv
+>
+> https://github.com/nauu/clickhousebook/dict/plugin/testdata/asn.csv
+>
+> 下载后，将数据文件上传到ClickHouse节点所在的服务器即可。
+
+### 5.2.2 扩展字典配置文件的元素组成
+
+​	扩展字典的配置文件由config.xml文件中的dictionaries_config配置项指定：
+
+```xml
+<!-- Configuration of external dictionaries. See:
+https://clickhouse.yandex/docs/en/dicts/external_dicts/
+-->
+<dictionaries_config>*_dictionary.xml</dictionaries_config>
+```
+
+​	在默认的情况下，ClickHouse会自动识别并加载/etc/clickhouse-server目录下所有以_dictionary.xml结尾的配置文件。同时ClickHouse也能够动态感知到此目录下配置文件的各种变化，并**支持不停机在线更新配置文件**。
+
+​	在单个字典配置文件内可以定义多个字典，其中每一个字典由一组dictionary元素定义。在dictionary元素之下又分为5个子元素，均为必填项，它们完整的配置结构如下所示：
+
+```xml
+<?xml version="1.0"?>
+<dictionaries>
+  <dictionary>
+    <name>dict_name</name>
+    <structure>
+      <!—字典的数据结构 -->
+    </structure>
+    <layout>
+      <!—在内存中的数据格式类型 -->
+    </layout>
+    <source>
+      <!—数据源配置 -->
+    </source>
+    <lifetime>
+      <!—字典的自动更新频率 -->
+    </lifetime>
+  </dictionary>
+</dictionaries>
+```
+
+​	在上述结构中，主要配置的含义如下。
+
++ name：字典的名称，用于确定字典的唯一标识，必须全局唯一，多个字典之间不允许重复。
+
++ structure：字典的数据结构，5.2.3节会详细介绍。
+
++ layout：字典的类型，它决定了数据在内存中以何种结构组织和存储。目前扩展字典共拥有7种类型，5.2.4节会详细介绍。
+
++ source：字典的数据源，它决定了字典中数据从何处加载。目前扩展字典共拥有文件、数据库和其他三类数据来源，5.2.5节会详细介绍。
+
++ lifetime：字典的更新时间，扩展字典支持数据在线更新，5.2.6节会详细介绍。
+
+### 5.2.3 扩展字典的数据结构
+
+​	扩展字典的数据结构由structure元素定义，由键值key和属性attribute两部分组成，它们分别描述字典的数据标识和字段属性。structure的完整形式如下所示（在后面的查询过程中都会通过这些字段来访问字典中的数据）：
+
+```xml
+<dictionary>
+  <structure>
+    <!—- <id> 或 <key> -->
+    <id>
+      <!—Key属性-->
+    </id>
+    <attribute>
+      <!—- 字段属性 -->
+    </attribute>
+    ...
+  </structure>
+</dictionary>
+```
+
+​	接下来具体介绍key和attribute的含义。
+
+1. key
+
+   ​	key用于定义字典的键值，每个字典必须包含1个键值key字段，用于定位数据，类似数据库的表主键。键值key分为数值型和复合型两类。
+
+   1. 数值型：数值型key由UInt64整型定义，支持flat、hashed、range_hashed和cache类型的字典（扩展字典类型会在后面介绍），它的定义方法如下所示。
+
+      ```xml
+      <structure>
+        <id>
+          <!—名称自定义-->
+          <name>Id</name>
+        </id>
+        省略…
+      ```
+
+   2. 复合型：复合型key使用Tuple元组定义，可以由1到多个字段组成，类似数据库中的复合主键。它仅支持complex_key_hashed、complex_key_cache和ip_trie类型的字典。其定义方法如下所示。
+
+      ```xml
+      <structure>
+        <key>
+          <attribute>
+            <name>field1</name>
+            <type>String</type>
+          </attribute>
+          <attribute>
+            <name>field2</name>
+            <type>UInt64</type>
+          </attribute>
+          省略…
+        </key>
+        省略…
+      ```
+
+2. attribute
+
+   ​	attribute用于定义字典的属性字段，字典可以拥有1到多个属性字段。它的完整定义方法如下所示：
+
+   ```xml
+   <structure>
+     省略…
+     <attribute>
+       <name>Name</name>
+       <type>DataType</type>
+       <!—空字符串-->
+       <null_value></null_value>
+       <expression>generateUUIDv4()</expression>
+       <hierarchical>true</hierarchical>
+       <injective>true</injective>
+       <is_object_id>true</is_object_id>
+     </attribute>
+     省略…
+   </structure>
+   ```
+
+   ​	在attribute元素下共有7个配置项，其中name、type和null_value为必填项。这些配置项的详细说明如表5-3所示。
+
+   表5-3 attribute的配置项说明
+
+   | 配置名称     | 是否必填 | 默认值   | 说明                                                         |
+   | ------------ | -------- | -------- | ------------------------------------------------------------ |
+   | name         | 是       | -        | 字段名称                                                     |
+   | type         | 是       | -        | 字段类型，参见第4章的数据类型部分                            |
+   | null_value   | 是       | -        | 在查询时，条件key没有对应元素时的默认值                      |
+   | expression   | 否       | 无表达式 | 表达式，可以调用函数或者使用运算符                           |
+   | hierarchical | 否       | false    | 是否支持层次结构                                             |
+   | injective    | 否       | false    | 是否支持集合单射优化。开启后，在后续的GROUP BY查询中，如果调用dictGet函数通过key获得value，则该value直接从GROUP BY数据返回 |
+   | is_object_id | 否       | false    | 是否开启MongoDB优化，通过ObjectID对MongoDB文档进行查询       |
+
+   > 注意，假设有两个集合A和B。如果集合A中的每个元素x，在集合B中都有一个唯一预知对应的元素y，那么集合A到B的映射关系就是单射映射。
+
+   > [单射_百度百科 (baidu.com)](https://baike.baidu.com/item/单射/9274884?fr=aladdin)
+
+### 5.2.4 扩展字典的类型
+
+​	扩展字典的类型使用layout元素定义，目前共有7种类型。一个字典的类型，既决定了其数据在内存中的存储结构，也决定了该字典支持的key键类型。根据key键类型的不同，可以将它们划分为两类：
+
++ 一类是以flat、hashed、range_hashed和cache组成的单数值key类型，因为它们均使用单个数值型的id；
++ 另一类则是由complex_key_hashed、complex_key_cache和ip_trie组成的复合key类型。
+
+​	complex_key_hashed与complex_key_cache字典在功能方面与hashed和cache并无二致，只是单纯地将数值型key替换成了复合型key而已。
+
+​	接下来会结合5.2.1节中已准备好的测试数据，逐一介绍7种字典的完整配置方法。通过这个过程，可以领略到不同类型字典的特点以及它们的使用方法。
+
+1. flat
+
+   flat字典是所有类型中性能最高的字典类型，它只能使用UInt64数值型key。顾名思义，flat字典的数据在内存中使用数组结构保存，数组的初始大小为1024，上限为500 000，这意味着它最多只能保存500 000行数据。如果在创建字典时数据量超出其上限，那么字典会创建失败。代码清单5-1所示是通过手动创建的flat字典配置文件。
+
+   代码清单5-1 flat类型字典的配置文件
+
+   test_flat_dictionary.xml
+
+   ```xml
+   <?xml version="1.0"?>
+   <dictionaries>
+     <dictionary>
+       <name>test_flat_dict</name>
+       <source>
+         <!—准备好的测试数据-->
+         <file>
+           <path>/chbase/data/dictionaries/organization.csv</path>
+           <format>CSV</format>
+         </file>
+       </source>
+       <layout>
+         <flat/>
+       </layout>
+       <!—与测试数据的结构对应-->
+       <structure>
+         <id>
+           <name>id</name>
+         </id>
+         <attribute>
+           <name>code</name>
+           <type>String</type>
+           <null_value></null_value>
+         </attribute>
+         <attribute>
+           <name>name</name>
+           <type>String</type>
+           <null_value></null_value>
+         </attribute>
+       </structure>
+       <lifetime>
+         <min>300</min>
+         <max>360</max>
+       </lifetime>
+     </dictionary>
+   </dictionaries>
+   ```
+
+   ​	在上述的配置中，source数据源是CSV格式的文件，structure数据结构与其对应。将配置文件复制到ClickHouse服务节点的/etc/clickhouse-server目录后，即完成了对该字典的创建过程。查验system.dictionaries系统表后，能够看到flat字典已经创建成功。
+
+   ```sql
+   SELECT name, type, key, attribute.names, attribute.types FROM system.dictionaries
+   ┌─name──────────┬─type─┬─key────┬─attribute.names─┐
+   │ test_flat_dict │ Flat │ UInt64 │ ['code','name'] │
+   └──────────────┴────┴───────┴───────────┘
+   ```
+
+2. hashed
+
+   ​	hashed字典同样只能够使用UInt64数值型key，但与flat字典不同的是，hashed字典的数据在内存中通过散列结构保存，且没有存储上限的制约。代码清单5-2所示是仿照flat创建的hashed字典配置文件。
+
+   代码清单5-2 hashed类型字典的配置文件
+
+   test_hashed_dictionary.xml
+
+   ```xml
+   <?xml version="1.0"?>
+   <dictionaries>
+     <dictionary>
+       <name>test_hashed_dict</name>
+       与flat字典配置相同,省略…
+       <layout>
+         <hashed/>
+       </layout>
+       省略…
+     </dictionary>
+   </dictionaries>
+   ```
+
+   ​	同样将配置文件复制到ClickHouse服务节点的/etc/clickhouse-server目录后，即完成了对该字典的创建过程。
+
+3. range_hashed
+
+   ​	range_hashed字典可以看作hashed字典的变种，它在原有功能的基础上增加了指定时间区间的特性，数据会以散列结构存储并按照时间排序。时间区间通过range_min和range_max元素指定，所指定的字段必须是Date或者DateTime类型。
+
+   ​	现在仿照hashed字典的配置，创建一个名为test_range_hashed_dictionary.xml的配置文件，将layout改为range_hashed并增加range_min和range_max元素。它的完整配置如代码清单5-3所示。
+
+   代码清单5-3 range_hashed类型字典的配置文件
+
+   test_range_hashed_dictionary.xml
+
+   ```xml
+   <?xml version="1.0"?>
+   <dictionaries>
+     <dictionary>
+       <name>test_range_hashed_dict</name>
+       <source>
+         <file>
+           <path>/chbase/data/dictionaries/sales.csv</path>
+           <format>CSV</format>
+         </file>
+       </source>
+       <layout>
+         <range_hashed/>
+       </layout>
+       <structure>
+         <id>
+           <name>id</name>
+         </id>
+         <range_min>
+           <name>start</name>
+         </range_min>
+         <range_max>
+           <name>end</name>
+         </range_max>
+         <attribute>
+           <name>price</name>
+           <type>Float32</type>
+           <null_value></null_value>
+         </attribute>
+       </structure>
+       <lifetime>
+         <min>300</min>
+         <max>360</max>
+       </lifetime>
+     </dictionary>
+   </dictionaries>
+   ```
+
+   ​	在上述的配置中，使用了一份销售数据，数据中的start和end字段分别与range_min和range_max对应。将配置文件复制到ClickHouse服务节点的/etc/clickhouse-server目录后，即完成了对该字典的创建过程。查验system.dictionaries系统表后，能够看到range_hashed字典已经创建成功：
+
+   ```sql
+   SELECT name, type, key, attribute.names, attribute.types FROM system.dictionaries
+   ┌─name───────────┬─type─────┬─key───┬─attribute.names─┐
+   │ test_range_hashed_dict │ RangeHashed │ UInt64 │ ['price'] │
+   └──────────────┴────────┴─────┴───────────┘
+   ```
+
+4. cache
+
+   ​	cache字典只能够使用UInt64数值型key，它的字典数据在内存中会通过固定长度的向量数组保存。定长的向量数组又称cells，它的数组长度由size_in_cells指定。而size_in_cells的取值大小必须是2的整数倍，如若不是，则会自动向上取为2的倍数的整数。
+
+   ​	cache字典的取数逻辑与其他字典有所不同，它并不会一次性将所有数据载入内存。当从cache字典中获取数据的时候，它首先会在cells数组中检查该数据是否已被缓存。如果数据没有被缓存，它才会从源头加载数据并缓存到cells中。所以**cache字典是性能最不稳定的字典，因为它的性能优劣完全取决于缓存的命中率（缓存命中率=命中次数/查询次数），如果无法做到99%或者更高的缓存命中率，则最好不要使用此类型**。代码清单5-4所示是仿照hashed创建的cache字典配置文件。
+
+   代码清单5-4 cache类型字典的配置文件
+
+   test_cache_dictionary.xml
+
+   ```xml
+   <?xml version="1.0"?>
+   <dictionaries>
+     <dictionary>
+       <name>test_cache_dict</name>
+       <source>
+         <!—- 本地文件需要通过 executable形式 -->
+         <executable>
+           <command>cat /chbase/data/dictionaries/organization.csv</command>
+           <format>CSV</format>
+         </executable>
+       </source>
+       <layout>
+         <cache>
+           <!—- 缓存大小 -->
+           <size_in_cells>10000</size_in_cells>
+         </cache>
+       </layout>
+       省略…
+     </dictionary>
+   </dictionaries>
+   ```
+
+   ​	在上述配置中，layout被声明为cache并将缓存大小size_in_cells设置为10000。关于cells的取值可以根据实际情况考虑，在内存宽裕的情况下设置成1000000000也是可行的。还有一点需要注意，如果cache字典使用本地文件作为数据源，则必须使用executable的形式设置。
+
+5. complex_key_hashed
+
+   ​	complex_key_hashed字典在功能方面与hashed字典完全相同，只是将单个数值型key替换成了复合型。代码清单5-5所示是仿照hashed字典进行配置后，将layout改为complex_key_hashed并替换key类型的示例。
+
+   代码清单5-5 complex_key_hashed类型字典的配置文件
+
+   test_complex_key_hashed_dictionary.xml
+
+   ```xml
+   <?xml version="1.0"?>
+   <dictionaries>
+     <dictionary>
+       <name>test_complex_key_hashed_dict</name>
+       <!—- 与hashed字典配置相同,省略…-->
+       <layout>
+         <complex_key_hashed/>
+       </layout>
+       <structure>
+         <!—- 复合型key -->
+         <key>
+           <attribute>
+             <name>id</name>
+             <type>UInt64</type>
+           </attribute>
+           <attribute>
+             <name>code</name>
+             <type>String</type>
+           </attribute>
+         </key>
+         省略…
+       </structure>
+       省略…
+   ```
+
+   ​	将配置文件复制到ClickHouse服务节点的/etc/clickhouseserver目录后，即完成了对该字典的创建过程。
+
+6. complex_key_cache
+
+   ​	complex_key_cache字典同样与cache字典的特性完全相同，只是将单个数值型key替换成了复合型。现在仿照cache字典进行配置，将layout改为complex_key_cache并替换key类型，如代码清单5-6所示。
+
+   代码清单5-6 complex_key_cache类型字典的配置文件
+
+   test_complex_key_cache_dictionary.xml
+
+   ```xml
+   <?xml version="1.0"?>
+   <dictionaries>
+     <dictionary>
+       <name>test_complex_key_cache_dict</name>
+       <!—-与cache字典配置相同,省略…-->
+       <layout>
+         <complex_key_cache>
+           <size_in_cells>10000</size_in_cells>
+         </complex_key_cache>
+       </layout>
+       <structure>
+         <!—- 复合型Key -->
+         <key>
+           <attribute>
+             <name>id</name>
+             <type>UInt64</type>
+           </attribute>
+           <attribute>
+             <name>code</name>
+             <type>String</type>
+           </attribute>
+         </key>
+         省略…
+       </structure>
+       省略…
+   ```
+
+   ​	将配置文件复制到ClickHouse服务节点的/etc/clickhouse-server目录后，即完成了对该字典的创建过程。
+
+7. ip_trie
+
+   ​	虽然同为复合型key的字典，但ip_trie字典却较为特殊，因为它只能指定单个String类型的字段，用于指代IP前缀。ip_trie字典的数据在内存中使用trie树结构保存，且专门用于IP前缀查询的场景，例如通过IP前缀查询对应的ASN信息。它的完整配置如代码清单5-7所示。
+
+   代码清单5-7 ip_trie类型字典的配置文件
+
+   test_ip_trie_dictionary.xml
+
+   ```xml
+   <?xml version="1.0"?>
+   <dictionaries>
+     <dictionary>
+       <name>test_ip_trie_dict</name>
+       <source>
+         <file>
+           <path>/chbase/data/dictionaries/asn.csv</path>
+           <format>CSV</format>
+         </file>
+       </source>
+       <layout>
+         <ip_trie/>
+       </layout>
+       <structure>
+         <!—虽然是复合类型,但是只能设置单个String类型的字段 -->
+         <key>
+           <attribute>
+             <name>prefix</name>
+             <type>String</type>
+           </attribute>
+         </key>
+         <attribute>
+           <name>asn</name>
+           <type>String</type>
+           <null_value></null_value>
+         </attribute>
+         <attribute>
+           <name>country</name>
+           <type>String</type>
+           <null_value></null_value>
+         </attribute>
+       </structure>
+       省略…
+     </dictionary>
+   </dictionaries>
+   ```
+
+   ​	通过上述介绍，读者已经知道了7种类型字典的创建方法。**在这些字典中，flat、hashed和range_hashed依次拥有最高的性能，而cache性能最不稳定**。最后再总结一下这些字典各自的特点，如表5-4所示。
+
+表5-4 7种类型字典的特点总结
+
+| 名称               | 存储结构         | 字典键类型            | 支持的数据来源                                   |
+| ------------------ | ---------------- | --------------------- | ------------------------------------------------ |
+| flat               | 数组             | UInt64                | Local file<br/>Executable file<br/>HTTP<br/>DBMS |
+| hashed             | 散列             | UInt64                | Local file<br/>Executable file<br/>HTTP<br/>DBMS |
+| range_hashed       | 散列并按时间排序 | UInt64和时间          | Local file<br/>Executable file<br/>HTTP<br/>DBMS |
+| complex_key_hashed | 散列             | 复合型key             | Local file<br/>Executable file<br/>HTTP<br/>DBMS |
+| ip_trie            | 层次结构         | 复合型key(单个String) | Local file<br/>Executable file<br/>HTTP<br/>DBMS |
+| cache              | 固定大小数组     | UInt64                | Executable file<br/>HTTP<br/>ClickHouse、MySQL   |
+| complex_key_cache  | 固定大小数组     | 复合型key             | Executable file<br/>HTTP<br/>ClickHouse、MySQL   |
+
+### 5.2.5 扩展字典的数据源
+
+​	数据源使用source元素定义，它指定了字典的数据从何而来。通过5.2.4节其实大家已经领略过本地文件与可执行文件这两种数据源了，但扩展字典支持的数据源远不止这些。现阶段，扩展字典支持3大类共计9种数据源，接下来会以更加体系化的方式逐一介绍它们。
+
+1. 文件类型
+
+   文件可以细分为本地文件、可执行文件和远程文件三类，它们是最易使用且最为直接的数据源，非常适合在静态数据这类场合中使用。
+
+   1. 本地文件
+
+      本地文件使用file元素定义。其中，path表示数据文件的绝对路径，而format表示数据格式，例如CSV或者TabSeparated等。它的完整配置如下所示。
+
+      ```xml
+      <source>
+        <file>
+          <path>/data/dictionaries/organization.csv</path>
+          <format>CSV</format>
+        </file>
+      </source>
+      ```
+
+   2. 可执行文件
+
+      可执行文件数据源属于本地文件的变种，它需要通过cat命令访问数据文件。对于cache和complex_key_cache类型的字典，必须使用此类型的文件数据源。可执行文件使用executable元素定义。其中，command表示数据文件的绝对路径，format表示数据格式，例如CSV或者TabSeparated等。它的完整配置如下所示。
+
+      ```xml
+      <source>
+        <executable>
+          <command>cat /data/dictionaries/organization.csv</ command>
+          <format>CSV</format>
+        </executable>
+      </source>
+      ```
+
+   3. 远程文件
+
+      远程文件与可执行文件类似，只是它将cat命令替换成了post请求，支持HTTP与HTTPS协议。远程文件使用http元素定义。其中，url表示远程数据的访问地址，format表示数据格式，例如CSV或者TabSeparated。它的完整配置如下所示。
+
+      ```xml
+      <source>
+        <http>
+          <url>http://10.37.129.6/organization.csv</url>
+          <format>CSV</format>
+        </http>
+      </source>
+      ```
+
+2. 数据库类型
+
+   ​	相比文件类型，数据库类型的数据源更适合在正式的生产环境中使用。目前扩展字典支持MySQL、ClickHouse本身及MongoDB三种数据库。接下来会分别介绍它们的创建方法。对于MySQL和MongoDB数据库环境的安装，由于篇幅原因此处不再赘述，而相关的SQL脚本可以在本书附带的源码站点中下载。
+
+   1. MySQL
+
+      MySQL数据源支持从指定的数据库中提取数据，作为其字典的数据来源。首先，需要准备源头数据，执行下面的语句在MySQL中创建测试表：
+
+      ```sql
+      CREATE TABLE 't_organization' (
+        `id` int(11) NOT NULL AUTO_INCREMENT,
+        `code` varchar(40) DEFAULT NULL,
+        `name` varchar(60) DEFAULT NULL,
+        `updatetime` datetime DEFAULT NULL,
+        PRIMARY KEY (`id`)
+      ) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8;
+      ```
+
+      接着，写入测试数据：
+
+      ```sql
+      INSERT INTO t_organization (code, name,updatetime) VALUES('a0001','研发部',NOW())
+      INSERT INTO t_organization (code, name,updatetime) VALUES('a0002','产品部',NOW())
+      …
+      ```
+
+      完成上述准备之后，就可以配置MySQL数据源的字典了。现在仿照flat字典进行配置，创建一个名为test_mysql_dictionary.xml的配置文件，将source替换成MySQL数据源：
+
+      ```xml
+      <dictionaries>
+        <dictionary>
+          <name>test_mysql_dict</name>
+          <source>
+            <mysql>
+              <port>3306</port>
+              <user>root</user>
+              <password></password>
+              <replica>
+                <host>10.37.129.2</host>
+                <priority>1</priority>
+              </replica>
+              <db>test</db>
+              <table>t_organization</table>
+              <!--
+      				<where>id=1</where>
+      				<invalidate_query>SQL_QUERY</invalidate_query>
+      				-->
+            </mysql>
+          </source>
+          省略…
+      ```
+
+      其中，各配置项的含义分别如下。
+
+      + port：数据库端口。
+
+      + user：数据库用户名。
+
+      + password：数据库密码。
+      + replica：数据库host地址，支持MySQL集群。
+      + db：database数据库。
+      + table：字典对应的数据表。
+      + where：查询table时的过滤条件，非必填项。
+      + invalidate_query：指定一条SQL语句，用于在数据更新时判断是否需要更新，非必填项。5.2.6节会详细说明。
+
+      将配置文件复制到ClickHouse服务节点的/etc/clickhouseserver目录后，即完成了对该字典的创建过程。
+
+   2. ClickHouse
+
+      扩展字典支持将ClickHouse数据表作为数据来源，这是一种比较有意思的设计。在配置之前同样需要准备数据源的测试数据，执行下面的语句在ClickHouse中创建测试表并写入测试数据：
+
+      ```sql
+      CREATE TABLE t_organization (
+        ID UInt64,
+        Code String,
+        Name String,
+        UpdateTime DateTime
+      ) ENGINE = TinyLog;
+      -- 写入测试数据
+      INSERT INTO t_organization VALUES(1,'a0001','研发部',NOW()),(2,'a0002','产品部'
+      ,NOW()),(3,'a0003','数据部',NOW()),(4,'a0004','测试部',NOW()),(5,'a0005','运维部'
+      ,NOW()),(6,'a0006','规划部',NOW()),(7,'a0007','市场部',NOW())
+      ```
+
+      ClickHouse数据源的配置与MySQL数据源极为相似，所以我们可以仿照MySQL数据源的字典配置，创建一个名为test_ch_dictionary.xml的配置文件，将source替换成ClickHouse数据源：
+
+      ```xml
+      <?xml version="1.0"?>
+      <dictionaries>
+        <dictionary>
+          <name>test_ch_dict</name>
+          <source>
+            <clickhouse>
+              <host>10.37.129.6</host>
+              <port>9000</port>
+              <user>default</user>
+              <password></password>
+              <db>default</db>
+              <table>t_organization</table>
+              <!--
+              <where>id=1</where>
+              <invalidate_query>SQL_QUERY</invalidate_query>
+              -->
+            </clickhouse>
+          </source>
+          省略…
+      ```
+
+      其中，各配置项的含义分别如下。
+
+      + host：数据库host地址。
+
+      + port：数据库端口。
+
+      + user：数据库用户名。
+
+      + password：数据库密码。
+
+      + db：database数据库。
+
+      + table：字典对应的数据表。
+
+      + where：查询table时的过滤条件，非必填项。
+
+      + invalidate_query：指定一条SQL语句，用于在数据更新时判断是否需要更新，非必填项。在5.2.6节会详细说明。
+
+   3. MongoDB
+
+      最后是MongoDB数据源，执行下面的语句，MongoDB会自动创建相应的schema并写入数据：
+
+      ```sql
+      db.t_organization.insertMany(
+        [{
+         id: 1,
+         code: 'a0001',
+         name: '研发部'
+         },
+         {
+         id: 2,
+         code: 'a0002',
+         name: '产品部'
+         },
+         {
+         id: 3,
+         code: 'a0003',
+         name: '数据部'
+         },
+         {
+         id: 4,
+         code: 'a0004',
+         name: '测试部'
+         }]
+      )
+      ```
+
+      完成上述准备之后就可以配置MongoDB数据源的字典了，同样仿照MySQL字典配置，创建一个名为test_mongodb_dictionary.xml的配置文件，将source替换成mongodb数据源：
+
+      ```xml
+      <dictionaries>
+        <dictionary>
+          <name>test_mongodb_dict</name>
+          <source>
+            <source>
+              <mongodb>
+                <host>10.37.129.2</host>
+                <port>27017</port>
+                <user></user>
+                <password></password>
+                <db>test</db>
+                <collection>t_organization</collection>
+              </mongodb>
+            </source>
+            省略…
+      ```
+
+      其中，各配置项的含义分别如下。
+
+      + host：数据库host地址。
+
+      + port：数据库端口。
+
+      + user：数据库用户名。
+
+      + password：数据库密码。
+
+      + db：database数据库。
+
+      + collection：与字典对应的collection的名称。
+
+3. 其他类型
+
+   除了上述已经介绍过的两类数据源之外，扩展字典还支持通过ODBC的方式连接PostgreSQL和MS SQL Server数据库作为数据源。它们的配置方式与数据库类型数据源大同小异，此处不再赘述，如有需要请参见官方手册。
+
+### * 5.2.6 扩展字典的数据更新策略
+
+​	扩展字典支持数据的在线更新，更新后无须重启服务。字典数据的更新频率由配置文件中的lifetime元素指定，单位为秒：
+
+```xml
+<lifetime>
+  <min>300</min>
+  <max>360</max>
+</lifetime>
+```
+
+​	其中，min与max分别指定了更新间隔的上下限。ClickHouse会在这个时间区间内随机触发更新动作，这样能够有效错开更新时间，避免所有字典在同一时间内爆发性的更新。<u>当min和max都是0的时候，将禁用字典更新。对于cache字典而言，lifetime还代表了它的缓存失效时间</u>。
+
+​	**字典内部拥有版本的概念，在数据更新的过程中，旧版本的字典将持续提供服务，只有当更新完全成功之后，新版本的字典才会替代旧版本。所以更新操作或者更新时发生的异常，并不会对字典的使用产生任何影响**。
+
+​	不同类型的字典数据源，更新机制也稍有差异。总体来说，**扩展字典目前并不支持增量更新**。<u>但部分数据源能够依照标识判断，只有在源数据发生实质变化后才实施更新动作。这个判断源数据是否被修改的标识，在字典内部称为previous，它保存了一个用于比对的值。ClickHouse的后台进程每隔5秒便会启动一次数据刷新的判断，依次对比每个数据字典中前后两次previous的值是否相同。若相同，则代表无须更新数据；若不同且满足更新频率，则代表需要更新数据</u>。而对于previous值的获取方式，不同的数据源有不同的实现逻辑，下面详细介绍。
+
+1. 文件数据源
+
+   对于文件类型的数据源，它的previous值来自系统文件的修改时间，这和Linux系统中的stat查询命令类似：
+
+   ```shell
+   #stat ./test_flat_dictionary.xml
+   File: `./test_flat_dictionary.xml'
+   Size: 926 Blocks: 8 IO Block: 4096 regular file
+   Access: 2019-07-18 01:15:43.509000359 +0800
+   Modify: 2019-07-18 01:15:32.000000000 +0800
+   Change: 2019-07-18 01:15:38.865999868 +0800
+   ```
+
+   当前后两次previous的值不相同时，才会触发数据更新。
+
+2. MySQL(InnoDB)、ClickHouse和ODBC
+
+   对于MySQL（InnoDB引擎）、ClickHouse和ODBC数据源，它们的previous值来源于invalidate_query中定义的SQL语句。例如在下面的示例中，如果前后两次的updatetime值不相同，则会判定源数据发生了变化，字典需要更新。
+
+   ```xml
+   <source>
+     <mysql>
+       省略…
+       <invalidate_query>select updatetime from t_organization where id =
+         8</invalidate_query>
+     </mysql>
+   </source>
+   ```
+
+   这对源表有一定的要求，它必须拥有一个支持判断数据是否更新的字段。
+
+3. MySQL(MyISAM)
+
+   如果数据源是MySQL的MyISAM表引擎，则它的previous值要简单得多。因为在MySQL中，使用MyISAM表引擎的数据表支持通过`SHOW TABLE STATUS`命令查询修改时间。例如在MySQL中执行下面的语句，就能够查询到数据表的Update_time值：
+
+   ```sql
+   SHOW TABLE STATUS WHERE Name = 't_organization'
+   ```
+
+   所以，如果前后两次Update_time的值不相同，则会判定源数据发生了变化，字典需要更新。
+
+4. 其他数据源
+
+   <u>除了上面描述的数据源之外，其他数据源目前无法依照标识判断是否跳过更新。所以无论数据是否发生实质性更改，只要满足当前lifetime的时间要求，它们都会执行更新动作</u>。**相比之前介绍的更新方式，其他类型的更新效率更低**。
+
+   除了按照lifetime定义的时间频率被动更新之外，数据字典也能够主动触发更新。执行下面的语句后，将会触发所有数据字典的更新：
+
+   ```sql
+   SYSTEM RELOAD DICTIONARIES
+   ```
+
+   也支持指定某个具体字典的更新：
+
+   ```sql
+   SYSTEM RELOAD DICTIONARY [dict_name]
+   ```
+
+### 5.2.7 扩展字典的基本操作
+
+​	至此，我们已经在ClickHouse中创建了10种不同类型的扩展字典。接下来将目光聚焦到字典的基本操作上，包括对字典元数据和数据的查询，以及借助字典表引擎访问数据。
+
+1. 元数据查询
+
+   通过system.dictionaries系统表，可以查询扩展字典的元数据信息。例如执行下面的语句就可以看到目前所有已经创建的扩展字典的名称、类型和字段等信息：
+
+   ```sql
+   SELECT name, type, key, attribute.names, attribute.types, source FROM
+   system.dictionaries
+   ```
+
+   在system.dictionaries系统表内，其主要字段的含义分别如下。
+
+   + name：字典的名称，在使用字典函数时需要通过字典名称访问数据。
+
+   + type：字典所属类型。
+
+   + key：字典的key值，数据通过key值定位。
+   + attribute.names：属性名称，以数组形式保存。
+   + attribute.types：属性类型，以数组形式保存，其顺序与attribute.names相同。
+   + bytes_allocated：已载入数据在内存中占用的字节数。
+   + query_count：字典被查询的次数。
+   + hit_rate：字典数据查询的命中率。
+   + element_count：已载入数据的行数
+   + load_factor：数据的加载率。
+   + source：数据源信息。
+   + last_exception：异常信息，需要重点关注。如果字典在加载过程中产生异常，那么异常信息会写入此字段。last_exception是获取字典调试信息的主要方式。
+
+2. 数据查询
+
+   在正常情况下，字典数据只能通过字典函数获取，例如下面的语句就使用到了`dictGet('dict_name','attr_name',key)`函数：
+
+   ```sql
+   SELECT dictGet('test_flat_dict','name',toUInt64(1))
+   ```
+
+   如果字典使用了复合型key，则需要使用元组作为参数传入：
+
+   ```sql
+   SELECT dictGet('test_ip_trie_dict', 'asn', tuple(IPv4StringToNum('82.118.230.0')))
+   ```
+
+   除了dictGet函数之外，ClickHouse还提供了一系列以dictGet为前缀的字典函数，具体如下所示。
+
+   + 获取整型数据的函数：dictGetUInt8、dictGetUInt16、dictGetUInt32、dictGetUInt64、dictGetInt8、dictGetInt16、dictGetInt32、dictGetInt64。
+   + 获取浮点数据的函数：dictGetFloat32、dictGetFloat64。
+   + 获取日期数据的函数：dictGetDate、dictGetDateTime。
+   + 获取字符串数据的函数：dictGetString、dictGetUUID。
+
+   这些函数的使用方法与dictGet大同小异，此处不再赘述。
+
+3. 字典表
+
+   除了通过字典函数读取数据之外，ClickHouse还提供了另外一种借助字典表的形式来读取数据。字典表是使用Dictionary表引擎的数据表，比如下面的例子：
+
+   ```sql
+   CREATE TABLE tb_test_flat_dict (
+     id UInt64,
+     code String,
+     name String
+   ) ENGINE = Dictionary(test_flat_dict);
+   ```
+
+   通过这张表，就能查询到字典中的数据。更多关于字典引擎的信息详见第8章。
+
+4. 使用DDL查询创建字典
+
+   从19.17.4.11版本开始，ClickHouse开始支持使用DDL查询创建字典，例如：
+
+   ```sql
+   CREATE DICTIONARY test_dict(
+     id UInt64,
+     value String
+   )
+   PRIMARY KEY id
+   LAYOUT(FLAT())
+   SOURCE(FILE(PATH '/usr/bin/cat' FORMAT TabSeparated))
+   LIFETIME(1)
+   ```
+
+   可以看到，其配置参数与之前并无差异，只是转成了DDL的形式。
+
+## 5.3 本章小结
+
+​	通过对本章的学习，我们知道了ClickHouse拥有内置与扩展两类数据字典，同时也掌握了数据字典的配置、更新和查询的基本操作。在内置字典方面，目前只有一种YM字典且需要自行准备数据，而扩展字典是更加常用的字典类型。在扩展字典方面，目前拥有7种类型，其中flat、hashed和range_hashed依次拥有最高的性能。数据字典能够有效地帮助我们消除不必要的JOIN操作（例如根据ID转名称），优化SQL查询，为查询性能带来质的提升。下一章将开始介绍MergeTree表引擎的核心原理。
+
+# 6. MergeTree原理解析
+
+​	表引擎是ClickHouse设计实现中的一大特色。可以说，是表引擎决定了一张数据表最终的“性格”，比如数据表拥有何种特性、数据以何种形式被存储以及如何被加载。ClickHouse拥有非常庞大的表引擎体系，截至本书完成时，其共拥有合并树、外部存储、内存、文件、接口和其他6大类20多种表引擎。而在这众多的表引擎中，又属合并树（MergeTree）表引擎及其家族系列（*MergeTree）最为强大，在生产环境的绝大部分场景中，都会使用此系列的表引擎。因为只有合并树系列的表引擎才支持主键索引、数据分区、数据副本和数据采样这些特性，同时也只有此系列的表引擎支持ALTER相关操作。
+
+​	合并树家族自身也拥有多种表引擎的变种。其中MergeTree作为家族中最基础的表引擎，提供了主键索引、数据分区、数据副本和数据采样等基本能力，而家族中其他的表引擎则在MergeTree的基础之上各有所长。例如ReplacingMergeTree表引擎具有删除重复数据的特性，而SummingMergeTree表引擎则会按照排序键自动聚合数据。如果给合并树系列的表引擎加上Replicated前缀，又会得到一组支持数据副本的表引擎，例如ReplicatedMergeTree、ReplicatedReplacingMergeTree、ReplicatedSummingMergeTree等。合并树表引擎家族如图6-1所示。
+
+![img](https://pic2.zhimg.com/80/v2-db132f45192b5415ed031369e7908cf5_1440w.jpg)
+
+​	虽然合并树的变种很多，但MergeTree表引擎才是根基。作为合并树家族系列中最基础的表引擎，MergeTree具备了该系列其他表引擎共有的基本特征，所以吃透了MergeTree表引擎的原理，就能够掌握该系列引擎的精髓。本章就针对MergeTree的一些基本原理进行解读。
+
+## 6.1 MergeTree的创建方式与存储结构
+
+​	MergeTree在写入一批数据时，数据总会以数据片段的形式写入磁盘，且数据片段不可修改。为了避免片段过多，ClickHouse会通过后台线程，定期合并这些数据片段，属于相同分区的数据片段会被合成一个新的片段。这种数据片段往复合并的特点，也正是合并树名称的由来。
+
+### 6.1.1 MergeTree的创建方式
+
+​	创建MergeTree数据表的方法，与我们第4章介绍的定义数据表的方法大致相同，但需要将ENGINE参数声明为MergeTree()，其完整的语法如下所示：
+
+```sql
+CREATE TABLE [IF NOT EXISTS] [db_name.]table_name (
+name1 [type] [DEFAULT|MATERIALIZED|ALIAS expr],
+name2 [type] [DEFAULT|MATERIALIZED|ALIAS expr],
+省略...
+) ENGINE = MergeTree()
+[PARTITION BY expr]
+[ORDER BY expr]
+[PRIMARY KEY expr]
+[SAMPLE BY expr]
+[SETTINGS name=value, 省略...]
+```
+
+​	MergeTree表引擎除了常规参数之外，还拥有一些独有的配置选项。接下来会着重介绍其中几个重要的参数，包括它们的使用方法和工作原理。但是在此之前，还是先介绍一遍它们的作用。
+
+1. PARTITION BY [选填]：分区键，用于指定表数据以何种标准进行分区。分区键既可以是单个列字段，也可以通过元组的形式使用多个列字段，同时它也支持使用列表达式。如果不声明分区键，则ClickHouse会生成一个名为all的分区。合理使用数据分区，可以有效减少查询时数据文件的扫描范围，更多关于数据分区的细节会在6.2节介绍。
+
+2. ORDER BY [必填]：排序键，用于指定在一个数据片段内，数据以何种标准排序。默认情况下主键（PRIMARY KEY）与排序键相同。排序键既可以是单个列字段，例如ORDER BYCounterID，也可以通过元组的形式使用多个列字段，例如`ORDER BY（CounterID,EventDate）`。当使用多个列字段排序时，以`ORDER BY（CounterID,EventDate）`为例，在单个数据片段内，数据首先会以CounterID排序，相同CounterID的数据再按EventDate排序。
+
+3. PRIMARY KEY [选填]：主键，顾名思义，声明后会依照主键字段生成一级索引，用于加速表查询。默认情况下，主键与排序键(ORDER BY)相同，所以通常直接使用ORDER BY代为指定主键，无须刻意通过PRIMARY KEY声明。所以在一般情况下，在单个数据片段内，数据与一级索引以相同的规则升序排列。与其他数据库不同，MergeTree主键允许存在重复数据（ReplacingMergeTree可以去重）。
+
+4. SAMPLE BY [选填]：抽样表达式，用于声明数据以何种标准进行采样。如果使用了此配置项，那么在主键的配置中也需要声明同样的表达式，例如：
+
+   ```sql
+   省略...
+   ) ENGINE = MergeTree()
+   ORDER BY (CounterID, EventDate, intHash32(UserID)
+   SAMPLE BY intHash32(UserID)
+   ```
+
+   抽样表达式需要配合SAMPLE子查询使用，这项功能对于选取抽样数据十分有用，更多关于抽样查询的使用方法会在第9章介绍。
+
+5. SETTINGS：index_granularity [选填]：index_granularity对于MergeTree而言是一项非常重要的参数，它表示索引的粒度，默认值为8192。也就是说，MergeTree的索引在默认情况下，每间隔8192行数据才生成一条索引，其具体声明方式如下所示：
+
+   ```sql
+   省略...
+   ) ENGINE = MergeTree()
+   省略...
+   SETTINGS index_granularity = 8192;
+   ```
+
+   8192是一个神奇的数字，在ClickHouse中大量数值参数都有它的影子，可以被其整除（例如最小压缩块大小min_compress_block_size:65536）。通常情况下并不需要修改此参数，但理解它的工作原理有助于我们更好地使用MergeTree。关于索引详细的工作原理会在后续阐述。
+
+6. SETTINGS：index_granularity_bytes [选填]：在19.11版本之前，ClickHouse只支持固定大小的索引间隔，由index_granularity控制，默认为8192。在新版本中，它增加了自适应间隔大小的特性，即根据每一批次写入数据的体量大小，动态划分间隔大小。而数据的体量大小，正是由index_granularity_bytes参数控制的，默认为10M(10×1024×1024)，设置为0表示不启动自适应功能。
+7. SETTINGS：enable_mixed_granularity_parts [选填]：设置是否开启自适应索引间隔的功能，默认开启。
+8. SETTINGS：merge_with_ttl_timeout [选填]：从19.6版本开始，MergeTree提供了数据TTL的功能，关于这部分的详细介绍，将留到第7章介绍。
+9. SETTINGS：storage_policy [选填]：从19.15版本开始，MergeTree提供了多路径的存储策略，关于这部分的详细介绍，同样留到第7章介绍。
+
+### 6.1.2 MergeTree的存储结构
+
+> [ClickHouse核心引擎MergeTree解读 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/361622782)
+
+​	MergeTree表引擎中的数据是拥有物理存储的，数据会按照分区目录的形式保存到磁盘之上，其完整的存储结构如图6-2所示。
+
+![img](https://pic1.zhimg.com/80/v2-bccb6c9e3bbae2f9f679a82fd8fb0e98_1440w.jpg)
+
+P213
