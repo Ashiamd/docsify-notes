@@ -3251,6 +3251,482 @@ name2 [type] [DEFAULT|MATERIALIZED|ALIAS expr],
 
 10. **skp\_idx\_[Column].idx与skp\_idx\_[Column].mrk**：如果在建表语句中声明了**二级索引**，则会额外生成相应的二级索引与标记文件，它们同样也使用二进制存储。<u>二级索引在ClickHouse中又称**跳数索引**，目前拥有minmax、set、ngrambf_v1和tokenbf_v1四种类型。这些索引的最终目标与一级稀疏索引相同，都是为了进一步减少所需扫描的数据范围，以加速整个查询过程</u>。更多关于二级索引的细节会在6.4节阐述。
 
-## 6.2 数据分区
+## * 6.2 数据分区
 
-P216
+​	通过先前的介绍已经知晓在MergeTree中，数据是以分区目录的形式进行组织的，每个分区独立分开存储。借助这种形式，在对MergeTree进行数据查询时，可以有效跳过无用的数据文件，只使用最小的分区目录子集。这里有一点需要明确，<u>在ClickHouse中，数据分区（partition）和数据分片（shard）是完全不同的概念</u>。
+
++ **数据分区是针对本地数据而言的，是对数据的一种纵向切分。MergeTree并不能依靠分区的特性，将一张表的数据分布到多个ClickHouse服务节点**。
++ **而横向切分是数据分片（shard）的能力**，关于这一点将在后续章节介绍。本节将针对“数据分区目录具体是如何运作的”这一问题进行分析。
+
+### * 6.2.1 数据的分区规则
+
+​	<u>MergeTree数据分区的规则由分区ID决定，而具体到每个数据分区所对应的ID，则是由分区键的取值决定的</u>。**分区键支持使用任何一个或一组字段表达式声明，其业务语义可以是年、月、日或者组织单位等任何一种规则**。针对取值数据类型的不同，分区ID的生成逻辑目前拥有四种规则：
+
+1. <u>不指定分区键：如果不使用分区键，即不使用PARTITIONBY声明任何分区表达式，则分区ID默认取名为all，所有的数据都会被写入这个all分区</u>。
+
+2. 使用整型：如果分区键取值属于整型（兼容UInt64，包括有符号整型和无符号整型），且无法转换为日期类型YYYYMMDD格式，则直接按照该整型的字符形式输出，作为分区ID的取值。
+
+3. 使用日期类型：如果分区键取值属于日期类型，或者是能够转换为YYYYMMDD格式的整型，则使用按照YYYYMMDD进行格式化后的字符形式输出，并作为分区ID的取值。
+
+4. 使用其他类型：**如果分区键取值既不属于整型，也不属于日期类型，例如String、Float等，则通过128位Hash算法取其Hash值作为分区ID的取值**。
+
+​	数据在写入时，会对照分区ID落入相应的数据分区，表6-1列举了分区ID在不同规则下的一些示例。
+
+<table>
+  <tr>
+  	<th>类型</th>
+    <th>样例数据</th>
+    <th>分区表达式</th>
+    <th>分区ID</th>
+  </tr>
+  <tr>
+  	<td>无分区键</td>
+    <td></td>
+    <td>无</td>
+    <td>all</td>
+  </tr>
+  <tr>
+  	<td rowspan="2">整型</td>
+    <td>18, 19, 20</td>
+    <td>PARTITION BY Age</td>
+    <td>分区1: 18<br/>分区2: 19<br/>分区3: 20</td>
+  </tr>
+  <tr>
+    <td>'A0', 'A1', 'A2'</td>
+    <td>PARTITION BY length(Code)</td>
+    <td>分区1: 2</td>
+  </tr>
+  <tr>
+  	<td rowspan="2">日期</td>
+    <td>2019-05-01, 2019-06-11</td>
+    <td>PARTITION BY EventTime</td>
+    <td>分区1: 20190501<br/>分区2: 20190611</td>
+  </tr>
+  <tr>
+    <td>2019-05-01, 2019-06-11</td>
+    <td>PARTITION BY toYYYYMM(EventTime)</td>
+    <td>分区1: 201905<br/>分区2: 201906</td>
+  </tr>
+  <tr>
+  	<td>其他</td>
+    <td>'wwww.nauu.com'</td>
+    <td>PARTITION BY URL</td>
+    <td>分区1: 15b31467bc77falc24ac9380cd8b4033</td>
+  </tr>
+</table>
+
+​	**如果通过元组的方式使用多个分区字段，则分区ID依旧是根据上述规则生成的，只是多个ID之间通过“-”符号依次拼接**。例如按照上述表格中的例子，使用两个字段分区：
+
+```sql
+PARTITION BY (length(Code),EventTime)
+```
+
+​	则最终的分区ID会是下面的模样：
+
+```sql
+2-20190501
+2-20190611
+```
+
+### * 6.2.2 分区目录的命名规则
+
+​	通过上一小节的介绍，我们已经知道了分区ID的生成规则。但是如果进入数据表所在的磁盘目录后，会发现MergeTree分区目录的完整物理名称并不是只有ID而已，在ID之后还跟着一串奇怪的数字，例如201905_1_1_0。那么这些数字又代表着什么呢？
+
+​	众所周知，对于MergeTree而言，它最核心的特点是其分区目录的合并动作。但是我们可曾想过，从分区目录的命名中便能够解读出它的合并逻辑。在这一小节，我们会着重对命名公式中各分项进行解读，而关于具体的目录合并过程将会留在后面小节讲解。一个完整分区目录的命名公式如下所示：
+
+```shell
+PartitionID_MinBlockNum_MaxBlockNum_Level
+```
+
+​	如果对照着示例数据，那么数据与公式的对照关系会如同图6-3所示一般。
+
+​	`201905_1_1_0`
+
+上图中，201905表示分区目录的ID（PartitionID）；\_1\_1分别表示最小的数据块编号（MinBlockNum）与最大的数据块编号（MaxBlockNum）；而最后的_0则表示目前合并的层级（Level）。接下来开始分别解释它们的含义：
+
+1. PartitionID：分区ID，无须多说，关于分区ID的规则在上一小节中已经做过详细阐述了。
+2. MinBlockNum和MaxBlockNum：顾名思义，**最小数据块编号与最大数据块编号**。<u>ClickHouse在这里的命名似乎有些歧义，很容易让人与稍后会介绍到的数据压缩块混淆。但是本质上它们毫无关系，这里的BlockNum是一个整型的**自增长编号**</u>。如果将其设为n的话，那么计数n在单张MergeTree数据表内全局累加，n从1开始，每当新创建一个分区目录时，计数n就会累积加1。对于一个新的分区目录而言，MinBlockNum与MaxBlockNum取值一样，同等于n，例如201905_1_1_0、201906_2_2_0以此类推。但是也有例外，当分区目录发生合并时，对于新产生的合并目录MinBlockNum与MaxBlockNum有着另外的取值规则。对于合并规则，我们留到下一小节再详细讲解。
+3. Level：合并的层级，可以理解为某个分区被合并过的次数，或者这个分区的年龄。数值越高表示年龄越大。Level计数与BlockNum有所不同，它并不是全局累加的。对于每一个新创建的分区目录而言，其初始值均为0。之后，以分区为单位，如果相同分区发生合并动作，则在相应分区内计数累积加1。
+
+### * 6.2.3 分区目录的合并过程
+
+​	MergeTree的分区目录和传统意义上其他数据库有所不同。
+
++ 首先，**MergeTree的分区目录并不是在数据表被创建之后就存在的，而是在数据写入过程中被创建的**。也就是说如果一张数据表没有任何数据，那么也不会有任何分区目录存在。
++ 其次，它的分区目录在建立之后也并不是一成不变的。在其他某些数据库的设计中，追加数据后目录自身不会发生变化，只是在相同分区目录中追加新的数据文件。<u>而MergeTree完全不同，伴随着每一批数据的写入（一次INSERT语句），MergeTree都会生成一批新的分区目录。即便不同批次写入的数据属于相同分区，也会生成不同的分区目录。也就是说，对于同一个分区而言，也会存在多个分区目录的情况。在之后的某个时刻（写入后的10～15分钟，也可以手动执行optimize查询语句），ClickHouse会通过后台任务再将属于相同分区的多个目录合并成一个新的目录</u>。**已经存在的旧分区目录并不会立即被删除，而是在之后的某个时刻通过后台任务被删除（默认8分钟）**。
+
+​	属于同一个分区的多个目录，在合并之后会生成一个全新的目录，目录中的索引和数据文件也会相应地进行合并。新目录名称的合并方式遵循以下规则，其中：
+
++ MinBlockNum：取同一分区内所有目录中最小的MinBlockNum值。
++ MaxBlockNum：取同一分区内所有目录中最大的MaxBlockNum值。
++ Level：取同一分区内最大Level值并加1。
+
+​	在图6-4中，partition_v5测试表按日期字段格式分区，即PARTITION BY toYYYYMM（EventTime），T表示时间。假设在T0时刻，首先分3批（3次INSERT语句）写入3条数据：
+
+```sql
+INSERT INTO partition_v5 VALUES (A, c1, '2019-05-01')
+INSERT INTO partition_v5 VALUES (B, c1, '2019-05-02')
+INSERT INTO partition_v5 VALUES (C, c1, '2019-06-01')
+```
+
+​	按照目录规，上述代码会创建3个分区目录。分区目录的名称由PartitionID、MinBlockNum、MaxBlockNum和Level组成，其中PartitionID根据6.2.1节介绍的生成规则，3个分区目录的ID依次为201905、201905和201906。而对于每个新建的分区目录而言，它们的MinBlockNum与MaxBlockNum取值相同，均来源于表内全局自增的BlockNum。BlockNum初始为1，每次新建目录后累计加1。所以，3个分区目录的MinBlockNum与MaxBlockNum依次为0_0、1_1和2_2。最后是Level层级，每个新建的分区目录初始Level都是0。所以3个分区目录的最终名称分别是201905_1_1_0、201905_2_2_0和201906_3_3_0。
+
+​	假设在T1时刻，MergeTree的合并动作开始了，那么属于同一分区的201905_1_1_0与201905_2_2_0目录将发生合并。从图6-4所示过程中可以发现，合并动作完成后，生成了一个新的分区201905_1_2_1。根据本节所述的合并规则，其中，MinBlockNum取同一分区内所有目录中最小的MinBlockNum值，所以是1；MaxBlockNum取同一分区内所有目录中最大的MaxBlockNum值，所以是2；而Level则取同一分区内，最大Level值加1，所以是1。而后续T2时刻的合并规则，只是在重复刚才所述的过程而已。
+
+​	至此，大家已经知道了分区ID、目录命名和目录合并的相关规则。最后，再用一张完整的示例图作为总结，描述MergeTree分区目录从创建、合并到删除的整个过程，如图6-5所示。
+
+​	从图6-5中应当能够发现，**分区目录在发生合并之后，旧的分区目录并没有被立即删除，而是会存留一段时间。但是旧的分区目录已不再是激活状态（active=0），所以在数据查询时，它们会被自动过滤掉**。
+
+## 6.3 一级索引
+
+​	MergeTree的主键使用PRIMARY KEY定义，待主键定义之后，MergeTree会依据index_granularity间隔（默认8192行），为数据表生成一级索引并保存至primary.idx文件内，索引数据按照PRIMARY KEY排序。<u>相比使用PRIMARY KEY定义，更为常见的简化形式是通过ORDER BY指代主键</u>。<u>在此种情形下，PRIMARY KEY与ORDER BY定义相同，所以索引（primary.idx）和数据（.bin）会按照完全相同的规则排序</u>。对于PRIMARY KEY与ORDER BY定义有差异的应用场景在SummingMergeTree引擎章节部分会所有介绍，而关于数据文件的更多细节，则留在稍后的6.5节介绍，本节重点讲解一级索引部分。
+
+### 6.3.1 稀疏索引
+
+​	primary.idx文件内的一级索引采用稀疏索引实现。此时有人可能会问，既然提到了稀疏索引，那么是不是也有稠密索引呢？还真有！稀疏索引和稠密索引的区别如图6-6所示。
+
+![image.png](https://ewr1.vultrobjects.com/imgur2/000/005/226/177_993_97d.jpg)
+
+​	**简单来说，在稠密索引中每一行索引标记都会对应到一行具体的数据记录。而在稀疏索引中，每一行索引标记对应的是一段数据，而不是一行**。用一个形象的例子来说明：如果把MergeTree比作一本书，那么稀疏索引就好比是这本书的一级章节目录。一级章节目录不会具体对应到每个字的位置，只会记录每个章节的起始页码。
+
+​	稀疏索引的优势是显而易见的，它仅需使用少量的索引标记就能够记录大量数据的区间位置信息，且数据量越大优势越为明显。以默认的索引粒度（8192）为例，MergeTree只需要12208行索引标记就能为1亿行数据记录提供索引。**由于稀疏索引占用空间小，所以primary.idx内的索引数据常驻内存，取用速度自然极快**。
+
+### 6.3.2 索引粒度
+
+​	在先前的篇幅中已经数次出现过index_granularity这个参数了，它表示索引的粒度。虽然在新版本中，ClickHouse提供了自适应粒度大小的特性，但是为了便于理解，仍然会使用固定的索引粒度（默认8192）进行讲解。索引粒度对MergeTree而言是一个非常重要的概念，因此很有必要对它做一番深入解读。索引粒度就如同标尺一般，会丈量整个数据的长度，并依照刻度对数据进行标注，最终将数据标记成多个间隔的小段，如图6-7所示。
+
+![img](https://ask.qcloudimg.com/http-save/yehe-6510437/843fb04c503002fb78c5ae2c796e6c5d.png?imageView2/2/w/1620)
+
+​	数据以index_granularity的粒度（默认8192）被标记成多个小的区间，其中每个区间最多8192行数据。MergeTree使用MarkRange表示一个具体的区间，并通过start和end表示其具体的范围。<u>index_granularity的命名虽然取了索引二字，但它不单只作用于一级索引（.idx），同时也会影响数据标记（.mrk）和数据文件（.bin）。因为仅有一级索引自身是无法完成查询工作的，它需要借助数据标记才能定位数据，所以**一级索引和数据标记的间隔粒度相同（同为index_granularity行），彼此对齐**。而数据文件也会依照index_granularity的间隔粒度生成压缩数据块</u>。关于数据文件和数据标记的细节会在后面说明。
+
+### * 6.3.3 索引数据的生成规则
+
+​	**由于是稀疏索引，所以MergeTree需要间隔index_granularity行数据才会生成一条索引记录，其索引值会依据声明的主键字段获取**。图6-8所示是对照测试表hits_v1中的真实数据具象化后的效果。hits_v1使用年月分区（PARTITION BY toYYYYMM(EventDate)），所以2014年3月份的数据最终会被划分到同一个分区目录内。如果使用CounterID作为主键（ORDER BY CounterID），则每间隔8192行数据就会取一次CounterID的值作为索引值，索引数据最终会被写入primary.idx文件进行保存。
+
+![preload](https://ask.qcloudimg.com/http-save/yehe-6510437/552a4f5bf75226772a36ade497fb372f.png)
+
+​	图6-8 测试表hits_v1具象化后的效果
+
+​	例如第0(8192\*0)行CounterID取值57，第8192(8192\*1)行CounterID取值1635，而第16384(8192\*2)行CounterID取值3266，最终索引数据将会是5716353266。
+
+​	从图6-8中也能够看出，MergeTree对于稀疏索引的存储是非常紧凑的，索引值前后相连，按照主键字段顺序紧密地排列在一起。不仅此处，<u>ClickHouse中很多数据结构都被设计得非常紧凑，比如其使用位读取替代专门的标志位或状态码，可以不浪费哪怕一个字节的空间。以小见大，这也是ClickHouse为何性能如此出众的深层原因之一</u>。
+
+​	如果使用多个主键，例如ORDER BY(CounterID,EventDate)，则每间隔8192行可以同时取CounterID与EventDate两列的值作为索引值，具体如图6-9所示。
+
+![preload](https://ask.qcloudimg.com/http-save/yehe-6510437/732f1a1965108554cb6a4fa0a8fdabe2.png)
+
+​	图6-9 使用CounterID和EventDate作为主键
+
+### * 6.3.4 索引的查询过程
+
+​	在介绍了上述关于索引的一些概念之后，接下来说明索引具体是如何工作的。首先，我们需要了解什么是MarkRange。<u>MarkRange在ClickHouse中是用于定义标记区间的对象。通过先前的介绍已知，MergeTree按照index_granularity的间隔粒度，将一段完整的数据划分成了多个小的间隔数据段，一个具体的数据段即是一个MarkRange</u>。MarkRange与索引编号对应，使用start和end两个属性表示其区间范围。通过与start及end对应的索引编号的取值，即能够得到它所对应的数值区间。而数值区间表示了此MarkRange包含的数据范围。
+
+​	如果只是这么干巴巴地介绍，大家可能会觉得比较抽象，下面用一份示例数据来进一步说明。假如现在有一份测试数据，共192行记录。其中，主键ID为String类型，ID的取值从A000开始，后面依次为A001、A002……直至A192为止。MergeTree的索引粒度index_granularity=3，根据索引的生成规则，primary.idx文件内的索引数据会如图6-10所示。
+
+![preload](https://ask.qcloudimg.com/http-save/yehe-6510437/50a9b43913d45604556558514b036f94.png)
+
+​	图6-10 192行ID索引的物理存储示意
+
+​	根据索引数据，MergeTree会将此数据片段划分成192/3=64个小的MarkRange，两个相邻MarkRange相距的步长为1。其中，所有MarkRange（整个数据片段）的最大数值区间为[A000,+inf)，其完整的示意如图6-11所示。
+
+![preload](https://ask.qcloudimg.com/http-save/yehe-6510437/adc6fdf1d99c04086c03552db9c1ea30.png)
+
+​	图6-11 64个MarkRange与其数值区间范围的示意图
+
+​	在引出了数值区间的概念之后，对于索引的查询过程就很好解释了。索引查询其实就是两个数值区间的交集判断。其中，一个区间是由基于主键的查询条件转换而来的条件区间；而另一个区间是刚才所讲述的与MarkRange对应的数值区间。整个索引查询过程可以大致分为3个步骤。
+
+1. **生成查询条件区间**：首先，将查询条件转换为条件区间。即便是单个值的查询条件，也会被转换成区间的形式，例如下面的例子。
+
+   ```sql
+   WHERE ID = 'A003'
+   ['A003', 'A003']
+   WHERE ID > 'A000'
+   ('A000', +inf)
+   WHERE ID < 'A188'
+   (-inf, 'A188')
+   WHERE ID LIKE 'A006%'
+   ['A006', 'A007')
+   ```
+
+2. **递归交集判断**：以递归的形式，依次对MarkRange的数值区间与条件区间做交集判断。从最大的区间[A000,+inf)开始：
+
+   + 如果不存在交集，则直接通过剪枝算法优化此整段MarkRange。
+   + 如果存在交集，且MarkRange步长大于8(end-start)，则将此区间进一步拆分成8个子区间（由merge_tree_coarse_index_granularity指定，默认值为8），并重复此规则，继续做递归交集判断。
+   + 如果存在交集，且MarkRange不可再分解（步长小于8），则记录MarkRange并返回。
+
+3. **合并MarkRange区间**：将最终匹配的MarkRange聚在一起，合并它们的范围。
+
+​	完整逻辑的示意如图6-12所示。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/ffba91545f274ce9978a2db70abe76e9.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA6YKL6YGi55qE5rWB5rWq5YmR5a6i,size_20,color_FFFFFF,t_70,g_se,x_16#pic_center)
+
+​	图6-12 索引查询完整过程的逻辑示意图
+
+​	MergeTree通过递归的形式持续向下拆分区间，最终将MarkRange定位到最细的粒度，以帮助在后续读取数据的时候，能够最小化扫描数据的范围。以图6-12所示为例，当查询条件`WHERE ID='A003'`的时候，最终只需要读取[A000,A003]和[A003,A006]两个区间的数据,它们对应MarkRange(start:0,end:2)范围，而其他无用的区间都被裁剪掉了。因为MarkRange转换的数值区间是闭区间，所以会额外匹配到临近的一个区间。
+
+## 6.4 二级索引
+
+​	除了一级索引之外，MergeTree同样支持二级索引。<u>二级索引又称跳数索引，由数据的聚合信息构建而成</u>。根据索引类型的不同，其聚合信息的内容也不同。跳数索引的目的与一级索引一样，也是帮助查询时减少数据扫描的范围。
+
+​	跳数索引在默认情况下是关闭的，需要设置allow_experimental_data_skipping_indices（该参数在新版本中已被取消）才能使用：
+
+```sql
+SET allow_experimental_data_skipping_indices = 1
+```
+
+​	跳数索引需要在CREATE语句内定义，它支持使用元组和表达式的形式声明，其完整的定义语法如下所示：
+
+```sql
+INDEX index_name expr TYPE index_type(...) GRANULARITY granularity
+```
+
+​	**与一级索引一样，如果在建表语句中声明了跳数索引，则会额外生成相应的索引与标记文件（skp_idx\_[Column].idx与skp\_idx\_[Column].mrk）**。
+
+### * 6.4.1 granularity与index_granularity的关系
+
+​	不同的跳数索引之间，除了它们自身独有的参数之外，还都共同拥有granularity参数。初次接触时，很容易将granularity与index_granularity的概念弄混淆。**对于跳数索引而言，index_granularity定义了数据的粒度，而granularity定义了聚合信息汇总的粒度。换言之，granularity定义了一行跳数索引能够跳过多少个index_granularity区间的数据**。
+
+​	要解释清楚granularity的作用，就要从跳数索引的数据生成规则说起，其规则大致是这样的：首先，按照index_granularity粒度间隔将数据划分成n段，总共有[0,n-1]个区间（n=total_rows/index_granularity，向上取整）。接着，根据索引定义时声明的表达式，从0区间开始，依次按index_granularity粒度从数据中获取聚合信息，每次向前移动1步(n+1)，聚合信息逐步累加。最后，**当移动granularity次区间时，则汇总并生成一行跳数索引数据**。
+
+​	以minmax索引为例，它的聚合信息是在一个index_granularity区间内数据的最小和最大极值。以下图为例，假设index_granularity=8192且granularity=3，则数据会按照index_granularity划分为n等份，MergeTree从第0段分区开始，依次获取聚合信息。当获取到第3个分区时（granularity=3），则汇总并会生成第一行minmax索引（前3段minmax极值汇总后取值为[1,9]），如图6-13所示。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/8e6de5f6ad54415fa28276023c57a764.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA6YKL6YGi55qE5rWB5rWq5YmR5a6i,size_20,color_FFFFFF,t_70,g_se,x_16#pic_center)
+
+​	图6-13 跳数索引granularity与index_granularity的关系
+
+### * 6.4.2 跳数索引的类型
+
+​	目前，MergeTree共支持4种跳数索引，分别是minmax、set、ngrambf_v1和tokenbf_v1。**一张数据表支持同时声明多个跳数索引**，例如：
+
+```sql
+CREATE TABLE skip_test (
+  ID String,
+  URL String,
+  Code String,
+  EventTime Date,
+  INDEX a ID TYPE minmax GRANULARITY 5,
+  INDEX b（length(ID) * 8） TYPE set(2) GRANULARITY 5,
+  INDEX c（ID，Code） TYPE ngrambf_v1(3, 256, 2, 0) GRANULARITY 5,
+  INDEX d ID TYPE tokenbf_v1(256, 2, 0) GRANULARITY 5
+) ENGINE = MergeTree()
+省略...
+```
+
+​	接下来，就借助上面的例子逐个介绍这几种跳数索引的用法：
+
+1. minmax：minmax索引记录了一段数据内的最小和最大极值，其索引的作用类似分区目录的minmax索引，能够快速跳过无用的数据区间，示例如下所示：
+
+   ```sql
+   INDEX a ID TYPE minmax GRANULARITY 5
+   ```
+
+   上述示例中minmax索引会记录这段数据区间内ID字段的极值。极值的计算涉及每5个index_granularity区间中的数据。
+
+2. set：set索引直接记录了声明字段或表达式的取值（唯一值，无重复），其完整形式为set(max_rows)，其中max_rows是一个阈值，表示在一个index_granularity内，索引最多记录的数据行数。如果max_rows=0，则表示无限制，例如：
+
+   ```sql
+   INDEX b（length(ID) * 8） TYPE set(100) GRANULARITY 5
+   ```
+
+   上述示例中set索引会记录数据中ID的长度*8后的取值。其中，每个index_granularity内最多记录100条。
+
+3. ngrambf_v1：<u>ngrambf_v1索引记录的是数据短语的布隆表过滤器，只支持String和FixedString数据类型</u>。**ngrambf_v1只能够提升in、notIn、like、equals和notEquals查询的性能**，其完整形式为`ngrambf_v1(n,size_of_bloom_filter_in_bytes,number_of_hash_functions,random_seed)`。这些参数是一个布隆过滤器的标准输入，如果你接触过布隆过滤器，应该会对此十分熟悉。它们具体的含义如下：
+
+   + n：token长度，依据n的长度将数据切割为token短语。
+   + size_of_bloom_filter_in_bytes：布隆过滤器的大小。
+   + number_of_hash_functions：布隆过滤器中使用Hash函数的个数。
+   + random_seed：Hash函数的随机种子。
+
+   例如在下面的例子中，ngrambf_v1索引会依照3的粒度将数据切割成短语token，token会经过2个Hash函数映射后再被写入，布隆过滤器大小为256字节。
+
+   ```sql
+   INDEX c（ID，Code） TYPE ngrambf_v1(3, 256, 2, 0) GRANULARITY 5
+   ```
+
+4. tokenbf_v1：tokenbf_v1索引是ngrambf_v1的变种，同样也是一种布隆过滤器索引。tokenbf_v1除了短语token的处理方法外，其他与ngrambf_v1是完全一样的。tokenbf_v1会自动按照非字符的、数字的字符串分割token，具体用法如下所示：
+
+   ```sql
+   INDEX d ID TYPE tokenbf_v1(256, 2, 0) GRANULARITY 5
+   ```
+
+## 6.5 数据存储
+
+​	此前已经多次提过，在MergeTree中数据是按列存储的。但是前面的介绍都较为抽象，具体到存储的细节、MergeTree是如何工作的，读者心中难免会有疑问。数据存储，就好比一本书中的文字，在排版时，绝不会密密麻麻地把文字堆满，这样会导致难以阅读。更为优雅的做法是，将文字按段落的形式精心组织，使其错落有致。本节将进一步介绍MergeTree在数据存储方面的细节，尤其是其中关于压缩数据块的概念。
+
+### * 6.5.1 各列独立存储
+
+​	**在MergeTree中，数据按列存储**。而具体到每个列字段，数据也是独立存储的，每个列字段都拥有一个与之对应的.bin数据文件。也正是这些.bin文件，最终承载着数据的物理存储。数据文件以分区目录的形式被组织存放，所以在.bin文件中只会保存当前分区片段内的这一部分数据，其具体组织形式已经在图6-2中展示过。<u>按列独立存储的设计优势显而易见：一是可以更好地进行数据压缩（相同类型的数据放在一起，对压缩更加友好），二是能够最小化数据扫描的范围</u>。
+
+​	而对应到存储的具体实现方面，MergeTree也并不是一股脑地将数据直接写入.bin文件，而是经过了一番精心设计：
+
++ 首先，**数据是经过压缩的**，目前支持LZ4、ZSTD、Multiple和Delta几种算法，默认使用LZ4算法；
++ 其次，**数据会事先依照ORDER BY的声明排序**；
++ 最后，**数据是以压缩数据块的形式被组织并写入.bin文件中的**。
+
+​	压缩数据块就好比一本书的文字段落，是组织文字的基本单元。这个概念十分重要，值得多花些篇幅进一步展开说明。
+
+### * 6.5.2 压缩数据块
+
+​	一个压缩数据块由**头信息**和**压缩数据**两部分组成。<u>头信息固定使用9位字节表示，具体由1个UInt8（1字节）整型和2个UInt32（4字节）整型组成，分别代表使用的压缩算法类型、压缩后的数据大小和压缩前的数据大小</u>，具体如图6-14所示。
+
+<img src="https://img-blog.csdnimg.cn/29fde480235f41569de8863b569e9075.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA6YKL6YGi55qE5rWB5rWq5YmR5a6i,size_20,color_FFFFFF,t_70,g_se,x_16#pic_center" alt="在这里插入图片描述" style="zoom:50%;" />
+
+​	图6-14 压缩数据块示意图
+
+​	从图6-14所示中能够看到，.bin压缩文件是由多个压缩数据块组成的，而每个压缩数据块的头信息则是基于**CompressionMethod_CompressedSize_UncompressedSize**公式生成的。
+
+​	通过ClickHouse提供的clickhouse-compressor工具，能够查询某个.bin文件中压缩数据的统计信息。以测试数据集hits_v1为例，执行下面的命令：
+
+```shell
+clickhouse-compressor --stat < /chbase/
+/data/default/hits_v1/201403_1_34_3/JavaEnable.bin
+```
+
+执行后，会看到如下信息：
+
+```shell
+65536 12000
+65536 14661
+65536 4936
+65536 7506
+省略…
+```
+
+​	其中每一行数据代表着一个压缩数据块的头信息，其分别表示该压缩块中未压缩数据大小和压缩后数据大小（打印信息与物理存储的顺序刚好相反）。
+
+​	每个压缩数据块的体积，按照其压缩前的数据字节大小，都被严格控制在64KB～1MB，其上下限分别由min_compress_block_size（默认65536）与max_compress_block_size（默认1048576）参数指定。而**一个压缩数据块最终的大小，则和一个间隔（index_granularity）内数据的实际大小相关（是的，没错，又见到索引粒度这个老朋友了）**。
+
+​	MergeTree在数据具体的写入过程中，会依照索引粒度（默认情况下，每次取8192行），按批次获取数据并进行处理。如果把一批数据的未压缩大小设为size，则整个写入过程遵循以下规则：
+
+1. **单个批次数据size<64KB** ：如果单个批次数据小于64KB，则继续获取下一批数据，直至累积到size>=64KB时，生成下一个压缩数据块。
+2. **单个批次数据64KB<=size<=1MB** ：如果单个批次数据大小恰好在64KB与1MB之间，则直接生成下一个压缩数据块。
+3. **单个批次数据size>1MB** ：如果单个批次数据直接超过1MB，则首先按照1MB大小截断并生成下一个压缩数据块。剩余数据继续依照上述规则执行。此时，会出现一个批次数据生成多个压缩数据块的情况。
+
+​	整个过程逻辑如图6-15所示。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/78880d6564cc472e82cd6dc4721470fb.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA6YKL6YGi55qE5rWB5rWq5YmR5a6i,size_20,color_FFFFFF,t_70,g_se,x_16#pic_center)
+
+​	图6-15 切割压缩数据块的逻辑示意图
+
+​	经过上述的介绍后我们知道，**一个.bin文件是由1至多个压缩数据块组成的，每个压缩块大小在64KB～1MB之间**。多个压缩数据块之间，按照写入顺序首尾相接，紧密地排列在一起，如图6-16所示。
+
+​	在.bin文件中引入压缩数据块的目的至少有以下两个：
+
++ 其一，虽然数据被压缩后能够有效减少数据大小，降低存储空间并加速数据传输效率，但<u>数据的压缩和解压动作，其本身也会带来额外的性能损耗</u>。所以需要控制被压缩数据的大小，以求在性能损耗和压缩率之间寻求一种平衡。
++ 其二，在具体读取某一列数据时（.bin文件），首先需要将压缩数据加载到内存并解压，这样才能进行后续的数据处理。**通过压缩数据块，可以在不读取整个.bin文件的情况下将读取粒度降低到压缩数据块级别，从而进一步缩小数据读取的范围**。
+
+![4bd90f52fb3d995d7ed72b76057640af.png](https://img-blog.csdnimg.cn/img_convert/4bd90f52fb3d995d7ed72b76057640af.png)
+
+​	图6-16 读取粒度精确到压缩数据块
+
+## * 6.6 数据标记
+
+​	如果把MergeTree比作一本书，primary.idx一级索引好比这本书的一级章节目录，.bin文件中的数据好比这本书中的文字，那么数据标记(.mrk)会为一级章节目录和具体的文字之间建立关联。对于数据标记而言，它记录了两点重要信息：其一，是一级章节对应的页码信息；其二，是一段文字在某一页中的起始位置信息。这样一来，通过数据标记就能够很快地从一本书中立即翻到关注内容所在的那一页，并知道从第几行开始阅读。
+
+### 6.6.1 数据标记的生成规则
+
+​	数据标记作为衔接一级索引和数据的桥梁，其像极了做过标记小抄的书签，而且书本中每个一级章节都拥有各自的书签。它们之间的关系如图6-17所示。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/470393e7f5a845faa20fdf0fba6719f3.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA6YKL6YGi55qE5rWB5rWq5YmR5a6i,size_20,color_FFFFFF,t_70,g_se,x_16#pic_center)
+
+​	图6-17 通过索引下标编号找到对应的数据标记
+
+​	从图6-17中一眼就能发现数据标记的首个特征，即**数据标记和索引区间是对齐的，均按照index_granularity的粒度间隔**。如此一来，只需简单通过索引区间的下标编号就可以直接找到对应的数据标记。
+
+​	**为了能够与数据衔接，数据标记文件也与.bin文件一一对应**。即每一个列字段`[Column].bin`文件都有一个与之对应的`[Column].mrk`数据标记文件，用于记录数据在.bin文件中的偏移量信息。
+
+​	<u>一行标记数据使用一个元组表示，元组内包含两个整型数值的偏移量信息。它们分别表示在此段数据区间内，在对应的.bin压缩文件中，压缩数据块的起始偏移量；以及将该数据压缩块解压后，其未压缩数据的起始偏移量</u>。图6-18所示是.mrk文件内标记数据的示意。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/b5da8c5c13f1464a95b4cee5b3a32cab.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA6YKL6YGi55qE5rWB5rWq5YmR5a6i,size_20,color_FFFFFF,t_70,g_se,x_16#pic_center)
+
+​	图6-18 标记数据示意图
+
+​	如图6-18所示，每一行标记数据都表示了一个片段的数据（默认8192行）在.bin压缩文件中的读取位置信息。**标记数据与一级索引数据不同，<u>它并不能常驻内存</u>，而是使用LRU（最近最少使用）缓存策略加快其取用速度**。
+
+### 6.6.2 数据标记的工作方式
+
+​	**MergeTree在读取数据时，必须通过标记数据的位置信息才能够找到所需要的数据**。整个查找过程大致可以分为读取压缩数据块和读取数据两个步骤。为了便于解释，这里继续使用测试表hits_v1中的真实数据进行说明。图6-19所示为hits_v1测试表的JavaEnable字段及其标记数据与压缩数据的对应关系。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/991099c67dd04e1ba2307a8bb558fcb2.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA6YKL6YGi55qE5rWB5rWq5YmR5a6i,size_20,color_FFFFFF,t_70,g_se,x_16#pic_center)
+
+​	图6-19 JavaEnable字段的标记文件和压缩数据文件的对应关系
+
+​	首先，对图6-19所示左侧的标记数据做一番解释说明。JavaEnable字段的数据类型为UInt8，所以每行数值占用1字节。而hits_v1数据表的index_granularity粒度为8192，所以一个索引片段的数据大小恰好是8192B。按照6.5.2节介绍的压缩数据块的生成规则，如果单个批次数据小于64KB，则继续获取下一批数据，直至累积到size>=64KB时，生成下一个压缩数据块。因此在JavaEnable的标记文件中，每8行标记数据对应1个压缩数据块（1B*8192=8192B,64KB=65536B,65536/8192=8）。所以，从图6-19所示中能够看到，其左侧的标记数据中，8行数据的压缩文件偏移量都是相同的，因为这8行标记都指向了同一个压缩数据块。而在这8行的标记数据中，它们的解压缩数据块中的偏移量，则依次按照8192B（每行数据1B，每一个批次8192行数据）累加，当累加达到65536(64KB)时则置0。因为根据规则，此时会生成下一个压缩数据块。
+
+​	理解了上述标记数据之后，接下来就开始介绍MergeTree具体是如何定位压缩数据块并读取数据的。
+
+1. 读取压缩数据块： **在查询某一列数据时，MergeTree无须一次性加载整个.bin文件，而是可以根据需要，只加载特定的压缩数据块。而这项特性需要借助标记文件中所保存的压缩文件中的偏移量**。
+
+   ​	在图6-19所示的标记数据中，上下相邻的两个压缩文件中的起始偏移量，构成了与获取当前标记对应的压缩数据块的偏移量区间。<u>由当前标记数据开始，向下寻找，直到找到不同的压缩文件偏移量为止。此时得到的一组偏移量区间即是压缩数据块在.bin文件中的偏移量</u>。例如在图6-19所示中，读取右侧.bin文件中[0，12016]字节数据，就能获取第0个压缩数据块。
+
+   ​	细心的读者可能会发现，在.mrk文件中，第0个压缩数据块的截止偏移量是12016。而在.bin数据文件中，第0个压缩数据块的压缩大小是12000。为什么两个数值不同呢？其实原因很简单，12000只是数据压缩后的字节数，并没有包含头信息部分。而一个完整的压缩数据块是由头信息加上压缩数据组成的，它的头信息固定由9个字节组成，压缩后大小为8个字节。所以，12016=8+12000+8，其定位方法如图6-19右上角所示。压缩数据块被整个加载到内存之后，会进行解压，在这之后就进入具体数据的读取环节了。
+
+2. 读取数据： **在读取解压后的数据时，MergeTree并不需要一次性扫描整段解压数据，它可以根据需要，以index_granularity的粒度加载特定的一小段**。为了实现这项特性，需要借助标记文件中保存的解压数据块中的偏移量。
+
+   ​	同样的，在图6-19所示的标记数据中，上下相邻两个解压缩数据块中的起始偏移量，构成了与获取当前标记对应的数据的偏移量区间。通过这个区间，能够在它的压缩块被解压之后，依照偏移量按需读取数据。例如在图6-19所示中，通过[0，8192]能够读取压缩数据块0中的第一个数据片段。
+
+## * 6.7 对于分区、索引、标记和压缩数据的协同总结
+
+​	分区、索引、标记和压缩数据，就好比是MergeTree给出的一套组合拳，使用恰当时威力无穷。那么，在依次介绍了各自的特点之后，现在将它们聚在一块进行一番总结。接下来，就分别从写入过程、查询过程，以及数据标记与压缩数据块的三种对应关系的角度展开介绍。
+
+### 6.7.1 写入过程
+
+​	数据写入的第一步是生成分区目录，伴随着每一批数据的写入，都会生成一个新的分区目录。在后续的某一时刻，属于相同分区的目录会依照规则合并到一起；接着，按照index_granularity索引粒度，会分别生成primary.idx一级索引（如果声明了二级索引，还会创建二级索引文件）、每一个列字段的.mrk数据标记和.bin压缩数据文件。图6-20所示是一张MergeTree表在写入数据时，它的分区目录、索引、标记和压缩数据的生成过程。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/b05bc915c63f498f9381e92c572ac955.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA6YKL6YGi55qE5rWB5rWq5YmR5a6i,size_20,color_FFFFFF,t_70,g_se,x_16#pic_center)
+
+​	图6-20 分区目录、索引、标记和压缩数据的生成过程示意
+
+​	从分区目录201403_1_34_3能够得知，该分区数据共分34批写入，期间发生过3次合并。在数据写入的过程中，依据index_granularity的粒度，依次为每个区间的数据生成索引、标记和压缩数据块。其中，**索引和标记区间是对齐的，而标记与压缩块则根据区间数据大小的不同，会生成多对一、一对一和一对多三种关系**。
+
+### 6.7.2 查询过程
+
+​	数据查询的本质，可以看作一个不断减小数据范围的过程。在最理想的情况下，MergeTree首先可以依次借助分区索引、一级索引和二级索引，将数据扫描范围缩至最小。然后再借助数据标记，将需要解压与计算的数据范围缩至最小。以图6-21所示为例，它示意了在最优的情况下，经过层层过滤，最终获取最小范围数据的过程。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/1d525ef8b4ed4286b1e831cb7059afea.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA6YKL6YGi55qE5rWB5rWq5YmR5a6i,size_20,color_FFFFFF,t_70,g_se,x_16#pic_center)
+
+​	图6-21 将扫描数据范围最小化的过程
+
+​	<u>如果一条查询语句没有指定任何WHERE条件，或是指定了WHERE条件，但条件没有匹配到任何索引（分区索引、一级索引和二级索引），那么MergeTree就不能预先减小数据范围。在后续进行数据查询时，它会扫描所有分区目录，以及目录内索引段的最大区间。虽然不能减少数据范围，但是MergeTree仍然能够借助数据标记，以**多线程**的形式同时读取多个压缩数据块，以提升性能</u>。
+
+### 6.7.3 数据标记与压缩数据块的对应关系
+
+​	由于压缩数据块的划分，与一个间隔（index_granularity）内的数据大小相关，每个压缩数据块的体积都被严格控制在64KB～1MB。而一个间隔（index_granularity）的数据，又只会产生一行数据标记。那么根据一个间隔内数据的实际字节大小，数据标记和压缩数据块之间会产生三种不同的对应关系。接下来使用具体示例做进一步说明，对于示例数据，仍然是测试表hits_v1，其中index_granularity粒度为8192，数据总量为8873898行。
+
+1. 多对一
+
+   ​	多个数据标记对应一个压缩数据块，当一个间隔（index_granularity）内的数据未压缩大小size小于64KB时，会出现这种对应关系。
+
+   ​	以hits_v1测试表的JavaEnable字段为例。JavaEnable数据类型为UInt8，大小为1B，则一个间隔内数据大小为8192B。所以在此种情形下，每8个数据标记会对应同一个压缩数据块，如图6-22所示
+
+   ![在这里插入图片描述](https://img-blog.csdnimg.cn/aa8dd00b89b04aa6b1c470cb38bcbc77.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA6YKL6YGi55qE5rWB5rWq5YmR5a6i,size_20,color_FFFFFF,t_70,g_se,x_16#pic_center)
+
+   图6-22 多个数据标记对应同一个压缩数据块的示意
+
+2. 一对一
+
+   ​	一个数据标记对应一个压缩数据块，当一个间隔（index_granularity）内的数据未压缩大小size大于等于64KB且小于等于1MB时，会出现这种对应关系。
+
+   ​	以hits_v1测试表的URLHash字段为例。URLHash数据类型为UInt64，大小为8B，则一个间隔内数据大小为65536B，恰好等于64KB。所以在此种情形下，数据标记与压缩数据块是一对一的关系，如图6-23所示。
+
+   ![在这里插入图片描述](https://img-blog.csdnimg.cn/74879439082d49c79fa5178a41d00e7e.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA6YKL6YGi55qE5rWB5rWq5YmR5a6i,size_20,color_FFFFFF,t_70,g_se,x_16#pic_center)
+
+   图6-23 一个数据标记对应一个压缩数据块的示意
+
+3. 一对多
+
+   ​	一个数据标记对应多个压缩数据块，当一个间隔（index_granularity）内的数据未压缩大小size直接大于1MB时，会出现这种对应关系。
+
+   ​	以hits_v1测试表的URL字段为例。URL数据类型为String，大小根据实际内容而定。如图6-24所示，编号45的标记对应了2个压缩数据块。
+
+   <img src="https://img-blog.csdnimg.cn/77b05fff3723465990a1ad515c97e702.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA6YKL6YGi55qE5rWB5rWq5YmR5a6i,size_20,color_FFFFFF,t_70,g_se,x_16#pic_center" alt="在这里插入图片描述" style="zoom:50%;" />
+
+   图6-24 一个数据标记对应多个压缩数据块的示意
+
+## 6.8 本章小结
+
+​	本章全方面、立体地解读了MergeTree表引擎的工作原理：首先，解释了MergeTree的基础属性和物理存储结构；接着，依次介绍了数据分区、一级索引、二级索引、数据存储和数据标记的重要特性；最后，结合实际样例数据，进一步总结了MergeTree上述特性在一起协同时的工作过程。掌握本章的内容，即掌握了合并树系列表引擎的精髓。下一章将进一步介绍MergeTree家族中其他常见表引擎的具体使用方法。
+
+## 第7章 MergeTree系列表引擎
+
+P259
