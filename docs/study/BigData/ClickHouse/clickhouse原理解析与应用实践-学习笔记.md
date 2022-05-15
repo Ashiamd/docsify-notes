@@ -3727,6 +3727,686 @@ clickhouse-compressor --stat < /chbase/
 
 ​	本章全方面、立体地解读了MergeTree表引擎的工作原理：首先，解释了MergeTree的基础属性和物理存储结构；接着，依次介绍了数据分区、一级索引、二级索引、数据存储和数据标记的重要特性；最后，结合实际样例数据，进一步总结了MergeTree上述特性在一起协同时的工作过程。掌握本章的内容，即掌握了合并树系列表引擎的精髓。下一章将进一步介绍MergeTree家族中其他常见表引擎的具体使用方法。
 
-## 第7章 MergeTree系列表引擎
+# 7. MergeTree系列表引擎
 
-P259
+​	目前在ClickHouse中，按照特点可以将表引擎大致分成6个系列，分别是合并树、外部存储、内存、文件、接口和其他，每一个系列的表引擎都有着独自的特点与使用场景。在它们之中，最为核心的当属MergeTree系列，因为它们拥有最为强大的性能和最广泛的使用场合。
+
+​	经过上一章的介绍，大家应该已经知道了MergeTree有两层含义：其一，表示合并树表引擎家族；其二，表示合并树家族中最基础的MergeTree表引擎。而在整个家族中，除了基础表引擎MergeTree之外，常用的表引擎还有ReplacingMergeTree、SummingMergeTree、AggregatingMergeTree、CollapsingMergeTree和VersionedCollapsingMergeTree。每一种合并树的变种，在继承了基础MergeTree的能力之后，又增加了独有的特性。<u>其名称中的“合并”二字奠定了所有类型MergeTree的基因，**它们的所有特殊逻辑，都是在触发合并的过程中被激活的**</u>。在本章后续的内容中，会逐一介绍它们的特点以及使用方法。
+
+## 7.1 MergeTree
+
+​	MergeTree作为家族系列最基础的表引擎，提供了数据分区、一级索引和二级索引等功能。对于它们的运行机理，在上一章中已经进行了详细介绍。本节将进一步介绍MergeTree家族独有的另外两项能力——数据TTL与存储策略。
+
+### 7.1.1 数据TTL
+
+​	TTL即Time To Live，顾名思义，它表示数据的存活时间。在MergeTree中，可以为某个**列字段**或整张**表**设置TTL。
+
++ 当时间到达时，如果是列字段级别的TTL，则会删除这一列的数据；
++ 如果是表级别的TTL，则会删除整张表的数据；
++ **如果同时设置了列级别和表级别的TTL，则会以先到期的那个为主**。
+
+​	**无论是列级别还是表级别的TTL，都需要依托某个DateTime或Date类型的字段**，通过对这个时间字段的INTERVAL操作，来表述TTL的过期时间，例如：
+
+```sql
+TTL time_col + INTERVAL 3 DAY
+```
+
+​	上述语句表示数据的存活时间是time_col时间的3天之后。又例如：
+
+```sql
+TTL time_col + INTERVAL 1 MONTH
+```
+
+​	上述语句表示数据的存活时间是time_col时间的1月之后。INTERVAL完整的操作包括SECOND、MINUTE、HOUR、DAY、WEEK、MONTH、QUARTER和YEAR。
+
+1. 列级别TTL
+
+   ​	<u>如果想要设置列级别的TTL，则需要在定义表字段的时候，为它们声明TTL表达式</u>，**<u>主键字段不能被声明TTL</u>**。以下面的语句为例：
+
+   ```sql
+   CREATE TABLE ttl_table_v1(
+     id String,
+     create_time DateTime,
+     code String TTL create_time + INTERVAL 10 SECOND,
+     type UInt8 TTL create_time + INTERVAL 10 SECOND
+   )
+   ENGINE = MergeTree
+   PARTITION BY toYYYYMM(create_time)
+   ORDER BY id
+   ```
+
+   ​	其中，create_time是日期类型，列字段code与type均被设置了TTL，它们的存活时间是在create_time的取值基础之上向后延续10秒。
+
+   ​	现在写入测试数据，其中第一行数据create_time取当前的系统时间，而第二行数据的时间比第一行增加10分钟：
+
+   ```sql
+   INSERT INTO TABLE ttl_table_v1 VALUES('A000',now(),'C1',1),
+   ('A000',now() + INTERVAL 10 MINUTE,'C1',1)
+   SELECT * FROM ttl_table_v1
+   ┌─id───┬─────create_time──┬─code─┬─type─┐
+   │ A000 │ 2019-06-12 22:49:00 │ C1 │ 1 │
+   │ A000 │ 2019-06-12 22:59:00 │ C1 │ 1 │
+   └────┴───────────────┴────┴─────┘
+   ```
+
+   ​	接着心中默数10秒，然后执行optimize命令强制触发TTL清理：
+
+   ```sql
+   optimize TABLE ttl_table_v1 FINAL
+   ```
+
+   ​	再次查询ttl_table_v1则能够看到，由于第一行数据满足TTL过期条件（当前系统时间>=create_time+10秒），它们的code和type列会**被还原为数据类型的默认值**：
+
+   ```sql
+   ┌─id───┬───────create_time─┬─code─┬─type─┐
+   │ A000 │ 2019-06-12 22:49:00 │ │ 0 │
+   │ A000 │ 2019-06-12 22:59:00 │ C1 │ 1 │
+   └─────┴───────────────┴─────┴─────┘
+   ```
+
+   ​	如果想要修改列字段的TTL，或是为已有字段添加TTL，则可以使用ALTER语句，示例如下：
+
+   ```sql
+   ALTER TABLE ttl_table_v1 MODIFY COLUMN code String TTL create_time + INTERVAL 1
+   DAY
+   ```
+
+   ​	**目前ClickHouse没有提供取消列级别TTL的方法**。
+
+2. 表级别TTL
+
+   ​	如果想要为整张数据表设置TTL，需要在MergeTree的表参数中增加TTL表达式，例如下面的语句：
+
+   ```sql
+   CREATE TABLE ttl_table_v2(
+     id String,
+     create_time DateTime,
+     code String TTL create_time + INTERVAL 1 MINUTE,
+     type UInt8
+   )ENGINE = MergeTree
+   PARTITION BY toYYYYMM(create_time)
+   ORDER BY create_time
+   TTL create_time + INTERVAL 1 DAY
+   ```
+
+   ​	ttl_table_v2整张表被设置了TTL，当触发TTL清理时，那些满足过期时间的数据行将会被整行删除。同样，表级别的TTL也支持修改，修改的方法如下：
+
+   ```sql
+   ALTER TABLE ttl_table_v2 MODIFY TTL create_time + INTERVAL 3 DAY
+   ```
+
+   ​	**表级别TTL目前也没有取消的方法**。
+
+3. TTL的运行机理
+
+   ​	在知道了列级别与表级别TTL的使用方法之后，现在简单聊一聊TTL的运行机理。如果一张MergeTree表被设置了TTL表达式，那么在写入数据时，会**以数据分区为单位**，在每个分区目录内生成一个名为ttl.txt的文件。以刚才示例中的ttl_table_v2为例，它被设置了列级别TTL：
+
+   ```sql
+   code String TTL create_time + INTERVAL 1 MINUTE
+   ```
+
+   ​	同时被设置了表级别的TTL：
+
+   ```sql
+   TTL create_time + INTERVAL 1 DAY
+   ```
+
+   ​	那么，在写入数据之后，它的每个分区目录内都会生成ttl.txt文件：
+
+   ```shell
+   # pwd
+   /chbase/data/data/default/ttl_table_v2/201905_1_1_0
+   # ll
+   total 60
+   …省略
+   -rw-r-----. 1 clickhouse clickhouse 38 May 13 14:30 create_time.bin
+   -rw-r-----. 1 clickhouse clickhouse 48 May 13 14:30 create_time.mrk2
+   -rw-r-----. 1 clickhouse clickhouse 8 May 13 14:30 primary.idx
+   -rw-r-----. 1 clickhouse clickhouse 67 May 13 14:30 ttl.txt
+   …省略
+   ```
+
+   ​	进一步查看ttl.txt的内容：
+
+   ```shell
+   cat ./ttl.txt
+   ttl format version: 1
+   {"columns":[{"name":"code","min":1557478860,"max":1557651660}],"table":
+   {"min":1557565200,"max":1557738000}}
+   ```
+
+   ​	通过上述操作会发现，原来MergeTree是通过一串JSON配置保存了TTL的相关信息，其中：
+
+   + **columns用于保存列级别TTL信息；**
+
+   + **table用于保存表级别TTL信息；**
+
+   + **min和max则保存了当前数据分区内，TTL指定日期字段的最小值、最大值分别与INTERVAL表达式计算后的时间戳。**
+
+   ​	如果将table属性中的min和max时间戳格式化，并分别与create_time最小与最大取值对比：
+
+   ```sql
+   SELECT
+   	toDateTime('1557565200') AS ttl_min,
+   	toDateTime('1557738000') AS ttl_max,
+   	ttl_min - MIN(create_time) AS expire_min,
+   	ttl_max - MAX(create_time) AS expire_max
+   FROM ttl_table_v2
+   ┌─────ttl_min────┬────ttl_max────┬─expire_min┬─expire_max─┐
+   │ 2019-05-11 17:00:00 │ 2019-05-13 17:00:00 │ 86400 │ 86400 │
+   └─────────────┴─────────────┴────────┴────────┘
+   ```
+
+   ​	则能够印证，ttl.txt中记录的极值区间恰好等于当前数据分区内create_time最小与最大值增加1天（1天=86400秒）所表示的区间，与TTL表达式`create_time+INTERVAL 1 DAY`的预期相符。
+
+   ​	在知道了TTL信息的记录方式之后，现在看看它的大致处理逻辑。
+
+   （1）MergeTree以分区目录为单位，通过ttl.txt文件记录过期时间，并将其作为后续的判断依据。
+
+   （2）每当写入一批数据时，都会基于INTERVAL表达式的计算结果为这个分区生成ttl.txt文件。
+
+   （3）**只有在MergeTree合并分区时，才会触发删除TTL过期数据的逻辑**。
+
+   （4）**在选择删除的分区时，会使用贪婪算法，它的算法规则是尽可能找到会最早过期的，同时年纪又是最老的分区（合并次数更多，MaxBlockNum更大的）**。
+
+   （5）<u>如果一个分区内某一列数据因为TTL到期全部被删除了，那么在合并之后生成的新分区目录中，将不会包含这个列字段的数据文件（.bin和.mrk）</u>。
+
+   ​	这里还有几条TTL使用的小贴士。
+
+   （1）<u>TTL默认的合并频率由MergeTree的merge_with_ttl_timeout参数控制，默认86400秒，即1天。它维护的是一个专有的TTL任务队列。有别于MergeTree的常规合并任务，如果这个值被设置的过小，可能会带来性能损耗</u>。
+
+   （2）除了被动触发TTL合并外，也可以使用optimize命令强制触发合并。例如，触发一个分区合并：
+
+   ```sql
+   optimize TABLE table_name
+   ```
+
+   触发所有分区合并：
+
+   ```sql
+   optimize TABLE table_name FINAL
+   ```
+
+   （3）**ClickHouse目前虽然没有提供删除TTL声明的方法，但是提供了控制全局TTL合并任务的启停方法**：
+
+   ```sql
+   SYSTEM STOP/START TTL MERGES
+   ```
+
+   ​	虽然还不能做到按每张MergeTree数据表启停，但聊胜于无吧。
+
+### 7.1.2 多路径存储策略
+
+​	**在ClickHouse 19.15版本之前，MergeTree只支持单路径存储，所有的数据都会被写入config.xml配置中path指定的路径下，即使服务器挂载了多块磁盘，也无法有效利用这些存储空间。为了解决这个痛点，从19.15版本开始，MergeTree实现了自定义存储策略的功能，支持以数据分区为最小移动单元，将分区目录写入多块磁盘目录**。
+
+​	根据配置策略的不同，目前大致有三类存储策略。
+
++ 默认策略：MergeTree原本的存储策略，无须任何配置，所有分区会自动保存到config.xml配置中path指定的路径下。
+
++ JBOD策略：这种策略适合服务器挂载了多块磁盘，但没有做RAID的场景。<u>JBOD的全称是Just a Bunch of Disks，它是一种轮询策略，每执行一次INSERT或者MERGE，所产生的新分区会轮询写入各个磁盘。这种策略的效果类似RAID 0，可以降低单块磁盘的负载，在一定条件下能够增加数据并行读写的性能</u>。**如果单块磁盘发生故障，则会丢掉应用JBOD策略写入的这部分数据**。（数据的可靠性需要利用副本机制保障，这部分内容将会在后面介绍副本与分片时介绍。）
+
++ HOT/COLD策略：这种策略适合服务器挂载了不同类型磁盘的场景。将存储磁盘分为HOT与COLD两类区域。<u>HOT区域使用SSD这类高性能存储媒介，注重存取性能；COLD区域则使用HDD这类高容量存储媒介，注重存取经济性</u>。**数据在写入MergeTree之初，首先会在HOT区域创建分区目录用于保存数据，当分区数据大小累积到阈值时，数据会自行移动到COLD区域。而在每个区域的内部，也支持定义多个磁盘，所以在单个区域的写入过程中，也能应用JBOD策略**。
+
+  存储配置需要预先定义在config.xml配置文件中，由storage_configuration标签表示。在storage_configuration之下又分为disks和policies两组标签，分别表示磁盘与存储策略。
+
+  disks的配置示例如下所示，支持定义多块磁盘：
+
+  ```xml
+  <storage_configuration>
+    <disks>
+      <disk_name_a> <!--自定义磁盘名称 -->
+        <path>/chbase/data</path><!—磁盘路径 -->
+        <keep_free_space_bytes>1073741824</keep_free_space_bytes>
+      </disk_name_a>
+      <disk_name_b>
+        <path>… </path>
+      </disk_name_b>
+    </disks>
+  ```
+
+  其中：
+
+  + \<disk_name_*>，必填项，必须全局唯一，表示磁盘的自定义名称；
+
+  + \<path>，必填项，用于指定磁盘路径；
+
+  + \<keep_free_space_bytes>，选填项，以字节为单位，用于定义磁盘的预留空间。
+
+  在policies的配置中，需要引用先前定义的disks磁盘。policies同样支持定义多个策略，它的示例如下：
+
+  ```xml
+  <policies>
+    <policie_name_a> <!--自定义策略名称 -->
+      <volumes>
+        <volume_name_a> <!--自定义卷名称 -->
+          <disk>disk_name_a</disk>
+          <disk>disk_name_b</disk>
+          <max_data_part_size_bytes>1073741824</max_data_part_size_bytes>
+          </volume_name_b>
+      </volumes>
+      <move_factor>0.2</move_factor>
+    </policie_name_a>
+    <policie_name_b>
+    </policie_name_b>
+  </policies>
+  </storage_configuration>
+  ```
+
+  其中：
+
+  + \<policie_name_*>，必填项，必须全局唯一，表示策略的自定义名称；
+
+  + \<volume_name_*>，必填项，必须全局唯一，表示卷的自定义名称；
+
+  + \<disk>，必填项，用于关联配置内的磁盘，可以声明多个disk，MergeTree会按定义的顺序选择disk；
+
+  + \<max_data_part_size_bytes>，选填项，以字节为单位，表示在这个卷的单个disk磁盘中，一个数据分区的最大存储阈值，如果当前分区的数据大小超过阈值，则之后的分区会写入下一个disk磁盘；
+
+  + \<move_factor>，选填项，默认为0.1；如果当前卷的可用空间小于factor因子，并且定义了多个卷，则数据会自动向下一个卷移动。
+
+  ​	在知道了配置格式之后，现在用一组示例说明它们的使用方法。
+
+  1. JBOD策略
+
+     首先，在config.xml配置文件中增加storage_configuration元素，并配置3块磁盘：
+
+     ```xml
+     <storage_configuration>
+       <!--自定义磁盘配置 -->
+       <disks>
+         <disk_hot1> <!--自定义磁盘名称 -->
+           <path>/chbase/data</path>
+         </disk_hot1>
+         <disk_hot2>
+           <path>/chbase/hotdata1</path>
+         </disk_hot2>
+         <disk_cold>
+           <path>/chbase/cloddata</path>
+           <keep_free_space_bytes>1073741824</keep_free_space_bytes>
+         </disk_cold>
+       </disks>
+       …省略
+     ```
+
+     接着，配置一个存储策略，在volumes卷下引用两块磁盘，组成一个磁盘组：
+
+     ```xml
+     <!-- 实现JDOB效果 -->
+     <policies>
+       <default_jbod> <!--自定义策略名称 -->
+         <volumes>
+           <jbod> <!—自定义名称 磁盘组 -->
+             <disk>disk_hot1</disk>
+             <disk>disk_hot2</disk>
+           </jbod>
+         </volumes>
+       </default_jbod>
+     </policies>
+     </storage_configuration>
+     ```
+
+     至此，一个支持JBOD策略的存储策略就配置好了。在正式应用之前，还需要做一些准备工作。首先，需要给磁盘路径授权，使ClickHouse用户拥有路径的读写权限：
+
+     ```xml
+     sudo chown clickhouse:clickhouse -R /chbase/cloddata /chbase/hotdata1
+     ```
+
+     **由于存储配置不支持动态更新，为了使配置生效，还需要重启clickhouse-server服务**：
+
+     ```shell
+     sudo service clickhouse-server restart
+     ```
+
+     服务重启好之后，可以查询系统表以验证配置是否已经生效：
+
+     ```sql
+     SELECT
+     name,
+     path,formatReadableSize(free_space) AS free,
+     formatReadableSize(total_space) AS total,
+     formatReadableSize(keep_free_space) AS reserved
+     FROM system.disks
+     ┌─name─────┬─path────────┬─free────┬─total────┬─reserved─┐
+     │ default │ /chbase/data/ │ 38.26 GiB │ 49.09 GiB │ 0.00 B │
+     │ disk_cold │ /chbase/cloddata/ │ 37.26 GiB │ 48.09 GiB │ 1.00 GiB │
+     │ disk_hot1 │ /chbase/data/ │ 38.26 GiB │ 49.09 GiB │ 0.00 B │
+     │ disk_hot2 │ /chbase/hotdata1/ │ 38.26 GiB │ 49.09 GiB │ 0.00 B │
+     └────────┴────────────┴────────┴────────┴───────┘
+     ```
+
+     ​	通过system.disks系统表可以看到刚才声明的3块磁盘配置已经生效。接着验证策略配置：
+
+     ```sql
+     SELECT policy_name,
+     volume_name,
+     volume_priority,
+     disks,
+     formatReadableSize(max_data_part_size) max_data_part_size ,
+     move_factor FROM
+     system.storage_policies
+     ┌─policy_name─┬─volume_name─┬─disks──────────┬─max_data_part_size─┬─move_factor─┐
+     │ default │ default │ ['default'] │ 0.00 B │ 0
+     │
+     │ default_jbod │ jbod │ ['disk_hot1','disk_hot2']│ 0.00 B │ 0.1
+     │
+     └────────┴────────┴─────────────┴──────────┴─────────┘
+     ```
+
+     通过system.storage_policies系统表可以看到刚才配置的存储策略也已经生效了。
+
+     现在创建一张MergeTree表，用于测试default_jbod存储策略的效果：
+
+     ```sql
+     CREATE TABLE jbod_table(
+       id UInt64
+     )ENGINE = MergeTree()
+     ORDER BY id
+     SETTINGS storage_policy = 'default_jbod'
+     ```
+
+     在定义MergeTree时，使用storage_policy配置项指定刚才定义的default_jbod存储策略。**存储策略一旦设置，就不能修改了**。现在开始测试它的效果。首先写入第一批数据，创建一个分区目录：
+
+     ```sql
+     INSERT INTO TABLE jbod_table SELECT rand() FROM numbers(10)
+     ```
+
+     查询分区系统表，可以看到第一个分区写入了第一块磁盘disk_hot1：
+
+     ```sql
+     SELECT name, disk_name FROM system.parts WHERE table = 'jbod_table'
+     ┌─name─────┬─disk_name─┐
+     │ all_1_1_0 │ disk_hot1 │
+     └────────┴───────┘
+     ```
+
+     接着写入第二批数据，创建一个新的分区目录：
+
+     ```sql
+     INSERT INTO TABLE jbod_table SELECT rand() FROM numbers(10)
+     ```
+
+     再次查询分区系统表，可以看到第二个分区写入了第二块磁盘disk_hot2：
+
+     ```sql
+     SELECT name, disk_name FROM system.parts WHERE table = 'jbod_table'
+     ┌─name─────┬─disk_name─┐
+     │ all_1_1_0 │ disk_hot1 │
+     │ all_2_2_0 │ disk_hot2 │
+     └────────┴───────┘
+     ```
+
+     最后触发一次分区合并动作，生成一个合并后的新分区目录：
+
+     ```sql
+     optimize TABLE jbod_table
+     ```
+
+     还是查询分区系统表，可以看到合并后生成的all_1_2_1分区，再一次写入了第一块磁盘disk_hot1：
+
+     ```sql
+     ┌─name─────┬─disk_name─┐
+     │ all_1_1_0 │ disk_hot1 │
+     │ all_1_2_1 │ disk_hot1 │
+     │ all_2_2_0 │ disk_hot2 │
+     └────────┴───────┘
+     ```
+
+     至此，大家应该已经明白JBOD策略的工作方式了。**在这个策略中，由多个磁盘组成了一个磁盘组，即volume卷。每当生成一个新数据分区的时候，分区目录会依照volume卷中磁盘定义的顺序，依次轮询并写入各个磁盘**。
+
+  2. HOT/COLD策略
+
+     现在介绍HOT/COLD策略的使用方法。首先在上一小节介绍的配置文件中添加一个新的策略：
+
+     ```xml
+     <policies>
+       …省略
+       <moving_from_hot_to_cold><!--自定义策略名称 -->
+         <volumes>
+           <hot><!--自定义名称 ,hot区域磁盘 -->
+             <disk>disk_hot1</disk>
+             <max_data_part_size_bytes>1073741824</max_data_part_size_bytes>
+           </hot>
+           <cold><!--自定义名称 ,cold区域磁盘 -->
+             <disk>disk_cold</disk>
+           </cold>
+         </volumes>
+         <move_factor>0.2</move_factor>
+       </moving_from_hot_to_cold>
+     </policies>
+     ```
+
+     **存储配置不支持动态更新，所以为了使配置生效，需要重启clickhouse-server服务**：
+
+     ```shell
+     sudo service clickhouse-server restart
+     ```
+
+     通过system.storage_policies系统表可以看到，刚才配置的存储策略已经生效了。
+
+     ```sql
+     ┌─policy_name────────┬─volume_name┬─disks────┬max_data_part_size─┬─move_factor─┐
+     │ moving_from_hot_to_cold │ hot │ ['disk_hot1']│ 1.00 MiB │ 0.2
+     │
+     │ moving_from_hot_to_cold │ cold │ ['disk_cold']│ 0.00 B │ 0.2
+     │
+     └───────────────┴───────┴────────┴──────────┴────────┘
+     ```
+
+     moving_from_hot_to_cold存储策略拥有hot和cold两个磁盘卷，在每个卷下各拥有1块磁盘。注意，hot磁盘卷的max_data_part_size列显示的值是1M，这个值的含义表示，在这个磁盘卷下，如果一个分区的大小超过1MB，则它需要被移动到紧邻的下一个磁盘卷。
+
+     与先前一样，现在创建一张MergeTree表，用于测试moving_from_hot_to_cold存储策略的效果：
+
+     ```sql
+     CREATE TABLE hot_cold_table(
+       id UInt64
+     )ENGINE = MergeTree()
+     ORDER BY id
+     SETTINGS storage_policy = 'moving_from_hot_to_cold'
+     ```
+
+     在定义MergeTree时，使用storage_policy配置项指定刚才定义的moving_from_hot_to_cold存储策略。存储策略一旦设置就不能再修改。
+
+     现在开始测试它的效果，首先写入第一批数据，创建一个分区目录，数据大小500KB：
+
+     ```sql
+     -- 写入500K大小,分区会写入hot
+     INSERT INTO TABLE hot_cold_table SELECT rand()FROM numbers(100000)
+     ```
+
+     查询分区系统表，可以看到第一个分区写入了hot卷：
+
+     ```sql
+     SELECT name, disk_name FROM system.parts WHERE table = 'hot_cold_table'
+     ┌─name─────┬─disk_name─┐
+     │ all_1_1_0 │ disk_hot1 │
+     └────────┴───────┘
+     ```
+
+     接着写入第二批数据，创建一个新的分区目录，数据大小还是500KB：
+
+     ```sql
+     INSERT INTO TABLE hot_cold_table SELECT rand()FROM numbers(100000)
+     ```
+
+     再次查询分区系统表，可以看到第二个分区，仍然写入了hot卷：
+
+     ```sql
+     SELECT name, disk_name FROM system.parts WHERE table = 'hot_cold_table'
+     ┌─name─────┬─disk_name─┐
+     │ all_1_1_0 │ disk_hot1 │
+     │ all_2_2_0 │ disk_hot1 │
+     └────────┴───────┘
+     ```
+
+     这是由于hot磁盘卷的max_data_part_size是1MB，而前两次数据写入所创建的分区，单个分区大小是500KB，自然分区目录都被保存到了hot磁盘卷下的disk_hot1磁盘。现在触发一次分区合并动作，生成一个新的分区目录：
+
+     ```sql
+     optimize TABLE hot_cold_table
+     ```
+
+     查询分区系统表，可以看到合并后生成的all_1_2_1分区写入了cold卷：
+
+     ```sql
+     ┌─name─────┬─disk_name─┐
+     │ all_1_1_0 │ disk_hot1 │
+     │ all_1_2_1 │ disk_cold │
+     │ all_2_2_0 │ disk_hot1 │
+     └────────┴───────┘
+     ```
+
+     这是因为两个分区合并之后，所创建的新分区的大小超过了1MB，所以它被写入了cold卷，相关查询代码如下：
+
+     ```sql
+     SELECT
+     disk_name,
+     formatReadableSize(bytes_on_disk) AS size
+     FROM system.parts
+     WHERE (table = 'hot_cold_table') AND active = 1
+     ┌─disk_name─┬─size────┐
+     │ disk_cold │ 1.01 MiB │
+     └────────┴───────┘
+     ```
+
+     注意，如果一次性写入大于1MB的数据，分区也会被写入cold卷。
+
+     至此，大家应该明白HOT/COLD策略的工作方式了。**在这个策略中，由多个磁盘卷（volume卷）组成了一个volume组。每当生成一个新数据分区的时候，按照阈值大小（max_data_part_size），分区目录会依照volume组中磁盘卷定义的顺序，依次轮询并写入各个卷下的磁盘**。
+
+     **<u>虽然MergeTree的存储策略目前不能修改，但是分区目录却支持移动</u>**。例如，将某个分区移动至当前存储策略中当前volume卷下的其他disk磁盘：
+
+     ```sql
+     ALTER TABLE hot_cold_table MOVE PART 'all_1_2_1' TO DISK 'disk_hot1'
+     ```
+
+     或是将某个分区移动至当前存储策略中其他的volume卷：
+
+     ```sql
+     ALTER TABLE hot_cold_table MOVE PART 'all_1_2_1' TO VOLUME 'cold'
+     ```
+
+## 7.2 ReplacingMergeTree
+
+​	**虽然MergeTree拥有主键，但是它的主键却没有唯一键的约束**。这意味着即便多行数据的主键相同，它们还是能够被正常写入。在某些使用场合，用户并不希望数据表中含有重复的数据。**ReplacingMergeTree就是在这种背景下为了数据去重而设计的，它能够在合并分区时删除重复的数据**。它的出现，确实也在一定程度上解决了重复数据的问题。为什么说是“一定程度”？此处先按下不表。
+
+​	创建一张ReplacingMergeTree表的方法与创建普通MergeTree表无异，只需要替换Engine：
+
+```sql
+ENGINE = ReplacingMergeTree(ver)
+```
+
+​	其中，ver是选填参数，会指定一个UInt*、Date或者DateTime类型的字段作为<u>版本号</u>。**这个参数决定了数据去重时所使用的算法**。接下来，用一个具体的示例说明它的用法。首先执行下面的语句创建数据表：
+
+```sql
+CREATE TABLE replace_table(
+  id String,
+  code String,
+  create_time DateTime
+)ENGINE = ReplacingMergeTree()
+PARTITION BY toYYYYMM(create_time)
+ORDER BY (id,code)
+PRIMARY KEY id
+```
+
+​	**注意这里的ORDER BY是去除重复数据的关键，排序键ORDERBY所声明的表达式是后续作为判断数据是否重复的依据**。在这个例子中，数据会基于id和code两个字段去重。假设此时表内的测试数据如下：
+
+```sql
+┌─id───┬─code─┬───────create_time─┐
+│ A001 │ C1 │ 2019-05-10 17:00:00 │
+│ A001 │ C1 │ 2019-05-11 17:00:00 │
+│ A001 │ C100 │ 2019-05-12 17:00:00 │
+│ A001 │ C200 │ 2019-05-13 17:00:00 │
+│ A002 │ C2 │ 2019-05-14 17:00:00 │
+│ A003 │ C3 │ 2019-05-15 17:00:00 │
+└─────┴─────┴───────────────┘
+```
+
+​	那么在执行optimize强制触发合并后，会按照id和code分组，**保留分组内的最后一条**（观察create_time日期字段）：
+
+```sql
+optimize TABLE replace_table FINAL
+```
+
+​	将其余重复的数据删除：
+
+```sql
+┌─id───┬─code─┬──────create_time─┐
+│ A001 │ C1 │ 2019-05-11 17:00:00 │
+│ A001 │ C100 │ 2019-05-12 17:00:00 │
+│ A001 │ C200 │ 2019-05-13 17:00:00 │
+│ A002 │ C2 │ 2019-05-14 17:00:00 │
+│ A003 │ C3 │ 2019-05-15 17:00:00 │
+└────┴────┴──────────────┘
+```
+
+​	从执行的结果来看，ReplacingMergeTree在去除重复数据时，确实是以ORDER BY排序键为基准的，而不是PRIMARY KEY。因为在上面的例子中，ORDER BY是(id,code)，而PRIMARY KEY是id，如果按照id值去除重复数据，则最终结果应该只剩下A001、A002和A003三行数据。
+
+​	到目前为止，ReplacingMergeTree看起来完美地解决了重复数据的问题。事实果真如此吗？现在尝试写入一批新数据：
+
+```sql
+INSERT INTO TABLE replace_table VALUES('A001','C1','2019-08-10 17:00:00')
+```
+
+​	写入之后，执行optimize强制分区合并，并查询数据：
+
+```sql
+┌─id───┬─code─┬─────────create_time─┐
+│ A001 │ C1 │ 2019-08-22 17:00:00 │
+└─────┴────┴─────────────────┘
+┌─id──┬─code─┬─────────create_time─┐
+│ A001 │ C1 │ 2019-05-11 17:00:00 │
+│ A001 │ C100 │ 2019-05-12 17:00:00 │
+│ A001 │ C200 │ 2019-05-13 17:00:00 │
+│ A002 │ C2 │ 2019-05-14 17:00:00 │
+│ A003 │ C3 │ 2019-05-15 17:00:00 │
+└────┴──────┴─────────────────┘
+```
+
+​	再次观察返回的数据，可以看到A001:C1依然出现了重复。这是怎么回事呢？这是因为**<u>ReplacingMergeTree是以分区为单位删除重复数据的</u>**。**只有在相同的数据分区内重复的数据才可以被删除，而不同数据分区之间的重复数据依然不能被剔除。这就是上面说ReplacingMergeTree只是在一定程度上解决了重复数据问题的原因**。
+
+​	现在接着说明ReplacingMergeTree版本号的用法。以下面的语句为例：
+
+```sql
+CREATE TABLE replace_table_v(
+  id String,
+  code String,
+  create_time DateTime
+)ENGINE = ReplacingMergeTree(create_time)
+PARTITION BY toYYYYMM(create_time)
+ORDER BY id
+```
+
+​	replace_table_v基于id字段去重，并且使用create_time字段作为版本号，假设表内的数据如下所示：
+
+```sql
+┌─id──┬─code──┬───────────create_time─┐
+│ A001 │ C1 │ 2019-05-10 17:00:00 │
+│ A001 │ C1 │ 2019-05-25 17:00:00 │
+│ A001 │ C1 │ 2019-05-13 17:00:00 │
+└────┴─────┴───────────────────┘
+```
+
+​	那么在删除重复数据的时候，会保留同一组数据内create_time时间最长的那一行：
+
+```sql
+┌─id────┬─code─┬──────────create_time─┐
+│ A001 │ C1 │ 2019-05-25 17:00:00 │
+└──────┴────┴──────────────────┘
+```
+
+​	在知道了ReplacingMergeTree的使用方法后，现在简单梳理一下它的处理逻辑。
+
+（1）**使用ORBER BY排序键作为判断重复数据的唯一键**。
+
+（2）**只有在合并分区的时候才会触发删除重复数据的逻辑**。
+
+（3）**<u>以数据分区为单位删除重复数据</u>**。**当分区合并时，同一分区内的重复数据会被删除；不同分区之间的重复数据不会被删除**。
+
+（4）在进行数据去重时，因为分区内的数据已经基于ORBER BY进行了排序，所以能够找到那些相邻的重复数据。
+
+（5）数据去重策略有两种：
+
++ **如果没有设置ver版本号，则保留同一组重复数据中的最后一行。**
++ **如果设置了ver版本号，则保留同一组重复数据中ver字段取值最大的那一行**。
+
+## 7.3 SummingMergeTree
+
+P281
