@@ -1,4 +1,4 @@
-# clickhouse原理解析与应用实践-学习笔记
+# clickhouse原理解析与应用实践-学习笔记-01
 
 # 1. ClickHouse的前世今生
 
@@ -4588,4 +4588,363 @@ nestMap Nested(
 
 ## 7.4 AggregatingMergeTree
 
-P287
+> [数据立方_百度百科 (baidu.com)](https://baike.baidu.com/item/数据立方/13237096?fromtitle=数据立方体&fromid=9851963&fr=aladdin)
+
+​	有过数据仓库建设经验的读者一定知道“数据立方体”的概念，这是一个在数据仓库领域十分常见的模型。<u>它通过以空间换时间的方法提升查询性能，将需要聚合的数据预先计算出来，并将结果保存起来。在后续进行聚合查询的时候，直接使用结果数据</u>。
+
+​	<u>AggregatingMergeTree就有些许数据立方体的意思，它能够**在合并分区的时候**，按照预先定义的条件聚合数据。同时，根据预先定义的聚合函数计算数据并通过二进制的格式存入表内</u>。将同一分组下的多行数据聚合成一行，既减少了数据行，又降低了后续聚合查询的开销。**可以说，AggregatingMergeTree是SummingMergeTree的升级版，它们的许多设计思路是一致的**，例如同时定义ORDER BY与PRIMARY KEY的原因和目的。但是在使用方法上，两者存在明显差异，应该说AggregatingMergeTree的定义方式是MergeTree家族中最为特殊的一个。
+
+​	声明使用AggregatingMergeTree的方式如下：
+
+```sql
+ENGINE = AggregatingMergeTree()
+```
+
+​	AggregatingMergeTree没有任何额外的设置参数，**在分区合并时，在每个数据分区内，会按照ORDER BY聚合**。而<u>使用何种聚合函数，以及针对哪些列字段计算，则是通过定义AggregateFunction数据类型实现的</u>。以下面的语句为例：
+
+```sql
+CREATE TABLE agg_table(
+  id String,
+  city String,
+  code AggregateFunction(uniq,String),
+  value AggregateFunction(sum,UInt32),
+  create_time DateTime
+)ENGINE = AggregatingMergeTree()
+PARTITION BY toYYYYMM(create_time)
+ORDER BY (id,city)
+PRIMARY KEY id
+```
+
+​	上例中列字段id和city是聚合条件，等同于下面的语义：
+
+```sql
+GROUP BY id，city
+```
+
+​	而code和value是聚合字段，其语义等同于：
+
+```sql
+UNIQ(code), SUM(value)
+```
+
+​	**AggregateFunction是ClickHouse提供的一种特殊的数据类型，它能够以二进制的形式存储中间状态结果**。其使用方法也十分特殊，对于AggregateFunction类型的列字段，数据的写入和查询都与寻常不同。
+
++ **在写入数据时，需要调用\*State函数；**
++ **而在查询数据时，则需要调用相应的\*Merge函数**。
+
+​	其中，\*表示定义时使用的聚合函数。
+
+例如示例中定义的code和value，使用了uniq和sum函数：
+
+```sql
+code AggregateFunction(uniq,String),
+value AggregateFunction(sum,UInt32),
+```
+
+​	那么，在写入数据时需要调用与uniq、sum对应的uniqState和sumState函数，并使用INSERT SELECT语法：
+
+```sql
+INSERT INTO TABLE agg_table
+SELECT 'A000','wuhan',
+uniqState('code1'),
+sumState(toUInt32(100)),
+'2019-08-10 17:00:00'
+```
+
+​	<u>在查询数据时，如果直接使用列名访问code和value，将会是无法显示的二进制形式。此时，需要调用与uniq、sum对应的uniqMerge、sumMerge函数</u>：
+
+```sql
+SELECT id,city,uniqMerge(code),sumMerge(value) FROM agg_table
+GROUP BY id,city
+```
+
+​	讲到这里，你是否会认为AggregatingMergeTree使用起来过于烦琐了？连正常进行数据写入都需要借助INSERT…SELECT的句式并调用特殊函数。如果直接像刚才示例中那样使用AggregatingMergeTree，确实会非常麻烦。不过各位读者并不需要忧虑，因为目前介绍的这种使用方法，并不是它的主流用法。
+
+​	**AggregatingMergeTree更为常见的应用方式是结合物化视图使用，将它作为物化视图的表引擎**。<u>而这里的物化视图是作为其他数据表上层的一种查询视图</u>，如图7-1所示。
+
+​	现在用一组示例说明。首先，建立明细数据表，也就是俗称的底表：
+
+```sql
+CREATE TABLE agg_table_basic(
+  id String,
+  city String,
+  code String,
+  value UInt32
+)ENGINE = MergeTree()
+PARTITION BY city
+ORDER BY (id,city)
+```
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/70830a77b24b4082a59b6ddd61e0e449.png?x-oss-process=image/watermark,type_d3F5LXplbmhlaQ,shadow_50,text_Q1NETiBAJ-WXr-WTvOOAgg==,size_20,color_FFFFFF,t_70,g_se,x_16)
+
+​	<u>通常会使用MergeTree作为底表，用于存储全量的明细数据，并以此对外提供实时查询。接着，新建一张物化视图</u>：
+
+```sql
+CREATE MATERIALIZED VIEW agg_view
+ENGINE = AggregatingMergeTree()
+PARTITION BY city
+ORDER BY (id,city)
+AS SELECT
+id,
+city,
+uniqState(code) AS code,
+sumState(value) AS value
+FROM agg_table_basic
+GROUP BY id, city
+```
+
+​	**物化视图使用AggregatingMergeTree表引擎，用于特定场景的数据查询，相比MergeTree，它拥有更高的性能**。
+
+​	在新增数据时，面向的对象是底表MergeTree：
+
+```sql
+INSERT INTO TABLE agg_table_basic
+VALUES('A000','wuhan','code1',100),('A000','wuhan','code2',200),('A000','zhuhai',
+                                                                 'code1',200)
+```
+
+​	**<u>数据会自动同步到物化视图，并按照AggregatingMergeTree引擎的规则处理</u>**。
+
+​	在查询数据时，面向的对象是物化视图AggregatingMergeTree：
+
+```sql
+SELECT id, sumMerge(value), uniqMerge(code) FROM agg_view GROUP BY id, city
+┌─id──┬─sumMerge(value)──┬──uniqMerge(code)─┐
+│ A000 │ 200 │ 1 │
+│ A000 │ 300 │ 2 │
+└─────┴────────────┴────────────┘
+```
+
+接下来，简单梳理一下AggregatingMergeTree的处理逻辑。
+
+（1）用ORBER BY排序键作为聚合数据的条件Key。
+
+（2）使用AggregateFunction字段类型定义聚合函数的类型以及聚合的字段。
+
+（3）**只有在合并分区的时候才会触发聚合计算的逻辑**。
+
+（4）**以数据分区为单位来聚合数据**。当分区合并时，同一数据分区内聚合Key相同的数据会被合并计算，而不同分区之间的数据则不会被计算。
+
+（5）在进行数据计算时，因为分区内的数据已经基于ORBER BY排序，所以能够找到那些相邻且拥有相同聚合Key的数据。
+
+（6）在聚合数据时，同一分区内，相同聚合Key的多行数据会合并成一行。对于那些非主键、非AggregateFunction类型字段，则会使用第一行数据的取值。
+
+（7）**AggregateFunction类型的字段使用二进制存储，在写入数据时，需要调用\*State函数；而在查询数据时，则需要调用相应的\*Merge函数。其中，\*表示定义时使用的聚合函数**。
+
+（8）<u>**AggregatingMergeTree通常作为物化视图的表引擎，与普通MergeTree搭配使用**</u>。
+
+## 7.5 CollapsingMergeTree
+
+​	假设现在需要设计一款数据库，该数据库支持对已经存在的数据实现行级粒度的修改或删除，你会怎么设计？一种最符合常理的思维可能是：首先找到保存数据的文件，接着修改这个文件，删除或者修改那些需要变化的数据行。<u>然而在大数据领域，对于ClickHouse这类高性能分析型数据库而言，对数据源文件修改是一件非常奢侈且代价高昂的操作。**相较于直接修改源文件，它们会将修改和删除操作转换成新增操作，即以增代删**</u>。
+
+​	CollapsingMergeTree就是一种通过以增代删的思路，**支持行级数据修改和删除的表引擎**。<u>**它通过定义一个sign标记位字段，记录数据行的状态**</u>。
+
++ 如果sign标记为1，则表示这是一行有效的数据；
++ 如果sign标记为-1，则表示这行数据需要被删除。
+
+​	**当CollapsingMergeTree分区合并时，同一数据分区内，sign标记为1和-1的一组数据会被抵消删除**。这种1和-1相互抵消的操作，犹如将一张瓦楞纸折叠了一般。这种直观的比喻，想必也正是折叠合并树（CollapsingMergeTree）名称的由来，其折叠的过程如图7-2所示。
+
+![img](https://upload-images.jianshu.io/upload_images/1233356-15a9203fea815d89.png?imageMogr2/auto-orient/strip|imageView2/2/w/1200/format/webp)
+
+​	图7-2 CollapsingMergeTree折叠数据的示意图
+
+声明CollapsingMergeTree的方式如下：
+
+```sql
+ENGINE = CollapsingMergeTree(sign)
+```
+
+​	其中，sign用于指定一个Int8类型的标志位字段。一个完整的使用示例如下所示：
+
+```sql
+CREATE TABLE collpase_table(
+  id String,
+  code Int32,
+  create_time DateTime,
+  sign Int8
+)ENGINE = CollapsingMergeTree(sign)
+PARTITION BY toYYYYMM(create_time)
+ORDER BY id
+```
+
+​	与其他的MergeTree变种引擎一样，**CollapsingMergeTree同样是以ORDER BY排序键作为后续判断数据唯一性的依据**。按照之前的介绍，对于上述collpase_table数据表而言，除了常规的新增数据操作之外，还能够支持两种操作。
+
+​	其一，修改一行数据：
+
+```sql
+--修改前的源数据, 它需要被修改
+INSERT INTO TABLE collpase_table VALUES('A000',100,'2019-02-20 00:00:00',1)
+--镜像数据, ORDER BY字段与源数据相同(其他字段可以不同),sign取反为-1,它会和源数据折叠
+INSERT INTO TABLE collpase_table VALUES('A000',100,'2019-02-20 00:00:00',-1)
+--修改后的数据 ,sign为1
+INSERT INTO TABLE collpase_table VALUES('A000',120,'2019-02-20 00:00:00',1)
+```
+
+​	其二，删除一行数据：
+
+```sql
+--修改前的源数据, 它需要被删除
+INSERT INTO TABLE collpase_table VALUES('A000',100,'2019-02-20 00:00:00',1)
+--镜像数据, ORDER BY字段与源数据相同, sign取反为-1, 它会和源数据折叠
+INSERT INTO TABLE collpase_table VALUES('A000',100,'2019-02-20 00:00:00',-1)
+```
+
+​	CollapsingMergeTree在折叠数据时，遵循以下规则。
+
++ **如果sign=1比sign=-1的数据多一行，则保留最后一行sign=1的数据**。
+
++ **如果sign=-1比sign=1的数据多一行，则保留第一行sign=-1的数据**。
+
++ **如果sign=1和sign=-1的数据行一样多，并且最后一行是sign=1，则保留第一行sign=-1和最后一行sign=1的数据**。
+
++ **如果sign=1和sign=-1的数据行一样多，并且最后一行是sign=-1，则什么也不保留**。
+
++ **<u>其余情况，ClickHouse会打印警告日志，但不会报错，在这种情形下，查询结果不可预知</u>**。
+
+​	在使用CollapsingMergeTree的时候，还有几点需要注意。
+
+（1）<u>折叠数据并不是实时触发的，和所有其他的MergeTree变种表引擎一样，这项特性也**只有在分区合并的时候**才会体现。所以在分区合并之前，用户还是会看到旧的数据</u>。解决这个问题的方式有两种。
+
++ 在查询数据之前，使用`optimize TABLE table_name FINAL`命令强制分区合并，但是这种方法效率极低，在实际生产环境中慎用。
+
++ 需要改变我们的查询方式。以collpase_table举例，如果原始的SQL如下所示：
+
+  ```sql
+  SELECT id,SUM(code),COUNT(code),AVG(code),uniq(code)
+  FROM collpase_table
+  GROUP BY id
+  ```
+
+  则需要改写成如下形式：
+
+  ```sql
+  SELECT id,SUM(code * sign),COUNT(code * sign),AVG(code * sign),uniq(code * sign)
+  FROM collpase_table
+  GROUP BY id
+  HAVING SUM(sign) > 0
+  ```
+
+（2）**只有相同分区内的数据才有可能被折叠**。不过这项限制对于CollapsingMergeTree来说通常不是问题，因为修改或者删除数据的时候，这些数据的分区规则通常都是一致的，并不会改变。
+
+（3）**<u>最后这项限制可能是CollapsingMergeTree最大的命门所在。CollapsingMergeTree对于写入数据的顺序有着严格要求</u>**。现在用一个示例说明。如果按照正常顺序写入，先写入sign=1，再写入sign=-1，则能够正常折叠：
+
+```sql
+--先写入sign=1
+INSERT INTO TABLE collpase_table VALUES('A000',102,'2019-02-20 00:00:00',1)
+--再写入sign=-1
+INSERT INTO TABLE collpase_table VALUES('A000',101,'2019-02-20 00:00:00',-1)
+```
+
+现在将写入的顺序置换，先写入sign=-1，再写入sign=1，则不能够折叠：
+
+```sql
+--先写入sign=-1
+INSERT INTO TABLE collpase_table VALUES('A000',101,'2019-02-20 00:00:00',-1)
+--再写入sign=1
+INSERT INTO TABLE collpase_table VALUES('A000',102,'2019-02-20 00:00:00',1)
+```
+
+​	**这种现象是CollapsingMergeTree的处理机制引起的，因为它要求sign=1和sign=-1的数据相邻。而分区内的数据基于ORBER BY排序，要实现sign=1和sign=-1的数据相邻，则只能依靠严格按照顺序写入**。
+
+​	如果数据的写入程序是单线程执行的，则能够较好地控制写入顺序；如果需要处理的数据量很大，数据的写入程序通常是多线程执行的，那么此时就不能保障数据的写入顺序了。在这种情况下，CollapsingMergeTree的工作机制就会出现问题。为了解决这个问题，ClickHouse另外提供了一个名为VersionedCollapsingMergeTree的表引擎，7.6节会介绍它。
+
+## 7.6 VersionedCollapsingMergeTree
+
+​	VersionedCollapsingMergeTree表引擎的作用与CollapsingMergeTree完全相同，它们的不同之处在于，VersionedCollapsingMergeTree对数据的写入顺序没有要求，在同一个分区内，任意顺序的数据都能够完成折叠操作。VersionedCollapsingMergeTree是如何做到这一点的呢？其实从它的命名各位就应该能够猜出来，是版本号。
+
+​	**在定义VersionedCollapsingMergeTree的时候，除了需要指定sign标记字段以外，还需要指定一个UInt8类型的ver版本号字段**：
+
+```sql
+ENGINE = VersionedCollapsingMergeTree(sign,ver)
+```
+
+​	一个完整的例子如下：
+
+```sql
+CREATE TABLE ver_collpase_table(
+  id String,
+  code Int32,
+  create_time DateTime,
+  sign Int8,
+  ver UInt8
+)ENGINE = VersionedCollapsingMergeTree(sign,ver)
+PARTITION BY toYYYYMM(create_time)
+ORDER BY id
+```
+
+​	VersionedCollapsingMergeTree是如何使用版本号字段的呢？其实很简单，**<u>在定义ver字段之后，VersionedCollapsingMergeTree会自动将ver作为排序条件并增加到ORDER BY的末端</u>**。以上面的ver_collpase_table表为例，在每个数据分区内，数据会按照ORDER BY id，ver DESC排序。所以无论写入时数据的顺序如何，在折叠处理时，都能回到正确的顺序。
+
+​	可以用一组示例证明，首先是删除数据：
+
+```sql
+--删除
+INSERT INTO TABLE ver_collpase_table VALUES('A000',101,'2019-02-20
+00:00:00',-1,1)
+INSERT INTO TABLE ver_collpase_table VALUES('A000',102,'2019-02-20 00:00:00',1,1)
+```
+
+​	接着是修改数据：
+
+```sql
+--修改
+INSERT INTO TABLE ver_collpase_table VALUES('A000',101,'2019-02-20
+00:00:00',-1,1)
+INSERT INTO TABLE ver_collpase_table VALUES('A000',102,'2019-02-20 00:00:00',1,1)
+INSERT INTO TABLE ver_collpase_table VALUES('A000',103,'2019-02-20 00:00:00',1,2)
+```
+
+​	上述操作中，数据均能够按照正常预期被折叠。
+
+## 7.7 各种MergeTree之间的关系总结
+
+​	经过上述介绍之后是不是觉得MergeTree功能非常丰富？但凡事都有两面性，功能丰富的同时很多朋友也会被这么多表引擎弄晕。其实我们可以使用继承和组合这两种关系来理解整个MergeTree。	
+
+### 7.7.1 继承关系
+
+​	首先，为了便于理解，可以使用继承关系来理解MergeTree。MergeTree表引擎向下派生出6个变种表引擎，如图7-3所示。
+
+![img](https://img2020.cnblogs.com/blog/1287132/202104/1287132-20210416220411550-948812111.png)
+
+​	图7-3 MergeTree家族的继承关系示意图
+
+​	在ClickHouse底层的实现方法中，上述7种表引擎的区别主要体现在**Merge合并**的逻辑部分。图7-4所示是简化后的对象关系。
+
+​	可以看到，在具体的实现逻辑部分，7种MergeTree共用一个主体，在触发Merge动作时，它们调用了各自独有的合并逻辑。
+
+![img](https://cdn.bianchengquan.com/da8ce53cf0240070ce6c69c48cd588ee/blog/5ffc3961b3698.jpeg)
+
+​	图7-4 MergeTree各种表引擎的逻辑部分
+
+​	除MergeTree之外的其他6个变种表引擎的Merge合并逻辑，全部是建立在MergeTree基础之上的，且均继承于MergeTree的MergingSortedBlockInputStream，如图7-5所示。
+
+![img](https://cdn.bianchengquan.com/da8ce53cf0240070ce6c69c48cd588ee/blog/5ffc39615b109.png)
+
+​	图7-5 合并树变种表引擎的Merge逻辑
+
+​	**MergingSortedBlockInputStream的主要作用是按照ORDER BY的规则保持新分区数据的有序性**。而其他6种变种MergeTree的合并逻辑，则是在有序的基础之上“各有所长”，要么是将排序后相邻的重复数据消除、要么是将重复数据累加汇总……
+
+​	所以，从继承关系的角度来看，7种MergeTree的主要区别在于Merge逻辑部分，所以特殊功能只会在Merge合并时才会触发。
+
+### 7.7.2 组合关系
+
+​	上一节已经介绍了7种MergeTree关系，本节介绍ReplicatedMergeTree系列。
+
+​	ReplicatedMergeTree与普通的MergeTree有什么区别呢？我们看图7-6所示。
+
+![img](https://cdn.bianchengquan.com/da8ce53cf0240070ce6c69c48cd588ee/blog/5ffc396128bb1.jpeg)
+
+​	图7-6 ReplicatedMergeTree系列
+
+​	上图中的虚线框部分是MergeTree的能力边界，而**ReplicatedMergeTree在MergeTree能力的基础之上增加了分布式协同的能力，其借助ZooKeeper的消息日志广播功能，实现了副本实例之间的数据同步功能**。
+
+​	ReplicatedMergeTree系列可以用组合关系来理解，如图7-7所示。
+
+![img](https://cdn.bianchengquan.com/da8ce53cf0240070ce6c69c48cd588ee/blog/5ffc3960ed104.png)
+
+​	图7-7 ReplicatedMergeTree组合关系示意图
+
+​	当我们为7种MergeTree加上Replicated前缀后，又能组合出7种新的表引擎，这些ReplicatedMergeTree拥有副本协同的能力。关于ReplicatedMergeTree表引擎的详细说明见第10章。
+
+## 7.8 本章小结
+
+​	本章全面介绍了MergeTree表引擎系列，通过本章我们知道了，合并树家族除了基础表引擎MergeTree之外，还有另外5种常用的变种来引擎。对于MergeTree而言，继上一章介绍了它的核心工作原理之后，本章又进一步介绍了它的TTL机制和多数据块存储。除此之外，我们还知道了MergeTree各个变种表引擎的特点和使用方法，包括支持数据去重的ReplacingMergeTree、支持预先聚合计算的SummingMergeTree与AggregatingMergeTree，以及支持数据更新且能够折叠数据的CollapsingMergeTree与VersionedCollapsingMergeTree。这些MergeTree系列的表引擎，都用ORDER BY作为条件Key，在分区合并时触发各自的处理逻辑。下一章将进一步介绍其他常见表引擎的具体使用方法。
