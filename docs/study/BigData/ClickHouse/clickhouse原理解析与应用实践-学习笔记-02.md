@@ -2230,4 +2230,737 @@ desc query_v3
 
 ## 9.7 GROUP BY子句
 
-P397
+​	GROUP BY又称聚合查询，是最常用的子句之一，它是让ClickHouse最凸显卓越性能的地方。在GROUP BY后声明的表达式，通常称为聚合键或者Key，数据会按照聚合键进行聚合。在ClickHouse的聚合查询中，SELECT可以声明聚合函数和列字段，**如果SELECT后只声明了聚合函数，则可以省略GROUP BY关键字**：
+
+```sql
+--如果只有聚合函数，可以省略GROUP BY
+SELECT SUM(data_compressed_bytes) AS compressed ,
+SUM(data_uncompressed_bytes) AS uncompressed
+FROM system.parts
+```
+
+​	**如若声明了列字段，则只能使用聚合键包含的字段，否则会报错**：
+
+```sql
+--除了聚合函数外，只能使用聚合key中包含的table字段
+SELECT table,COUNT() FROM system.parts GROUP BY table
+--使用聚合key中未声明的rows字段，则会报错
+SELECT table,COUNT(),rows FROM system.parts GROUP BY table
+```
+
+​	但是在某些场合下，可以借助any、max和min等聚合函数访问聚合键之外的列字段：
+
+```sql
+SELECT table,COUNT(),any(rows) FROM system.parts GROUP BY table
+┌─table────┬─COUNT()─┬─any(rows)─┐
+│ partition_v1 │ 1 │ 4 │
+│ agg_merge2 │ 1 │ 1 │
+│ hits_v1 │ 2 │ 8873898 │
+└────────┴───────┴────────┘
+```
+
+​	**<u>当聚合查询内的数据存在NULL值时，ClickHouse会将NULL作为NULL=NULL的特定值处理</u>**，例如：
+
+```sql
+SELECT arrayJoin([1, 2, 3,null,null,null]) AS v GROUP BY v
+┌───v───┐
+│ │
+│ 1 │
+│ 2 │
+│ 3 │
+│ NULL │
+└───────┘
+```
+
+​	可以看到所有的NULL值都被聚合到了NULL分组。
+
+​	除了上述特性之外，<u>聚合查询目前还能配合WITH ROLLUP、WITH CUBE和WITH TOTALS三种修饰符获取额外的汇总信息</u>。
+
+### * 9.7.1 WITH ROLLUP
+
+​	顾名思义，**ROLLUP能够按照聚合键从右向左上卷数据，<u>基于聚合函数依次生成分组小计和总计</u>。如果设聚合键的个数为n，则最终会生成小计的个数为n+1**。例如执行下面的语句：
+
+```sql
+SELECT table, name, SUM(bytes_on_disk) FROM system.parts GROUP BY table,name WITH
+ROLLUP
+ORDER BY table ┌─table──────┬─name──────┬─SUM(bytes_on_disk)─┐
+│ │ │ 2938852157 │
+│partition_v1 │ │ 670 │
+│ partition_v1 │ 201906_6_6_0 │ 160 │
+│ partition_v1 │ 201905_1_3_1 │ 175 │
+│ partition_v1 │ 201905_5_5_0 │ 160 │
+│ partition_v1 │ 201906_2_4_1 │ 175 │
+│query_v4 │ │ 459 │
+│ query_v4 │ 201906_2_2_0 │ 203 │
+│ query_v4 │ 201905_1_1_0 │ 256 │
+省略…
+└─────────┴─────────┴─────────────┘
+```
+
+​	可以看到在最终返回的结果中，**附加返回了显示名称为空的小计汇总行**，<u>包括所有表分区磁盘大小的汇总合计以及每张table内所有分区大小的合计信息</u>。
+
+### * 9.7.2 WITH CUBE
+
+​	顾名思义，CUBE会像立方体模型一样，**基于聚合键之间所有的组合生成小计信息**。**<u>如果设聚合键的个数为n，则最终小计组合的个数为2的n次方</u>**。
+
+​	接下来用示例说明它的用法。假设在数据库(database)default和datasets中分别拥有一张数据表hits_v1，现在需要通过查询system.parts系统表分别按照数据库database、表table和分区name分组合计汇总，则可以执行下面的语句：
+
+```sql
+SELECT database, table, name, SUM(bytes_on_disk) FROM
+(SELECT database, table, name, bytes_on_disk FROM system.parts WHERE table
+='hits_v1') GROUP BY database,table,name
+WITH CUBE
+ORDER BY database,table ,name
+┌─database─┬─table──┬─name──────┬─SUM(bytes_on_disk) ──┐
+│ │ │ │ 1460381504 │
+│ │ │ 201403_1_29_2 │ 1271367153 │
+│ │ │ 201403_1_6_1 │ 189014351 │
+│ │ hits_v1 │ │ 1460381504 │
+│ │ hits_v1 │ 201403_1_29_2 │ 1271367153 │
+│ │ hits_v1 │ 201403_1_6_1 │ 189014351 │
+│ │ │ │ │
+│ datasets │ │ │ 1271367153 │
+│ datasets │ │ 201403_1_29_2 │ 1271367153 │
+│ datasets │ hits_v1 │ │ 1271367153 │
+│ datasets │ hits_v1 │ 201403_1_29_2 │ 1271367153 │
+│ default │ │ │ 189014351 │
+│ default │ │ 201403_1_6_1 │ 189014351 │
+│ default │ hits_v1 │ │ 189014351 │
+│ default │ hits_v1 │ 201403_1_6_1 │ 189014351 │
+└───────┴──────┴─────────┴──────────────┘
+```
+
+​	由返回结果可知，基于3个分区键database、table与name按照立方体CUBE组合后，形成了[空]、[database,table,name]、[database]、[table]、[name]、[database,table]、[database,name]和[table,name]共计8种小计组合，恰好是2的3次方。
+
+### * 9.7.3 WITH TOTALS
+
+​	**使用TOTALS修饰符后，会基于聚合函数对所有数据进行总计**，例如执行下面的语句：
+
+```sql
+SELECT database, SUM(bytes_on_disk),COUNT(table) FROM system.parts GROUP BY
+database WITH TOTALS
+┌─database─┬─SUM(bytes_on_disk)─┬─COUNT(table)─┐
+│ default │ 378059851 │ 46 │
+│ datasets │ 2542748913 │ 3 │
+│ system │ 152144 │ 3 │
+└───────┴─────────────┴─────────┘
+Totals:
+┌─database─┬─SUM(bytes_on_disk)─┬─COUNT(table)─┐
+│ │ 2920960908 │ 52 │
+└───────┴─────────────┴─────────┘
+```
+
+​	其结果附加了一行Totals汇总合计，**这一结果是基于聚合函数对所有数据聚合总计的结果**。
+
+## 9.8 HAVING子句
+
+​	HAVING子句需要与GROUP BY同时出现，不能单独使用。它能够在聚合计算之后实现二次过滤数据。例如下面的语句是一条普通的聚合查询，会按照table分组并计数：
+
+```sql
+SELECT COUNT() FROM system.parts GROUP BY table --执行计划
+Expression
+	Expression
+		Aggregating
+			Concat
+				Expression One
+```
+
+​	现在增加HAVING子句后再次执行上述操作，则数据在按照table聚合之后，进一步截掉了table='query_v3'的部分。
+
+```sql
+SELECT COUNT() FROM system.parts GROUP BY table HAVING table = 'query_v3'
+--执行计划
+Expression
+	Expression
+		Filter
+			Aggregating
+				Concat
+					Expression One
+```
+
+​	观察两次查询的执行计划，可以发现**<u>HAVING的本质是在聚合之后增加了Filter过滤动作</u>**。
+
+​	对于类似上述的查询需求，除了使用HAVING之外，通过嵌套的WHERE也能达到相同的目的，例如下面的语句：
+
+```sql
+SELECT COUNT() FROM
+(SELECT table FROM system.parts WHERE table = 'query_v3') GROUP BY table
+--执行计划
+Expression
+	Expression
+		Aggregating
+			Concat
+				Expression Expression Expression Filter One
+```
+
+​	分析上述查询的执行计划，**<u>相比使用HAVING，嵌套WHERE的执行计划效率更高</u>**。**因为WHERE等同于使用了谓词下推，在聚合之前就进行了数据过滤，从而减少了后续聚合时需要处理的数据量**。
+
+​	既然如此，那是否意味着HAVING子句没有存在的意义了呢？其实不然，现在来看另外一种查询诉求。假设现在需要按照table分组聚合，并且返回均值bytes_on_disk大于10 000字节的数据表，在这种情形下需要使用HAVING子句：
+
+```sql
+SELECT table ,avg(bytes_on_disk) as avg_bytes FROM system.parts GROUP BY table
+HAVING avg_bytes > 10000
+┌─table─────┬───avg_bytes───┐
+│ hits_v1 │ 730190752 │
+└─────────┴────────────┘
+```
+
+​	这是因为WHERE的执行优先级大于GROUP BY，所以<u>如果需要按照聚合值进行过滤，就必须借助HAVING实现</u>。
+
+## * 9.9 ORDER BY子句
+
+​	ORDER BY子句通过声明排序键来指定查询数据返回时的顺序。通过先前的介绍大家知道，在MergeTree表引擎中也有ORDER BY参数用于指定排序键，那么这两者有何不同呢？**在MergeTree中指定ORDER BY后，数据在各个分区内会按照其定义的规则排序，这是一种分区内的局部排序**。如果在查询时数据跨越了多个分区，则它们的返回顺序是无法预知的，每一次查询返回的顺序都可能不同。<u>在这种情形下，如果需要数据总是能够按照期望的顺序返回，就需要借助ORDER BY子句来指定全局顺序</u>。
+
+​	ORDER BY在使用时可以定义多个排序键，每个排序键后需紧跟ASC（升序）或DESC（降序）来确定排列顺序。**如若不写，则默认为ASC（升序）**。例如下面的两条语句即是等价的：
+
+```sql
+--按照v1升序、v2降序排序
+SELECT arrayJoin([1,2,3]) as v1 , arrayJoin([4,5,6]) as v2
+ORDER BY v1 ASC, v2 DESC
+SELECT arrayJoin([1,2,3]) as v1 , arrayJoin([4,5,6]) as v2
+ORDER BY v1, v2 DESC
+```
+
+​	数据首先会按照v1升序，接着再按照v2降序。
+
+​	**对于数据中NULL值的排序，目前ClickHouse拥有NULL值最后和NULL值优先两种策略**，可以通过NULLS修饰符进行设置：
+
+1. NULLS LAST
+
+   **<u>NULL值排在最后，这也是默认行为</u>，修饰符可以省略**。在这种情形下，数据的排列顺序为其他值（value）→NaN→NULL。
+
+   ```sql
+   -- 顺序是value -> NaN -> NULL
+   WITH arrayJoin([30,null,60.5,0/0,1/0,-1/0,30,null,0/0]) AS v1
+   SELECT v1 ORDER BY v1 DESC NULLS LAST
+   ┌───v1─┐
+   │ inf │
+   │ 60.5 │
+   │ 30 │
+   │ 30 │
+   │ -inf │
+   │ nan │
+   │ nan │
+   │ NULL │
+   │ NULL │
+   └─────┘
+   ```
+
+2. NULLS FIRST
+
+   NULL值排在最前，在这种情形下，数据的排列顺序为NULL→NaN→其他值（value）：
+
+   ```sql
+   -- 顺序是NULL -> NaN -> value
+   WITH arrayJoin([30,null,60.5,0/0,1/0,-1/0,30,null,0/0]) AS v1
+   SELECT v1 ORDER BY v1 DESC NULLS FIRST
+   ┌──v1─┐
+   │ NULL │
+   │ NULL │
+   │ nan │
+   │ nan │
+   │ inf │
+   │ 60.5 │
+   │ 30 │
+   │ 30 │
+   │ -inf │
+   └────┘
+   ```
+
+   ​	从上述的两组测试中不难发现，对于NaN而言，它总是紧跟在NULL的身边。
+
+   + **在使用NULLS LAST策略时，NaN好像比所有非NULL值都小**；
+   + **而在使用NULLS FIRST时，NaN又好像比所有非NULL值都大**。
+
+## * 9.10 LIMIT BY子句
+
+​	**<u>LIMIT BY子句和大家常见的LIMIT所有不同，它运行于ORDER BY之后和LIMIT之前，能够按照指定分组，最多返回前n行数据（如果数据少于n行，则按实际数量返回），常用于TOP N的查询场景</u>**。LIMIT BY的常规语法如下：
+
+```sql
+LIMIT n BY express
+```
+
+​	例如执行下面的语句后便能够在基于数据库和数据表分组的情况下，查询返回数据占磁盘空间最大的前3张表：
+
+```sql
+-- limit n by
+SELECT database,table,MAX(bytes_on_disk) AS bytes FROM system.parts GROUP BY
+database,table ORDER BY database ,bytes DESC
+LIMIT 3 BY database
+┌─database─┬─table───────┬───bytes──┐
+│ datasets │ hits_v1 │ 1271367153 │
+│ datasets │ hits_v1_1 │ 1269636153 │
+│ default │ hits_v1_1 │ 189025442 │
+│ default │ hits_v1 │ 189014351 │
+│ default │ partition_v5 │ 5344 │
+│ │ │ │
+│ system │ query_log │ 81127 │
+│ system │ query_thread_log │ 68838 │
+└───────┴───────────┴────────┘
+```
+
+​	声明多个表达式需使用逗号分隔，例如下面的语句能够得到每张数据表所定义的字段中，使用最频繁的前5种数据类型：
+
+```sql
+SELECT database,table,type,COUNT(name) AS col_count FROM system.columns GROUP BY
+database,table,type ORDER BY col_count DESC
+LIMIT 5 BY database,table
+```
+
+​	除了常规语法以外，**LIMIT BY也支持跳过OFFSET偏移量获取数据**，具体语法如下：
+
+```sql
+LIMIT n OFFSET y BY express --简写
+LIMIT y,n BY express
+```
+
+​	例如在执行下面的语句时，查询会从跳过1行数据的位置开始：
+
+```sql
+SELECT database,table,MAX(bytes_on_disk) AS bytes FROM system.parts GROUP BY
+database,table ORDER BY bytes DESC
+LIMIT 3 OFFSET 1 BY database
+```
+
+​	使用简写形式也能够得到相同效果：
+
+```sql
+SELECT database,table,MAX(bytes_on_disk) AS bytes FROM system.parts GROUP BY
+database,table ORDER BY bytes DESC
+LIMIT 1，3 BY database
+```
+
+## 9.11 LIMIT子句
+
+​	LIMIT子句用于返回指定的前n行数据，常用于分页场景，它的三种语法形式如下所示：
+
+```sql
+LIMIT n
+LIMIT n OFFSET m
+LIMIT m，n
+```
+
+​	例如下面的语句，会返回前10行数据：
+
+```sql
+SELECT number FROM system.numbers LIMIT 10
+```
+
+​	从指定m行开始并返回前n行数据的语句如下：
+
+```sql
+SELECT number FROM system.numbers LIMIT 10 OFFSET 5
+```
+
+​	上述语句的简写形式如下：
+
+```sql
+SELECT number FROM system.numbers LIMIT 5 ,10
+```
+
+​	**LIMIT子句可以和LIMIT BY一同使用**，以下面的语句为例：
+
+```sql
+SELECT database,table,MAX(bytes_on_disk) AS bytes FROM system.parts
+GROUP BY database,table ORDER BY bytes DESC
+LIMIT 3 BY database
+LIMIT 10
+```
+
+​	上述语句表示，查询返回数据占磁盘空间最大的前3张表，而返回的总数据行等于10。
+
+​	**<u>在使用LIMIT子句时有一点需要注意，如果数据跨越了多个分区，在没有使用ORDER BY指定全局顺序的情况下，每次LIMIT查询所返回的数据有可能不同。如果对数据的返回顺序敏感，则应搭配ORDER BY一同使用</u>**。
+
+## * 9.12 SELECT子句
+
+​	SELECT子句决定了一次查询语句最终返回哪些列字段或表达式。与直观的感受不同，**虽然SELECT位于SQL语句的起始位置，但它却是在上述一众子句之后执行的**。<u>**在其他子句执行之后，SELECT会将选取的字段或表达式作用于每行数据之上**</u>。<u>如果使用`*`通配符，则会返回数据表的所有字段。正如本章开篇所言，在大多数情况下都不建议这么做，因为对于一款列式存储的数据库而言，这绝对是劣势而不是优势</u>。
+
+​	**<u>在选择列字段时，ClickHouse还为特定场景提供了一种基于正则查询的形式</u>**。例如执行下面的语句后，查询会返回名称以字母n开头和包含字母p的列字段：
+
+```sql
+SELECT COLUMNS('^n'), COLUMNS('p') FROM system.databases
+┌─name────┬─data_path────┬─metadata_path───┐
+│ default │ /data/default/ │ /metadata/default/ │
+│ system │ /data/system/ │ /metadata/system/ │
+└───────┴──────────┴────────────┘
+```
+
+## 9.13 DISTINCT子句
+
+​	DISTINCT子句能够去除重复数据，使用场景广泛。有时候，人们会拿它与GROUP BY子句进行比较。假设数据表query_v5的数据如下所示：
+
+```sql
+┌─name─┬─v1─┐
+│ a │ 1 │
+│ c │ 2 │
+│ b │ 3 │
+│ NULL │ 4 │
+│ d │ 5 │
+│ a │ 6 │
+│ a │ 7 │
+│ NULL │ 8 │
+└────┴───┘
+```
+
+​	则下面两条SQL查询的返回结果相同：
+
+```sql
+-- DISTINCT查询
+SELECT DISTINCT name FROM query_v5
+-- DISTINCT查询执行计划
+Expression
+	Distinct
+		Expression
+		Log
+-- GROUP BY查询
+SELECT name FROM query_v5 GROUP BY name
+-- GROUP BY查询执行计划
+Expression
+	Expression
+		Aggregating
+		Concat
+			Expression
+				Log
+```
+
+​	其中，第一条SQL语句使用了DISTINCT子句，第二条SQL语句使用了GROUP BY子句。但是观察它们执行计划不难发现，DISTINCT子句的执行计划更简单。与此同时，**DISTINCT也能够与GROUP BY同时使用，所以它们是互补而不是互斥的关系**。
+
+​	**<u>如果使用了LIMIT且没有ORDER BY子句，则DISTINCT在满足条件时能够迅速结束查询，这样可避免多余的处理逻辑</u>；而当DISTINCT与ORDER BY同时使用时，其执行的优先级是先DISTINCT后ORDER BY**。例如执行下面的语句，首先以升序查询：
+
+```sql
+SELECT DISTINCT name FROM query_v5 ORDER BY v1 ASC
+┌─name─┐
+│ a │
+│ c │
+│ b │
+│ NULL │
+│ d │
+└─────┘
+```
+
+​	接着再反转顺序，以倒序查询：
+
+```sql
+SELECT DISTINCT name FROM query_v5 ORDER BY v1 DESC
+┌─name─┐
+│ d │
+│ NULL │
+│ b │
+│ c │
+│ a │
+└─────┘
+```
+
+​	从两组查询结果中能够明显看出，执行逻辑是先DISTINCT后ORDER BY。**对于NULL值而言，DISTINCT也遵循着NULL=NULL的语义，所有的NULL值都会归为一组**。
+
+## * 9.14 UNION ALL子句
+
+​	UNION ALL子句能够联合左右两边的两组子查询，将结果一并返回。**在一次查询中，可以声明多次UNION ALL以便联合多组查询，<u>但UNION ALL不能直接使用其他子句（例如ORDER BY、LIMIT等），这些子句只能在它联合的子查询中使用</u>**。下面用一组示例说明它的用法。首先准备用于测试的数据表以及测试数据：
+
+```sql
+CREATE TABLE union_v1
+(
+  name String,
+  v1 UInt8
+) ENGINE = Log
+INSERT INTO union_v1 VALUES('apple',1),('cherry',2),('banana',3)
+CREATE TABLE union_v2
+(
+  title Nullable(String), v1 Float32
+) ENGINE = Log
+INSERT INTO union_v2 VALUES('apple',20), (null,4.5),('orange',1.1),('pear',2.0),
+('lemon',3.54)
+```
+
+现在执行联合查询：
+
+```sql
+SELECT name,v1 FROM union_v1
+UNION ALL
+SELECT title,v1 FROM union_v2
+```
+
+​	在上述查询中，对于UNION ALL两侧的子查询能够得到几点信息：
+
++ 首先，**列字段的数量必须相同**；
++ 其次，**列字段的数据类型必须相同或相兼容**；
++ 最后，**列字段的名称可以不同，查询结果中的列名会以左边的子查询为准**。
+
+​	对于联合查询还有一点要说明，**目前ClickHouse只支持UNION ALL子句**，如果想得到UNION DISTINCT子句的效果，可以使用嵌套查询来变相实现，例如：
+
+```sql
+SELECT DISTINCT name FROM
+(
+  SELECT name,v1 FROM union_v1
+  UNION ALL
+  SELECT title,v1 FROM union_v2
+)
+```
+
+## * 9.15 查看SQL执行计划
+
+​	**ClickHouse目前并没有直接提供EXPLAIN查询**，但是<u>借助后台的服务日志，能变相实现该功能</u>。例如，执行下面的语句，就能看到SQL的执行计划：
+
+```shell
+clickhouse-client -h ch7.nauu.com --send_logs_level=trace <<< 'SELECT * FROM
+hits_v1' > /dev/null
+```
+
+​	假设数据表hits_v1的关键属性如下所示：
+
+```sql
+CREATE TABLE hits_v1 (
+  WatchID UInt64,
+  EventDate DATE,
+  CounterID UInt32,
+  ...
+)ENGINE = MergeTree()
+PARTITION BY toYYYYMM(EventDate)
+ORDER BY CounterID
+SETTINGS index_granularity = 8192
+```
+
+​	其中，分区键是EventDate，主键是CounterID。在写入测试数据后，这张表的数据约900万行：
+
+```shell
+SELECT COUNT(*) FROM hits_v1
+┌─COUNT()─┐
+│ 8873910 │
+└──────┘
+1 rows in set. Elapsed: 0.010 sec.
+```
+
+​	另外，测试数据还拥有12个分区：
+
+```shell
+SELECT partition_id ,name FROM 'system'.parts WHERE 'table' = 'hits_v1' AND
+active = 1
+┌─partition_id┬─name──────┐
+│ 201403 │ 201403_1_7_1 │
+│ 201403 │ 201403_8_13_1 │
+│ 201403 │ 201403_14_19_1 │
+│ 201403 │ 201403_20_25_1 │
+│ 201403 │ 201403_26_26_0 │
+│ │ │
+│ 201403 │ 201403_27_27_0 │
+│ 201403 │ 201403_28_28_0 │
+│ 201403 │ 201403_29_29_0 │
+│ 201403 │ 201403_30_30_0 │
+│ 201405 │ 201405_31_40_2 │
+│ 201405 │ 201405_41_41_0 │
+│ 201406 │ 201406_42_42_0 │
+└────────┴─────────┘
+12 rows in set. Elapsed: 0.008 sec.
+```
+
+​	因为数据刚刚写入完毕，所以名为201403的分区目前有8个，该阶段还没有将其最终合并成1个。
+
+1. 全字段、全表扫描
+
+   ​	首先，执行SELECT * FROM hits_v进行全字段、全表扫描，具体语句如下：
+
+   ```shell
+   [root@ch7 ~]# clickhouse-client -h ch7.nauu.com --send_logs_level=trace <<<
+   'SELECT * FROM hits_v1' > /dev/null
+   [ch7.nauu.com] 2020.03.24 21:17:18.197960 {910ebccd-6af9-4a3e-82f4-d2291686e319}
+   [ 45 ] <Debug> executeQuery: (from 10.37.129.15:47198) SELECT * FROM hits_v1
+   [ch7.nauu.com] 2020.03.24 21:17:18.200324 {910ebccd-6af9-4a3e-82f4-d2291686e319}
+   [ 45 ] <Debug> default.hits_v1 (SelectExecutor): Key condition: unknown
+   [ch7.nauu.com] 2020.03.24 21:17:18.200350 {910ebccd-6af9-4a3e-82f4-d2291686e319}
+   [ 45 ] <Debug> default.hits_v1 (SelectExecutor): MinMax index condition: unknown
+   [ch7.nauu.com] 2020.03.24 21:17:18.200453 {910ebccd-6af9-4a3e-82f4-d2291686e319}
+   [ 45 ] <Debug> default.hits_v1 (SelectExecutor): Selected 12 parts by date, 12
+   parts by key, 1098 marks to read from 12 ranges
+   [ch7.nauu.com] 2020.03.24 21:17:18.205865 {910ebccd-6af9-4a3e-82f4-d2291686e319}
+   [ 45 ] <Trace> default.hits_v1 (SelectExecutor): Reading approx. 8917216 rows
+   with 2 streams
+   [ch7.nauu.com] 2020.03.24 21:17:18.206333 {910ebccd-6af9-4a3e-82f4-d2291686e319}
+   [ 45 ] <Trace> InterpreterSelectQuery: FetchColumns -> Complete
+   [ch7.nauu.com] 2020.03.24 21:17:18.207143 {910ebccd-6af9-4a3e-82f4-d2291686e319}
+   [ 45 ] <Debug> executeQuery: Query pipeline:
+   Union
+   Expression × 2
+   Expression
+   MergeTreeThread
+   [ch7.nauu.com] 2020.03.24 21:17:46.460028 {910ebccd-6af9-4a3e-82f4-d2291686e319}
+   [ 45 ] <Trace> UnionBlockInputStream: Waiting for threads to finish
+   [ch7.nauu.com] 2020.03.24 21:17:46.463029 {910ebccd-6af9-4a3e-82f4-d2291686e319}
+   [ 45 ] <Trace> UnionBlockInputStream: Waited for threads to finish
+   [ch7.nauu.com] 2020.03.24 21:17:46.466535 {910ebccd-6af9-4a3e-82f4-d2291686e319}
+   [ 45 ] <Information> executeQuery: Read 8873910 rows, 8.50 GiB in 28.267 sec.,
+   313928 rows/sec., 308.01 MiB/sec.
+   [ch7.nauu.com] 2020.03.24 21:17:46.466603 {910ebccd-6af9-4a3e-82f4-d2291686e319}
+   [ 45 ] <Debug> MemoryTracker: Peak memory usage (for query): 340.03 MiB.
+   ```
+
+   ​	现在我们分析一下，从上述日志中能够得到什么信息。日志中打印了该SQL的执行计划：
+
+   ```sql
+   Union
+   	Expression × 2
+   		Expression
+   			MergeTreeThread
+   ```
+
+   ​	<u>这条查询语句使用了2个线程执行，并最终通过Union合并了结果集</u>。
+
+   ​	**该查询语句没有使用主键索引**，具体如下：
+
+   ```shell
+   Key condition: unknown
+   ```
+
+   ​	**该查询语句没有使用分区索引**，具体如下：
+
+   ```shell
+   MinMax index condition: unknown
+   ```
+
+   ​	该查询语句共扫描了12个分区目录，共计1098个MarkRange，具体如下：
+
+   ```shell
+   Selected 12 parts by date, 12 parts by key, 1098 marks to read from 12 ranges
+   ```
+
+   ​	该查询语句总共读取了8 873 910行数据（全表），共8.50GB，具体如下：
+
+   ```shell
+   Read 8873910 rows, 8.50 GiB in 28.267 sec., 313928 rows/sec., 308.01 MiB/sec.
+   ```
+
+   ​	该查询语句消耗内存最大时为340 MB：
+
+   ```shell
+   MemoryTracker: Peak memory usage (for query): 340.03 MiB.
+   ```
+
+   ​	接下来尝试优化这条查询语句。
+
+2. 单个字段、全表扫描
+
+   ​	首先，还是全表扫描，但只访问1个字段：
+
+   ```sql
+   SELECT WatchID FROM hits_v，
+   ```
+
+   ​	执行下面的语句：
+
+   ```shell
+   clickhouse-client -h ch7.nauu.com --send_logs_level=trace <<< 'SELECT WatchID
+   FROM hits_v1' > /dev/null
+   ```
+
+   ​	再次观察执行日志，会发现该查询语句仍然会扫描所有的12个分区，并读取8873910行数据，但结果集大小由之前的8.50 GB降低到了现在的67.70 MB：
+
+   ```shell
+   Read 8873910 rows, 67.70 MiB in 0.195 sec., 45505217 rows/sec., 347.18 MiB/sec.
+   ```
+
+   ​	内存的峰值消耗也从先前的340 MB降低为现在的17.56 MB：
+
+   ```shell
+   MemoryTracker: Peak memory usage (for query): 17.56 MiB.
+   ```
+
+3. 使用分区索引
+
+   ​	继续修改SQL语句，增加WHERE子句，并将分区字段EventDate作为查询条件：
+
+   ```sql
+   SELECT WatchID FROM hits_v1 WHERE EventDate = '2014-03-17',
+   ```
+
+   ​	执行下面的语句：
+
+   ```shell
+   clickhouse-client -h ch7.nauu.com --send_logs_level=trace <<< "SELECT WatchID
+   FROM hits_v1 WHERE EventDate = '2014-03-17'" > /dev/null
+   ```
+
+   ​	这一次会看到执行日志发生了一些变化。首先，**WHERE子句被自动优化成了PREWHERE子句**：
+
+   ```shell
+   InterpreterSelectQuery: MergeTreeWhereOptimizer: condition "EventDate = '2014-03-
+   17'" moved to PREWHERE
+   ```
+
+   ​	其次，分区索引被启动了：
+
+   ```shell
+   MinMax index condition: (column 0 in [16146, 16146])
+   ```
+
+   ​	借助分区索引，这次查询只需要扫描9个分区目录，剪枝了3个分区：
+
+   ```shell
+   Selected 9 parts by date, 9 parts by key, 1095 marks to read from 9 ranges
+   ```
+
+   ​	**由于仍然没有启用主键索引，所以该查询仍然需要扫描9个分区内，即所有的1095个MarkRange**。所以，最终需要读取到内存的预估数据量为8892640行：
+
+   ```shell
+   Reading approx. 8892640 rows with 2 streams
+   ```
+
+4. 使用主键索引
+
+   ​	继续修改SQL语句，在WHERE子句中增加主键字段CounterID的过滤条件：
+
+   ```sql
+   SELECT WatchID FROM hits_v1 WHERE EventDate = '2014-03-17'
+   AND CounterID = 67141
+   ```
+
+   ​	执行下面的语句：
+
+   ```shell
+   clickhouse-client -h ch7.nauu.com --send_logs_level=trace <<< "SELECT WatchID
+   FROM hits_v1 WHERE EventDate = '2014-03-17' AND CounterID = 67141 " > /dev/null
+   ```
+
+   ​	再次观察日志，会发现在上次的基础上主键索引也被启动了：
+
+   ```shell
+   Key condition: (column 0 in [67141, 67141])
+   ```
+
+   ​	<u>由于启用了主键索引，所以需要扫描的MarkRange由1095个降到了8个</u>：
+
+   ```shell
+   Selected 9 parts by date, 8 parts by key, 8 marks to read from 8 ranges
+   ```
+
+   ​	现在最终需要读取到内存的预估数据量只有65536行（8192*8）：
+
+   ```shell
+   Reading approx. 65536 rows with 2 streams
+   ```
+
+---
+
+好了，现在总结一下：
+
+（1）**通过将ClickHouse服务日志设置到DEBUG或者TRACE级别，可以变相实现EXPLAIN查询，以分析SQL的执行日志**。
+
+（2）**需要真正执行了SQL查询，CH才能打印计划日志，所以如果表的数据量很大，最好借助LIMIT子句以减小查询返回的数据量**。
+
+（3）在日志中，分区过滤信息部分如下所示：
+
+```shell
+Selected xxx parts by date,
+```
+
+​	**<u>其中by date是固定的，无论我们的分区键是什么字段，这里都不会变。这是由于在早期版本中，MergeTree分区键只支持日期字段</u>**。
+
+（4）不要使用SELECT * 全字段查询。
+
+（5）尽可能利用各种索引（分区索引、一级索引、二级索引），这样可避免全表扫描。
+
+## 9.16 本章小结
+
+​	本章按照ClickHouse对SQL大致的解析顺序，依次介绍了各种查询子句的用法。包括用于简化SQL写法的WITH子句、用于数据采样的SAMPLE子句、能够优化查询的PREWHERE子句以及常用的JOIN和GROUP BY子句等。但是到目前为止，我们还是只介绍了ClickHouse的本地查询部分，当面对海量数据的时候，单节点服务是不足以支撑的，所以下一章将进一步介绍与ClickHouse分布式相关的知识。
+
+# 10. 副本与分片
+
+P429
