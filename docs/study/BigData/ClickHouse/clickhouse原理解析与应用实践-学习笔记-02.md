@@ -873,4 +873,1361 @@ SELECT COUNT(*) FROM memory_1
 
 ## 8.3 日志类型
 
-P341
+​	**如果使用的数据量很小（100万以下），面对的数据查询场景也比较简单，并且是<u>“一次”写入多次查询</u>的模式，那么使用日志家族系列的表引擎将会是一种不错的选择**。
+
+​	与合并树家族表引擎类似，日志家族系列的表引擎也拥有一些共性特征。例如：<u>它们均不支持索引、分区等高级特性；不支持并发读写，当针对一张日志表写入数据时，针对这张表的查询会被阻塞，直至写入动作结束；但它们也同时拥有切实的物理存储，数据会被保存到本地文件中</u>。除了这些共同的特征之外，日志家族系列的表引擎也有着各自的特点。接下来，会按照性能由低到高的顺序逐个介绍它们的使用方法。
+
+### 8.3.1 TinyLog
+
+​	**TinyLog是日志家族系列中性能最低的表引擎**，它的存储结构由<u>数据文件</u>和<u>元数据</u>两部分组成。其中，**数据文件是按列独立存储的**，也就是说每一个列字段都拥有一个与之对应的.bin文件。这种结构和MergeTree有些相似，但是**TinyLog既不支持分区，也没有.mrk标记文件**。<u>**由于没有标记文件，它自然无法支持.bin文件的并行读取操作，所以它只适合在非常简单的场景下使用**</u>。接下来用一个示例说明它的用法。首先创建一张TinyLog表：
+
+```sql
+CREATE TABLE tinylog_1 (
+  id UInt64,
+  code UInt64
+)ENGINE = TinyLog()
+```
+
+​	接着，对其写入数据：
+
+```sql
+INSERT INTO TABLE tinylog_1 SELECT number,number+1 FROM numbers(100)
+```
+
+​	数据写入后就能够通过SELECT语句对它进行查询了。现在找到它的文件目录，分析一下它的存储结构：
+
+```shell
+# pwd
+/chbase/data/default/tinylog_1
+ll
+total 12
+-rw-r-----. 1 clickhouse clickhouse 432 23:39 code.bin
+-rw-r-----. 1 clickhouse clickhouse 430 23:39 id.bin
+-rw-r-----. 1 clickhouse clickhouse 66 23:39 sizes.json
+```
+
+​	可以看到，在表目录之下，id和code字段分别生成了各自的.bin数据文件。现在进一步查看sizes.json文件：
+
+```shell
+# cat ./sizes.json
+{"yandex":{"code%2Ebin":{"size":"432"},"id%2Ebin":{"size":"430"}}}
+```
+
+​	由上述操作发现，在sizes.json文件内使用JSON格式记录了每个.bin文件内对应的数据大小的信息。
+
+### 8.3.2 StripeLog
+
+​	StripeLog表引擎的存储结构由固定的3个文件组成，它们分别是：
+
++ data.bin：数据文件，所有的列字段使用同一个文件保存，它们的数据都会被写入data.bin。
++ index.mrk：数据标记，保存了数据在data.bin文件中的位置信息。利用数据标记能够使用多个线程，以并行的方式读取data.bin内的压缩数据块，从而提升数据查询的性能。
++ sizes.json：元数据文件，记录了data.bin和index.mrk大小的信息。
+
+​	从上述信息能够得知，相比TinyLog而言，**StripeLog拥有更高的查询性能（拥有.mrk标记文件，支持并行查询），同时其使用了更少的文件描述符（所有数据使用同一个文件保存）**。
+
+​	接下来用一个示例说明它的用法。首先创建一张StripeLog表：
+
+```sql
+CREATE TABLE spripelog_1 (
+  id UInt64,
+  price Float32
+)ENGINE = StripeLog()
+```
+
+​	接着，对其写入数据：
+
+```sql
+INSERT INTO TABLE spripelog_1 SELECT number,number+100 FROM numbers(1000)
+```
+
+​	写入之后，就可以使用SELECT语句对它进行查询了。现在，同样找到它的文件目录，下面分析它的存储结构：
+
+```shell
+# pwd
+/chbase/data/default/spripelog_1
+# ll
+total 16
+-rw-r-----. 1 clickhouse clickhouse 8121 01:10 data.bin
+-rw-r-----. 1 clickhouse clickhouse 70 01:10 index.mrk
+-rw-r-----. 1 clickhouse clickhouse 69 01:10 sizes.json
+```
+
+​	在表目录下，StripeLog表引擎创建了3个固定文件，现在进一步查看sizes.json：
+
+```shell
+# cd /chbase/data/default/spripelog_1
+# cat ./sizes.json
+{"yandex":{"data%2Ebin":{"size":"8121"},"index%2Emrk":{"size":"70"}}}
+```
+
+​	在sizes.json文件内，使用JSON格式记录了每个data.bin和index.mrk文件内对应的数据大小的信息。
+
+### 8.3.3 Log
+
+​	**Log表引擎结合了TinyLog表引擎和StripeLog表引擎的长处，是日志家族系列中性能最高的表引擎**。Log表引擎的存储结构由3个部分组成：
+
++ [column].bin：数据文件，数据文件按列独立存储，每一个列字段都拥有一个与之对应的.bin文件。
++ __marks.mrk：数据标记，统一保存了数据在各个[column].bin文件中的位置信息。利用数据标记能够使用多个线程，以并行的方式读取.bin内的压缩数据块，从而提升数据查询的性能。
++ sizes.json：元数据文件，记录了[column].bin和__marks.mrk大小的信息。
+
+​	从上述信息能够得知，**由于拥有数据标记且各列数据独立存储，所以Log既能够支持并行查询，又能够按列按需读取，而付出的代价仅仅是比StripeLog消耗更多的文件描述符（每个列字段都拥有自己的.bin文件）**。
+
+​	接下来用一个示例说明它的用法。首先创建一张Log：
+
+```sql
+CREATE TABLE log_1 (
+  id UInt64,
+  code UInt64
+)ENGINE = Log()
+```
+
+​	接着，对其写入数据：
+
+```sql
+INSERT INTO TABLE log_1 SELECT number,number+1 FROM numbers(200)
+```
+
+​	数据写入之后就能够通过SELECT语句对它进行查询了。现在，再次找到它的文件目录，对它的存储结构进行分析：
+
+```shell
+# pwd
+/chbase/data/default/log_1
+# ll
+total 16
+-rw-r-----. 1 clickhouse clickhouse 432 23:55 code.bin
+-rw-r-----. 1 clickhouse clickhouse 430 23:55 id.bin
+-rw-r-----. 1 clickhouse clickhouse 32 23:55 __marks.mrk
+-rw-r-----. 1 clickhouse clickhouse 96 23:55 sizes.json
+```
+
+​	可以看到，在表目录下，各个文件与先前表引擎中的文件如出一辙。现在进一步查看sizes.json文件：
+
+```shell
+# cd /chbase/data/default/log_1
+# cat ./sizes.json
+{"yandex":{"__marks%2Emrk":{"size":"32"},"code%2Ebin":{"size":"432"},"id%2Ebin":
+{"size":"430"}}}
+```
+
+​	在sizes.json文件内，使用JSON格式记录了每个[column].bin和__marks.mrk文件内对应的数据大小的信息。
+
+## * 8.4 接口类型
+
+​	有这么一类表引擎，它们自身并不存储任何数据，而是像黏合剂一样可以整合其他的数据表。**在使用这类表引擎的时候，不用担心底层的复杂性，它们就像接口一样，为用户提供了统一的访问界面，所以我将它们归为接口类表引擎**。
+
+### * 8.4.1 Merge
+
+​	假设有这样一种场景：在数据仓库的设计中，数据按年分表存储，例如test_table_2018、test_table_2019和test_table_2020。假如现在需要跨年度查询这些数据，应该如何实现呢？在这情形下，使用Merge表引擎是一种合适的选择了。
+
+​	Merge表引擎就如同一层使用了门面模式的代理，**它本身不存储任何数据，也不支持数据写入**。它的作用就如其名，即**负责合并多个查询的结果集**。<u>Merge表引擎可以代理查询任意数量的数据表，这些查询会异步且并行执行，并最终合成一个结果集返回</u>。
+
+​	**<u>被代理查询的数据表被要求处于同一个数据库内，且拥有相同的表结构，但是它们可以使用不同的表引擎以及不同的分区定义（对于MergeTree而言）</u>**。Merge表引擎的声明方式如下所示：
+
+```sql
+ENGINE = Merge(database, table_name)
+```
+
+​	其中：database表示数据库名称；table_name表示数据表的名称，它**支持使用正则表达式**，例如^test表示合并查询所有以test为前缀的数据表。
+
+​	现在用一个简单示例说明Merge的使用方法，假设数据表test_table_2018保存了整个2018年度的数据，它数据结构如下所示：
+
+```sql
+CREATE TABLE test_table_2018(
+  id String,
+  create_time DateTime,
+  code String
+)ENGINE = MergeTree
+PARTITION BY toYYYYMM(create_time)
+ORDER BY id
+```
+
+​	表test_table_2019的结构虽然与test_table_2018相同，但是它使用了不同的表引擎：
+
+```sql
+CREATE TABLE test_table_2019(
+  id String,
+  create_time DateTime,
+  code String
+)ENGINE = Log
+```
+
+​	现在创建一张Merge表，将上述两张表组合：
+
+```sql
+CREATE TABLE test_table_all as test_table_2018
+ENGINE = Merge(currentDatabase(), '^test_table_')
+```
+
+​	其中，Merge表test_table_all直接复制了test_table_2018的表结构，它会合并当前数据库中所有以^test_table_开头的数据表。创建Merge之后，就可以查询这张Merge表了：	
+
+```sql
+SELECT _table,* FROM test_table_all
+┌─_table────────┬─id──┬───────create_time─┬─code─┐
+│ test_table_2018 │ A001 │ 2018-06-01 11:00:00 │ C2 │
+└────────────┴────┴──────────────┴────┘
+┌─_table────────┬─id──┬───────create_time─┬─code─┐
+│ test_table_2018 │ A000 │ 2018-05-01 17:00:00 │ C1 │
+│ test_table_2018 │ A002 │ 2018-05-01 12:00:00 │ C3 │
+└────────────┴────┴──────────────┴────┘
+┌─_table────────┬─id──┬───────create_time─┬─code─┐
+│ test_table_2019 │ A020 │ 2019-05-01 17:00:00 │ C1 │
+│ test_table_2019 │ A021 │ 2019-06-01 11:00:00 │ C2 │
+│ test_table_2019 │ A022 │ 2019-05-01 12:00:00 │ C3 │
+└────────────┴────┴──────────────┴────┘
+```
+
+​	通过返回的结果集可以印证，所有以^test_table_为前缀的数据表被分别查询后进行了合并返回。
+
+​	值得一提的是，在上述示例中用到了**虚拟字段\_table，它表示某行数据的来源表**。如果在查询语句中，将虚拟字段\_table作为过滤条件：
+
+```sql
+SELECT _table,* FROM test_table_all WHERE _table = 'test_table_2018'
+```
+
+​	那么**它将等同于索引，Merge表会忽略那些被排除在外的数据表，不会向它们发起查询请求**。
+
+### 8.4.2 Dictionary
+
+​	**Dictionary表引擎是数据字典的一层代理封装，它可以取代字典函数，让用户通过数据表查询字典**。字典内的数据被加载后，会全部保存到内存中，所以使用Dictionary表对字典性能不会有任何影响。声明Dictionary表的方式如下所示：
+
+```sql
+ENGINE = Dictionary(dict_name)
+```
+
+​	其中，dict_name对应一个已被加载的字典名称，例如下面的例子：
+
+```sql
+CREATE TABLE tb_test_flat_dict (
+  id UInt64,
+  code String,
+  name String
+)Engine = Dictionary(test_flat_dict);
+```
+
+​	tb_test_flat_dict等同于数据字典test_flat_dict的代理表，现在对它使用SELECT语句进行查询：
+
+```sql
+SELECT * FROM tb_test_flat_dict
+┌─id─┬─code──┬─name─┐
+│ 1 │ a0001 │ 研发部 │
+│ 2 │ a0002 │ 产品部 │
+│ 3 │ a0003 │ 数据部 │
+│ 4 │ a0004 │ 测试部 │
+└───┴─────┴────┘
+```
+
+​	由上可以看到，字典数据被如数返回。
+
+​	<u>如果字典的数量很多，逐一为它们创建各自的Dictionary表未免过于烦琐。这时候可以使用Dictionary引擎类型的数据库来解决这个问题</u>，例如：
+
+```sql
+CREATE DATABASE test_dictionaries ENGINE = Dictionary
+```
+
+​	<u>上述语句创建了一个名为test_dictionaries的数据库，它使用了Dictionary类型的引擎。在这个数据库中，ClickHouse会自动为每个字典分别创建它们的Dictionary表</u>：
+
+```sql
+SELECT database,name,engine_full FROM system.tables WHERE database =
+'test_dictionaries'
+┌─database──────┬─name─────────────────┬─engine───┐
+│ test_dictionaries │ test_cache_dict │ Dictionary │
+│ test_dictionaries │ test_ch_dict │ Dictionary │
+│ test_dictionaries │ test_flat_dict │ Dictionary │
+└────────────┴────────────────────┴────────┘
+```
+
+​	由上可以看到，当前系统中所有已加载的数据字典都在这个数据库下创建了各自的Dictionary表。
+
+### 8.4.3 Distributed
+
+​	在数据库领域，当面对海量业务数据的时候，一种主流的做法是实施Sharding方案，即将一张数据表横向扩展到多个数据库实例。其中，每个数据库实例称为一个Shard分片，数据在写入时，需要按照预定的业务规则均匀地写至各个Shard分片；而在数据查询时，则需要在每个Shard分片上分别查询，最后归并结果集。所以为了实现Sharding方案，一款支持分布式数据库的中间件是必不可少的，例如Apache ShardingSphere。
+
+​	**ClickHouse作为一款性能卓越的分布式数据库，自然是支持Sharding方案的，而Distributed表引擎就等同于Sharding方案中的数据库中间件。Distributed表引擎自身不存储任何数据，它能够作为分布式表的一层透明代理，在集群内部自动开展数据的写入分发以及查询路由工作**。关于Distributed表引擎的详细介绍，将会在后续章节展开。
+
+## 8.5 其他类型
+
+​	接下来将要介绍的几款表引擎，由于各自用途迥异，所以只好把它们归为其他类型。虽然这些表引擎的使用场景并不广泛，但仍建议大家了解它们的特性和使用方法。因为这些表引擎扩充了ClickHouse的能力边界，在一些特殊的场合，它们也能够发挥重要作用。
+
+### * 8.5.1 Live View
+
+​	虽然ClickHouse已经提供了准实时的数据处理手段，例如Kafka表引擎和物化视图，但是在应用层面，一直缺乏开放给用户的**事件监听机制**。所以从19.14版本开始，Click-House提供了一种全新的图——Live View。
+
+​	Live View是一种特殊的视图，虽然它并不属于表引擎，但是因为它与数据表息息相关，所以我还是把Live View归类到了这里。**Live View的作用类似事件监听器，它能够将一条SQL查询结果作为监控目标，当目标数据增加时，Live View可以及时发出响应**。
+
+​	若要使用Live View，首先需要将allow_experimental_live_view参数设置为1，可以执行如下语句确认参数是否设置正确：
+
+```sql
+SELECT name, value FROM system.settings WHERE name LIKE '%live_view%'
+┌─name──────────────────────────────┬─value─┐
+│ allow_experimental_live_view │ 1 │
+└──────────────────────────────────┴─────┘
+```
+
+​	现在用一个示例说明它的使用方法。首先创建一张数据表，它将作为Live View的监听目标：
+
+```sql
+CREATE TABLE origin_table1(
+  id UInt64
+) ENGINE = Log
+```
+
+​	接着，创建一张Live View表示：
+
+```sql
+CREATE LIVE VIEW lv_origin AS SELECT COUNT(*) FROM origin_table1
+```
+
+​	然后，**执行watch命令以开启监听模式**：
+
+```sql
+WATCH lv_origin
+┌─COUNT()─┬─_version─┐
+│ 0 │ 1 │
+└───────┴───────┘
+↖ Progress: 1.00 rows, 16.00 B (0.07 rows/s., 1.07 B/s.)
+```
+
+​	如此一来，Live View就进入监听模式了。接着再开启另外一个客户端，向origin_table1写入数据：
+
+```sql
+INSERT INTO TABLE origin_table1 SELECT rand() FROM numbers(5)
+```
+
+​	此时再观察Live View，可以看到它做出了实时响应：
+
+```sql
+WATCH lv_origin
+┌─COUNT()─┬─_version──┐
+│ 0 │ 1 │
+└──────┴────────┘
+┌─COUNT()─┬─_version──┐
+│ 5 │ 2 │
+└──────┴────────┘
+↓ Progress: 2.00 rows, 32.00 B (0.04 rows/s., 0.65 B/s.)
+```
+
+​	注意，**虚拟字段_version伴随着每一次数据的同步，它的位数都会加1**。
+
+### * 8.5.2 Null
+
+​	**Null表引擎的功能与作用，与Unix系统的空设备/dev/null很相似。如果用户向Null表写入数据，系统会正确返回，但是Null表会自动忽略数据，永远不会将它们保存。如果用户向Null表发起查询，那么它将返回一张空表**。
+
+​	**<u>在使用物化视图的时候，如果不希望保留源表的数据，那么将源表设置成Null引擎将会是极好的选择</u>**。接下来，用一个具体示例来说明这种使用方法。
+
+​	首先新建一张Null表：
+
+```sql
+CREATE TABLE null_table1(
+  id UInt8
+) ENGINE = Null
+```
+
+​	接着以null_table1为源表，建立一张**物化视图**：
+
+```sql
+CREATE MATERIALIZED VIEW view_table10
+ENGINE = TinyLog
+AS SELECT * FROM null_table1
+```
+
+​	现在向null_table1写入数据，会发现数据被顺利同步到了视图view_table10中，而源表null_table1依然空空如也。
+
+### 8.5.3 URL
+
+​	**URL表引擎的作用等价于HTTP客户端，它可以通过HTTP/HTTPS协议，直接访问远端的REST服务**。
+
++ 当执行SELECT查询的时候，底层会将其转换为GET请求的远程调用。
++ 而执行INSERT查询的时候，会将其转换为POST请求的远程调用。
+
+​	URL表引擎的声明方式如下所示：
+
+```sql
+ENGINE = URL('url', format)
+```
+
+​	其中，url表示远端的服务地址，而format则是ClickHouse支持的数据格式，如TSV、CSV和JSON等。
+
+​	接下来，用一个具体示例说明它的用法。下面的这段代码片段来自于一个通过NodeJS模拟实现的REST服务：
+
+```javascript
+/* GET users listing. */
+router.get('/users', function(req, res, next) {
+	var result = '';
+	for (let i = 0; i < 5; i++) {
+		result += '{"name":"nauu'+i+'"}\n';
+	}
+	res.send(result);
+});
+/* Post user. */
+router.post('/ users'', function(req, res) {
+	res.sendStatus(200)
+});
+```
+
+​	该服务的访问路径是/users，其中，GET请求对应了用户查询功能；而POST请求对应了新增用户功能。现在新建一张URL表：
+
+```sql
+CREATE TABLE url_table(
+  name String
+)ENGINE = URL('http://client1.nauu.com:3000/users', JSONEachRow)
+```
+
+​	其中，url参数对应了REST服务的访问地址，数据格式使用了JSONEachRow。
+
+​	按如下方式执行SELECT查询：
+
+```sql
+SELECT * FROM url_table
+```
+
+​	此时SELECT会转换成一次GET请求，访问远端的HTTP服务：
+
+```shell
+<Debug> executeQuery: (from 10.37.129.2:62740) SELECT * FROM url_table
+<Trace> ReadWriteBufferFromHTTP: Sending request to
+http://client1.nauu.com:3000/users
+```
+
+​	最终，数据以表的形式被呈现在用户面前：
+
+```sql
+┌─name──┐
+│ nauu0 │
+│ nauu1 │
+│ nauu2 │
+│ nauu3 │
+│ nauu4 │
+└─────┘
+```
+
+​	按如下方式执行INSERT查询：
+
+```sql
+INSERT INTO TABLE url_table VALUES('nauu-insert')
+```
+
+​	INSERT会转换成一次POST请求，访问远端的HTTP服务：
+
+```shell
+<Debug> executeQuery: (from 10.37.129.2:62743) INSERT INTO TABLE url_table VALUES
+<Trace> WriteBufferToHTTP: Sending request to http://client1.nauu.com:3000/users
+```
+
+## 8.6 本章小结
+
+​	本章全面介绍了除第7章介绍的表引擎之外的其他类型的表引擎，知道了MergeTree家族表引擎之外还有另外5类表引擎。这些表引擎丰富了ClickHouse的使用场景，扩充了ClickHouse的能力界限。
+
+​	**外部存储类型的表引擎与Hive的外挂表很相似，它们只负责元数据管理和数据查询，自身并不负责数据的生成，数据文件直接由外部系统维护**。它们可以直接读取HDFS、本地文件、常见关系型数据库和KafKa的数据。
+
+​	**内存类型的表引擎中的数据是常驻内存的，所以它们拥有堪比MergeTree的查询性能（1亿数据量以内**）。其中Set和Join表引擎拥有物理存储，数据在写入内存的同时也会被刷新到磁盘；而Memory和Buffer表引擎在服务重启之后，数据便会被清空。**内存类表引擎是一把双刃剑，在数据大于1亿的场景下不建议使用内存类表引擎**。
+
+​	**日志类型表引擎适用于数据量在100万以下，并且是“一次”写入多次查询的场景**。其中TinyLog、StripeLog和Log的性能依次升高的。
+
+​	接口类型的表引擎自身并不存储任何数据，而是像黏合剂一样可以整合其他的数据表。其中Merge表引擎能够合并查询任意张表结构相同的数据表；Dictionary表引擎能够代理查询数据字典；而Distributed表引擎的作用类似分布式数据库的分表中间件，能够帮助用户简化数据的分发和路由工作。
+
+​	助用户简化数据的分发和路由工作。其他类型的表引擎用途迥异。其中Live View是一种特殊的视图，能够对SQL查询进行准实时监听；<u>Null表引擎类似于Unix系统的空设备/dev/null，通常与物化视图搭配使用</u>；而URL表引擎类似于HTTP客户端，能够代理调用远端的REST服务。
+
+# 9. 数据查询
+
+​	作为一款OLAP分析型数据库，我相信大家在绝大部分时间内都在使用它的查询功能。在日常运转的过程中，数据查询也是ClickHouse的主要工作之一。ClickHouse完全使用SQL作为查询语言，能够以SELECT查询语句的形式从数据库中选取数据，这也是它具备流行潜质的重要原因。虽然ClickHouse拥有优秀的查询性能，但是我们也不能滥用查询，掌握ClickHouse所支持的各种查询子句，并选择合理的查询形式是很有必要的。使用不恰当的SQL语句进行查询不仅会带来低性能，还可能导致不可预知的系统错误。
+
+​	虽然在之前章节的部分示例中，我们已经见识过一些查询语句的用法，但那些都是为了演示效果简化后的代码，与真正的生产环境中的代码相差较大。例如在绝大部分场景中，都应该避免使用`SELECT *`形式来查询数据，因为通配符`*`对于采用列式存储的ClickHouse而言没有任何好处。假如面对一张拥有数百个列字段的数据表，下面这两条SELECT语句的性能可能会相差100倍之多：
+
+```sql
+--使用通配符*与按列按需查询相比，性能可能相差100倍
+SELECT * FROM datasets.hits_v1;
+SELECT WatchID FROM datasets.hits_v1;
+```
+
+​	**<u>ClickHouse对于SQL语句的解析是大小写敏感的</u>**，这意味着SELECT a和SELECT A表示的语义是不相同的。ClickHouse目前支持的查询子句如下所示：
+
+```sql
+[WITH expr |(subquery)]
+SELECT [DISTINCT] expr
+[FROM [db.]table | (subquery) | table_function] [FINAL]
+[SAMPLE expr]
+[[LEFT] ARRAY JOIN]
+[GLOBAL] [ALL|ANY|ASOF] [INNER | CROSS | [LEFT|RIGHT|FULL [OUTER]] ] JOIN
+(subquery)|table ON|USING columns_list
+[PREWHERE expr]
+[WHERE expr]
+[GROUP BY expr] [WITH ROLLUP|CUBE|TOTALS]
+[HAVING expr]
+[ORDER BY expr]
+[LIMIT [n[,m]]
+[UNION ALL]
+[INTO OUTFILE filename]
+[FORMAT format]
+[LIMIT [offset] n BY columns]
+```
+
+​	其中，方括号包裹的查询子句表示其为可选项，所以只有SELECT子句是必须的，而ClickHouse对于查询语法的解析也大致是按照上面各个子句排列的顺序进行的。在本章后续会正视ClickHouse的本地查询部分，并大致依照各子句的解析顺序系统性地介绍它们的使用方法，而分布式查询部分则留待第10章介绍。
+
+## * 9.1 WITH子句
+
+​	**ClickHouse支持CTE（Common Table Expression，公共表表达式）**，以增强查询语句的表达。例如下面的函数嵌套：
+
+```sql
+SELECT pow(pow(2, 2), 3)
+```
+
+​	在改用CTE的形式后，可以极大地提高语句的可读性和可维护性，简化后的语句如下所示：
+
+```sql
+WITH pow(2, 2) AS a SELECT pow(a, 3)
+```
+
+​	CTE通过WITH子句表示，目前支持以下四种用法。
+
+1. 定义变量
+
+   ​	可以定义变量，这些变量能够在后续的查询子句中被直接访问。例如下面示例中的常量start，被直接用在紧接的WHERE子句中：
+
+   ```sql
+   WITH 10 AS start
+   SELECT number FROM system.numbers
+   WHERE number > start
+   LIMIT 5
+   ┌number─┐
+   │ 11 │
+   │ 12 │
+   │ 13 │
+   │ 14 │
+   │ 15 │
+   └─────┘
+   ```
+
+2. 调用函数
+
+   ​	可以访问SELECT子句中的列字段，并调用函数做进一步的加工处理。例如在下面的示例中，对data_uncompressed_bytes使用聚合函数求和后，又紧接着在SELECT子句中对其进行了格式化处理：
+
+   ```sql
+   WITH SUM(data_uncompressed_bytes) AS bytes
+   SELECT database , formatReadableSize(bytes) AS format FROM system.columns
+   GROUP BY database
+   ORDER BY bytes DESC
+   ┌─database────┬─format───┐
+   │ datasets │ 12.12 GiB │
+   │ default │ 1.87 GiB │
+   │ system │ 1.10 MiB │
+   │ dictionaries │ 0.00 B │
+   └─────────┴───────┘
+   ```
+
+3. 定义子查询
+
+   **可以定义子查询**。例如在下面的示例中，借助子查询可以得出各database未压缩数据大小与数据总和大小的比例的排名：
+
+   ```sql
+   WITH (
+     SELECT SUM(data_uncompressed_bytes) FROM system.columns
+   ) AS total_bytes
+   SELECT database , (SUM(data_uncompressed_bytes) / total_bytes) * 100 AS
+   database_disk_usage
+   FROM system.columns
+   GROUP BY database
+   ORDER BY database_disk_usage DESC
+   ┌─database────┬──database_disk_usage─┐
+   │ datasets │ 85.15608638238845 │
+   │ default │ 13.15591656190217 │
+   │ system │ 0.007523354055850406 │
+   │ dictionaries │ 0 │
+   └──────────┴──────────────┘
+   ```
+
+   ​	**<u>在WITH中使用子查询时有一点需要特别注意，该查询语句只能返回一行数据，如果结果集的数据大于一行则会抛出异常</u>**。
+
+4. 在子查询中重复使用WITH
+
+   ​	**在子查询中可以嵌套使用WITH子句**，例如在下面的示例中，在计算出各database未压缩数据大小与数据总和的比例之后，又进行了取整函数的调用：
+
+   ```sql
+   WITH (
+     round(database_disk_usage)
+   ) AS database_disk_usage_v1
+   SELECT database,database_disk_usage, database_disk_usage_v1
+   FROM (
+     --嵌套
+     WITH (
+       SELECT SUM(data_uncompressed_bytes) FROM system.columns
+     ) AS total_bytes
+     SELECT database , (SUM(data_uncompressed_bytes) / total_bytes) * 100 AS
+     database_disk_usage FROM system.columns
+     GROUP BY database
+     ORDER BY database_disk_usage DESC
+   )
+   ┌─database────┬───database_disk_usage─┬─database_disk_usage_v1───┐
+   │ datasets │ 85.15608638238845 │ 85 │
+   │ default │ 13.15591656190217 │ 13 │
+   │ system │ 0.007523354055850406 │ 0 │
+   └─────────┴───────────────┴─────────────────┘
+   ```
+
+## 9.2 FROM子句
+
+​	FROM子句表示从何处读取数据，目前支持如下3种形式。
+
+（1）从数据表中取数：
+
+```sql
+SELECT WatchID FROM hits_v1
+```
+
+（2）从子查询中取数：
+
+```sql
+SELECT MAX_WatchID
+FROM (SELECT MAX(WatchID) AS MAX_WatchID FROM hits_v1)
+```
+
+（3）从表函数中取数：
+
+```sql
+SELECT number FROM numbers(5)
+```
+
+​	**<u>FROM关键字可以省略，此时会从虚拟表中取数。在ClickHouse中，并没有数据库中常见的DUAL虚拟表，取而代之的是system.one</u>**。例如下面的两条查询语句，其效果是等价的：
+
+```sql
+SELECT 1
+SELECT 1 FROM system.one
+┌─1─┐
+│ 1 │
+└───┘
+```
+
+​	**在FROM子句后，可以使用Final修饰符**。<u>它可以配合CollapsingMergeTree和Versioned-CollapsingMergeTree等表引擎进行查询操作，以强制在查询过程中合并，但由于Final修饰符会降低查询性能，所以应该尽可能避免使用它</u>。
+
+## * 9.3 SAMPLE子句
+
+​	**SAMPLE子句能够实现数据采样的功能，使查询仅返回采样数据而不是全部数据，从而有效减少查询负载**。**<u>SAMPLE子句的采样机制是一种幂等设计</u>**，也就是说在数据不发生变化的情况下，使用相同的采样规则总是能够返回相同的数据，所以这项特性非常适合在那些可以接受近似查询结果的场合使用。例如在数据量十分巨大的情况下，对查询时效性的要求大于准确性时就可以尝试使用SAMPLE子句。
+
+​	**<u>SAMPLE子句只能用于MergeTree系列引擎的数据表，并且要求在CREATE TABLE时声明SAMPLE BY抽样表达式</u>**，例如下面的语句：
+
+```sql
+CREATE TABLE hits_v1 (
+  CounterID UInt64,
+  EventDate DATE,
+  UserID UInt64
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(EventDate)
+ORDER BY (CounterID, intHash32(UserID))
+--Sample Key声明的表达式必须也包含在主键的声明中
+SAMPLE BY intHash32(UserID)
+```
+
+​	<u>SAMPLE BY表示hits_v1内的数据，可以按照intHash32(UserID)分布后的结果采样查询</u>。
+
+​	在声明Sample Key的时候有两点需要注意：
+
++ **<u>SAMPLE BY所声明的表达式必须同时包含在主键的声明内</u>**；
+
++ **<u>Sample Key必须是Int类型，如若不是，ClickHouse在进行CREATE TABLE操作时也不会报错，但在数据查询时会得到如下类似异常</u>**：
+
+  ```shell
+  Invalid sampling column type in storage parameters: Float32. Must be unsigned
+  integer type.
+  ```
+
+SAMPLE子句目前支持如下3种用法。
+
+1. SAMPLE factor
+
+   SAMPLE factor表示按因子系数采样，其中factor表示采样因子，它的取值支持0～1之间的小数。**如果factor设置为0或者1，则效果等同于不进行数据采样**。如下面的语句表示按10%的因子采样数据：
+
+   ```sql
+   SELECT CounterID FROM hits_v1 SAMPLE 0.1
+   ```
+
+   factor也支持使用十进制的形式表述：
+
+   ```sql
+   SELECT CounterID FROM hits_v1 SAMPLE 1/10
+   ```
+
+   **在进行统计查询时，为了得到最终的近似结果，需要将得到的直接结果乘以采样系数。例如若想按0.1的因子采样数据，则需要将统计结果放大10倍**：
+
+   ```sql
+   SELECT count() * 10 FROM hits_v1 SAMPLE 0.1
+   ```
+
+   **一种更为优雅的方法是借助虚拟字段`_sample_factor`来获取采样系数，并以此代替硬编码的形式**。`_sample_factor`可以返回当前查询所对应的采样系数：
+
+   ```sql
+   SELECT CounterID, _sample_factor FROM hits_v1 SAMPLE 0.1 LIMIT 2
+   ┌─CounterID─┬─_sample_factor───┐
+   │ 57 │ 10 │
+   │ 57 │ 10 │
+   └────────┴─────────────┘
+   ```
+
+   在使用`_sample_factor`之后，可以将之前的查询语句改写成如下形式：
+
+   ```sql
+   SELECT count() * any(_sample_factor) FROM hits_v1 SAMPLE 0.1
+   ```
+
+2. SAMPLE rows
+
+   **SAMPLE rows表示按样本数量采样，其中rows表示至少采样多少行数据，<u>它的取值必须是大于1的整数</u>。如果rows的取值大于表内数据的总行数，则效果等于rows=1（即不使用采样）**。
+
+   下面的语句表示采样10000行数据：
+
+   ```sql
+   SELECT count() FROM hits_v1 SAMPLE 10000
+   ┌─count()─┐
+   │ 9576 │
+   └──────┘
+   ```
+
+   最终查询返回了9576行数据，从返回的结果中可以得知，**数据采样的范围是一个近似范围**，<u>**这是由于采样数据的最小粒度是由`index_granularity`索引粒度决定的**</u>。由此可知，设置一个小于索引粒度或者较小的rows值没有什么意义，应该设置一个较大的值。
+
+   同样可以使用虚拟字段`_sample_factor`来获取当前查询所对应的采样系数：
+
+   ```sql
+   SELECT CounterID,_sample_factor FROM hits_v1 SAMPLE 100000 LIMIT 1
+   ┌─CounterID─┬─_sample_factor─┐
+   │ 63 │ 13.27104 │
+   └───────┴──────────┘
+   ```
+
+3. SAMPLE factor OFFSET n
+
+   <u>SAMPLE factor OFFSET n表示按因子系数和偏移量采样，其中factor表示采样因子，n表示偏移多少数据后才开始采样，它们两个的取值都是0～1之间的小数</u>。例如下面的语句表示偏移量为0.5并按0.4的系数采样：
+
+   ```sql
+   SELECT CounterID FROM hits_v1 SAMPLE 0.4 OFFSET 0.5
+   ```
+
+   <u>上述代码最终的查询会从数据的二分之一处开始，按0.4的系数采样数据</u>。
+
+   **如果在计算OFFSET偏移量后，按照SAMPLE比例采样出现了溢出，则数据会被自动截断**。
+
+   这种用法支持使用十进制的表达形式，也支持虚拟字段`_sample_factor`：
+
+   ```sql
+   SELECT CounterID,_sample_factor FROM hits_v1 SAMPLE 1/10 OFFSET 1/2
+   ```
+
+## * 9.4 ARRAY JOIN子句
+
+​	**ARRAY JOIN子句允许在数据表的内部，与数组或嵌套类型的字段进行JOIN操作，从而将一行数组展开为多行**。接下来让我们看看它的基础用法。首先新建一张包含Array数组字段的测试表：
+
+```sql
+CREATE TABLE query_v1
+(
+  title String,
+  value Array(UInt8)
+) ENGINE = Log
+```
+
+​	接着写入测试数据，注意最后一行数据的数组为空：
+
+```sql
+INSERT INTO query_v1 VALUES ('food', [1,2,3]), ('fruit', [3,4]), ('meat', [])
+SELECT title,value FROM query_v1
+┌─title─┬─value───┐
+│ food │ [1,2,3] │
+│ fruit │ [3,4] │
+│ meat │ [] │
+└─────┴───────┘
+```
+
+​	**在一条SELECT语句中，只能存在一个ARRAY JOIN（使用子查询除外）。目前支持INNER和LEFT两种JOIN策略**：
+
+1. INNER ARRAY JOIN
+
+   **<u>ARRAY JOIN在默认情况下使用的是INNER JOIN策略</u>**，例如下面的语句：
+
+   ```sql
+   SELECT title,value FROM query_v1 ARRAY JOIN value
+   ┌─title─┬─value──┐
+   │ food │ 1 │
+   │ food │ 2 │
+   │ food │ 3 │
+   │ fruit │ 3 │
+   │ fruit │ 4 │
+   └─────┴──────┘
+   ```
+
+   从查询结果可以发现，最终的数据基于value数组被展开成了多行，并且**<u>排除掉了空数组</u>**。在使用ARRAY JOIN时，如果为原有的数组字段添加一个别名，则能够访问展开前的数组字段，例如：
+
+   ```sql
+   SELECT title,value,v FROM query_v1 ARRAY JOIN value AS v
+   ┌─title─┬─value──┬─v─┐
+   │ food │ [1,2,3] │ 1 │
+   │ food │ [1,2,3] │ 2 │
+   │ food │ [1,2,3] │ 3 │
+   │ fruit │ [3,4] │ 3 │
+   │ fruit │ [3,4] │ 4 │
+   └─────┴──────┴───┘
+   ```
+
+2. LEFT ARRAY JOIN
+
+   ARRAY JOIN子句支持LEFT连接策略，例如执行下面的语句：
+
+   ```sql
+   SELECT title,value,v FROM query_v1 LEFT ARRAY JOIN value AS v
+   ┌─title─┬─value──┬─v─┐
+   │ food │ [1,2,3] │ 1 │
+   │ food │ [1,2,3] │ 2 │
+   │ food │ [1,2,3] │ 3 │
+   │ fruit │ [3,4] │ 3 │
+   │ fruit │ [3,4] │ 4 │
+   │ meat │ [] │ 0 │
+   └─────┴──────┴──┘
+   ```
+
+   **<u>在改为LEFT连接查询后，可以发现，在INNER JOIN中被排除掉的空数组出现在了返回的结果集中</u>**。
+
+   **当同时对<u>多个数组字段</u>进行ARRAY JOIN操作时，查询的计算逻辑是<u>按行合并</u>而不是产生笛卡儿积**，例如下面的语句：
+
+   ```sql
+   -- ARRAY JOIN多个数组时，是合并，不是笛卡儿积
+   SELECT title,value,v ,arrayMap(x -> x * 2,value) as mapv,v_1 FROM query_v1 LEFT
+   ARRAY JOIN value AS v , mapv as v_1
+   ┌─title─┬─value──┬─v─┬─mapv───┬─v_1─┐
+   │ food │ [1,2,3] │ 1 │ [2,4,6] │ 2 │
+   │ food │ [1,2,3] │ 2 │ [2,4,6] │ 4 │
+   │ food │ [1,2,3] │ 3 │ [2,4,6] │ 6 │
+   │ fruit │ [3,4] │ 3 │ [6,8] │ 6 │
+   │ fruit │ [3,4] │ 4 │ [6,8] │ 8 │
+   │ meat │ [] │ 0 │ [] │ 0 │
+   └─────┴──────┴───┴──────┴────┘
+   ```
+
+   value和mapv**数组是按行合并的，并没有产生笛卡儿积**。
+
+   在前面介绍数据定义时曾介绍过，**<u>嵌套数据类型的本质是数组，所以ARRAY JOIN也支持嵌套数据类型</u>**。接下来继续用一组示例说明。首先新建一张包含嵌套类型的测试表：
+
+   ```sql
+   --ARRAY JOIN嵌套类型
+   CREATE TABLE query_v2
+   (
+     title String,
+     nest Nested(
+       v1 UInt32,
+       v2 UInt64)
+   ) ENGINE = Log
+   ```
+
+   接着写入测试数据，在写入嵌套数据类型时，记得同一行数据中各个数组的长度需要对齐，而对多行数据之间的数组长度没有限制：
+
+   ```sql
+   -- 同一行数据，数组长度要对齐
+   INSERT INTO query_v2 VALUES ('food', [1,2,3], [10,20,30]), ('fruit', [4,5],
+   [40,50]), ('meat', [], [])
+   SELECT title, nest.v1, nest.v2 FROM query_v2
+   ┌─title─┬─nest.v1─┬─nest.v2───┐
+   │ food │ [1,2,3] │ [10,20,30] │
+   │ fruit │ [4,5] │ [40,50] │
+   │ meat │ [] │ [] │
+   └─────┴──────┴────────┘
+   ```
+
+   **对嵌套类型数据的访问，ARRAY JOIN既可以直接使用字段列名**：
+
+   ```sql
+   SELECT title, nest.v1, nest.v2 FROM query_v2 ARRAY JOIN nest
+   ```
+
+   也可以使用点访问符的形式：
+
+   ```sql
+   SELECT title, nest.v1, nest.v2 FROM query_v2 ARRAY JOIN nest.v1, nest.v2
+   ```
+
+   上述两种形式的查询效果完全相同：
+
+   ```sql
+   ┌─title─┬─nest.v1─┬─nest.v2─┐
+   │ food │ 1 │ 10 │
+   │ food │ 2 │ 20 │
+   │ food │ 3 │ 30 │
+   │ fruit │ 4 │ 40 │
+   │ fruit │ 5 │ 50 │
+   └─────┴───────┴───────┘
+   ```
+
+   **嵌套类型也支持ARRAY JOIN部分嵌套字段**：
+
+   ```sql
+   --也可以只ARRAY JOIN其中部分字段
+   SELECT title, nest.v1, nest.v2 FROM query_v2 ARRAY JOIN nest.v1
+   ┌─title─┬─nest.v1─┬─nest.v2───┐
+   │ food │ 1 │ [10,20,30] │
+   │ food │ 2 │ [10,20,30] │
+   │ food │ 3 │ [10,20,30] │
+   │ fruit │ 4 │ [40,50] │
+   │ fruit │ 5 │ [40,50] │
+   └─────┴──────┴────────┘
+   ```
+
+   可以看到，在这种情形下，只有被ARRAY JOIN的数组才会展开。
+
+   在查询嵌套类型时也能够通过别名的形式访问原始数组：
+
+   ```sql
+   SELECT title, nest.v1, nest.v2, n.v1, n.v2 FROM query_v2 ARRAY JOIN nest as n
+   ┌─title─┬─nest.v1─┬─nest.v2───┬─n.v1─┬─n.v2─┐
+   │ food │ [1,2,3] │ [10,20,30] │ 1 │ 10 │
+   │ food │ [1,2,3] │ [10,20,30] │ 2 │ 20 │
+   │ food │ [1,2,3] │ [10,20,30] │ 3 │ 30 │
+   │ fruit │ [4,5] │ [40,50] │ 4 │ 40 │
+   │ fruit │ [4,5] │ [40,50] │ 5 │ 50 │
+   └──────┴──────┴────────┴────┴─────┘
+   ```
+
+## 9.5 JOIN子句
+
+​	JOIN子句可以对左右两张表的数据进行连接，这是最常用的查询子句之一。<u>它的语法包含**连接精度**和**连接类型**两部分</u>。目前ClickHouse支持的JOIN子句形式如图9-3所示。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20210616173303639.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1MTQxMTA1,size_16,color_FFFFFF,t_70)
+
+图9-3 JOIN子句组合规则
+
+​	由上图可知，**连接精度分为ALL、ANY和ASOF三种，而连接类型也可分为外连接、内连接和交叉连接三种**。
+
+​	除此之外，<u>JOIN查询还可以根据其执行策略被划分为**本地查询**和**远程查询**</u>。关于远程查询的内容放在后续章节进行说明，这里着重讲解本地查询。接下来，会基于下面三张测试表介绍JOIN用法。
+
+​	代码清单9-1 JOIN测试表join_tb1
+
+```sql
+┌─id─┬─name──────┬─────────time─┐
+│ 1 │ ClickHouse │ 2019-05-01 12:00:00 │
+│ 2 │ Spark │ 2019-05-01 12:30:00 │
+│ 3 │ ElasticSearch │ 2019-05-01 13:00:00 │
+│ 4 │ HBase │ 2019-05-01 13:30:00 │
+│ NULL │ ClickHouse │ 2019-05-01 12:00:00 │
+│ NULL │ Spark │ 2019-05-01 12:30:00 │
+└────┴─────────┴─────────────┘
+```
+
+​	代码清单9-2 JOIN测试表join_tb2
+
+```sql
+┌─id─┬─rate─┬─────────time─┐
+│ 1 │ 100 │ 2019-05-01 11:55:00 │
+│ 2 │ 90 │ 2019-05-01 12:01:00 │
+│ 3 │ 80 │ 2019-05-01 13:10:00 │
+│ 5 │ 70 │ 2019-05-01 14:00:00 │
+│ 6 │ 60 │ 2019-05-01 13:50:00 │
+└───┴────┴─────────────┘
+```
+
+​	代码清单9-3 JOIN测试表join_tb3
+
+```sql
+┌─id─┬─star─┐
+│ 1 │ 1000 │
+│ 2 │ 900 │
+└───┴────┘
+```
+
+### 9.5.1 连接精度
+
+​	连接精度决定了JOIN查询在连接数据时所使用的策略，目前支持ALL、ANY和ASOF三种类型。如果不主动声明，则**默认是ALL**。可以通过join_default_strictness配置参数修改默认的连接精度类型。
+
+​	**对数据是否连接匹配的判断是通过JOIN KEY进行的，<u>目前只支持等式（EQUAL JOIN）</u>**。交叉连接（CROSS JOIN）不需要使用JOIN KEY，因为它会产生笛卡儿积。
+
+1. ALL
+
+   **如果左表内的一行数据，在右表中有多行数据与之连接匹配，<u>则返回右表中全部连接的数据</u>**。而判断连接匹配的依据是左表与右表内的数据，基于连接键（JOIN KEY）的取值完全相等（equal），等同于left.key=right.key。例如执行下面的语句：
+
+   ```sql
+   SELECT a.id,a.name,b.rate FROM join_tb1 AS a
+   ALL INNER JOIN join_tb2 AS b ON a.id = b.id
+   ┌─id─┬─name──────┬─rate──┐
+   │ 1 │ ClickHouse │ 100 │
+   │ 1 │ ClickHouse │ 105 │
+   │ 2 │ Spark │ 90 │
+   │ 3 │ ElasticSearch │ 80 │
+   └───┴─────────┴──────┘
+   ```
+
+   结果集返回了右表中所有与左表id相匹配的数据。
+
+2. ANY
+
+   **如果左表内的一行数据，在右表中有多行数据与之连接匹配，<u>则仅返回右表中第一行连接的数据</u>**。ANY与ALL判断连接匹配的依据相同。例如执行下面的语句：
+
+   ```sql
+   SELECT a.id,a.name,b.rate FROM join_tb1 AS a
+   ANY INNER JOIN join_tb2 AS b ON a.id = b.id
+   ┌─id─┬─name──────┬─rate──┐
+   │ 1 │ ClickHouse │ 100 │
+   │ 2 │ Spark │ 90 │
+   │ 3 │ ElasticSearch │ 80 │
+   └───┴─────────┴──────┘
+   ```
+
+   结果集仅返回了右表中与左表id相连接的第一行数据。
+
+3. ASOF
+
+   **<u>ASOF是一种模糊连接，它允许在连接键之后追加定义一个模糊连接的匹配条件asof_column</u>**。以下面的语句为例：
+
+   ```sql
+   SELECT a.id,a.name,b.rate,a.time,b.time
+   FROM join_tb1 AS a ASOF INNER JOIN join_tb2 AS b
+   ON a.id = b.id AND a.time = b.time
+   ```
+
+   **其中a.id=b.id是寻常的连接键，而紧随其后的a.time=b.time则是asof_column模糊连接条件**，这条语句的语义等同于：
+
+   ```sql
+   a.id = b.id AND a.time >= b.time
+   ```
+
+   执行上述这条语句后：
+
+   ```sql
+   ┌─id─┬─name────┬─rate─┬────time──────┬──────b.time───┐
+   │ 1 │ ClickHouse │ 100 │ 2019-05-01 12:00:00 │ 2019-05-01 11:55:00 │
+   │ 2 │ Spark │ 90 │ 2019-05-01 12:30:00 │ 2019-05-01 12:01:00 │
+   └───┴───────┴────┴─────────────┴─────────────┘
+   ```
+
+   ​	由上可以得知，其最终返回的查询结果符合连接条件a.id=b.idAND a.time>=b.time，**且仅返回了右表中第一行连接匹配的数据**。
+
+   ​	**ASOF支持使用USING的简写形式，USING后声明的<u>最后一个字段</u>会被自动转换成asof_colum模糊连接条件**。例如将上述语句改成USING的写法后，将会是下面的样子：
+
+   ```sql
+   SELECT a.id,a.name,b.rate,a.time,b.time FROM join_tb1 AS a ASOF
+   INNER JOIN join_tb2 AS b USING(id,time)
+   ```
+
+   USING后的time字段会被转换成asof_colum。
+
+   对于asof_colum字段的使用有两点需要注意：
+
+   + **asof_colum必须是整型、浮点型和日期型这类有序序列的数据类型**；
+   + **asof_colum不能是数据表内的唯一字段，换言之，连接键（JOIN KEY）和asof_colum不能是同一个字段**。
+
+### * 9.5.2 连接类型
+
+​	连接类型决定了JOIN查询组合左右两个数据集合要用的策略，它们所形成的结果是交集、并集、笛卡儿积或是其他形式。接下来会分别介绍这几种连接类型的使用方法。
+
+1. INNER
+
+   INNER JOIN表示内连接，在查询时会以左表为基础逐行遍历数据，然后从右表中找出与左边连接的行，它只会返回左表与右表两个数据集合中交集的部分，其余部分都会被排除。
+
+   ![在这里插入图片描述](https://img-blog.csdnimg.cn/202106161739108.png)
+
+   在前面介绍连接精度时所用的演示用例中，使用的正是INNER JOIN，它的使用方法如下所示：
+
+   ```sql
+   SELECT a.id,a.name,b.rate FROM join_tb1 AS a
+   INNER JOIN join_tb2 AS b ON a.id = b.id
+   ┌─id─┬─name──────┬─rate──┐
+   │ 1 │ ClickHouse │ 100 │
+   │ 1 │ ClickHouse │ 105 │
+   │ 2 │ Spark │ 90 │
+   │ 3 │ ElasticSearch │ 80 │
+   └────┴─────────┴──────┘
+   ```
+
+   从返回的结果集能够得知，只有左表与右表中id完全相同的数据才会保留，也就是<u>只保留交集部分</u>。
+
+2. OUTER
+
+   <u>OUTER JOIN表示外连接，它可以进一步细分为左外连接（LEFT）、右外连接（RIGHT）和全外连接（FULL）三种形式</u>。根据连接形式的不同，其返回数据集合的逻辑也不尽相同。OUTER JOIN查询的语法如下所示：
+
+   ```sql
+   [LEFT|RIGHT|FULL [OUTER]] ] JOIN
+   ```
+
+   其中，**OUTER修饰符可以省略**。
+
+   1. LEFT
+
+      在进行左外连接查询时，会**以左表为基础逐行遍历数据**，然后从右表中找出与左边连接的行以补齐属性。<u>如果在右表中没有找到连接的行，则采用相应字段数据类型的默认值填充</u>。换言之，对于左连接查询而言，**左表的数据总是能够全部返回**。
+
+      ![在这里插入图片描述](https://img-blog.csdnimg.cn/202106161739108.png)
+
+      左外连接查询的示例语句如下所示：
+
+      ```sql
+      SELECT a.id,a.name,b.rate FROM join_tb1 AS a
+      LEFT OUTER JOIN join_tb2 AS b ON a.id = b.id
+      ┌─id──┬─name──────┬─rate──┐
+      │ 1 │ ClickHouse │ 100 │
+      │ 1 │ ClickHouse │ 105 │
+      │ 2 │ Spark │ 90 │
+      │ 3 │ ElasticSearch │ 80 │
+      │ │ │ │
+      │ 4 │ HBase │ 0 │
+      └────┴─────────┴──────┘
+      ```
+
+      由查询的返回结果可知，左表join_tb1内的数据全部返回，其中id为4的数据在右表中没有连接，所以由默认值0补全。
+
+   2. RIGHT
+
+      右外连接查询的效果与左连接恰好相反，**右表的数据总是能够全部返回**，而<u>左表不能连接的数据则使用默认值补全</u>。
+
+      ![在这里插入图片描述](https://img-blog.csdnimg.cn/202106161739108.png)
+
+      在进行右外连接查询时，内部的执行逻辑大致如下：
+
+      （1）<u>在内部进行类似INNER JOIN的内连接查询，在计算交集部分的同时，顺带记录右表中那些未能被连接的数据行</u>。
+
+      （2）**将那些未能被连接的数据行追加到交集的尾部**。
+
+      （3）将追加数据中那些属于左表的列字段用默认值补全。
+
+      右外连接查询的示例语句如下所示：
+
+      ```sql
+      SELECT a.id,a.name,b.rate FROM join_tb1 AS a
+      RIGHT JOIN join_tb2 AS b ON a.id = b.id
+      ┌─id──┬─name──────┬─rate──┐
+      │ 1 │ ClickHouse │ 100 │
+      │ 1 │ ClickHouse │ 105 │
+      │ 2 │ Spark │ 90 │
+      │ 3 │ ElasticSearch │ 80 │
+      │ 5 │ │ 70 │
+      │ │ │ │
+      │ 6 │ │ 60 │
+      └────┴─────────┴──────┘
+      ```
+
+      由查询的返回结果可知，右表join_tb2内的数据全部返回，在左表中没有被连接的数据由默认值补全。
+
+   3. FULL
+
+      全外连接查询会返回左表与右表两个数据集合的并集。
+
+      ![在这里插入图片描述](https://img-blog.csdnimg.cn/20210616174401891.png)
+
+      全外连接内部的执行逻辑大致如下：
+
+      （1）<u>会在内部进行类似LEFT JOIN的查询，在左外连接的过程中，顺带记录右表中已经被连接的数据行</u>。
+
+      （2）通过在右表中记录已被连接的数据行，得到未被连接的数据行。
+
+      （3）**将右表中未被连接的数据追加至结果集，并将那些属于左表中的列字段以默认值补全**。
+
+      全外连接查询的示例如下所示。
+
+      ```sql
+      SELECT a.id,a.name,b.rate FROM join_tb1 AS a
+      FULL JOIN join_tb2 AS b ON a.id = b.id
+      ┌─id──┬─name──────┬─rate──┐
+      │ 1 │ ClickHouse │ 100 │
+      │ │ │ │
+      │ 1 │ ClickHouse │ 105 │
+      │ 2 │ Spark │ 90 │
+      │ 3 │ ElasticSearch │ 80 │
+      │ 4 │ HBase │ 0 │
+      │ 5 │ │ 70 │
+      │ 6 │ │ 60 │
+      └────┴─────────┴──────┘
+      ```
+
+3. CROSS
+
+   CROSS JOIN表示交叉连接，它会返回左表与右表两个数据集合的**笛卡儿积**。也正因为如此，CROSS JOIN不需要声明JOIN KEY，因为结果会包含它们的所有组合，如下面的语句所示：
+
+   ```sql
+   SELECT a.id,a.name,b.rate FROM join_tb1 AS a
+   CROSS JOIN join_tb2 AS b
+   ┌─id──┬─name──────┬─rate──┐
+   │ 1 │ ClickHouse │ 100 │
+   │ 1 │ ClickHouse │ 105 │
+   │ 1 │ ClickHouse │ 90 │
+   │ 1 │ ClickHouse │ 80 │
+   │ 1 │ ClickHouse │ 70 │
+   │ 1 │ ClickHouse │ 60 │
+   │ 2 │ Spark │ 100 │
+   │ 2 │ Spark │ 105 │
+   │ 2 │ Spark │ 90 │
+   │ 2 │ Spark │ 80 │
+   …省略
+   ```
+
+   上述语句返回的结果是两张数据表的笛卡儿积。
+
+   在进行交叉连接查询时，会**以左表为基础，逐行与右表全集相乘**。
+
+### * 9.5.3 多表连接
+
+​	**<u>在进行多张数据表的连接查询时，ClickHouse会将它们转为两两连接的形式</u>**，例如执行下面的语句，对三张测试表进行内连接查询：
+
+```sql
+SELECT a.id,a.name,b.rate,c.star FROM join_tb1 AS a
+INNER JOIN join_tb2 AS b ON a.id = b.id
+LEFT JOIN join_tb3 AS c ON a.id = c.id
+┌─a.id─┬─a.name────┬─b.rate──┬─c.star──┐
+│ 1 │ ClickHouse │ 100 │ 1000 │
+│ 1 │ ClickHouse │ 105 │ 1000 │
+│ 2 │ Spark │ 90 │ 900 │
+│ 3 │ ElasticSearch │ 80 │ 0 │
+└─────┴─────────┴───────┴───────┘
+```
+
+​	在执行上述查询时，**会先将join_tb1与join_tb2进行内连接，之后再将它们的结果集与join_tb3左连接**。
+
+​	**<u>ClickHouse虽然也支持关联查询的语法，但是会自动将其转换成指定的连接查询</u>**。<u>要想使用这项特性，需要将allow_experimental_cross_to_join_conversion参数设置为1（默认为1，该参数在新版本中已经取消）</u>，它的转换规则如下：
+
++ 转换为CROSS JOIN：**如果查询语句中不包含WHERE条件，则会转为CROSS JOIN**。
+
+  ```sql
+  SELECT a.id,a.name,b.rate,c.star FROM join_tb1 AS a , join_tb2 AS b ,join_tb3 AS
+  c
+  ```
+
++ 转换为INNER JOIN：**如果查询语句中包含WHERE条件，则会转为INNER JOIN**。
+
+  ```sql
+  SELECT a.id,a.name,b.rate,c.star FROM join_tb1 AS a , join_tb2 AS b ,join_tb3 AS
+  c WHERE a.id = b.id AND a.id = c.id
+  ```
+
+​	**<u>虽然ClickHouse支持上述语法转换特性，但并不建议使用，因为在编写复杂的业务查询语句时，我们无法确定最终的查询意图</u>**。
+
+### * 9.5.4 注意事项
+
+​	最后，还有两个关于JOIN查询的注意事项。
+
+1. 关于性能
+
+   为了能够优化JOIN查询性能，首先应该**遵循左大右小的原则** ，即将数据量小的表放在右侧。这是因为在执行JOIN查询时，<u>无论使用的是哪种连接方式，**右表都会被全部加载到内存中**与左表进行比较</u>。
+
+   <u>其次，**JOIN查询目前没有缓存的支持** ，这意味着每一次JOIN查询，即便是连续执行相同的SQL，也都会生成一次全新的执行计划。如果应用程序会大量使用JOIN查询，则需要进一步考虑借助上层应用侧的缓存服务或使用JOIN表引擎来改善性能</u>。
+
+   最后，<u>**如果是在大量维度属性补全的查询场景中，则建议使用字典代替JOIN查询** 。因为在进行多表的连接查询时，查询会转换成两两连接的形式，这种“滚雪球”式的查询很可能带来性能问题</u>。
+
+2. 关于空值策略与简写形式
+
+   细心的读者应该能够发现，在之前的介绍中，连接查询的空值（那些未被连接的数据）是由默认值填充的，这与其他数据库所采取的策略不同（由Null填充）。<u>连接查询的空值策略是通过join_use_nulls参数指定的，默认为0。当参数值为0时，空值由数据类型的默认值填充；而当参数值为1时，空值由Null填充</u>。
+
+   <u>JOIN KEY支持简化写法，当数据表的连接字段名称相同时，可以使用USING语法简写</u>，例如下面两条语句的效果是等同的：
+
+   ```sql
+   SELECT a.id,a.name,b.rate FROM join_tb1 AS a
+   INNER JOIN join_tb2 AS b ON a.id = b.id
+   --USING简写
+   SELECT id,name,rate FROM join_tb1 INNER JOIN join_tb2 USING id
+   ```
+
+## * 9.6 WHERE与PREWHERE子句
+
+​	WHERE子句基于条件表达式来实现数据过滤。<u>如果过滤条件恰好是主键字段，则能够进一步借助索引加速查询，所以WHERE子句是一条查询语句能否启用索引的判断依据（前提是表引擎支持索引特性）</u>。例如下面的查询语句：
+
+```sql
+SELECT id,url,v1,v2,v3,v4 FROM query_v3 WHERE id = 'A000'
+(SelectExecutor): Key condition: (column 0 in ['A000', 'A000'])
+```
+
+​	WHERE表达式中包含主键，所以它能够使用索引过滤数据区间。除此之外，ClickHouse还提供了全新的PREWHERE子句。
+
+​	**<u>PREWHERE目前只能用于MergeTree系列的表引擎</u>**，它可以看作对WHERE的一种优化，其作用与WHERE相同，均是用来过滤数据。它们的不同之处在于，**<u>使用PREWHERE时，首先只会读取PREWHERE指定的列字段数据，用于数据过滤的条件判断。待数据过滤之后再读取SELECT声明的列字段以补全其余属性</u>**。所以在一些场合下，PREWHERE相比WHERE而言，处理的数据量更少，性能更高。
+
+​	接下来，就让我们用一组具体的例子对比两者的差异。首先执行`set optimize_move_to_prewhere=0`强制关闭自动优化（关于这个参数，之后会进一步介绍），然后执行下面的语句：
+
+```sql
+-- 执行set optimize_move_to_prewhere=0关闭PREWHERE自动优化
+SELECT WatchID,Title,GoodEvent FROM hits_v1 WHERE JavaEnable = 1
+981110 rows in set. Elapsed: 0.095 sec. Processed 1.34 million rows, 124.65 MB
+(639.61 thousand rows/s., 59.50 MB/s.)
+```
+
+​	从查询统计结果可以看到，此次查询总共处理了134万行数据，其数据大小为124.65 MB。
+
+​	现在，将语句中的WHERE替换为PREWHERE，其余保持不变：
+
+```sql
+SELECT WatchID,Title,GoodEvent FROM hits_v1 PREWHERE JavaEnable = 1
+981110 rows in set. Elapsed: 0.080 sec. Processed 1.34 million rows, 91.61 MB
+(740.98 thousand rows/s., 50.66 MB/s.)
+```
+
+​	从PREWHERE语句的查询统计结果可以发现，虽然处理数据的总量没有发生变化，仍然是134万行数据，但是其数据大小从124.65MB减少至91.61 MB，从而提高了每秒处理数据的吞吐量，这种现象充分印证了PREWHERE的优化效果。**这是因为在执行PREWHERE查询时，只需获取JavaEnable字段进行数据过滤，减少了需要处理的数据量大小**。
+
+​	进一步观察两次查询的执行计划，也能够发现它们查询过程之间的差异：
+
+```sql
+--WHERE查询
+Union
+	Expression × 2
+		Expression
+			Filter
+				MergeTreeThread
+--PREWHERE查询
+Union
+	Expression × 2
+		Expression
+			MergeTreeThread
+```
+
+​	由上可以看到，**PREWHERE查询省去了一次Filter操作**。
+
+​	既然PREWHERE性能更优，那么是否需要将所有的WHERE子句都替换成PREWHERE呢？其实大可不必，因为**<u>ClickHouse实现了自动优化的功能，会在条件合适的情况下将WHERE替换为PREWHERE</u>**。**如果想开启这项特性，需要将optimize_move_to_prewhere设置为1（默认值为1，即开启状态）**，例如执行下面的语句：
+
+```sql
+SELECT id,url FROM query_v3 WHERE v1 = 10
+```
+
+​	通过观察执行日志可以发现，谓词v1=10被移动到了PREWHERE子句：
+
+```shell
+<Debug> InterpreterSelectQuery: MergeTreeWhereOptimizer: condition "v1 = 10"
+moved to PREWHERE
+```
+
+​	但是也有例外情况，假设数据表query_v3所有的字段类型如下：
+
+```sql
+desc query_v3
+┌─name──┬─type──────┬─default_type─┬─default_expression───┐
+│ id │ String │ │ │
+│ url │ String │ │ │
+│ time │ Date │ │ │
+│ v1 │ UInt8 │ │ │
+│ v2 │ UInt8 │ │ │
+│ nest.v1 │ Array(UInt32) │ │ │
+│ nest.v2 │ Array(UInt64) │ │ │
+│ v3 │ UInt8 │ MATERIALIZED │ CAST(v1 / v2, 'UInt8') │
+│ v4 │ String │ ALIAS │ id │
+└─────┴─────────┴─────────┴───────────────┘
+```
+
+则在**<u>以下情形时并不会自动优化</u>**：
+
++ **使用了常量表达式**：
+
+  ```sql
+  SELECT id,url,v1,v2,v3,v4 FROM query_v3 WHERE 1=1
+  ```
+
++ **使用了默认值为ALIAS类型的字段**：
+
+  ```sql
+  SELECT id,url,v1,v2,v3,v4 FROM query_v3 WHERE v4 = 'A000'
+  ```
+
++ **包含了arrayJoin、globalIn、globalNotIn或者indexHint的查询**：
+
+  ```sql
+  SELECT title, nest.v1, nest.v2 FROM query_v2 ARRAY JOIN nest WHERE nest.v1=1
+  ```
+
++ SELECT查询的列字段与WHERE谓词相同：
+
+  ```sql
+  SELECT v3 FROM query_v3 WHERE v3 = 1
+  ```
+
++ 使用了主键字段：
+
+  ```sql
+  SELECT id FROM query_v3 WHERE id = 'A000'
+  ```
+
+​	虽然在上述情形中ClickHouse不会自动将谓词移动到PREWHERE，但仍然可以主动使用PREWHERE。以主键字段为例，当使用PREWHERE进行主键查询时，首先会通过稀疏索引过滤数据区间（index_granularity粒度），接着会读取PREWHERE指定的条件列以进一步过滤，这样一来就有可能截掉数据区间的尾巴，从而返回低于index_granularity粒度的数据范围。<u>即便如此，相比其他场合移动谓词所带来的性能提升，这类效果还是比较有限的，所以目前ClickHouse在这类场合下仍然保持不移动的处理方式</u>。
+
+## 9.7 GROUP BY子句
+
+P397
