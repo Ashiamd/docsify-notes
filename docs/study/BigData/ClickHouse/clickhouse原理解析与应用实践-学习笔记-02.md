@@ -2961,6 +2961,192 @@ Selected xxx parts by date,
 
 ​	本章按照ClickHouse对SQL大致的解析顺序，依次介绍了各种查询子句的用法。包括用于简化SQL写法的WITH子句、用于数据采样的SAMPLE子句、能够优化查询的PREWHERE子句以及常用的JOIN和GROUP BY子句等。但是到目前为止，我们还是只介绍了ClickHouse的本地查询部分，当面对海量数据的时候，单节点服务是不足以支撑的，所以下一章将进一步介绍与ClickHouse分布式相关的知识。
 
-# 10. 副本与分片
+# * 10. 副本与分片
 
-P429
+​	纵使单节点性能再强，也会有遇到瓶颈的那一天。业务量的持续增长、服务器的意外故障，都是ClickHouse需要面对的洪水猛兽。常言道，“一个篱笆三个桩，一个好汉三个帮”，而**集群**、**副本**与**分片**，就是ClickHouse的三个“桩”和三个“帮手”。
+
+## 10.1 概述
+
+​	集群是副本和分片的基础，它将ClickHouse的服务拓扑由单节点延伸到多个节点，但它并不像Hadoop生态的某些系统那样，要求所有节点组成一个单一的大集群。**ClickHouse的集群配置非常灵活，用户既可以将所有节点组成一个单一集群，也可以按照业务的诉求，把节点划分为多个小的集群**。在每个小的集群区域之间，它们的节点、分区和副本数量可以各不相同，如图10-1所示。
+
+![preview](https://segmentfault.com/img/bVbI4JZ/view)
+
+​	图10-1 单集群和多集群的示意图
+
+​	<u>从作用来看，**ClickHouse集群的工作更多是针对逻辑层面的**。集群定义了多个节点的拓扑关系，这些节点在后续服务过程中可能会协同工作，而**执行层面的具体工作则交给了副本和分片来执行**</u>。
+
+​	副本和分片这对双胞胎兄弟，有时候看起来泾渭分明，有时候又让人分辨不清。这里有两种区分的方法。
+
++ 一种是从**数据层面区分**，假设ClickHouse的N个节点组成了一个集群，在集群的各个节点上，都有一张结构相同的数据表Y。<u>如果N1的Y和N2的Y中的数据完全不同，则N1和N2互为分片；如果它们的数据完全相同，则它们互为副本</u>。换言之，**分片之间的数据是不同的，而副本之间的数据是完全相同的**。所以抛开表引擎的不同，单纯从数据层面来看，副本和分片有时候只有一线之隔。
+
++ 另一种是从**功能作用层面区分**，**<u>使用副本的主要目的是防止数据丢失，增加数据存储的冗余；而使用分片的主要目的是实现数据的水平切分</u>**，如图10-2所示。
+
+![image.png](https://segmentfault.com/img/bVbI4J3)
+
+​	图10-2 区分副本和分片的示意图
+
+​	本章接下来会按照由易到难的方式介绍副本、分片和集群的使用方法。从数据表的初始形态1分片、0副本开始介绍；接着介绍如何为它添加副本，从而形成1分片、1副本的状态；再介绍如何引入分片，将其转换为多分片、1副本的形态（多副本的形态以此类推），如图10-3所示。
+
+![image.png](https://segmentfault.com/img/bVbI4J4)
+
+​	图10-3 由1分片、0副本发展到多分片、1副本的示意图
+
+​	这种形态的变化过程像极了企业内的业务发展过程。在业务初期，我们从单张数据表开始；在业务上线之后，可能会为它增加副本，以保证数据的安全，或者希望进行读写分离；随着业务量的发展，单张数据表可能会遇到瓶颈，此时会进一步为它增加分片，从而实现数据的水平切分。在接下来的示例中，也会遵循这样的演示路径进行说明。
+
+## 10.2 数据副本
+
+​	不知大家是否还记得，在介绍MergeTree的时候，曾经讲过它的命名规则。如果在\*MergeTree的前面增加Replicated的前缀，则能够组合成一个新的变种引擎，即Replicated-MergeTree复制表，如图10-4所示。
+
+![image.png](https://segmentfault.com/img/bVbI4Kb)
+
+​	图10-4 ReplicatedMergeTree系列表引擎的命名规则示意图
+
+​	换言之，**只有使用了ReplicatedMergeTree复制表系列引擎，才能应用副本的能力（后面会介绍另一种副本的实现方式）**。或者用一种更为直接的方式理解，即**使用ReplicatedMergeTree的数据表就是副本**。
+
+​	ReplicatedMergeTree是MergeTree的派生引擎，它在MergeTree的基础上加入了分布式协同的能力，如图10-5所示。
+
+![image.png](https://segmentfault.com/img/bVbI4Kc)
+
+​	图10-5 ReplicatedMergeTree与MergeTree的逻辑关系示意
+
+​	在MergeTree中，一个数据分区由开始创建到全部完成，会历经两类存储区域。
+
+（1）内存：数据首先会被写入内存缓冲区。
+
+（2）本地磁盘：**<u>数据接着会被写入tmp临时目录分区</u>，待全部完成后再将临时目录重命名为正式分区**。
+
+​	<u>ReplicatedMergeTree在上述基础之上增加了ZooKeeper的部分，它会进一步在ZooKeeper内创建一系列的监听节点，并以此实现多个实例之间的通信。**在整个通信过程中，ZooKeeper并不会涉及表数据的传输**</u>。
+
+### * 10.2.1 副本的特点
+
+​	作为数据副本的主要实现载体，ReplicatedMergeTree在设计上有一些显著特点。
+
++ 依赖ZooKeeper：<u>在执行INSERT和ALTER查询的时候，ReplicatedMergeTree需要借助ZooKeeper的分布式协同能力，以实现多个副本之间的同步</u>。但是**在查询副本的时候，并不需要使用ZooKeeper**。关于这方面的更多信息，会在稍后详细介绍。
+
++ **表级别的副本**：副本是在表级别定义的，所以每张表的副本配置都可以按照它的实际需求进行个性化定义，包括副本的数量，以及副本在集群内的分布位置等。
+
++ **多主架构（Multi Master）：可以在任意一个副本上执行INSERT和ALTER查询，它们的效果是相同的。这些操作会借助ZooKeeper的协同能力被分发至每个副本以本地形式执行**。
+
++ **Block数据块**：在执行INSERT命令写入数据时，会依据max_insert_block_size的大小（默认1048576行）将数据切分成若干个Block数据块。所以**Block数据块是数据写入的基本单元，并且<u>具有写入的原子性和唯一性</u>**。
+
++ **原子性：在数据写入时，一个Block块内的数据要么全部写入成功，要么全部失败**。
+
++ 唯一性：在写入一个Block数据块的时候，会按照当前Block数据块的数据顺序、数据行和数据大小等指标，计算Hash信息摘要并记录在案。在此之后，**如果某个待写入的Block数据块与先前已被写入的Block数据块拥有相同的Hash摘要（Block数据块内数据顺序、数据大小和数据行均相同），则该Block数据块会被忽略**。这项设计可以**预防由异常原因引起的Block数据块重复写入的问题**。
+
+​	如果只是单纯地看这些特点的说明，可能不够直观。没关系，接下来会逐步展开，并附带一系列具体的示例。
+
+### 10.2.2 ZooKeeper的配置方式
+
+​	在正式开始之前，还需要做一些准备工作，那就是安装并配置ZooKeeper，因为ReplicatedMergeTree必须对接到它才能工作。关于ZooKeeper的安装，此处不再赘述，使用3.4.5及以上版本均可。这里着重讲解如何在ClickHouse中增加ZooKeeper的配置。
+
+​	ClickHouse使用一组zookeeper标签定义相关配置，默认情况下，在全局配置config.xml中定义即可。但是各个副本所使用的Zookeeper配置通常是相同的，为了便于在多个节点之间复制配置文件，更常见的做法是将这一部分配置抽离出来，独立使用一个文件保存。
+
+​	首先，在服务器的/etc/clickhouse-server/config.d目录下创建一个名为metrika.xml的配置文件：
+
+```xml
+<?xml version="1.0"?>
+<yandex>
+  <zookeeper-servers> <!—ZooKeeper配置，名称自定义 -->
+    <node index="1"> <!—节点配置，可以配置多个地址-->
+      <host>hdp1.nauu.com</host>
+      <port>2181</port>
+    </node>
+  </zookeeper-servers>
+</yandex>
+```
+
+​	接着，在全局配置config.xml中使用<include_from>标签导入刚才定义的配置：
+
+```xml
+<include_from>/etc/clickhouse-server/config.d/metrika.xml</include_from>
+```
+
+​	并引用ZooKeeper配置的定义：
+
+```xml
+<zookeeper incl="zookeeper-servers" optional="false" />
+```
+
+​	其中，incl与metrika.xml配置文件内的节点名称要彼此对应。至此，整个配置过程就完成了。
+
+​	**ClickHouse在它的系统表中，颇为贴心地提供了一张名为zookeeper的代理表。通过这张表，可以使用SQL查询的方式读取远端ZooKeeper内的数据**。有一点需要注意，在用于查询的SQL语句中，必须指定path条件，例如查询根路径：
+
+```sql
+SELECT * FROM system.zookeeper where path = '/'
+┌─name─────────┬─value─┬─czxid─┐
+│ dolphinscheduler │ │ 2627 │
+│ clickhouse │ │ 92875 │
+└─────────────┴─────┴─────┘
+```
+
+​	进一步查询clickhouse目录：
+
+```sql
+SELECT name, value, czxid, mzxid FROM system.zookeeper where path = '/clickhouse'
+┌─name─────┬─value─┬─czxid─┬──mzxid─┐
+│ tables │ │ 134107 │ 134107 │
+│ task_queue │ │ 92876 │ 92876 │
+└────────┴─────┴─────┴──────┘
+```
+
+### * 10.2.3 副本的定义形式
+
+​	正如前文所言，使用副本的好处甚多。首先，由于增加了数据的冗余存储，所以降低了数据丢失的风险；其次，由于副本采用了多主架构，所以每个副本实例都可以作为数据读、写的入口，这无疑分摊了节点的负载。
+
+​	**在使用副本时，不需要依赖任何集群配置（关于集群配置，在后续小节会详细介绍），ReplicatedMergeTree结合ZooKeeper就能完成全部工作**。
+
+​	ReplicatedMergeTree的定义方式如下：
+
+```sql
+ENGINE = ReplicatedMergeTree('zk_path', 'replica_name')
+```
+
+​	在上述配置项中，有zk_path和replica_name两项配置，首先介绍zk_path的作用。
+
+​	**zk_path用于指定在ZooKeeper中创建的数据表的路径**，路径名称是自定义的，并没有固定规则，用户可以设置成自己希望的任何路径。即便如此，ClickHouse还是提供了一些约定俗成的配置模板以供参考，例如：
+
+```shell
+/clickhouse/tables/{shard}/table_name
+```
+
+​	其中：
+
++ /clickhouse/tables/是约定俗成的路径固定前缀，表示存放数据表的根路径。
+
++ {shard}表示分片编号，通常用数值替代，例如01、02、03。一张数据表可以有多个分片，而每个分片都拥有自己的副本。
++ table_name表示数据表的名称，为了方便维护，通常与物理表的名字相同（虽然ClickHouse并不强制要求路径中的表名称和物理表名相同）；
+
+​	而**replica_name的作用是定义在ZooKeeper中创建的副本名称，该名称是区分不同副本实例的唯一标识**。<u>一种约定成俗的命名方式是使用所在服务器的域名称</u>。
+
+​	<u>**对于zk_path而言，同一张数据表的同一个分片的不同副本，应该定义相同的路径**；**而对于replica_name而言，同一张数据表的同一个分片的不同副本，应该定义不同的名称**</u>。
+
+​	是不是有些绕口呢？下面列举几个示例。
+
+​	1个分片、1个副本的情形：
+
+```shell
+//1分片，1副本. zk_path相同，replica_name不同
+ReplicatedMergeTree('/clickhouse/tables/01/test_1, 'ch5.nauu.com')
+ReplicatedMergeTree('/clickhouse/tables/01/test_1, 'ch6.nauu.com')
+```
+
+​	多个分片、1个副本的情形：
+
+```shell
+//分片1
+//2分片，1副本. zk_path相同，其中{shard}=01, replica_name不同
+ReplicatedMergeTree('/clickhouse/tables/01/test_1, 'ch5.nauu.com')
+ReplicatedMergeTree('/clickhouse/tables/01/test_1, 'ch6.nauu.com')
+//分片2
+//2分片，1副本. zk_path相同，其中{shard}=02, replica_name不同
+ReplicatedMergeTree('/clickhouse/tables/02/test_1, 'ch7.nauu.com')
+ReplicatedMergeTree('/clickhouse/tables/02/test_1, 'ch8.nauu.com')
+```
+
+## 10.3 ReplicatedMergeTree原理解析
+
+​	<u>ReplicatedMergeTree作为复制表系列的基础表引擎，涵盖了数据副本最为核心的逻辑，将它拿来作为副本的研究标本是最合适不过了</u>。因为只要剖析了ReplicatedMergeTree的核心原理，就能掌握整个ReplicatedMergeTree系列表引擎的使用方法。
+
+### 10.3.1 数据结构
+
+P442
