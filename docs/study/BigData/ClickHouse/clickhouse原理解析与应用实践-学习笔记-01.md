@@ -1987,9 +1987,9 @@ ALTER TABLE partition_v2 ATTACH PARTITION 201908
 
 ```sql
 CREATE TABLE partition_v3 ON CLUSTER ch_cluster(
-ID String,
-URL String,
-EventTime Date
+  ID String,
+  URL String,
+  EventTime Date
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(EventTime)
 ORDER BY ID

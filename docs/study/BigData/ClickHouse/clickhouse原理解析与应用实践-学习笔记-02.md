@@ -3624,6 +3624,902 @@ ReplicatedMergeTree('/clickhouse/tables/02/test_1, 'ch8.nauu.com')
 
    ​	可以看到，在ALTER整个的执行过程中，ZooKeeper不会进行任何实质性的数据传输。所有的ALTER操作，最终都是由各个副本在本地完成的。本着**谁执行谁负责**的原则，在这个案例中由CH6负责对共享元数据的修改以及对各个副本修改进度的监控。
 
-## 10.4 数据分片
+## * 10.4 数据分片
 
-P463
+​	<u>通过引入数据副本，虽然能够有效降低数据的丢失风险（多份存储），并提升查询的性能（分摊查询、读写分离），但是仍然有一个问题没有解决，那就是数据表的容量问题</u>。到目前为止，每个副本自身，仍然保存了数据表的全量数据。所以在业务量十分庞大的场景中，依靠副本并不能解决单表的性能瓶颈。想要从根本上解决这类问题，需要借助另外一种手段，即进一步将数据水平切分，也就是我们将要介绍的数据分片。
+
+​	**ClickHouse中的每个服务节点都可称为一个shard（分片）**。<u>从理论上来讲，假设有N(N>=1)张数据表A，分布在N个ClickHouse服务节点，而这些数据表彼此之间没有重复数据，那么就可以说数据表A拥有N个分片</u>。然而在工程实践中，如果只有这些分片表，那么整个Sharding（分片）方案基本是不可用的。**<u>对于一个完整的方案来说，还需要考虑数据在写入时，如何被均匀地写至各个shard，以及数据在查询时，如何路由到每个shard，并组合成结果集</u>**。所以，**ClickHouse的数据分片需要结合Distributed表引擎一同使用**，如图10-10所示。
+
+​	![image.png](https://segmentfault.com/img/bVbI4Oo)
+
+​	图10-10 Distributed分布式表引擎与分片的关系示意图
+
+​	**<u>Distributed表引擎自身不存储任何数据，它能够作为分布式表的一层透明代理，在集群内部自动开展数据的写入、分发、查询、路由等工作</u>**。
+
+### 10.4.1 集群的配置方式
+
+​	**在ClickHouse中，集群配置用shard代表分片、用replica代表副本**。那么在逻辑层面，表示1分片、0副本语义的配置如下所示：
+
+```xml
+<shard> <!-- 分片 -->
+  <replica> <!-- 副本 -->
+  </replica>
+</shard>
+```
+
+​	而表示1分片、1副本语义的配置则是：
+
+```xml
+<shard> <!-- 分片 -->
+  <replica> <!-- 副本 -->
+  </replica>
+  <replica>
+  </replica>
+</shard>
+```
+
+​	可以看到，这样的配置似乎有些反直觉，shard更像是逻辑层面的分组，而**<u>无论是副本还是分片，它们的载体都是replica，所以从某种角度来看，副本也是分片</u>**。关于这方面的详细介绍会在后续展开，现在先回到之前的话题。
+
+​	**由于<u>Distributed表引擎需要读取集群的信息</u>，所以首先必须为ClickHouse添加集群的配置**。找到前面在介绍ZooKeeper配置时增加的metrika.xml配置文件，将其加入集群的配置信息。
+
+​	集群有两种配置形式，下面分别介绍。
+
+1. 不包含副本的分片
+
+   **如果直接使用node标签定义分片节点，那么该集群将只包含分片，不包含副本**。以下面的配置为例：
+
+   ```xml
+   <yandex>
+     <!--自定义配置名，与config.xml配置的incl属性对应即可 -->
+     <clickhouse_remote_servers>
+       <shard_2><!--自定义集群名称-->
+         <node><!--定义ClickHouse节点-->
+           <host>ch5.nauu.com</host>
+           <port>9000</port>
+           <!--选填参数
+             <weight>1</weight>
+             <user></user>
+             <password></password>
+             <secure></secure>
+             <compression></compression>
+            -->
+         </node>
+         <node>
+           <host>ch6.nauu.com</host>
+           <port>9000</port>
+         </node>
+       </shard_2>
+       ……
+     </clickhouse_remote_servers>
+   ```
+
+   该配置定义了一个名为shard_2的集群，其包含了2个分片节点，它们分别指向了是CH5和CH6服务器。现在分别对配置项进行说明：
+
+   + shard_2表示自定义的集群名称，**全局唯一**，是<u>后续引用集群配置的唯一标识</u>。<u>在一个配置文件内，可以定义任意组集群</u>。
+
+   + <u>node用于定义分片节点，**不包含副本**</u>。
+
+   + host指定部署了ClickHouse节点的服务器地址。
+
+   + port指定ClickHouse服务的TCP端口。
+
+   接下来介绍选填参数：
+
+   + weight分片权重默认为1，在后续小节中会对其详细介绍。
+
+   + user为ClickHouse用户，默认为default。
+
+   + password为ClickHouse的用户密码，默认为空字符串。
+   + secure为SSL连接的端口，默认为9440。
+   + compression表示是否开启数据压缩功能，默认为true。
+
+2. 自定义分片与副本
+
+   <u>集群配置支持自定义分片和副本的数量，这种形式需要使用shard标签代替先前的node，除此之外的配置完全相同</u>。在这种自定义配置的方式下，分片和副本的数量完全交由配置者掌控。其中，**shard表示逻辑上的数据分片，而物理上的分片则用replica表示**。<u>如果在1个shard标签下定义N(N>=1)组replica，则该shard的语义表示1个分片和N-1个副本</u>。接下来用几组配置示例进行说明。
+
+   1）不包含副本的分片
+
+   下面所示的这组集群配置的效果与先前介绍的shard_2集群相同：
+
+   ```xml
+   <!-- 2个分片、0个副本 -->
+   <sharding_simple> <!-- 自定义集群名称 -->
+     <shard> <!-- 分片 -->
+       <replica> <!-- 副本 -->
+         <host>ch5.nauu.com</host>
+         <port>9000</port>
+       </replica>
+     </shard>
+     <shard>
+       <replica>
+         <host>ch6.nauu.com</host>
+         <port>9000</port>
+       </replica>
+     </shard>
+   </sharding_simple>
+   ```
+
+   sharding_simple集群的语义为2分片、0副本（1分片、0副本，再加上1分片、0副本）。
+
+   2）N个分片和N个副本
+
+   这种形式可以按照实际需求自由组合，例如下面的这组配置，集群sharding_simple_1拥有1个分片和1个副本：
+
+   ```xml
+   <!-- 1个分片 1个副本-->
+   <sharding_simple_1>
+     <shard>
+       <replica>
+         <host>ch5.nauu.com</host>
+         <port>9000</port>
+       </replica>
+       <replica>
+         <host>ch6.nauu.com</host>
+         <port>9000</port>
+       </replica>
+     </shard>
+   </sharding_simple_1>
+   ```
+
+   下面所示集群sharding_ha拥有2个分片，而每个分片拥有1个副本：
+
+   ```xml
+   <sharding_ha>
+     <shard>
+       <replica>
+         <host>ch5.nauu.com</host>
+         <port>9000</port>
+       </replica>
+       <replica>
+         <host>ch6.nauu.com</host>
+         <port>9000</port>
+       </replica>
+     </shard>
+     <shard>
+       <replica>
+         <host>ch7.nauu.com</host>
+         <port>9000</port>
+       </replica>
+       <replica>
+         <host>ch8.nauu.com</host>
+         <port>9000</port>
+       </replica>
+     </shard>
+   </sharding_ha>
+   ```
+
+   从上面的配置信息中能够得出结论，<u>集群中replica数量的上限是由ClickHouse节点的数量决定的</u>，例如为了部署集群sharding_ha，需要4个ClickHouse服务节点作为支撑。
+
+   在完成上述配置之后，可以查询系统表验证集群配置是否已被加载：
+
+   ```sql
+   SELECT cluster, host_name FROM system.clusters
+   ┌─cluster────────┬─host_name──┐
+   │ shard_2 │ ch5.nauu.com │
+   │ shard_2 │ ch6.nauu.com │
+   │ sharding_simple │ ch5.nauu.com │
+   │ sharding_simple │ ch6.nauu.com │
+   │ sharding_simple_1 │ ch5.nauu.com │
+   │ sharding_simple_1 │ ch6.nauu.com │
+   └─────────────┴─────────┘
+   ```
+
+### * 10.4.2 基于集群实现分布式DDL
+
+​	不知道大家是否还记得，在前面介绍数据副本时为了创建多张副本表，我们需要分别登录到每个ClickHouse节点，在它们本地执行各自的CREATE语句。这是因为<u>在默认的情况下，CREATE、DROP、RENAME和ALTER等DDL语句并不支持分布式执行</u>。而在**加入集群配置后，就可以使用新的语法实现分布式DDL执行**了，其语法形式如下：
+
+```sql
+CREATE/DROP/RENAME/ALTER TABLE ON CLUSTER cluster_name
+```
+
+​	其中，cluster_name对应了配置文件中的集群名称，**ClickHouse会根据集群的配置信息顺藤摸瓜，分别去各个节点执行DDL语句**。
+
+​	下面是在10.2.3节中使用的多副本示例：
+
+```shell
+//1分片，2副本. zk_path相同，replica_name不同。
+ReplicatedMergeTree('/clickhouse/tables/01/test_1, 'ch5.nauu.com')
+ReplicatedMergeTree('/clickhouse/tables/01/test_1, 'ch6.nauu.com')
+```
+
+​	现在将它改写为分布式DDL的形式：
+
+```sql
+CREATE TABLE test_1_local ON CLUSTER shard_2(
+id UInt64
+--这里可以使用任意其他表引擎，
+)ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/test_1', '{replica}')
+ORDER BY id
+┌─host──────┬─port─┬─status─┬─error─┬─num_hosts_active─┐
+│ ch6.nauu.com │ 9000 │ 0 │ │ 0 │
+│ ch5.nauu.com │ 9000 │ 0 │ │ 0 │
+└─────────┴────┴──────┴─────┴───────────┘
+```
+
+​	在执行了上述语句之后，ClickHouse会根据集群shard_2的配置信息，分别在CH5和CH6节点本地创建test_1_local。
+
+​	如果要删除test_1_local，则执行下面的分布式DROP：
+
+```sql
+DROP TABLE test_1_local ON CLUSTER shard_2
+┌─host──────┬─port─┬─status─┬─error─┬─num_hosts_active─┐
+│ ch6.nauu.com │ 9000 │ 0 │ │ 0 │
+│ ch5.nauu.com │ 9000 │ 0 │ │ 0 │
+└─────────┴────┴──────┴─────┴───────────┘
+```
+
+​	值得注意的是，**在改写的CREATE语句中，用{shard}和{replica}两个动态宏变量代替了先前的硬编码方式**。执行下面的语句查询系统表，能够看到当前ClickHouse节点中已存在的宏变量：
+
+```shell
+--ch5节点
+SELECT * FROM system.macros
+┌─macro───┬─substitution─┐
+│ replica │ ch5.nauu.com │
+│ shard │ 01 │
+└───────┴─────────┘
+--ch6节点
+SELECT * FROM remote('ch6.nauu.com:9000', 'system', 'macros', 'default')
+┌─macro───┬─substitution─┐
+│ replica │ ch6.nauu.com │
+│ shard │ 02 │
+└───────┴─────────┘
+```
+
+​	**这些宏变量是通过配置文件的形式预先定义在各个节点的配置文件中的**，配置文件如下所示。
+
+​	在CH5节点的config.xml配置中预先定义了分区01的宏变量：
+
+```xml
+<macros>
+  <shard>01</shard>
+  <replica>ch5.nauu.com</replica>
+</macros>
+```
+
+​	在CH6节点的config.xml配置中预先定义了分区02的宏变量：
+
+```xml
+<macros>
+  <shard>02</shard>
+  <replica>ch6.nauu.com</replica>
+</macros>
+```
+
+1. 数据结构
+
+   **与ReplicatedMergeTree类似，分布式DDL语句在执行的过程中也需要借助ZooKeeper的协同能力，以实现日志分发**。
+
+   1）ZooKeeper内的节点结构
+
+   在默认情况下，分布式DDL在ZooKeeper内使用的根路径为：
+
+   ```shell
+   /clickhouse/task_queue/ddl
+   ```
+
+   该路径由config.xml内的distributed_ddl配置指定：
+
+   ```xml
+   <distributed_ddl>
+     <!-- Path in ZooKeeper to queue with DDL queries -->
+     <path>/clickhouse/task_queue/ddl</path>
+   </distributed_ddl>
+   ```
+
+   **在此根路径之下，还有一些其他的监听节点，其中包括/query-[seq]，其是DDL操作日志，每执行一次分布式DDL查询，在该节点下就会新增一条操作日志，以记录相应的操作指令**。当各个节点监听到有新日志加入的时候，便会响应执行。DDL操作日志使用ZooKeeper的持久顺序型节点，每条指令的名称以query-为前缀，后面的序号递增，例如query-0000000000、query-0000000001等。在每条query-[seq]操作日志之下，还有两个状态节点：
+
+   （1）/query-[seq]/active：用于状态监控等用途，在任务的执行过程中，在该节点下会临时保存当前集群内状态为active的节点。
+
+   （2）/query-[seq]/finished：用于检查任务完成情况，在任务的执行过程中，每当集群内的某个host节点执行完毕之后，便会在该节点下写入记录。例如下面的语句。
+
+   ```shell
+   /query-000000001/finished
+   ch5.nauu.com:9000 : 0
+   ch6.nauu.com:9000 : 0
+   ```
+
+   上述语句表示集群内的CH5和CH6两个节点已完成任务。
+
+   2）DDLLogEntry日志对象的数据结构
+
+   在/query-[seq]下记录的日志信息由DDLLogEntry承载，它拥有如下几个核心属性：
+
+   （1）query记录了DDL查询的执行语句，例如：
+
+   ```shell
+   query: DROP TABLE default.test_1_local ON CLUSTER shard_2
+   ```
+
+   （2）hosts记录了指定集群的hosts主机列表，集群由分布式DDL语句中的ON CLUSTER指定，例如：
+
+   ```shell
+   hosts: ['ch5.nauu.com:9000','ch6.nauu.com:9000']
+   ```
+
+   <u>在分布式DDL的执行过程中，会根据hosts列表逐个判断它们的执行状态</u>。
+
+   （3）initiator记录初始化host主机的名称，hosts主机列表的取值来自于初始化host节点上的集群，例如：
+
+   ```shell
+   initiator: ch5.nauu.com:9000
+   ```
+
+   hosts主机列表的取值来源等同于下面的查询：
+
+   ```sql
+   --从initiator节点查询cluster信息
+   SELECT host_name FROM
+   remote('ch5.nauu.com:9000', 'system', 'clusters', 'default')
+   WHERE cluster = 'shard_2'
+   ┌─host_name────┐
+   │ ch5.nauu.com │
+   │ ch6.nauu.com │
+   └──────────┘
+   ```
+
+2. 分布式DDL的核心执行流程
+
+   ​	与副本协同的核心流程类似，接下来，就以10.4.2节中介绍的创建test_1_local的过程为例，解释分布式DDL的核心执行流程。整个流程如图10-11所示。
+
+   ​	整个流程从上至下按照时间顺序进行，其大致分成3个步骤。现在，根据图10-11所示编号讲解整个过程。
+
+   ![image.png](https://segmentfault.com/img/bVbI40o)
+
+   ​	图10-11 分布式CREATE查询的核心流程示意图（其他DDL语句与此类似）
+
+   （1）推送DDL日志：首先在CH5节点执行CREATE TABLE ONCLUSTER，本着**谁执行谁负责**的原则，在这个案例中将会由CH5节点负责创建DDLLogEntry日志并将日志推送到ZooKeeper，同时也会由这个节点负责监控任务的执行进度。
+
+   （2）拉取日志并执行：CH5和CH6两个节点分别监听/ddl/query-0000000064日志的推送，于是它们分别拉取日志到本地。首先，它们会判断各自的host是否被包含在DDLLog-Entry的hosts列表中。如果包含在内，则进入执行流程，<u>执行完毕后将状态写入finished节点</u>；**如果不包含，则忽略这次日志的推送**。
+
+   （3）确认执行进度：在步骤1执行DDL语句之后，客户端会阻塞等待180秒，以期望所有host执行完毕。如果等待时间大于180秒，则会转入后台线程继续等待（等待时间由distributed_ddl_task_timeout参数指定，默认为180秒）。
+
+## * 10.5 Distributed原理解析
+
+​	**Distributed表引擎是分布式表的代名词，<u>它自身不存储任何数据</u>，而是作为数据分片的透明代理，能够自动路由数据至集群中的各个节点，所以Distributed表引擎需要和其他数据表引擎一起协同工作**，如图10-12所示。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/2021062418014944.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2h1YW5nZmFuMzIy,size_16,color_FFFFFF,t_70#pic_center)	图10-12 分布式表与本地表一对多的映射关系示意图
+
+​	从实体表层面来看，一张分片表由两部分组成：
+
++ 本地表：通常以_local为后缀进行命名。本地表是承接数据的载体，可以使用非Distributed的任意表引擎，**一张本地表对应了一个数据分片**。
+
++ 分布式表：通常以_all为后缀进行命名。**分布式表只能使用Distributed表引擎，它与本地表形成一对多的映射关系，日后将通过分布式表代理操作多张本地表**。
+
+​	<u>**对于分布式表与本地表之间表结构的一致性检查，Distributed表引擎采用了读时检查的机制**，这意味着如果它们的表结构不兼容，只有在查询时才会抛出错误，而在创建表时并不会进行检查</u>。<u>不同ClickHouse节点上的本地表之间，使用不同的表引擎也是可行的，但是通常不建议这么做，保持它们的结构一致，有利于后期的维护并避免造成不可预计的错误</u>。
+
+### 10.5.1 定义形式
+
+​	Distributed表引擎的定义形式如下所示：
+
+```sql
+ENGINE = Distributed(cluster, database, table [,sharding_key])
+```
+
+​	其中，各个参数的含义分别如下：
+
++ cluster：集群名称，与集群配置中的自定义名称相对应。在对分布式表执行写入和查询的过程中，它会使用集群的配置信息来找到相应的host节点。
+
++ database和table：分别对应数据库和表的名称，分布式表使用这组配置映射到本地表。
+
++ sharding_key：分片键，选填参数。在数据写入的过程中，分布式表会依据分片键的规则，将数据分布到各个host节点的本地表。
+
+​	现在用示例说明Distributed表的声明方式，建表语句如下所示：
+
+```sql
+CREATE TABLE test_shard_2_all ON CLUSTER sharding_simple (
+  id UInt64
+)ENGINE = Distributed(sharding_simple, default, test_shard_2_local,rand())
+```
+
+​	上述表引擎参数的语义可以理解为，代理的本地表为default.test_shard_2_local，它们分布在集群sharding_simple的各个shard，<u>在数据写入时会根据rand()随机函数的取值决定数据写入哪个分片</u>。**值得注意的是，此时此刻本地表还未创建，所以从这里也能看出，<u>Distributed表运用的是读时检查的机制，对创建分布式表和本地表的顺序并没有强制要求</u>。同样值得注意的是，在上面的语句中使用了ON CLUSTER分布式DDL，这意味着在集群的每个分片节点上，都会创建一张Distributed表，如此一来便可以从其中任意一端发起对所有分片的读、写请求**，如图10-13所示。
+
+![image.png](https://segmentfault.com/img/bVbI40O)
+
+​	图10-13 示例中分布式表与本地表的关系拓扑图
+
+​	接着需要创建本地表，**一张本地表代表着一个数据分片**。这里同样可以利用先前已经配置好的集群配置，使用分布式DDL语句迅速的在各个节点创建相应的本地表：
+
+```sql
+CREATE TABLE test_shard_2_local ON CLUSTER sharding_simple (
+  id UInt64
+)ENGINE = MergeTree()
+ORDER BY id
+PARTITION BY id
+```
+
+​	至此，拥有两个数据分片的分布式表test_shard_2就建好了。
+
+### * 10.5.2 查询的分类
+
+​	Distributed表的查询操作可以分为如下几类：
+
++ 会作用于本地表的查询：<u>对于INSERT和SELECT查询，Distributed将会以分布式的方式作用于local本地表</u>。而对于这些查询的具体执行逻辑，将会在后续小节介绍。
+
++ 只会影响Distributed自身，不会作用于本地表的查询：**Distributed支持部分元数据操作，包括CREATE、DROP、RENAME和ALTER，其中ALTER并不包括分区的操作（ATTACH PARTITION、REPLACE PARTITION等）。<u>这些查询只会修改Distributed表自身，并不会修改local本地表</u>**。例如**<u>要彻底删除一张分布式表，则需要分别删除分布式表和本地表</u>**，示例如下。
+
+  ```sql
+  --删除分布式表
+  DROP TABLE test_shard_2_all ON CLUSTER sharding_simple
+  --删除本地表
+  DROP TABLE test_shard_2_local ON CLUSTER sharding_simple
+  ```
+
++ **不支持的查询：<u>Distributed表不支持任何MUTATION类型的操作，包括ALTER DELETE和ALTER UPDATE</u>**。
+
+### * 10.5.3 分片规则
+
+​	关于分片的规则这里将做进一步的展开说明。**<u>分片键要求返回一个整型类型的取值，包括Int系列和UInt系列</u>**。
+
+​	例如分片键可以是一个具体的整型列字段：
+
+```sql
+按照用户id的余数划分
+Distributed(cluster, database, table ,userid)
+```
+
+​	也可以是一个返回整型的表达式：
+
+```sql
+--按照随机数划分
+Distributed(cluster, database, table ,rand())
+--按照用户id的散列值划分
+Distributed(cluster, database, table , intHash64(userid))
+```
+
+​	**<u>如果不声明分片键，那么分布式表只能包含一个分片，这意味着只能映射一张本地表</u>**，否则，在写入数据时将会得到如下异常：
+
+```shell
+Method write is not supported by storage Distributed with more than one shard and
+no sharding key provided
+```
+
+​	<u>如果一张分布式表只包含一个分片，那就意味着其失去了使用的意义了。所以虽然分片键是选填参数，但是通常都会按照业务规则进行设置</u>。
+
+​	那么数据具体是如何被划分的呢？想要讲清楚这部分逻辑，首先需要明确几个概念。
+
+1. 分片权重（weight）
+
+   在集群的配置中，有一项weight（分片权重）的设置：
+
+   ```xml
+   <sharding_simple><!-- 自定义集群名称 -->
+     <shard><!-- 分片 -->
+       <weight>10</weight><!-- 分片权重 -->
+       ……
+     </shard>
+     <shard>
+       <weight>20</weight>
+       ……
+     </shard>
+     …
+   ```
+
+   <u>weight默认为1，虽然可以将它设置成任意整数，但**官方建议应该尽可能设置成较小的值**。分片权重会影响数据在分片中的倾斜程度，一个分片权重值越大，那么它被写入的数据就会越多</u>。
+
+2. **slot（槽）**
+
+   <u>slot可以理解成许多小的水槽，如果把数据比作是水的话，那么数据之水会顺着这些水槽流进每个数据分片。slot的数量等于所有分片的权重之和</u>，假设集群sharding_simple有两个Shard分片，第一个分片的weight为10，第二个分片的weight为20，那么slot的数量则等于30。slot按照权重元素的取值区间，与对应的分片形成映射关系。在这个示例中，如果slot值落在[0,10)区间，则对应第一个分片；如果slot值落在[10,20]区间，则对应第二个分片。
+
+3. 选择函数
+
+   选择函数用于判断一行待写入的数据应该被写入哪个分片，整个判断过程大致分成两个步骤：
+
+   （1）它会找出slot的取值，其计算公式如下：
+
+   ```sql
+   slot = shard_value % sum_weight
+   ```
+
+   其中，shard_value是分片键的取值；sum_weight是所有分片的权重之和；slot等于shard_value和sum_weight的余数。假设某一行数据的shard_value是10，sum_weight是30（两个分片，第一个分片权重为10，第二个分片权重为20），那么slot值等于10（10%30=10）。
+
+   （2）基于slot值找到对应的数据分片。当slot值等于10的时候，它属于[10,20)区间，所以这行数据会对应到第二个Shard分片。
+
+   ​	整个过程的示意如图10-14所示。
+
+   ![image.png](https://segmentfault.com/img/bVbI418)
+
+   图10-14 基于选择函数实现数据分片的逻辑示意图
+
+### * 10.5.4 分布式写入的核心流程
+
+​	在向集群内的分片写入数据时，通常有两种思路：<u>一种是借助外部计算系统，事先将数据均匀分片，再借由计算系统直接将数据写入ClickHouse集群的各个本地表</u>，如图10-15所示。
+
+![image.png](https://segmentfault.com/img/bVbI42t)
+
+​	图10-15 由外部系统将数据写入本地表
+
+​	**上述这种方案通常拥有更好的写入性能，因为分片数据是被并行点对点写入的**。但是这种方案的实现主要依赖于外部系统，而不在于ClickHouse自身，所以这里主要会介绍第二种思路。
+
+​	第二种思路是通过Distributed表引擎代理写入分片数据的，接下来开始介绍数据写入的核心流程。
+
+​	为了便于理解整个过程，这里会将分片写入、副本复制拆分成两个部分进行讲解。在讲解过程中，会使用两个特殊的集群分别进行演示：第一个集群拥有2个分片和0个副本，通过这个示例向大家讲解分片写入的核心流程；第二个集群拥有1个分片和1个副本，通过这个示例向大家讲解副本复制的核心流程。
+
+1. 将数据写入分片的核心流程
+
+   在对Distributed表执行INSERT查询的时候，会进入数据写入分片的执行逻辑，它的核心流程如图10-16所示。
+
+   ![image.png](https://segmentfault.com/img/bVbI43s)
+
+   ![image.png](https://segmentfault.com/img/bVbI43J)
+
+   ​	图10-16 由Distributed表将数据写入多个分片
+
+   ​	在这个流程中，继续使用集群sharding_simple的示例，该集群由2个分片和0个副本组成。整个流程从上至下按照时间顺序进行，其大致分成5个步骤。现在根据图10-16所示编号讲解整个过程。
+
+   1）在第一个分片节点写入本地分片数据
+
+   首先在CH5节点，对分布式表test_shard_2_all执行INSERT查询，尝试写入10、30、200和55四行数据。执行之后分布式表主要会做两件事情：第一，根据分片规则划分数据，在这个示例中，30会归至分片1，而10、200和55则会归至分片2；第二，将属于当前分片的数据直接写入本地表test_shard_2_local。
+
+   2）第一个分片建立远端连接，准备发送远端分片数据
+
+   将归至远端分片的数据**<u>以分区为单位</u>**，分别写入test_shard_2_all存储目录下的临时bin文件，数据文件的命名规则如下：
+
+   ```shell
+   /database@host:port/[increase_num].bin
+   ```
+
+   由于在这个示例中只有一个远端分片CH6，所以它的临时数据文件如下所示：
+
+   ```shell
+   /test_shard_2_all/default@ch6.nauu.com:9000/1.bin
+   ```
+
+   10、200和55三行数据会被写入上述这个临时数据文件。接着，会尝试与远端CH6分片建立连接：
+
+   ```shell
+   Connection (ch6.nauu.com:9000): Connected to ClickHouse server
+   ```
+
+   3）第一个分片向远端分片发送数据
+
+   此时，会有另一组监听任务负责监听/test_shard_2_all目录下的文件变化，这些任务负责将目录数据发送至远端分片：
+
+   ```shell
+   test_shard_2_all.Distributed.DirectoryMonitor:
+   Started processing /test_shard_2_all/default@ch6.nauu.com:9000/1.bin
+   ```
+
+   其中，**每份目录将会由独立的线程负责发送，数据在传输之前会被压缩**。
+
+   4）第二个分片接收数据并写入本地
+
+   CH6分片节点确认建立与CH5的连接：
+
+   ```shell
+   TCPHandlerFactory: TCP Request. Address: CH5:45912
+   TCPHandler: Connected ClickHouse server
+   ```
+
+   在接收到来自CH5发送的数据后，将它们写入本地表：
+
+   ```shell
+   executeQuery: (from CH5) INSERT INTO default.test_shard_2_local
+   --第一个分区
+   Reserving 1.00 MiB on disk 'default'
+   Renaming temporary part tmp_insert_10_1_1_0 to 10_1_1_0.
+   --第二个分区
+   Reserving 1.00 MiB on disk 'default'
+   Renaming temporary part tmp_insert_200_2_2_0 to 200_2_2_0.
+   --第三个分区
+   Reserving 1.00 MiB on disk 'default'
+   Renaming temporary part tmp_insert_55_3_3_0 to 55_3_3_0.
+   ```
+
+   5）由第一个分片确认完成写入
+
+   最后，还是由CH5分片确认所有的数据发送完毕：
+
+   ```shell
+   Finished processing /test_shard_2_all/default@ch6.nauu.com:9000/1.bin
+   ```
+
+   至此，整个流程结束。
+
+   <u>可以看到，在整个过程中，Distributed表负责所有分片的写入工作。本着**谁执行谁负责**的原则，在这个示例中，由CH5节点的分布式表负责切分数据，并向所有其他分片节点发送数据</u>。
+
+   在由Distributed表负责向远端分片发送数据时，有**异步写**和**同步写**两种模式：
+
+   + 如果是异步写，则在Distributed表写完本地分片之后，INSERT查询就会返回成功写入的信息；
+   + 如果是同步写，则在执行INSERT查询之后，会等待所有分片完成写入。
+
+   使用何种模式由insert_distributed_sync参数控制，默认为false，即异步写。如果将其设置为true，则可以一进步通过insert_distributed_timeout参数控制同步等待的超时时间。
+
+2. 副本复制数据的核心流程
+
+   如果在集群的配置中包含了副本，那么除了刚才的分片写入流程之外，还会触发副本数据的复制流程。**数据在多个副本之间，有两种复制实现方式：一种是继续借助Distributed表引擎，由它将数据写入副本；另一种则是借助ReplicatedMergeTree表引擎实现副本数据的分发**。两种方式的区别如图10-17所示。
+
+   ![image.png](https://segmentfault.com/img/bVbI44V)
+
+   图10-17 使用Distributed与ReplicatedMergeTree分发副本数据的对比示意图
+
+   1）通过Distributed复制数据
+
+   在这种实现方式下，即使本地表不使用ReplicatedMergeTree表引擎，也能实现数据副本的功能。**Distributed会同时负责分片和副本的数据写入工作，而副本数据的写入流程与分片逻辑相同**，详情参见10.5.4节。现在用一个简单示例说明。首先让我们再重温一下集群sharding_simple_1的配置，它的配置如下：
+
+   ```xml
+   <!-- 1个分片 1个副本-->
+   <sharding_simple_1>
+     <shard>
+       <replica>
+         <host>ch5.nauu.com</host>
+         <port>9000</port>
+       </replica>
+       <replica>
+         <host>ch6.nauu.com</host>
+         <port>9000</port>
+       </replica>
+     </shard>
+   </sharding_simple_1>
+   ```
+
+   现在，尝试在这个集群内创建数据表，首先创建本地表：
+
+   ```sql
+   CREATE TABLE test_sharding_simple1_local ON CLUSTER sharding_simple_1(
+     id UInt64
+   )ENGINE = MergeTree()
+   ORDER BY id
+   ```
+
+   接着创建Distributed分布式表：
+
+   ```sql
+   CREATE TABLE test_sharding_simple1_all
+   (
+     id UInt64
+   )ENGINE = Distributed(sharding_simple_1, default, test_sharding_simple1_local,rand())
+   ```
+
+   之后，向Distributed表写入数据，它会负责将数据写入集群内的每个replica。
+
+   细心的朋友应该能够发现，**在这种实现方案下，Distributed节点需要同时负责分片和副本的数据写入工作，它很有可能会成为写入的单点瓶颈**，所以就有了接下来将要说明的第二种方案。
+
+   2）通过ReplicatedMergeTree复制数据
+
+   <u>如果在集群的shard配置中增加internal_replication参数并将其设置为true（默认为false），那么Distributed表在该shard中只会选择一个合适的replica并对其写入数据。**此时，如果使用ReplicatedMergeTree作为本地表的引擎，则在该shard内，多个replica副本之间的数据复制会交由ReplicatedMergeTree自己处理，不再由Distributed负责，从而为其减负**</u>。
+
+   在shard中选择replica的算法大致如下：首选，在ClickHouse的服务节点中，拥有一个全局计数器errors_count，当服务出现任何异常时，该计数累积加1；接着，**<u>当一个shard内拥有多个replica时，选择errors_count错误最少的那个</u>**。
+
+   加入internal_replication配置后示例如下所示：
+
+   ```xml
+   <shard>
+     <!-- 由ReplicatedMergeTree复制表自己负责数据分发 -->
+     <internal_replication>true</internal_replication>
+     <replica>
+       <host>ch5.nauu.com</host>
+       <port>9000</port>
+     </replica>
+     <replica>
+       <host>ch6.nauu.com</host>
+       <port>9000</port>
+     </replica>
+   </shard>
+   ```
+
+   关于Distributed表引擎如何将数据写入分片，请参见10.5.4节；而关于Replicated-MergeTree表引擎如何复制分发数据，请参见10.3.2节。
+
+### * 10.5.5 分布式查询的核心流程
+
+​	**与数据写入有所不同，<u>在面向集群查询数据的时候，只能通过Distributed表引擎实现</u>**。**<u>当Distributed表接收到SELECT查询的时候，它会依次查询每个分片的数据，再合并汇总返回</u>**。接下来将对数据查询时的重点逻辑进行介绍。
+
+1. 多副本的路由规则
+
+   在查询数据的时候，如果集群中的一个shard，拥有多个replica，那么Distributed表引擎需要面临副本选择的问题。它会使用负载均衡算法从众多replica中选择一个，而具体使用何种负载均衡算法，则由load_balancing参数控制：
+
+   ```shell
+   load_balancing = random/nearest_hostname/in_order/first_or_random
+   ```
+
+   有如下四种负载均衡算法：
+
+   1）random
+
+   **random是默认的负载均衡算法**，正如前文所述，<u>在ClickHouse的服务节点中，拥有一个全局计数器errors_count，当服务发生任何异常时，该计数累积加1。而random算法会选择errors_count错误数量最少的replica，如果多个replica的errors_count计数相同，则在它们之中随机选择一个</u>。
+
+   2）nearest_hostname
+
+   nearest_hostname可以看作random算法的变种，首先它会选择errors_count错误数量最少的replica，如果多个replica的errors_count计数相同，则选择集群配置中host名称与当前host最相似的一个。而相似的规则是以当前host名称为基准按字节逐位比较，找出不同字节数最少的一个，例如CH5-1-1和CH5-1-2.nauu.com有一个字节不同：
+
+   ```shell
+   CH5-1-1
+   CH5-1-2.nauu.com
+   ```
+
+   而CH5-1-1和CH5-2-2则有两个字节不同：
+
+   ```shell
+   CH5-1-1
+   CH5-2-2
+   ```
+
+   3）in_order
+
+   in_order同样可以看作random算法的变种，首先它会选择errors_count错误数量最少的replica，如果多个replica的errors_count计数相同，则按照集群配置中replica的定义顺序逐个选择。
+
+   4）first_or_random
+
+   first_or_random可以看作in_order算法的变种，首先它会选择errors_count错误数量最少的replica，如果多个replica的errors_count计数相同，它首先会选择集群配置中第一个定义的replica，如果该replica不可用，则进一步随机选择一个其他的replica。
+
+2. 多分片查询的核心流程
+
+   分布式查询与分布式写入类似，同样本着**谁执行谁负责**的原则，它会由接收SELECT查询的Distributed表，并负责串联起整个过程。<u>首先它会将针对分布式表的SQL语句，按照分片数量将查询拆分成若干个针对本地表的子查询，然后向各个分片发起查询，最后再汇总各个分片的返回结果</u>。如果对分布式表按如下方式发起查询：
+
+   ```sql
+   SELECT * FROM distributed_table
+   ```
+
+   那么它会将其转为如下形式之后，再发送到远端分片节点来执行：
+
+   ```sql
+   SELECT * FROM local_table
+   ```
+
+   以sharding_simple集群的test_shard_2_all为例，假设在CH5节点对分布式表发起查询：
+
+   ```sql
+   SELECT COUNT(*) FROM test_shard_2_all
+   ```
+
+   那么，**Distributed表引擎会<u>将查询计划转换为多个分片的UNION联合查询</u>**，如图10-18所示。
+
+   ![image.png](https://segmentfault.com/img/bVbI455)
+
+   ​	图10-18 对分布式表执行COUNT查询的执行计划
+
+   整个执行计划从下至上大致分成两个步骤：
+
+   1）查询各个分片数据
+
+   在图10-18所示执行计划中，<u>One和Remote步骤是**并行执行**的，它们分别负责了本地和远端分片的查询动作</u>。其中，在One步骤会将SQL转换成对本地表的查询：
+
+   ```sql
+   SELECT COUNT() FROM default.test_shard_2_local
+   ```
+
+   而在Remote步骤中，会建立与CH6节点的连接，并向其发起远程查询：
+
+   ```shell
+   Connection (ch6.nauu.com:9000): Connecting. Database: …
+   ```
+
+   CH6节点在接收到来自CH5的查询请求后，开始在本地执行。<u>同样，SQL会转换成对本地表的查询</u>：
+
+   ```shell
+   executeQuery: (from CH5:45992, initial_query_id: 4831b93b-5ae6-4b18-bac9-
+   e10cc9614353) WITH toUInt32(2) AS _shard_num
+   SELECT COUNT() FROM default.test_shard_2_local
+   ```
+
+   2）合并返回结果
+
+   多个分片数据均查询返回后，按如下方法在CH5节点将它们合并：
+
+   ```shell
+   Read 2 blocks of partially aggregated data, total 2 rows.
+   Aggregator: Converting aggregated data to blocks
+   ……
+   ```
+
+3. 使用Global优化分布式子查询
+
+   **如果在分布式查询中使用子查询，可能会面临两难的局面**。下面来看一个示例。假设有这样一张分布式表test_query_all，它拥有两个分片，而表内的数据如下所示：
+
+   ```sql
+   CH5节点test_query_local
+   ┌─id─┬─repo─┐
+   │ 1 │ 100 │
+   │ 2 │ 100 │
+   │ 3 │ 100 │
+   └───┴─────┘
+   CH6节点test_query_local
+   ┌─id─┬─repo─┐
+   │ │ │
+   │ 3 │ 200 │
+   │ 4 │ 200 │
+   └───┴─────┘
+   ```
+
+   其中，id代表用户的编号，repo代表仓库的编号。如果现在有一项查询需求，要求找到同时拥有两个仓库的用户，应该如何实现？对于这类交集查询的需求，可以使用IN子查询，此时你会面临两难的选择：IN查询的子句应该使用本地表还是分布式表？（使用JOIN面临的情形与IN类似）。
+
+   1）使用本地表的问题
+
+   如果在IN查询中使用本地表，例如下面的语句：
+
+   ```sql
+   SELECT uniq(id) FROM test_query_all WHERE repo = 100
+   AND id IN (SELECT id FROM test_query_local WHERE repo = 200)
+   ┌─uniq(id)─┐
+   │ 0 │
+   └───────┘
+   ```
+
+   那么你会发现返回的结果是错误的。这是为什么呢？这是因为**<u>分布式表在接收到查询之后，会将上述SQL替换成本地表的形式，再发送到每个分片进行执行</u>**：
+
+   ```sql
+   SELECT uniq(id) FROM test_query_local WHERE repo = 100
+   AND id IN (SELECT id FROM test_query_local WHERE repo = 200)
+   ```
+
+   **注意，IN查询的子句使用的是本地表**：
+
+   ```sql
+   SELECT id FROM test_query_local WHERE repo = 200
+   ```
+
+   由于在单个分片上只保存了部分的数据，所以该SQL语句没有匹配到任何数据，如图10-19所示。
+
+   ![image.png](https://segmentfault.com/img/bVbI46R)
+
+   ​	图10-19 使用本地表作为IN查询子句的执行逻辑
+
+   从上图中可以看到，单独在分片1或分片2内均无法找到repo同时等于100和200的数据。
+
+   2）使用分布式表的问题
+
+   为了解决返回结果错误的问题，现在尝试在IN查询子句中使用分布式表：
+
+   ```sql
+   SELECT uniq(id) FROM test_query_all WHERE repo = 100
+   AND id IN (SELECT id FROM test_query_all WHERE repo = 200)
+   ┌─uniq(id)─┐
+   │ 1 │
+   └───────┘
+   ```
+
+   这次返回了正确的查询结果。那是否意味着使用这种方案就万无一失了呢？通过进一步观察执行日志会发现，**情况并非如此，该查询的请求被放大了两倍**。
+
+   **这是由于在IN查询子句中，同样也使用了分布式表查询**：
+
+   ```sql
+   SELECT id FROM test_query_all WHERE repo = 200
+   ```
+
+   所以在CH6节点接收到这条SQL之后，它将再次向其他分片发起远程查询，如图10-20所示。
+
+   ![在这里插入图片描述](https://img-blog.csdnimg.cn/8981076c15404db495f5a2ff2f812b68.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl8zOTAyNTM2Mg==,size_16,color_FFFFFF,t_70)
+
+   ​	图10-20 IN查询子句查询放大原因示意
+
+   因此可以得出结论，**<u>在IN查询子句使用分布式表的时候，查询请求会被放大N的平方倍</u>**，其中N等于集群内分片节点的数量，假如集群内有10个分片节点，则在一次查询的过程中，会最终导致100次的查询请求，这显然是不可接受的。
+
+   3）使用GLOBAL优化查询
+
+   为了解决查询放大的问题，可以使用GLOBAL IN或JOIN进行优化。现在对刚才的SQL进行改造，为其增加**GLOBAL修饰符**：
+
+   ```sql
+   SELECT uniq(id) FROM test_query_all WHERE repo = 100
+   AND id GLOBAL IN (SELECT id FROM test_query_all WHERE repo = 200)
+   ```
+
+   再次分析查询的核心过程，如图10-21所示。
+
+   整个过程由上至下大致分成5个步骤：
+
+   （1）将IN子句单独提出，发起了一次分布式查询。
+
+   （2）将分布式表转local本地表后，分别在本地和远端分片执行查询。
+
+   （3）**将IN子句查询的结果进行汇总，并放入一张临时的内存表进行保存**。
+
+   （4）**将内存表发送到远端分片节点**。
+
+   （5）将分布式表转为本地表后，开始执行完整的SQL语句，IN子句直接使用临时内存表的数据。
+
+   至此，整个核心流程结束。可以看到，**在使用GLOBAL修饰符之后，ClickHouse使用内存表临时保存了IN子句查询到的数据，并将其发送到远端分片节点，以此到达了数据共享的目的，从而避免了查询放大的问题**。<u>**由于数据会在网络间分发，所以需要特别注意临时表的大小，IN或者JOIN子句返回的数据不宜过大。如果表内存在重复数据，也可以事先在子句SQL中增加DISTINCT以实现去重**</u>。
+
+   ![在这里插入图片描述](https://img-blog.csdnimg.cn/caa551875a6e499e9f9cfe530d8fd5a7.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl8zOTAyNTM2Mg==,size_16,color_FFFFFF,t_70)
+
+   ​	图10-21 使用GLOBAL IN查询的流程示意图
+
+## 10.6 本章小结
+
+​	本章全方面介绍了副本、分片和集群的使用方法，并且详细介绍了它们的作用以及核心工作流程。
+
+​	首先我们介绍了数据副本的特点，并详细介绍了ReplicatedMergeTree表引擎，它是MergeTree表引擎的变种，同时也是数据副本的代名词；接着又介绍了数据分片的特点及作用，同时在这个过程中引入了ClickHouse集群的概念，并讲解了它的工作原理；最后介绍了Distributed表引擎的核心功能与工作流程，借助它的能力，可以实现分布式写入与查询。
+
+​	下一章将介绍与ClickHouse管理与运维相关的内容。
+
+# 11. 管理与运维
+
+P502
