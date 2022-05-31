@@ -4485,7 +4485,7 @@ no sharding key provided
 
    3）使用GLOBAL优化查询
 
-   为了解决查询放大的问题，可以使用GLOBAL IN或JOIN进行优化。现在对刚才的SQL进行改造，为其增加**GLOBAL修饰符**：
+   **<u>为了解决查询放大的问题，可以使用GLOBAL IN或JOIN进行优化</u>**。现在对刚才的SQL进行改造，为其增加**GLOBAL修饰符**：
 
    ```sql
    SELECT uniq(id) FROM test_query_all WHERE repo = 100
@@ -4504,7 +4504,7 @@ no sharding key provided
 
    （4）**将内存表发送到远端分片节点**。
 
-   （5）将分布式表转为本地表后，开始执行完整的SQL语句，IN子句直接使用临时内存表的数据。
+   （5）将分布式表转为本地表后，开始执行完整的SQL语句，**IN子句直接使用临时内存表的数据**。
 
    至此，整个核心流程结束。可以看到，**在使用GLOBAL修饰符之后，ClickHouse使用内存表临时保存了IN子句查询到的数据，并将其发送到远端分片节点，以此到达了数据共享的目的，从而避免了查询放大的问题**。<u>**由于数据会在网络间分发，所以需要特别注意临时表的大小，IN或者JOIN子句返回的数据不宜过大。如果表内存在重复数据，也可以事先在子句SQL中增加DISTINCT以实现去重**</u>。
 
@@ -4522,4 +4522,884 @@ no sharding key provided
 
 # 11. 管理与运维
 
-P502
+​	本章将对ClickHouse管理与运维相关的知识进行介绍，通过对本章所学知识的运用，大家在实际工作中能够让ClickHouse变得更加安全与健壮。在先前的演示案例中，为求简便，我们一直在使用默认的default用户，且采用无密码登录方式，这显然不符合生产环境的要求。所以在接下来的内容中，将会介绍ClickHouse的权限、熔断机制、数据备份和服务监控等知识。
+
+## 11.1 用户配置
+
+​	user.xml配置文件默认位于/etc/clickhouse-server路径下，ClickHouse使用它来定义用户相关的配置项，包括系统参数的设定、用户的定义、权限以及熔断机制等。
+
+### 11.1.1 用户profile
+
+​	<u>用户profile的作用类似于用户角色。可以预先在user.xml中为ClickHouse定义多组profile，并为每组profile定义不同的配置项，以实现配置的复用</u>。以下面的配置为例：
+
+```xml
+<yandex>
+  <profiles><!-- 配置profile -->
+    <default> <!-- 自定义名称，默认角色-->
+      <max_memory_usage>10000000000</max_memory_usage>
+      <use_uncompressed_cache>0</use_uncompressed_cache>
+    </default>
+    <test1> <!-- 自定义名称，默认角色-->
+      <allow_experimental_live_view>1</allow_experimental_live_view>
+      <distributed_product_mode>allow</distributed_product_mode>
+    </test1>
+  </profiles>
+  ……
+```
+
+​	在这组配置中，预先定义了default和test1两组profile。引用相应的profile名称，便会获得相应的配置。我们可以在CLI中直接切换到想要的profile：
+
+```sql
+SET profile = test1
+```
+
+​	或是在定义用户的时候直接引用（在11.1.3节进行演示）。
+
+​	**在所有的profile配置中，名称为default的profile将作为默认的配置被加载，所以它必须存在**。如果缺失了名为default的profile，在登录时将会出现如下错误提示：
+
+```shell
+DB::Exception: There is no profile 'default' in configuration file..
+```
+
+​	profile配置支持继承，实现继承的方式是在定义中引用其他的profile名称，例如下面的例子所示：
+
+```xml
+<normal_inherit> <!-- 只有read查询权限-->
+  <profile>test1</profile>
+  <profile>test2</profile>
+  <distributed_product_mode>deny</distributed_product_mode>
+</normal_inherit>
+```
+
+​	这个名为normal_inherit的profile继承了test1和test2的所有配置项，并且使用新的参数值覆盖了test1中原有的distributed_product_mode配置项。
+
+### 11.1.2 配置约束
+
+​	<u>constraints标签可以设置一组约束条件，以保障profile内的参数值不会被随意修改</u>。约束条件有如下三种规则：
+
++ Min：最小值约束，在设置相应参数的时候，取值不能小于该阈值。
+
++ Max：最大值约束，在设置相应参数的时候，取值不能大于该阈值。
+
++ **Readonly：只读约束，该参数值不允许被修改**。
+
+​	现在举例说明：
+
+```xml
+<profiles><!-- 配置profiles -->
+  <default> <!-- 自定义名称，默认角色-->
+    <max_memory_usage>10000000000</max_memory_usage>
+    <distributed_product_mode>allow</distributed_product_mode>
+    <constraints><!-- 配置约束-->
+      <max_memory_usage>
+        <min>5000000000</min>
+        <max>20000000000</max>
+      </max_memory_usage>
+      <distributed_product_mode>
+        <readonly/>
+      </distributed_product_mode>
+    </constraints>
+  </default>
+```
+
+​	从上面的配置定义中可以看出，在default默认的profile内，给两组参数设置了约束。其中，为max_memory_usage设置了min和max阈值；而为distributed_product_mode设置了只读约束。现在尝试修改max_memory_usage参数，将它改为50：
+
+```shell
+SET max_memory_usage = 50
+DB::Exception: Setting max_memory_usage shouldn't be less than 5000000000.
+```
+
+​	可以看到，最小值约束阻止了这次修改。
+
+​	接着继续修改distributed_product_mode参数的取值：
+
+```shell
+SET distributed_product_mode = 'deny'
+DB::Exception: Setting distributed_product_mode should not be changed.
+```
+
+​	同样，配置约束成功阻止了预期外的修改。
+
+​	**<u>还有一点需要特别明确，在default中默认定义的constraints约束，将作为默认的全局约束，自动被其他profile继承</u>**。
+
+### 11.1.3 用户定义
+
+​	使用users标签可以配置自定义用户。如果打开user.xml配置文件，会发现已经默认配置了default用户，在此之前的所有示例中，一直使用的正是这个用户。定义一个新用户，必须包含以下几项属性。
+
+1. username
+
+   username用于指定登录用户名，这是全局唯一属性。该属性比较简单，这里就不展开介绍了。
+
+2. password
+
+   password用于设置登录密码，支持明文、SHA256加密和double_sha1加密三种形式，可以任选其中一种进行设置。现在分别介绍它们的使用方法。
+
+   （1）明文密码：在使用明文密码的时候，直接通过password标签定义，例如下面的代码。
+
+   ```xml
+   <password>123</password>
+   ```
+
+   **如果password为空，则表示免密码登录**：
+
+   ```xml
+   <password></password>
+   ```
+
+   （2）SHA256加密：在使用SHA256加密算法的时候，需要通过password_sha256_hex标签定义密码，例如下面的代码。
+
+   ```xml
+   <password_sha256_hex>a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a2
+   7ae3</password_sha256_hex>
+   ```
+
+   可以执行下面的命令获得密码的加密串，例如对明文密码123进行加密：
+
+   ```xml
+   # echo -n 123 | openssl dgst -sha256
+   (stdin)= a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3
+   ```
+
+   （3）double_sha1加密：在使用double_sha1加密算法的时候，则需要通过password_double_sha1_hex标签定义密码，例如下面的代码。
+
+   ```xml
+   <password_double_sha1_hex>23ae809ddacaf96af0fd78ed04b6a265e05aa257</password_double_sha1_hex>
+   ```
+
+   可以执行下面的命令获得密码的加密串，例如对明文密码123进行加密：
+
+   ```shell
+   # echo -n 123 | openssl dgst -sha1 -binary | openssl dgst -sha1
+   (stdin)= 23ae809ddacaf96af0fd78ed04b6a265e05aa257
+   3. networks
+   ```
+
+   <u>networks表示被允许登录的网络地址，用于限制用户登录的客户端地址</u>，关于这方面的介绍将会在11.2节展开。
+
+3. profile
+
+   用户所使用的profile配置，直接引用相应的名称即可，例如：
+
+   ```xml
+   <default>
+     <profile>default</profile>
+   </default>
+   ```
+
+   该配置的语义表示，用户default使用了名为default的profile。
+
+4. quota
+
+   <u>quota用于设置该用户能够使用的资源限额，可以理解成一种熔断机制</u>。关于这方面的介绍将会在11.3节展开。
+
+   现在用一个完整的示例说明用户的定义方法。首先创建一个使用明文密码的用户user_plaintext：
+
+   ```xml
+   <yandex>
+     <profiles>
+       ……
+     </profiles>
+     <users>
+       <default><!—默认用户 -->
+         ……
+       </default>
+       <user_plaintext>
+         <password>123</password>
+         <networks>
+           <ip>::/0</ip>
+         </networks>
+         <profile>normal_1</profile>
+         <quota>default</quota>
+       </user_plaintext>
+   ```
+
+   由于配置了密码，所以在登录的时候需要附带密码参数：
+
+   ```shell
+   # clickhouse-client -h 10.37.129.10 -u user_plaintext --password 123
+   Connecting to 10.37.129.10:9000 as user user_plaintext.
+   ```
+
+   接下来是两组使用了加密算法的用户，首先是用户user_sha256：
+
+   ```xml
+   <user_sha256>
+     <!-- echo -n 123 | openssl dgst -sha256 !-->
+     <password_sha256_hex>a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a2
+       7ae3</password_sha256_hex>
+     <networks>
+       <ip>::/0</ip>
+     </networks>
+     <profile>default</profile>
+     <quota>default</quota>
+   </user_sha256>
+   ```
+
+   然后是用户user_double_sha1：
+
+   ```xml
+   <user_double_sha1>
+     <!-- echo -n 123 | openssl dgst -sha1 -binary | openssl dgst -sha1 !-->
+     <password_double_sha1_hex>23ae809ddacaf96af0fd78ed04b6a265e05aa257</password_double_sha1_hex>
+     <networks>
+       <ip>::/0</ip>
+     </networks>
+     <profile>default</profile>
+     <quota>limit_1</quota>
+   </user_double_sha1>
+   ```
+
+   这些用户在登录时同样需要附带加密前的密码，例如：
+
+   ```shell
+   # clickhouse-client -h 10.37.129.10 -u user_sha256 --password 123
+   Connecting to 10.37.129.10:9000 as user user_sha256.
+   ```
+
+## 11.2 权限管理
+
+​	权限管理是一个始终都绕不开的话题，ClickHouse分别从访问、查询和数据等角度出发，层层递进，为我们提供了一个较为立体的权限体系。
+
+### 11.2.1 访问权限
+
+​	访问层控制是整个权限体系的第一层防护，它又可进一步细分成两类权限。
+
+1. 网络访问权限
+
+   网络访问权限使用networks标签设置，用于限制某个用户登录的客户端地址，有IP地址、host主机名称以及正则匹配三种形式，可以任选其中一种进行设置。
+
+   （1）IP地址：直接使用IP地址进行设置。
+
+   ```xml
+   <ip>127.0.0.1</ip>
+   ```
+
+   （2）host主机名称：通过host主机名称设置。
+
+   ```xml
+   <host>ch5.nauu.com</host>
+   ```
+
+   （3）正则匹配：通过表达式来匹配host名称。
+
+   ```xml
+   <host>^ch\d.nauu.com$</host>
+   ```
+
+   现在用一个示例说明：
+
+   ```xml
+   <user_normal>
+     <password></password>
+     <networks>
+       <ip>10.37.129.13</ip>
+     </networks>
+     <profile>default</profile>
+     <quota>default</quota>
+   </user_normal>
+   ```
+
+   ​	用户user_normal限制了客户端IP，在设置之后，该用户将只能从指定的地址登录。此时如果从非指定IP的地址进行登录，例如：
+
+   ```shell
+   --从10.37.129.10登录
+   # clickhouse-client -u user_normal
+   ```
+
+   则将会得到如下错误：
+
+   ```shell
+   DB::Exception: User user_normal is not allowed to connect from address
+   10.37.129.10.
+   ```
+
+2. 数据库与字典访问权限
+
+   在客户端连入服务之后，可以进一步限制某个用户<u>数据库</u>和<u>字典</u>的访问权限，它们分别通过allow_databases和allow_dictionaries标签进行设置。**如果不进行任何定义，则表示不进行限制**。现在继续在用户user_normal的定义中增加权限配置：
+
+   ```xml
+   <user_normal>
+     ……
+     <allow_databases>
+       <database>default</database>
+       <database>test_dictionaries</database>
+     </allow_databases>
+     <allow_dictionaries>
+       <dictionary>test_flat_dict</dictionary>
+     </allow_dictionaries>
+   </user_normal>
+   ```
+
+   通过上述操作，该用户在登录之后，将只能看到为其开放了访问权限的数据库和字典。
+
+### 11.2.2 查询权限
+
+​	查询权限是整个权限体系的第二层防护，它决定了一个用户能够执行的查询语句。查询权限可以分成以下四类：
+
++ 读权限：包括SELECT、EXISTS、SHOW和DESCRIBE查询。
++ 写权限：包括INSERT和**OPTIMIZE**查询。
++ 设置权限：包括SET查询。
++ DDL权限：包括CREATE、DROP、ALTER、RENAME、ATTACH、DETACH和TRUNCATE查询。
++ **其他权限：包括KILL和USE查询，任何用户都可以执行这些查询**。
+
+​	上述这四类权限，通过以下两项配置标签控制：
+
+（1）readonly：读权限、写权限和设置权限均由此标签控制，它有三种取值。
+
++ 当取值为0时，不进行任何限制（默认值）。
++ 当取值为1时，只拥有读权限（只能执行SELECT、EXISTS、SHOW和DESCRIBE）。
++ 当取值为2时，拥有读权限和设置权限（在读权限基础上，增加了SET查询）。
+
+（2）allow_ddl：DDL权限由此标签控制，它有两种取值。
+
++ 当取值为0时，不允许DDL查询。
+
++ 当取值为1时，允许DDL查询（默认值）。
+
+​	现在继续用一个示例说明。与刚才的配置项不同，readonly和allow_ddl需要定义在用户profiles中，例如：
+
+```xml
+<profiles>
+  <normal> <!-- 只有read读权限-->
+    <readonly>1</readonly>
+    <allow_ddl>0</allow_ddl>
+  </normal>
+  <normal_1> <!-- 有读和设置参数权限-->
+    <readonly>2</readonly>
+    <allow_ddl>0</allow_ddl>
+  </normal_1>
+```
+
+​	继续在先前的profiles配置中追加了两个新角色。其中，normal只有读权限，而normal_1则有读和设置参数的权限，它们都没有DDL查询的权限。
+
+​	再次修改用户的user_normal的定义，将它的profile设置为刚追加的normal，这意味着该用户只有读权限。现在开始验证权限的设置是否生效。使用user_normal登录后尝试写操作：
+
+```shell
+--登录
+# clickhouse-client -h 10.37.129.10 -u user_normal
+--写操作
+:) INSERT INTO TABLE test_ddl VALUES (1)
+DB::Exception: Cannot insert into table in readonly mode.
+```
+
+​	可以看到，写操作如期返回了异常。接着执行DDL查询，会发现该操作同样会被限制执行：
+
+```shell
+:) CREATE DATABASE test_3
+DB::Exception: Cannot create database in readonly mode.
+```
+
+​	至此，权限设置已然生效。
+
+### 11.2.3 数据行级权限
+
+​	数据权限是整个权限体系中的第三层防护，它决定了一个用户能够看到什么数据。数据权限使用databases标签定义，它是用户定义中的一项选填设置。database通过定义用户级别的查询过滤器来实现**数据的行级粒度权限**，它的定义规则如下所示：
+
+```xml
+<databases>
+  <database_name><!--数据库名称-->
+    <table_name><!--表名称-->
+      <filter> id < 10</filter><!--数据过滤条件-->
+        </table_name>
+  </database_name>
+```
+
+​	其中，database_name表示数据库名称；table_name表示表名称；而filter则是权限过滤的关键所在，它等同于定义了一条WHERE条件子句，与WHERE子句类似，它支持组合条件。现在用一个示例说明。这里还是用user_normal，为它追加databases定义：
+
+```xml
+<user_normal>
+  ……
+  <databases>
+    <default><!--默认数据库-->
+      <test_row_level><!--表名称-->
+        <filter>id < 10</filter>
+      </test_row_level>
+       <!-- 支持组合条件
+       <test_query_all>
+          <filter>id <= 100 or repo >= 100</filter>
+       </test_query_all> -->
+     </default>
+  </databases>
+```
+
+​	基于上述配置，通过为user_normal用户增加全局过滤条件，实现了该用户在数据表default.test_row_level的行级粒度数据上的权限设置。test_row_level的表结构如下所示：
+
+```sql
+CREATE TABLE test_row_level(
+  id UInt64,
+  name UInt64
+)ENGINE = MergeTree()
+ORDER BY id
+```
+
+​	下面验证权限是否生效。首先写入测试数据：
+
+```sql
+INSERT INTO TABLE test_row_level VALUES (1,100),(5,200),(20,200),(30,110)
+```
+
+​	写入之后，登录user_normal用户并查询这张数据表：
+
+```sql
+SELECT * FROM test_row_level
+┌─id─┬─name─┐
+│ 1 │ 100 │
+│ 5 │ 200 │
+└───┴─────┘
+```
+
+​	可以看到，<u>在返回的结果数据中，只包含`<filter> id<10 </filter>`的部分</u>，证明权限设置生效了。
+
+​	那么数据权限的设定是如何实现的呢？进一步分析它的执行日志：
+
+```shell
+Expression
+	Expression
+		Filter –增加了过滤的步骤
+			MergeTreeThread
+```
+
+​	可以发现，上述代码**在普通查询计划的基础之上自动附加了Filter过滤的步骤**。
+
+​	**<u>对于数据权限的使用有一点需要明确，在使用了这项功能之后，PREWHERE优化将不再生效</u>**，例如执行下面的查询语句：
+
+```sql
+SELECT * FROM test_row_level where name = 5
+```
+
+​	**此时如果使用了数据权限，那么这条SQL将不会进行PREWHERE优化；反之，如果没有设置数据权限，则会进行PREWHERE优化**，例如：
+
+```shell
+InterpreterSelectQuery: MergeTreeWhereOptimizer: condition "name = 5" moved to
+PREWHERE
+```
+
+​	<u>所以，是直接利用ClickHouse的内置过滤器，还是通过拼接WHERE查询条件的方式实现行级数据权限，需要用户在具体的使用场景中进行权衡</u>。
+
+## * 11.3 熔断机制
+
+​	**熔断是限制资源被过度使用的一种自我保护机制，当使用的资源数量达到阈值时，那么正在进行的操作会被自动中断**。按照使用资源统计方式的不同，熔断机制可以分为两类。
+
+1. 根据时间周期的累积用量熔断
+
+   在这种方式下，系统资源的用量是按照时间周期累积统计的，当累积量达到阈值，则直到下个计算周期开始之前，该用户将无法继续进行操作。这种方式通过users.xml内的quotas标签来定义资源配额。以下面的配置为例：
+
+   ```xml
+   <quotas>
+     <default> <!-- 自定义名称 -->
+       <interval>
+         <duration>3600</duration><!-- 时间周期 单位：秒 -->
+         <queries>0</queries>
+         <errors>0</errors>
+         <result_rows>0</result_rows>
+         <read_rows>0</read_rows>
+         <execution_time>0</execution_time>
+       </interval>
+     </default>
+   </quotas>
+   ```
+
+   其中，各配置项的含义如下：
+
+   + default：表示自定义名称，全局唯一。
+
+   + duration：表示累积的时间周期，单位是秒。
+
+   + queries：表示在周期内允许执行的查询次数，0表示不限制。
+
+   + errors：表示在周期内允许发生异常的次数，0表示不限制。
+   + result_row：表示在周期内允许查询返回的结果行数，0表示不限制。
+   + read_rows：表示在周期内在分布式查询中，<u>允许远端节点读取的数据行数</u>，0表示不限制。
+   + execution_time：表示周期内允许执行的查询时间，单位是秒，0表示不限制。
+
+   由于上述示例中各配置项的值均为0，所以对资源配额不做任何限制。现在继续声明另外一组资源配额：
+
+   ```xml
+   <limit_1>
+     <interval>
+       <duration>3600</duration>
+       <queries>100</queries>
+       <errors>100</errors>
+       <result_rows>100</result_rows>
+       <read_rows>2000</read_rows>
+       <execution_time>3600</execution_time>
+     </interval>
+   </limit_1>
+   ```
+
+   ​	为了便于演示，在这个名为limit_1的配额中，在1小时（3600秒）的周期内只允许100次查询。继续修改用户user_normal的配置，为它添加limit_1配额的引用：
+
+   ```xml
+   <user_normal>
+     <password></password>
+     <networks>
+       <ip>10.37.129.13</ip>
+     </networks>
+     <profile>normal</profile>
+     <quota>limit_1</quota>
+   </user_normal>
+   ```
+
+   ​	最后使用user_normal用户登录，测试配额是否生效。在执行了若干查询以后，会发现之后的任何一次查询都将会得到如下异常：
+
+   ```shell
+   Quota for user 'user_normal' for 1 hour has been exceeded. Total result rows:
+   149, max: 100. Interval will end at 2019-08-29 22:00:00. Name of quota template:
+   'limit_1'..
+   ```
+
+   ​	上述结果证明熔断机制已然生效。
+
+2. 根据单次查询的用量熔断
+
+   ​	在这种方式下，系统资源的用量是按照单次查询统计的，而具体的熔断规则，则是由许多不同配置项组成的，<u>这些配置项需要定义在用户profile中</u>。**如果某次查询使用的资源用量达到了阈值，则会被中断**。以配置项max_memory_usage为例，它限定了单次查询可以使用的内存用量，在默认的情况下其规定不得超过10 GB，如果一次查询的内存用量超过10 GB，则会得到异常。**<u>需要注意的是，在单次查询的用量统计中，ClickHouse是以分区为最小单元进行统计的（不是数据行的粒度），这意味着单次查询的实际内存用量是有可能超过阈值的</u>**。
+
+   ​	由于篇幅所限，完整的熔断配置请参阅官方手册，这里只列举个别的常用配置项。
+
+   ​	首先介绍一组针对普通查询的熔断配置。
+
+   （1）max_memory_usage：在单个ClickHouse服务进程中，运行一次查询限制使用的最大内存量，默认值为10 GB，其配置形式如下。
+
+   ```xml
+   <max_memory_usage>10000000000</max_memory_usage>
+   ```
+
+   ​	该配置项还有max_memory_usage_for_user和max_memory_usage_for_all_queries两个变种版本。
+
+   （2）max_memory_usage_for_user：在单个ClickHouse服务进程中，**以用户为单位进行统计**，单个用户在运行查询时限制使用的最大内存量，默认值为0，即不做限制。
+
+   （3）max_memory_usage_for_all_queries：在单个ClickHouse服务进程中，所有运行的查询累加在一起所限制使用的最大内存量，默认为0，即不做限制。
+
+   ​	接下来介绍的是一组与数据写入和聚合查询相关的熔断配置。
+
+   （1）max_partitions_per_insert_block：在单次INSERT写入的时候，限制创建的最大分区个数，默认值为100个。如果超出这个阈值，将会出现如下异常：
+
+   ```shell
+   Too many partitions for single INSERT block ……
+   ```
+
+   （2）max_rows_to_group_by：在执行GROUP BY聚合查询的时候，限制去重后聚合KEY的最大个数，默认值为0，即不做限制。当超过阈值时，其处理方式由group_by_overflow_mode参数决定。
+
+   （3）group_by_overflow_mode：当max_rows_to_group_by熔断规则触发时，group_by_overflow_mode将会提供三种处理方式。
+
+   + throw：抛出异常，此乃默认值。
+
+   + break：立即停止查询，并返回当前数据。
+
+   + any：仅根据当前已存在的聚合KEY继续完成聚合查询。
+
+   （4）max_bytes_before_external_group_by：在执行GROUP BY聚合查询的时候，限制使用的最大内存量，默认值为0，即不做限制。<u>当超过阈值时，聚合查询将会进一步借用**本地磁盘**</u>。
+
+## 11.4 数据备份
+
+​	在先前的章节中，我们已经知道了数据副本的使用方法，可能有的读者心中会有这样的疑问：既然已经有了数据副本，那么还需要数据备份吗？**数据备份自然是需要的，因为数据副本并不能处理误删数据这类行为**。ClickHouse自身提供了多种备份数据的方法，根据数据规模的不同，可以选择不同的形式。
+
+### 11.4.1 导出文件备份
+
+​	**如果数据的体量较小，可以通过dump的形式将数据导出为本地文件**。例如执行下面的语句将test_backup的数据导出：
+
+```shell
+#clickhouse-client --query="SELECT * FROM test_backup" > /chbase/test_backup.tsv
+```
+
+​	将备份数据再次导入，则可以执行下面的语句：
+
+```shell
+# cat /chbase/test_backup.tsv | clickhouse-client --query "INSERT INTO test_backup FORMAT TSV"
+```
+
+​	上述这种dump形式的优势在于，可以**利用SELECT查询并筛选数据，然后按需备份**。**如果是备份整个表的数据，也可以直接复制它的整个目录文件**，例如：
+
+```shell
+# mkdir -p /chbase/backup/default/ & cp -r /chbase/data/default/test_backup/chbase/backup/default/
+```
+
+### 11.4.2 通过快照表备份
+
+​	快照表实质上就是普通的数据表，它通常按照业务规定的备份频率创建，例如按天或者按周创建。所以首先需要建立一张与原表结构相同的数据表，然后再使用INSERT INTO SELECT句式，点对点地将数据从原表写入备份表。假设数据表test_backup需要按日进行备份，现在为它创建当天的备份表：
+
+```sql
+CREATE TABLE test_backup_0206 AS test_backup
+```
+
+​	有了备份表之后，就可以点对点地备份数据了，例如：
+
+```sql
+INSERT INTO TABLE test_backup_0206 SELECT * FROM test_backup
+```
+
+​	如果考虑到容灾问题，也可以将备份表放置在不同的ClickHouse节点上，此时需要将上述SQL语句改成远程查询的形式：
+
+```sql
+INSERT INTO TABLE test_backup_0206 SELECT * FROM remote('ch5.nauu.com:9000',
+'default', 'test_backup', 'default')
+```
+
+### 11.4.3 按分区备份
+
+​	基于数据分区的备份，ClickHouse目前提供了FREEZE与FETCH两种方式，现在分别介绍它们的使用方法。
+
+1. 使用FREEZE备份
+
+   FREEZE的完整语法如下所示：
+
+   ```sql
+   ALTER TABLE tb_name FREEZE PARTITION partition_expr
+   ```
+
+   分区在被备份之后，会被统一保存到ClickHouse根路径/shadow/N子目录下。其中，**N是一个自增长的整数，它的含义是备份的次数（FREEZE执行过多少次）**，<u>具体次数由shadow子目录下的increment.txt文件记录</u>。而**<u>分区备份实质上是对原始目录文件进行硬链接操作，所以并不会导致额外的存储空间</u>**。<u>整个备份的目录会一直向上追溯至data根路径的整个链路</u>：
+
+   ```shell
+   /data/[database]/[table]/[partition_folder]
+   ```
+
+   例如执行下面的语句，会对数据表partition_v2的201908分区进行备份：
+
+   ```shell
+   :) ALTER TABLE partition_v2 FREEZE PARTITION 201908
+   ```
+
+   进入shadow子目录，即能够看到刚才备份的分区目录：
+
+   ```shell
+   # pwd
+   /chbase/data/shadow/1/data/default/partition_v2
+   # ll
+   total 4
+   drwxr-x---. 2 clickhouse clickhouse 4096 Sep 1 00:22 201908_5_5_0
+   ```
+
+   **对于备份分区的还原操作，则需要借助ATTACH装载分区的方式来实现。这意味着如果要还原数据，首先需要主动将shadow子目录下的分区文件复制到相应数据表的detached目录下，然后再使用ATTACH语句装载**。
+
+2. 使用FETCH备份
+
+   **FETCH只支持ReplicatedMergeTree系列的表引擎**，它的完整语法如下所示：
+
+   ```sql
+   ALTER TABLE tb_name FETCH PARTITION partition_id FROM zk_path
+   ```
+
+   **其工作原理与ReplicatedMergeTree同步数据的原理类似，FETCH通过指定的zk_path找到ReplicatedMergeTree的所有副本实例，然后从中选择一个最合适的副本，并下载相应的分区数据**。例如执行下面的语句：
+
+   ```sql
+   ALTER TABLE test_fetch FETCH PARTITION 2019 FROM
+   '/clickhouse/tables/01/test_fetch'
+   ```
+
+   表示指定将test_fetch的2019分区下载到本地，并保存到对应数据表的detached目录下，目录如下所示：
+
+   ```shell
+   data/default/test_fetch/detached/2019_0_0_0
+   ```
+
+   **与FREEZE一样，对于备份分区的还原操作，也需要借助ATTACH装载分区来实现。**
+
+   **<u>FREEZE和FETCH虽然都能实现对分区文件的备份，但是它们并不会备份数据表的元数据</u>**。所以说如果想做到万无一失的备份，还需要对数据表的元数据进行备份，它们是/data/metadata目录下的[table].sql文件。**<u>目前这些元数据需要用户通过复制的形式单独备份</u>**。
+
+## 11.5 服务监控
+
+​	基于原生功能对ClickHouse进行监控，可以从两方面着手——**系统表**和**查询日志**。接下来分别介绍它们的使用方法。
+
+### 11.5.1 系统表
+
+​	在众多的SYSTEM系统表中，主要由以下三张表支撑了对ClickHouse运行指标的查询，它们分别是metrics、events和asynchronous_metrics。
+
+1. metrics
+
+   metrics表用于统计ClickHouse服务在运行时，当前**正在执行**的高层次的概要信息，包括正在执行的查询总次数、正在发生的合并操作总次数等。该系统表的查询方法如下所示：
+
+   ```sql
+   SELECT * FROM system.metrics LIMIT 5
+   ┌─metric──────┬─value─┬─description─────────────────────┐
+   │ Query │ 1 │ Number of executing queries │
+   │ Merge │ 0 │ Number of executing background merges │
+   │ PartMutation │ 0 │ Number of mutations (ALTER DELETE/UPDATE) │
+   │ ReplicatedFetch │ 0 │ Number of data parts being fetched from replica │
+   │ ReplicatedSend │ 0 │ Number of data parts being sent to replicas │
+   └──────────┴─────┴─────────────────────────────┘
+   ```
+
+2. events
+
+   events用于统计ClickHouse服务在运行过程中**已经执行过**的高层次的累积概要信息，包括总的查询次数、总的SELECT查询次数等，该系统表的查询方法如下所示：
+
+   ```sql
+   SELECT event, value FROM system.events LIMIT 5
+   ┌─event─────────────────────┬─value─┐
+   │ Query │ 165 │
+   │ SelectQuery │ 92 │
+   │ InsertQuery │ 14 │
+   │ FileOpen │ 3525 │
+   │ ReadBufferFromFileDescriptorRead │ 6311 │
+   └─────────────────────────┴─────┘
+   ```
+
+3. asynchronous_metrics
+
+   asynchronous_metrics用于统计ClickHouse服务运行过程时，当前正在**后台异步运行**的高层次的概要信息，包括当前分配的内存、执行队列中的任务数量等。该系统表的查询方法如下所示：
+
+   ```sql
+   SELECT * FROM system.asynchronous_metrics LIMIT 5
+   ┌─metric───────────────────────┬─────value─┐
+   │ jemalloc.background_thread.run_interval │ 0 │
+   │ jemalloc.background_thread.num_runs │ 0 │
+   │ jemalloc.background_thread.num_threads │ 0 │
+   │ jemalloc.retained │ 79454208 │
+   │ jemalloc.mapped │ 531341312 │
+   └────────────────────────────┴──────────┘
+   ```
+
+### 11.5.2 查询日志
+
+​	查询日志目前主要有6种类型，它们分别从不同角度记录了ClickHouse的操作行为。**所有查询日志在默认配置下都是关闭状态**，需要在config.xml配置中进行更改，接下来分别介绍它们的开启方法。在配置被开启之后，ClickHouse会为每种类型的查询日志自动生成相应的系统表以供查询。
+
+1. query_log
+
+   query_log是最常用的查询日志，它记录了ClickHouse服务中所有**已经执行**的查询记录，它的全局定义方式如下所示：
+
+   ```xml
+   <query_log>
+     <database>system</database>
+     <table>query_log</table>
+     <partition_by>toYYYYMM(event_date)</partition_by>
+     <!-— 刷新周期 -->
+     <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+   </query_log>
+   ```
+
+   如果只需要为某些用户单独开启query_log，也可以在user.xml的profile配置中按照下面的方式定义：
+
+   ```xml
+   <log_queries> 1</log_queries>
+   ```
+
+   query_log开启后，即可以通过相应的系统表对记录进行查询：
+
+   ```sql
+   SELECT type,concat(substr(query,1,20),'...')query,read_rows,
+   query_duration_ms AS duration FROM system.query_log LIMIT 6
+   ┌─type──────────┬─query───────────┬─read_rows─┬─duration─┐
+   │ QueryStart │ SELECT DISTINCT arra... │ 0 │ 0 │
+   │ QueryFinish │ SELECT DISTINCT arra... │ 2432 │ 11 │
+   │ QueryStart │ SHOW DATABASES... │ 0 │ 0 │
+   │ QueryFinish │ SHOW DATABASES... │ 3 │ 1 │
+   │ ExceptionBeforeStart │ SELECT * FROM test_f... │ 0 │ 0 │
+   │ ExceptionBeforeStart │ SELECT * FROM test_f... │ 0 │ 0 │
+   └─────────────┴───────────────┴───────┴───────┘
+   ```
+
+   如上述查询结果所示，query_log日志记录的信息十分完善，涵盖了查询语句、执行时间、执行用户返回的数据量和执行用户等。
+
+2. query_thread_log
+
+   query_thread_log记录了所有线程的执行查询的信息，它的全局定义方式如下所示：
+
+   ```xml
+   <query_thread_log>
+     <database>system</database>
+     <table>query_thread_log</table>
+     <partition_by>toYYYYMM(event_date)</partition_by>
+     <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+   </query_thread_log>
+   ```
+
+   同样，如果只需要为某些用户单独开启该功能，可以在user.xml的profile配置中按照下面的方式定义：
+
+   ```xml
+   <log_query_threads> 1</log_query_threads>
+   ```
+
+   query_thread_log开启后，即可以通过相应的系统表对记录进行查询：
+
+   ```sql
+   SELECT thread_name,concat(substr(query,1,20),'...')query,query_duration_ms AS
+   duration,memory_usage AS memory FROM system.query_thread_log LIMIT 6
+   ┌─thread_name───┬─query───────────┬─duration─┬─memory─┐
+   │ ParalInputsProc │ SELECT DISTINCT arra... │ 2 │ 210888 │
+   │ ParalInputsProc │ SELECT DISTINCT arra... │ 3 │ 252648 │
+   │ AsyncBlockInput │ SELECT DISTINCT arra... │ 3 │ 449544 │
+   │ TCPHandler │ SELECT DISTINCT arra... │ 11 │ 0 │
+   │ TCPHandler │ SHOW DATABASES... │ 2 │ 0 │
+   └──────────┴───────────────┴───────┴──────┘
+   ```
+
+   如上述查询结果所示，query_thread_log日志记录的信息涵盖了线程名称、查询语句、执行时间和内存用量等。
+
+3. part_log
+
+   part_log日志记录了MergeTree系列表引擎的分区操作日志，其全局定义方式如下所示：
+
+   ```xml
+   <part_log>
+     <database>system</database>
+     <table>part_log</table>
+     <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+   </part_log>
+   ```
+
+   part_log开启后，即可以通过相应的系统表对记录进行查询：
+
+   ```sql
+   SELECT event_type AS type,table,partition_id,event_date FROM system.part_log
+   ┌─type────┬─table─────────────┬─partition_id─┬─event_date─┐
+   │ NewPart │ summing_table_nested_v1 │ 201908 │ 2020-01-29 │
+   │ NewPart │ summing_table_nested_v1 │ 201908 │ 2020-01-29 │
+   │ MergeParts │ summing_table_nested_v1 │ 201908 │ 2020-01-29 │
+   │ RemovePart │ ttl_table_v1 │ 201505 │ 2020-01-29 │
+   │ RemovePart │ summing_table_nested_v1 │ 201908 │ 2020-01-29 │
+   │ RemovePart │ summing_table_nested_v1 │ 201908 │ 2020-01-29 │
+   └───────┴─────────────────┴─────────┴────────┘
+   ```
+
+   如上述查询结果所示，part_log日志记录的信息涵盖了操纵类型、表名称、分区信息和执行时间等。
+
+4. text_log
+
+   text_log日志记录了ClickHouse运行过程中产生的一系列打印日志，包括INFO、DEBUG和Trace，它的全局定义方式如下所示：
+
+   ```xml
+   <text_log>
+     <database>system</database>
+     <table>text_log</table>
+     <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+   </text_log>
+   ```
+
+   text_log开启后，即可以通过相应的系统表对记录进行查询：
+
+   ```sql
+   SELECT thread_name,
+   concat(substr(logger_name,1,20),'...')logger_name,
+   concat(substr(message,1,20),'...')message
+   FROM system.text_log LIMIT 5
+   ┌─thread_name──┬─logger_name───────┬─message────────────┐
+   │ SystemLogFlush │ SystemLog (system.me... │ Flushing system log... │
+   │ SystemLogFlush │ SystemLog (system.te... │ Flushing system log... │
+   │ SystemLogFlush │ SystemLog (system.te... │ Creating new table s... │
+   │ SystemLogFlush │ system.text_log... │ Loading data parts... │
+   │ SystemLogFlush │ system.text_log... │ Loaded data parts (0... │
+   └──────────┴───────────────┴─────────────────┘
+   ```
+
+   如上述查询结果所示，text_log日志记录的信息涵盖了线程名称、日志对象、日志信息和执行时间等。
+
+5. metric_log
+
+   metric_log日志用于将system.metrics和system.events中的数据汇聚到一起，它的全局定义方式如下所示：
+
+   ```xml
+   <metric_log>
+     <database>system</database>
+     <table>metric_log</table>
+     <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+     <collect_interval_milliseconds>1000</collect_interval_milliseconds>
+   </metric_log>
+   ```
+
+   其中，collect_interval_milliseconds表示收集metrics和events数据的时间周期。metric_log开启后，即可以通过相应的系统表对记录进行查询。
+
+   除了上面介绍的系统表和查询日志外，ClickHouse还能够与众多的第三方监控系统集成，限于篇幅这里就不再展开了。
+
+## 11.6 本章小结
+
+​	通过对本章的学习，大家可进一步了解ClickHouse的安全性和健壮性。本章首先站在安全的角度介绍了用户的定义方法和权限的设置方法。在权限设置方面，ClickHouse分别从连接访问、资源访问、查询操作和数据权限等几个维度出发，提供了一个较为立体的权限控制体系。接着站在系统运行的角度介绍了如何通过熔断机制保护ClickHouse系统资源不会被过度使用。最后站在运维的角度介绍了数据的多种备份方法以及如何通过系统表和查询日志，实现对日常运行情况的监控。
