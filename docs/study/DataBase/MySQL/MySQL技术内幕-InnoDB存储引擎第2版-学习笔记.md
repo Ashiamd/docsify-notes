@@ -33,7 +33,7 @@
 + **插件式存储引擎**
 + 物理文件
 
-MySQL数据库区别于其他数据库的最重要的一个特点就是插件式的表存储引擎。
+MySQL数据库区别于其他数据库的最重要的一个特点就是<u>插件式</u>的表存储引擎。
 
 **存储引擎基于表，而不是数据库**。
 
@@ -119,7 +119,7 @@ MySQL数据库区别于其他数据库的最重要的一个特点就是插件式
 
   （eBay的工程师Igor Chernyshev给出patch解决方案）
 
-+ **MySQL数据库使用Memory存储引擎作为临时表来存放查询的中间结果集（intermediate result）。如果中间结果集大雨Memory存储引擎表的容量设置，又或者中间含有TEXT或BLOB列类型字段，则MySQL数据库会把其转换到MyISAM存储引擎表而存放到磁盘中。MyISAM不缓存数据文件，此时产生的临时表的性能对于查询会有损失**。
++ **<u>MySQL数据库使用Memory存储引擎作为临时表来存放查询的中间结果集（intermediate result）。如果中间结果集大雨Memory存储引擎表的容量设置，又或者中间含有TEXT或BLOB列类型字段，则MySQL数据库会把其转换到MyISAM存储引擎表而存放到磁盘中。MyISAM不缓存数据文件，此时产生的临时表的性能对于查询会有损失</u>**。
 
 ### 1.3.5 Archive存储引擎
 
@@ -208,6 +208,7 @@ MySQL数据库提供的连接方式从本质上看即上述提及的进程通信
 
 + 数据库、数据库实例
 + 常见的表存储引擎的特性
++ MySQL独有的插件式存储引擎概念
 
 # 2. InnoDB存储引擎
 
@@ -383,4 +384,108 @@ MySQL数据库提供的连接方式从本质上看即上述提及的进程通信
 
 ## 2.4 Checkpoint技术
 
-p45
+​	为了避免数据丢失，当前**事务数据库系统**普遍采用了**Write Ahead Log**策略。即当食物提交时，先写重做日志（磁盘），再修改页（内存）。*（宕机导致内存数据丢失时，即通过重做日志完成数据恢复，保证事务ACID的D，Durability）*
+
+​	Checkpoint(检查点)技术主要解决以下几个问题：
+
++ **缩短数据库的恢复时间**（宕机时，Checkpoint之前的页都已经刷新回磁盘，只需对Checkpoint之后的重做日志进行恢复）
++ **缓冲池不够用时，将脏页刷新到磁盘**（当缓冲池不够用时，根据LRU算法会溢出最近最少使用的页，若此页为脏页，那么需要强制执行Checkpoint，将脏页也就是页的新版本刷回磁盘）
++ **重做日志不可用时，刷新脏页**（当前事务数据库系统对重做日志的设计都是循环使用的，并非无限增大。不再需要的重做日志片段在宕机时可被覆盖重用。如果这部分重做日志还需要使用，那必须强制产生Checkpoint，将缓冲池中的页纸烧刷新到当前重做日志的位置。）
+
+​	InnoDB存储引擎，通过LSN（Log Sequence Number）标记版本。LSN是8字节数字，单位是字节。每个页有LSN，重做日志也有LSN，Checkpoint也有LSN。可通过`SHOW ENGINE INNODB STATUS`来观察。
+
+​	概述，**Checkpoint主要作用即将缓冲池中的脏页刷回到磁盘**。不同的细节即：每次刷新多少页到磁盘、从哪里取脏页面、什么时候触发Checkpoint。
+
+​	InnoDB引擎内部，有两种Checkpoint：
+
++ Sharp Checkpoint（默认<u>在数据库关闭时</u>将**所有**脏页刷新回磁盘，参数`innodb_fast_shutdown=1`）
++ **Fuzzy Checkpoint（InnoDB存储引擎内部使用，只刷新一部分脏页）**
+
+---
+
+InnoDB存储引擎中可能发生以下几种情况的Fuzzy Checkpoint：
+
++ Master Thread Checkpoint
+
+  每秒or每十秒速度异步从缓冲池刷新一定比例脏页回磁盘，不阻塞用户查询线程。
+
++ FLUSH_LRU_LIST Checkpoint
+
+  InnoDB 1.1.版本之前，在用户查询线程需保证LRU列表有差不多100个空闲页供用户查询时使用。若没有100个可用空闲页，那么InnoDB存储引擎会将LRU列表尾端的页移除，如果这些页中有脏页，那么需要进行Checkpoint，而这些页来自LRU列表，所以称为FLUSH_LRU_LIST Checkpoint。
+
+  MySQL5.6，InnoDB1.2.x版本开始，这项检查放在单独的Page Cleaner线程中运行，用户可通过参数`innodb_lru_scan_depth`控制LRU列表中可用页的数量（默认1024）。
+
++ Async/Sync Flush Checkpoint
+
+  重做日志文件不可用时，需强制从脏页列表中选取部分脏页刷新回磁盘。Async/Sync Flush Checkpoint保证重做日志的循环使用的可用性。InnoDB 1.2.x之前，Async Flush Checkpoint阻塞发现问题的用户查询线程，而Sync Flush Checkpoint阻塞所有用户查询线程，并等待脏页刷新完成。InnoDB 1.2.x开始，这部分的刷新操作同样放到单独的Page Cleaner Thread中，不阻塞用户查询线程。`SHOW ENGINE INNODB STATUS`可观察具体细节。
+
++ Dirty Page too much Checkpoint
+
+  为保证缓存池有足够可用的页，脏页过多会触发InnoDB存储引擎强制进行Checkpoint。阈值油`innodb_max_dirty_pages_pct`控制，值75表示脏页数据占比75%强制Checkpoint刷新部分脏页到磁盘。InnoDB 1.0.x之前默认值90，之后默认值75。
+
+## 2.5 Master Thread工作方式
+
+InnoDB存储引擎的主要工作在单独的后台线程Master Thread中完成。
+
+### 2.5.1 InnoDB 1.0.x版本之前的Master Thread
+
+​	Master Thread具有最高线程优先级。其内部由多个循环(loop)组成：主循环（loop）、后台循环（backgroup loop）、刷新循环（flush loop）、暂停循环（suspend loop）。Master Thread根据数据库运行状态在上述几种loop中进行切换。
+
+​	大部分操作在主循环Loop中，其有两大部分的操作——每秒钟的操作和每10秒的操作。
+
+---
+
+​	每秒钟的操作包括：
+
++ **日志缓冲刷新到磁盘，即使这个事务还没有提交**(总是);
+
+  这就是为什么再大的食物提交（commit）时间也是很短的。
+
++ 合并插入缓冲(可能);
+
+  前一秒内发生的IO次数小于5次则认为当前IO压力小，才执行合并插入缓冲的操作。
+
++ 至多刷新100个Innodb的缓冲池中的脏页到磁盘(可能);
+
+  缓冲池中脏页比例超过`buf_get_modified_ratio_pct`（默认90，表示90%）则将100个脏页写入磁盘中。
+
++ 如果当前没有用户活动，则切换到background loop(可能)。
+
+---
+
+​	每10秒的操作包括：
+
++ 刷新100个脏页到磁盘(可能的情况下);
+
+  过去10秒内磁盘IO操作小于200则刷新100个脏页到磁盘。
+
++ 合并至多5个插人缓冲(总是);
+
+  在每10秒触发了刷新100脏页到磁盘的动作后，InnoDB存储引擎会合并插入缓冲。
+
++ 将日志缓冲刷新到磁盘(总是);
+
+  每10秒操作中合并插入缓冲后，将日志缓冲刷新到磁盘。
+
++ 删除无用的Undo页(总是);
+
+  上述操作后，进一步执行full purge操作，删除无用Undo页。对表进行update、delete这类操作时，原先的行被标记为删除，由于一致性要求暂时保留行版本信息。full purge过程中，判断当前事务系统中已被删除的行是否可删除，比如有时候可能在查询操作时需要读取之前版本的undo信息，如果可以删除，InnoDB会立即将其删除。从源代码中可发现，InnoDB存储引擎在执行full purge操作时，每次最多尝试回收20个undo页。
+
++ 刷新100个或者10个脏页到磁盘(总是)
+
+  随后，同样判断缓冲池脏页占比是否超过`buf_get_modified_ratio_pct`，超过则刷新100个脏页到磁盘，不超过则刷新10%脏页到磁盘。
+
+---
+
+background loop，若当前没有用户活动（数据库空闲时）活着数据库关闭（shutdown），即切换到该循环。background loop执行以下操作：
+
++ 删除无用的Undo页（总是）；
++ 合并20个插入缓冲（总是）；
++ 跳回到主循环（总是）；
++ 不断刷新100个页直到符合条件（可能，跳转到flush loop中完成）
+
+若 flush loop中也没有什么事情可以做了， InnoDB存储引擎会切换到 suspend loop，将 Master Thread挂起，等待事件的发生。若用户启用(enable)了InnoDB存储引擎，却没有使用任何 InnoDB存储引擎的表，那么Master Thread总是处于挂起的状态。
+
+### 2.5.2 InnoDB 1.2.x 版本之前的Master Thread
+
+P54
