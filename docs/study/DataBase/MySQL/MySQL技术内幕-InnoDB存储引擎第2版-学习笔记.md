@@ -488,4 +488,507 @@ background loop，若当前没有用户活动（数据库空闲时）活着数�
 
 ### 2.5.2 InnoDB 1.2.x 版本之前的Master Thread
 
-P54
+`innodb_io_capacity`
+
+​	由于早期hard coding，即使磁盘能够在1秒内处理多于100个页的写入和20个插入缓冲的合并，Master Thread仍只会选择刷新100个脏页和合并20个插入缓冲。此时若发生宕机，由于很多数据没有刷新回磁盘，会导致恢复的时间较久，尤其是对于insert buffer来说。
+
+​	InnoDB Plugin（从InnoDB 1.0.x版本开始）提供了参数`innodb_io_capacity`，用来表示磁盘IO的吞吐量（默认值200）。
+
++ 在合并插入缓冲时，合并插入缓冲的数量为`innodb_io_capacity`值的5%
++ 在从缓冲区刷新脏页时，刷新脏页的数量为`innodb_io_capacity`
+
+​	若使用SSD类的磁盘或RAID磁盘阵列，存储设备拥有更高的IO速度，可以调高`innodb_io_capacity`的值。
+
+---
+
+`innodb_max_dirty_pages_pct`
+
+​	`innodb_max_dirty_pages_pct`在InnoDB 1.0.x版本之前，默认值90，当脏页占据缓冲池90%，才会刷新100个脏页。如果有很大的内存活着数据库服务器的压力很大，这时刷新脏页的速度反而会降低。从InnoDB 1.0.x版本开始，`innodb_max_dirty_pages_pct`默认值变为75，加快刷新脏页的频率并保证磁盘IO的负载。
+
+---
+
+`innodb_adaptive_flushing`
+
+​	随着`innodb_adaptive_flushing`参数的引入，InnoDB存储引擎会通过`buf_flush_get_desired_flush_rate`函数来判断需要刷新脏页最合适的数量。（`buf_flush_get_desired_flush_rate`通过判断产生重做日志redo log的速度来决定最合适的刷新脏页数量）。此时，即使脏页的比例小于`innodb_max_dirty_pages_pct`，也会刷新一定量的脏页。
+
+---
+
+`innodb_purge_batch_size`
+
+​	InnoDB 1.0.x版本引入`innodb_purge_batch_size`参数，控制每次full purge回收的Undo页数量（默认值20，可动态修改）。
+
+---
+
+​	从InnoDB 1.0.x开始，通过命令`SHOW ENGINE INNODB STATUS`可查看当前Master Thread的状态信息。
+
+### 2.5.3 InnoDB 1.2.x版本的Master Thread
+
+​	InnoDB 1.2.x 再次对Master Thread进行优化。其中刷新脏页的操作，从Master Thread线程分离到一个单独的Page Cleaner Thread。
+
+## * 2.6 InnoDB关键特性
+
+​	InnoDB存储引擎的关键特性包括：
+
++ 插入缓冲（Insert Buffer）
++ 两次写（Double Write）
++ 自适应哈希索引（Adaptive Hash Index）
++ 异步IO（Async IO）
++ 刷新邻接页（Flush Neighbor Page）
+
+### * 2.6.1 插入缓冲
+
+1. Insert Buffer
+
+   InnoDB缓冲池中有Insert Buffer信息，Insert Buffer和数据页一样，也是物理页的组成部分。
+
+   对于非聚集索引的插入或更新操作，不是每次直接插入到索引页中，而是先判断插入的非聚集索引页是否在缓冲池中，若在则直接插入；若不在，则先放入一个Insert Buffer对象中，之后以一定的频率和情况进行Insert Buffer和辅助索引页子节点的merge（合并）操作，此时通常能合并多个插入操作（因为在同一个索引页中），大大提高了对非聚集索引插入的性能。
+
+   使用Insert Buffer需要同时满足以下两个条件：
+
+   + **索引是辅助索引（secondary index）**
+   + **索引不是唯一的（unique）**
+
+   然而，应用程序进行大量的插入操作，这些数据如果都涉及不唯一的非聚集索引，使用到Insert Buffer。此时MySQL数据库发生宕机，就会有大量的Insert Buffer没有合并到实际的非聚集索引中，数据恢复时间在极端情况下需要几个小时。
+
+   **辅助索引不能是唯一的，因为在插入缓冲时，数据库并不去查找索引页来判断插入的记录的唯一性。如果去查找肯定又会有离散读取的情况发生，从而导致 Insert Buffer失去了意义。**
+
+   通过`SHOW ENGINE INNODB STATUS`可查看插入缓冲的信息。
+
+   修改`IBUF_POOL_SIZE_PER_MAX_SIZE`限制插入缓冲的大小（设置3表示最大只能使用1/3的缓冲池内存）。
+
+2. Changer Buffer
+
+   InnoDB 1.0.x版本开始，引入Change Buffer，可视为Insert Buffer的升级。该版本起，InnoDB可对DML操作——INSERT、DELETE、UPDATE都进行缓冲，分别是Insert Buffer、Delete Buffer、Purge Buffer。
+
+   **和Insert Buffer一样，Change Buffer适用对象仍是非唯一的辅助索引**。
+
+   对一条记录进行UPDATE操作可分为两个过程：
+
+   + 将记录标记为已删除（Delete Buufer对应这一过程）
+   + 真正将记录删除（Purge Buffer对应这一过程）
+
+   *InnoDB存储引擎提供了参数`innodb_change_buffering`，用来开启各种Buffer的选项，默认值all。该参数的可选值为：inserts、deletes、purges、changes、all、none。insets、deletes、purge对应前面讨论的3种情况。change表示启用inserts和deletes，all表示启用所有，none表示都不启用。*
+
+   InnoDB 1.2.x版本开始，通过参数`innodb_change_buffer_max_size`可控制Change Buffer最大使用内存的数量（默认值25，表示最多使用1/4缓冲池内存空间，该参数最大有效值为50）。
+
+3. Insert Buffer的内部实现
+
+   Insert Buffer的数据结构是一棵B+树。MySQL4.1之前，每张表有一颗Insert Buffer B+树。后续版本中，全局只有一颗Insert Buffer B+树，负责对所有的表的辅助索引进行Insert Buffer。该B+树存放在共享表空间中，默认也就是ibdata1中。
+
+   <u>试图通过独立表空间ibd文件恢复表中数据时，往往会导致CHECK TABLE失败。这是因为表的辅助索引中的数据可能还在 Insert Buffer中，也就是共享表空间中，所以通过ibd文件进行恢复后，还需要进行REPAIR TABLE操作来重建表上所有的辅助索引</u>。
+
+   Insert Buffer是一棵B+树，因此其也由叶节点和非叶节点组成。非叶节点存放的是查询的 search key(键值)，其构造如图2-3所示。
+
+   ![image](https://yqfile.alicdn.com/ea0da5467e09edbf2cabb8503c30bf37fa5415db.png)
+
+   search key一共占用9个字节，其中 space表示待插入记录所在表的表空间id，在Innodb存储引擎中，每个表有一个唯一的space id，可以通过space id查询得知是哪张表。space占用4字节。marker占用1字节，它是用来兼容老版本的 Insert Buffer。offset表示页所在的偏移量，占用4字节。
+
+   当一个辅助索引要插入到页（space，offset）时，如果这个页不在缓冲池中，那么InnoDB存储引擎首先根据上述规则构造一个search key，接下来查询Insert Buffer这棵B+树，然后再将这条记录插入到Insert Buffer B+树的叶子节点中。
+
+   对于插入到Insert Buffer B+树叶子节点的记录（如图2-4所示），并不是直接将待插入的记录插入，而是需要根据如下的规则进行构造：
+
+   ![image](https://yqfile.alicdn.com/f5955632cb034e946706f0bcc33e7b8529f6e087.png)
+
+   space、marker、page_no字段和之前非叶节点中的含义相同，一共占用9字节。第4个字段metadata占用4字节，其存储的内容如表2-2所示。
+
+   ![image](https://yqfile.alicdn.com/f6938a3faa3ebd43e9ed2b20b6dc40f2b8b9edfd.png)
+
+   IBUF_REC_OFFSET_COUNT是保存两个字节的整数，用来排序每个记录进入Insert Buffer的顺序。因为从InnoDB1.0.x开始支持Change Buffer，所以这个值同样记录进入Insert Buffer的顺序。通过这个顺序回放（replay）才能得到记录的正确值。
+
+   从Insert Buffer叶子节点的第5列开始，就是实际插入记录的各个字段了。因此较之原插入记录，Insert Buffer B+树的叶子节点记录需要额外13字节的开销。
+
+   因为启用Insert Buffer索引后，辅助索引页（space，page_no）中的记录可能被插入到Insert Buffer B+树中，所以为了保证每次Merge Insert Buffer页必须成功，还需要有一个特殊的页用来标记每个辅助索引页（space，page_no）的可用空间。这个页的类型为Insert Buffer Bitmap。
+
+   每个Insert Buffer Bitmap页用来追踪16384个辅助索引页，也就是256个区（Extent）。每个Insert Buffer Bitmap页都在16384个页的第二个页中。关于Insert Buffer Bitmap页的作用会在下一小节中详细介绍。
+
+   每个辅助索引页在Insert Buffer Bitmap页中占用4位（bit），由表2-3中的三个部分组成。
+
+   ![image](https://yqfile.alicdn.com/ff1179b0c12c7608e00ed74445b294d8b6082d74.png)
+
+4. Merge Insert Buffer
+
+   概括地说，Merge Insert Buffer的操作可能发生在以下几种情况下：
+
+   + 辅助索引页被读取到缓冲池时； 
+
+   + Insert Buffer Bitmap页追踪到该辅助索引页已无可用空间时；
+
+   + Master Thread。
+
+   第一种情况为当辅助索引页被读取到缓冲池中时，例如这在执行正常的SELECT查询操作，这时需要检查Insert Buffer Bitmap页，然后确认该辅助索引页是否有记录存放于Insert Buffer B+树中。若有，则将Insert Buffer B+树中该页的记录插入到该辅助索引页中。可以看到对该页多次的记录操作通过一次操作合并到了原有的辅助索引页中，因此性能会有大幅提高。
+
+   Insert Buffer Bitmap页用来追踪每个辅助索引页的可用空间，并至少有1/32页的空间。若插入辅助索引记录时检测到插入记录后可用空间会小于1/32页，则会强制进行一个合并操作，即强制读取辅助索引页，将Insert Buffer B+树中该页的记录及待插入的记录插入到辅助索引页中。这就是上述所说的第二种情况。
+
+   还有一种情况，之前在分析Master Thread时曾讲到，在Master Thread线程中每秒或每10秒会进行一次Merge Insert Buffer的操作，不同之处在于每次进行merge操作的页的数量不同。
+
+   在Master Thread中，执行merge操作的不止是一个页，而是根据srv_innodb_io_capactiy的百分比来决定真正要合并多少个辅助索引页。但InnoDB存储引擎又是根据怎样的算法来得知需要合并的辅助索引页呢？
+
+   在Insert Buffer B+树中，辅助索引页根据（space，offset）都已排序好，故可以根据（space，offset）的排序顺序进行页的选择。然而，对于Insert Buffer页的选择，InnoDB存储引擎并非采用这个方式，它随机地选择Insert Buffer B+树的一个页，读取该页中的space及之后所需要数量的页。该算法在复杂情况下应有更好的公平性。同时，若进行merge时，要进行merge的表已经被删除，此时可以直接丢弃已经被Insert/Change Buffer的数据记录。
+
+### * 2.6.2 两次写
+
+​	如果说Insert Buffer带给InnoDB存储引擎的是性能上的提升，那么doublewrite（两次写）带给InnoDB存储引擎的是数据页的可靠性。
+
+​	当发生数据库宕机时，可能InnoDB存储引擎正在写入某个页到表中，而这个页只写了一部分，比如16KB的页，只写了前4KB，之后就发生了宕机，这种情况被称为**部分写失效（partial page write）**。在InnoDB存储引擎未使用doublewrite技术前，曾经出现过因为部分写失效而导致数据丢失的情况。
+
+​	有经验的DBA也许会想，如果发生写失效，可以通过重做日志进行恢复。这是一个办法。但是必须清楚地认识到，重做日志中记录的是对页的物理操作，如偏移量800，写'aaaa'记录。如果这个页本身已经发生了损坏，再对其进行重做是没有意义的。这就是说，**在应用（apply）重做日志前，用户需要一个页的副本，当写入失效发生时，先通过页的副本来还原该页，再进行重做，这就是doublewrite**。在InnoDB存储引擎中doublewrite的体系架构如图2-5所示。
+
+![image](https://yqfile.alicdn.com/c1eb90077242e090818e14fc626ec87420d3f430.png)
+
+​	doublewrite由两部分组成，一部分是内存中的doublewrite buffer，大小为2MB，另一部分是物理磁盘上共享表空间中连续的128个页，即2个区（extent），大小同样为2MB。**在对缓冲池的脏页进行刷新时，并不直接写磁盘，而是会通过memcpy函数将脏页先复制到内存中的doublewrite buffer，之后通过doublewrite buffer再分两次，每次1MB顺序地写入共享表空间的物理磁盘上，然后马上调用fsync函数，同步磁盘，避免缓冲写带来的问题**。在这个过程中，因为doublewrite页是连续的，因此这个过程是顺序写的，开销并不是很大。在完成doublewrite页的写入后，再将doublewrite buffer中的页写入各个表空间文件中，此时的写入则是离散的。
+
+​	**如果操作系统在将页写入磁盘的过程中发生了崩溃，在恢复过程中，InnoDB存储引擎可以从共享表空间中的doublewrite中找到该页的一个副本，将其复制到表空间文件，再应用重做日志**。
+
+​	参数skip_innodb_doublewrite可以禁止使用doublewrite功能，这时可能会发生前面提及的写失效问题。不过如果用户有多个从服务器（slave server），需要提供较快的性能（如在slaves erver上做的是RAID0），也许启用这个参数是一个办法。不过**对于需要提供数据高可靠性的主服务器（master server），任何时候用户都应确保开启doublewrite功能**。
+
+> 注意：有些文件系统本身就提供了部分写失效的防范机制，如ZFS文件系统。在这种情况下，用户就不要启用doublewrite了。
+
+### * 2.6.3 自适应哈希索引
+
+​	哈希（hash）是一种非常快的查找方法，在一般情况下这种查找的时间复杂度为O(1)，即一般仅需要一次查找就能定位数据。而B+树的查找次数，取决于B+树的高度，**在生产环境中，B+树的高度一般为3～4层，故需要3～4次的查询**。
+
+​	**InnoDB存储引擎会监控对表上各索引页的查询。如果观察到建立哈希索引可以带来速度提升，则建立哈希索引，称之为自适应哈希索引（Adaptive Hash Index，AHI）**。AHI是通过缓冲池的B+树页构造而来，因此建立的速度很快，而且不需要对整张表构建哈希索引。<u>InnoDB存储引擎会自动根据访问的频率和模式来自动地为某些热点页建立哈希索引</u>。
+
+​	**AHI有一个要求，即对这个页的连续访问模式必须是一样的**。例如对于（a，b）这样的联合索引页，其访问模式可以是以下情况：
+
++ WHERE a=xxx
+
++ WHERE a=xxx and b=xxx
+
+​	访问模式一样指的是查询的条件一样，<u>若交替进行上述两种查询，那么InonDB存储引擎不会对该页构造AHI</u>。此外AHI还有如下的要求：
+
++ 以该模式访问了100次
++ 页通过该模式访问了N次，其中N=页中记录*1/16
+
+​	<u>根据InnoDB存储引擎官方的文档显示，启用AHI后，读取和写入速度可以提高2倍，辅助索引的连接操作性能可以提高5倍</u>。毫无疑问，AHI是非常好的优化模式，其设计思想是数据库自优化的（self-tuning），即无需DBA对数据库进行人为调整。
+
+​	通过命令SHOW ENGINE INNODB STATUS可以看到当前AHI的使用状况。
+
+​	值得注意的是，**哈希索引只能用来搜索等值的查询**，如SELECT*FROM table WHERE index_col='xxx'。而对于其他查找类型，如范围查找，是不能使用哈希索引的。
+
+​	AHI是由InnoDB存储引擎控制的。用户可以通过观察SHOW ENGINE INNODB STATUS的结果及参数`innodb_adaptive_hash_index`来考虑是禁用或启动此特性，**默认AHI为开启状态**。
+
+### 2.6.4 异步IO
+
+​	为了提高磁盘操作性能，当前的数据库系统都采用**异步IO**（Asynchronous IO，AIO）的方式来处理磁盘操作。InnoDB存储引擎亦是如此。
+
+​	一次SQL查询包括扫描索引页、数据页等操作，每个操作一般需要多次IO，AIO能够一次发起多个IO请求，最后在统一整合IO响应结果。另外<u>AIO能够进行IO Merge操作，将几个请求访问地址连续的IO请求合并成一个</u>，提高IOPS性能。
+
+​	在InnoDB1.1.x之前，AIO的实现通过InnoDB存储引擎中的代码来模拟实现。而从InnoDB 1.1.x开始（InnoDB Plugin不支持），提供了内核级别AIO的支持，称为Native AIO（Mac OS不支持）。因此在编译或者运行该版本MySQL时，需要libaio库的支持。	
+
+> 参数`innodb_use_native_aio`用来控制是否启用Native AIO，在Linux操作系统下，默认值为ON。
+>
+> 用户可以通过开启和关闭Native AIO功能来比较InnoDB性能的提升。官方的测试显示，启用Native AIO，恢复速度可以提高75%。
+
+​	**在InnoDB存储引擎中，read ahead方式的读取都是通过AIO完成，脏页的刷新，即磁盘的写入操作则全部由AIO完成**。
+
+### 2.6.5 刷新邻接页
+
+​	InnoDB存储引擎还提供了Flush Neighbor Page（刷新邻接页）的特性。其工作原理为：当刷新一个脏页时，InnoDB存储引擎会检测该页所在区（extent）的所有页，如果是脏页，那么一起进行刷新。这样做的好处显而易见，通过AIO可以将多个IO写入操作合并为一个IO操作，故该工作机制在传统机械磁盘下有着显著的优势。但是需要考虑到下面两个问题：
+
++ 是不是可能将不怎么脏的页进行了写入，而该页之后又会很快变成脏页？
+
++ 固态硬盘有着较高的IOPS，是否还需要这个特性？
+
+​	为此，InnoDB存储引擎从1.2.x版本开始提供了参数`innodb_flush_neighbors`，用来控制是否启用该特性。对于传统机械硬盘建议启用该特性，而对于固态硬盘有着超高IOPS性能的磁盘，则建议将该参数设置为0，即关闭此特性。
+
+## 2.7 启动、关闭与恢复
+
+​	在关闭时，参数`innodb_fast_shutdown`影响着表的存储引擎为InnoDB的行为。该参数可取值为0、1、2，默认值为1。
+
++ 0表示在MySQL数据库关闭时，InnoDB需要完成所有的full purge和merge insert buffer，并且将所有的脏页刷新回磁盘。这需要一些时间，有时甚至需要几个小时来完成。如果在进行InnoDB升级时，必须将这个参数调为0，然后再关闭数据库。
++ 1是参数`innodb_fast_shutdown`的默认值，表示不需要完成上述的full purge和merge insert buffer操作，但是在缓冲池中的一些数据脏页还是会刷新回磁盘。
++ 2表示不完成full purge和merge insert buffer操作，也不将缓冲池中的数据脏页写回磁盘，而是将日志都写入日志文件。这样不会有任何事务的丢失，但是下次MySQL数据库启动时，会进行恢复操作（recovery）。
+
+​	当正常关闭MySQL数据库时，下次的启动应该会非常“正常”。但是如果没有正常地关闭数据库，<u>如用kill命令关闭数据库，在MySQL数据库运行中重启了服务器，或者在关闭数据库时，将参数`innodb_fast_shutdown`设为了2时，下次MySQL数据库启动时都会对InnoDB存储引擎的表进行恢复操作</u>。
+
+​	参数`innodb_force_recovery`影响了整个InnoDB存储引擎恢复的状况。该参数值默认为0，代表当发生需要恢复时，进行所有的恢复操作，当不能进行有效恢复时，如数据页发生了corruption，MySQL数据库可能发生宕机（crash），并把错误写入错误日志中去。
+
+​	但是，在某些情况下，可能并不需要进行完整的恢复操作，因为用户自己知道怎么进行恢复。比如在对一个表进行alter table操作时发生意外了，数据库重启时会对InnoDB表进行回滚操作，对于一个大表来说这需要很长时间，可能是几个小时。这时用户可以自行进行恢复，如可以把表删除，从备份中重新导入数据到表，可能这些操作的速度要远远快于回滚操作。
+
+​	参数`innodb_force_recovery`还可以设置为6个非零值：1～6。大的数字表示包含了前面所有小数字表示的影响。具体情况如下：
+
++ 1(SRV_FORCE_IGNORE_CORRUPT)：忽略检查到的corrupt页。
++ 2(SRV_FORCE_NO_BACKGROUND)：阻止Master Thread线程的运行，如Master Thread线程需要进行full purge操作，而这会导致crash。
++ 3(SRV_FORCE_NO_TRX_UNDO)：不进行事务的回滚操作。
++ 4(SRV_FORCE_NO_IBUF_MERGE)：不进行插入缓冲的合并操作。
++ 5(SRV_FORCE_NO_UNDO_LOG_SCAN)：不查看撤销日志（Undo Log），InnoDB存储引擎会将未提交的事务视为已提交。
++ 6(SRV_FORCE_NO_LOG_REDO)：不进行前滚的操作。
+
+​	需要注意的是，**在设置了参数innodb_force_recovery大于0后，用户可以对表进行select、create和drop操作，但insert、update和delete这类DML操作是不允许的**。
+
+## 2.8 小结
+
++ InnoDB存储引擎及其体系结构
++ InnoDB存储引擎的关键特性
++ 启动和关闭MYSQL时一些配置文件参数对InnoDB存储引擎的影响
+
+​	第3章开始介绍 MYSQL的文件，包括 My SQL本身的文件和与InnoDB存储引擎本身有关的文件。之后本书将介绍基于InnoDB存储引擎的表，并揭示内部的存储构造。
+
+# 3. 文件
+
+​	本章将分析构成MySQL数据库和InnoDB存储引擎表的各种类型文件。这些文件有以下这些。
+
++ 参数文件：告诉MySQL实例启动时在哪里可以找到数据库文件，并且指定某些初始化参数，这些参数定义了某种内存结构的大小等设置，还会介绍各种参数的类型。
++ 日志文件：用来记录MySQL实例对某种条件做出响应时写入的文件，如错误日志文件、二进制日志文件、慢查询日志文件、查询日志文件等。
++ socket文件：当用UNIX域套接字方式进行连接时需要的文件。
++ pid文件：MySQL实例的进程ID文件。
++ MySQL表结构文件：用来存放MySQL表结构定义文件。
++ 存储引擎文件：因为MySQL表存储引擎的关系，每个存储引擎都会有自己的文件来保存各种数据。这些存储引擎真正存储了记录和索引等数据。本章主要介绍与InnoDB有关的存储引擎文件。
+
+## 3.1 参数文件
+
+​	MySQL实例启动时，数据库会按照一定的顺序读取配置文件，用户可通过命令`mysql--help | grep my.cnf`来寻找。
+
+### 3.1.1 什么是参数
+
+​	可以通过命令`SHOW VARIABLES`查看数据库中的所有参数，也可以通过LIKE来过滤参数名。从MySQL 5.1版本开始，还可以通过`information_schema`架构下的`GLOBAL_VARIABLES`视图来进行查找。
+
+### 3.1.2 参数类型
+
+​	MySQL数据库中的参数可以分为两类：
+
++ 动态（dynamic）参数
++ 静态（static）参数
+
+​	**动态参数意味着可以在MySQL实例运行中进行更改，静态参数说明在整个实例生命周期内都不得进行更改，就好像是只读（read only）的**。可以通过SET命令对动态的参数值进行修改，SET的语法如下：
+
+```
+SET 
+| [global | session] system_var_name= expr
+| [@@global. | @@session. | @@]system_var_name= expr
+```
+
+​	**这里可以看到global和session关键字，<u>它们表明该参数的修改是基于当前会话还是整个实例的生命周期</u>**。有些动态参数只能在会话中进行修改，如autocommit；而有些参数修改完后，在整个实例生命周期中都会生效，如binlog_cache_size；而有些参数既可以在会话中又可以在整个实例的生命周期内生效，如read_buffer_size。
+
+​	**这次把read_buffer_size全局值更改为1MB，而当前会话的read_buffer_size的值还是512KB**。<u>这里需要注意的是，对变量的全局值进行了修改，在**这次的实例生命周期内**都有效，但MySQL实例本身并不会对参数文件中的该值进行修改</u>。也就是说，**在下次启动时MySQL实例还是会读取参数文件。若想在数据库实例下一次启动时该参数还是保留为当前修改的值，那么用户必须去修改参数文件**。要想知道MySQL所有动态变量的可修改范围，可以参考MySQL官方手册的Dynamic System Variables的相关内容。
+
+> [mysql的session、global变量详解_勤天的博客-CSDN博客_mysql session](https://blog.csdn.net/demored/article/details/122962605)
+
+## 3.2 日志文件
+
+日志文件记录了影响MySQL数据库的各种类型活动。MySQL数据库中常见的日志文件有：
+
++ 错误日志（error log）
++ 二进制日志（binlog）
++ 慢查询日志（slow query log）
+
++ 查询日志（log）
+
+这些日志文件可以帮助DBA对MySQL数据库的运行状态进行诊断，从而更好地进行数据库层面的优化。
+
+### 3.2.1 错误日志
+
+​	<u>错误日志文件对MySQL的启动、运行、关闭过程进行了记录</u>。MySQL DBA在遇到问题时应该首先查看该文件以便定位问题。该文件不仅记录了所有的错误信息，也记录一些警告信息或正确的信息。用户可以通过命令SHOW VARIABLES LIKE 'log_error'来定位该文件。
+
+​	当出现MySQL数据库不能正常启动时，第一个必须查找的文件应该就是错误日志文件，该文件记录了错误信息，能很好地指导用户发现问题。
+
+### 3.2.2 慢查询日志
+
+​	3.2.1小节提到可以通过错误日志得到一些关于数据库优化的信息，而慢查询日志（slow log）可帮助DBA定位可能存在问题的SQL语句，从而进行SQL语句层面的优化。
+
+​	在默认情况下，MySQL数据库并不启动慢查询日志，用户需要手工将这个参数设为ON。
+
+​	另一个和慢查询日志有关的参数是`log_queries_not_using_indexes`，如果运行的SQL语句没有使用索引，则MySQL数据库同样会将这条SQL语句记录到慢查询日志文件。
+
+​	MySQL 5.6.5版本开始新增了一个参数`log_throttle_queries_not_using_indexes`，用来表示每分钟允许记录到slow log的且未使用索引的SQL语句次数。该值默认为0，表示没有限制。在生产环境下，若没有使用索引，此类SQL语句会频繁地被记录到slow log，从而导致slow log文件的大小不断增加，故DBA可通过此参数进行配置。
+
+​	DBA可以通过慢查询日志来找出有问题的SQL语句，对其进行优化。然而随着MySQL数据库服务器运行时间的增加，可能会有越来越多的SQL查询被记录到了慢查询日志文件中，此时要分析该文件就显得不是那么简单和直观的了。而这时MySQL数据库提供的`mysqldumpslow`命令，可以很好地帮助DBA解决该问题。
+
+​	MySQL 5.1开始可以将慢查询的日志记录放入一张表中，这使得用户的查询更加方便和直观。慢查询表在mysql架构下，名为slow_log。
+
+​	InnoSQL版本加强了对于SQL语句的捕获方式。在原版MySQL的基础上在slow log中增加了**对于逻辑读取（logical reads）和物理读取（physical reads）的统计**。这里的物理读取是指从磁盘进行IO读取的次数，逻辑读取包含所有的读取，不管是磁盘还是缓冲池。
+
+​	用户可以通过额外的参数`long_query_io`将超过指定逻辑IO次数的SQL语句记录到slow log中。该值默认为100，即表示对于逻辑读取次数大于100的SQL语句，记录到slow log中。而为了兼容原MySQL数据库的运行方式，还添加了参数`slow_query_type`，用来表示启用slow log的方式，可选值为：
+
++ 0表示不将SQL语句记录到slow log
++ 1表示根据运行时间将SQL语句记录到slow log
++ 2表示根据逻辑IO次数将SQL语句记录到slow log
++ 3表示根据运行时间及逻辑IO次数将SQL语句记录到slow log
+
+### 3.2.3 查询日志
+
+​	查询日志记录了所有对MySQL数据库请求的信息，无论这些请求是否得到了正确的执行。默认文件名为：`主机名.log`。
+
+​	同样地，从MySQL 5.1开始，可以将查询日志的记录放入mysql架构下的general_log表中，该表的使用方法和前面小节提到的slow_log基本一样。
+
+### * 3.2.4 二进制日志
+
+​	**二进制日志（binary log）记录了对MySQL数据库执行更改的所有操作，但是不包括SELECT和SHOW这类操作，因为这类操作对数据本身并没有修改**。然而，若操作本身并没有导致数据库发生变化，那么该操作可能也会写入二进制日志。
+
+​	如果用户想记录SELECT和SHOW操作，那只能使用查询日志，而不是二进制日志。此外，二进制日志还包括了执行数据库更改操作的时间等其他额外信息。总的来说，二进制日志主要有以下几种作用。
+
++ 恢复（recovery）：某些数据的恢复需要二进制日志，例如，在一个数据库全备文件恢复后，用户可以通过二进制日志进行point-in-time的恢复。
++ 复制（replication）：其原理与恢复类似，通过复制和执行二进制日志使一台远程的MySQL数据库（一般称为slave或standby）与一台MySQL数据库（一般称为master或primary）进行实时同步。
++ 审计（audit）：用户可以通过二进制日志中的信息来进行审计，判断是否有对数据库进行注入的攻击。
+
+> 通过配置参数log-bin［=name］可以启动二进制日志。如果不指定name，则默认二进制日志文件名为主机名，后缀名为二进制日志的序列号，所在路径为数据库所在目录（datadir）。
+
+​	二进制日志文件在默认情况下并没有启动，需要手动指定参数来启动。可能有人会质疑，开启这个选项是否会对数据库整体性能有所影响。不错，开启这个选项的确会影响性能，但是性能的损失十分有限。根据MySQL官方手册中的测试表明，开启二进制日志会使性能下降1%。但考虑到可以使用复制（replication）和point-in-time的恢复，这些性能损失绝对是可以且应该被接受的。
+以下配置文件的参数影响着二进制日志记录的信息和行为：
+
++ max_binlog_size
++ binlog_cache_size
++ sync_binlog
++ binlog-do-db
++ binlog-ignore-db
++ log-slave-update
++ binlog_format
+
+​	参数`max_binlog_size`指定了单个二进制日志文件的最大值，如果超过该值，则产生新的二进制日志文件，后缀名+1，并记录到.index文件。从MySQL 5.0开始的默认值为1073741824，代表1G（在之前版本中`max_binlog_size`默认大小为1.1G）。
+
+​	**当使用事务的表存储引擎（如InnoDB存储引擎）时，所有未提交（uncommitted）的二进制日志会被记录到一个缓存中去，等该事务提交（committed）时直接将缓冲中的二进制日志写入二进制日志文件**，而该缓冲的大小由`binlog_cache_size`决定，默认大小为32K。
+
+​	此外，**`binlog_cache_size`是基于会话（session）**的，也就是说，当一个线程开始一个事务时，MySQL会自动分配一个大小为`binlog_cache_size`的缓存，因此该值的设置需要相当小心，不能设置过大。<u>当一个事务的记录大于设定的`binlog_cache_size`时，MySQL会把缓冲中的日志写入一个临时文件中，因此该值又不能设得太小</u>。
+
+> 通过`SHOW GLOBAL STATUS`命令查看`binlog_cache_use`、`binlog_cache_disk_use`的状态，可以判断当前`binlog_cache_size`的设置是否合适。`Binlog_cache_use`记录了使用缓冲写二进制日志的次数，`binlog_cache_disk_use`记录了使用临时文件写二进制日志的次数。
+
+​	**在默认情况下，二进制日志并不是在每次写的时候同步到磁盘（用户可以理解为缓冲写）。因此，当数据库所在操作系统发生宕机时，可能会有最后一部分数据没有写入二进制日志文件中，这会给恢复和复制带来问题**。
+
+> 参数sync_binlog=［N］表示每写缓冲多少次就同步到磁盘。如果将N设为1，即sync_binlog=1表示采用同步写磁盘的方式来写二进制日志，这时写操作不使用操作系统的缓冲来写二进制日志。sync_binlog的默认值为0，如果使用InnoDB存储引擎进行复制，并且想得到最大的高可用性，建议将该值设为ON。不过该值为ON时，确实会对数据库的IO系统带来一定的影响。
+
+​	但是，即使将sync_binlog设为1，还是会有一种情况导致问题的发生。当使用InnoDB存储引擎时，在一个事务发出COMMIT动作之前，由于sync_binlog为1，因此会将二进制日志立即写入磁盘。**如果这时已经写入了二进制日志，但是提交还没有发生，并且此时发生了宕机，那么在MySQL数据库下次启动时，由于COMMIT操作并没有发生，这个事务会被回滚掉。但是二进制日志已经记录了该事务信息，不能被回滚**。**这个问题可以通过将参数`innodb_support_xa`设为1来解决，虽然`innodb_support_xa`与XA事务有关，但它同时也确保了二进制日志和InnoDB存储引擎数据文件的同步**。
+
+> 参数binlog-do-db和binlog-ignore-db表示需要写入或忽略写入哪些库的日志。默认为空，表示需要同步所有库的日志到二进制日志。
+>
+> 如果当前数据库是复制中的slave角色，则它不会将从master取得并执行的二进制日志写入自己的二进制日志文件中去。如果需要写入，要设置log-slave-update。如果需要搭建master=>slave=>slave架构的复制，则必须设置该参数。
+
+​	**`binlog_format`参数十分重要，它影响了记录二进制日志的格式**。在MySQL 5.1版本之前，没有这个参数。所有二进制文件的格式都是基于SQL语句（statement）级别的，因此基于这个格式的二进制日志文件的复制（Replication）和Oracle 的逻辑Standby有点相似。同时，对于复制是有一定要求的。如在主服务器运行rand、uuid等函数，又或者使用触发器等操作，这些都可能会导致主从服务器上表中数据的不一致（not sync）。另一个影响是，会发现**InnoDB存储引擎的默认事务隔离级别是REPEATABLE READ**。这其实也是因为二进制日志文件格式的关系，如果使用READ COMMITTED的事务隔离级别（大多数数据库，如Oracle，Microsoft SQL Server数据库的默认隔离级别），会出现类似丢失更新的现象，从而出现主从数据库上的数据不一致。
+
+​	MySQL 5.1开始引入了binlog_format参数，该参数可设的值有STATEMENT、ROW和MIXED。
+（1）STATEMENT格式和之前的MySQL版本一样，二进制日志文件记录的是日志的逻辑SQL语句。
+（2）**在ROW格式下，二进制日志记录的不再是简单的SQL语句了，而是记录表的行更改情况**。基于ROW格式的复制类似于Oracle的物理Standby（当然，还是有些区别）。同时，对上述提及的Statement格式下复制的问题予以解决。从MySQL 5.1版本开始，如果设置了binlog_format为ROW，可以将InnoDB的事务隔离基本设为READ COMMITTED，以获得更好的并发性。
+（3）**在MIXED格式下，MySQL默认采用STATEMENT格式进行二进制日志文件的记录，但是在一些情况下会使用ROW格式，可能的情况有**：
+1）表的存储引擎为NDB，这时对表的DML操作都会以ROW格式记录。
+2）<u>使用了UUID()、USER()、CURRENT_USER()、FOUND_ROWS()、ROW_COUNT()等不确定函数</u>。
+3）使用了INSERT DELAY语句。
+4）使用了用户定义函数（UDF）。
+5）使用了临时表（temporary table）。
+此外，`binlog_format`参数还有对于存储引擎的限制，如表3-1所示。
+![image](https://yqfile.alicdn.com/919af1f916ebe40d7088c1576f5cc15a828a7cfb.png)
+
+**`binlog_format`是动态参数**，因此可以在数据库运行环境下进行更改。
+
+> 当然，也可以将全局的binlog_format设置为想要的格式，不过通常这个操作会带来问题，运行时要确保更改后不会对复制带来影响。
+
+​	**<u>在通常情况下，我们将参数binlog_format设置为ROW，这可以为数据库的恢复和复制带来更好的可靠性。但是不能忽略的一点是，这会带来二进制文件大小的增加，有些语句下的ROW格式可能需要更大的容量</u>**。
+
+​	**<u>将参数`binlog_format`设置为ROW，会对磁盘空间要求有一定的增加。而由于复制是采用传输二进制日志方式实现的，因此复制的网络开销也有所增加</u>**。
+
+> 图书作者在某张17MB大小的表。在`binlog_format='STATEMENT'`时执行某UPDATE只增加binlog日志大小约200字节，但是`binlog_format='ROW'`执行相同UPDATE语句增加13MB大小的日志。**因为这时MySQL数据库不再将逻辑的SQL操作记录到二进制日志中，而是记录对于每行的更改。**
+
+> 二进制日志文件的文件格式为二进制（好像有点废话），不能像错误日志文件、慢查询日志文件那样用cat、head、tail等命令来查看。要查看二进制日志文件的内容，必须通过MySQL提供的工具mysqlbinlog。对于STATEMENT格式的二进制日志文件，在使用mysqlbinlog后，看到的就是执行的逻辑SQL语句。
+
+## 3.3 套接字文件
+
+​	前面提到过，在UNIX系统下本地连接MySQL可以采用UNIX域套接字方式，这种方式需要一个套接字（socket）文件。套接字文件可由参数socket控制。一般在/tmp目录下，名为`mysql.sock`。
+
+## 3.4 pid文件
+
+​	当MySQL实例启动时，会将自己的进程ID写入一个文件中——该文件即为pid文件。该文件可由参数`pid_file`控制，默认位于数据库目录下，文件名为`主机名.pid`。
+
+## 3.5 表结构定义文件
+
+​	因为MySQL插件式存储引擎的体系结构的关系，MySQL数据的存储是根据表进行的，每个表都会有与之对应的文件。但**不论表采用何种存储引擎，MySQL都有一个以frm为后缀名的文件，这个文件记录了该表的表结构定义**。
+
+​	frm还用来存放视图的定义，如用户创建了一个v_a视图，那么对应地会产生一个v_a.frm文件，用来记录视图的定义，该文件是文本文件，可以直接使用cat命令进行查看。
+
+## 3.6 InnoDB存储引擎文件
+
+​	之前介绍的文件都是MySQL数据库本身的文件，和存储引擎无关。除了这些文件外，每个表存储引擎还有其自己独有的文件。本节将具体介绍与InnoDB存储引擎密切相关的文件，这些文件包括重做日志文件、表空间文件。
+
+### 3.6.1 表空间文件
+
+​	**InnoDB采用将存储的数据按表空间（tablespace）进行存放的设计**。在默认配置下会有一个初始大小为10MB，名为ibdata1的文件。该文件就是默认的表空间文件（tablespace file），用户可以通过参数innodb_data_file_path对其进行设置，格式如下：
+
+```shell
+innodb_data_file_path=datafile_spec1[;datafile_spec2]...
+```
+
+​	用户可以通过多个文件组成一个表空间，同时制定文件的属性，如：
+
+```
+[mysqld]
+innodb_data_file_path = /db/ibdata1:2000M;/dr2/db/ibdata2:2000M:autoextend
+```
+
+​	这里将/db/ibdata1和/dr2/db/ibdata2两个文件用来组成表空间。<u>若这两个文件位于不同的磁盘上，磁盘的负载可能被平均，因此可以提高数据库的整体性能</u>。同时，两个文件的文件名后都跟了属性，表示文件idbdata1的大小为2000MB，文件ibdata2的大小为2000MB，如果用完了这2000MB，该文件可以自动增长（autoextend）。
+
+> 设置`innodb_data_file_path`参数后，所有基于InnoDB存储引擎的表的数据都会记录到该共享表空间中。若设置了参数`innodb_file_per_table`，则用户可以将每个基于InnoDB存储引擎的表产生一个独立表空间。独立表空间的命名规则为：`表名.ibd`。通过这样的方式，用户不用将所有数据都存放于默认的表空间中。
+
+​	**设置`innodb_file_per_table=ON`时，这些单独的表空间文件仅存储该表的数据、索引和插入缓冲BITMAP等信息，其余信息还是存放在默认的表空间中**。图3-1显示了InnoDB存储引擎对于文件的存储方式：
+
+![image](https://yqfile.alicdn.com/b642d3dd798919aed8ab11833c05a796f9616514.png)
+
+### * 3.6.2 重做日志文件
+
+​	在默认情况下，在InnoDB存储引擎的数据目录下会有两个名为`ib_logfile0`和`ib_logfile1`的文件。在MySQL官方手册中将其称为InnoDB存储引擎的日志文件，不过更准确的定义应该是重做日志文件（redo log file）。为什么强调是重做日志文件呢？因为重做日志文件对于InnoDB存储引擎至关重要，它们记录了对于InnoDB存储引擎的事务日志。
+
+​	<u>当实例或介质失败（media failure）时，重做日志文件就能派上用场。例如，数据库由于所在主机掉电导致实例失败，InnoDB存储引擎会使用重做日志恢复到掉电前的时刻，以此来保证数据的完整性</u>。
+
+​	**每个InnoDB存储引擎至少有1个重做日志文件组（group），每个文件组下至少有2个重做日志文件，如默认的`ib_logfile0`和`ib_logfile1`**。<u>为了得到更高的可靠性，用户可以设置多个的镜像日志组（mirrored log groups），将不同的文件组放在不同的磁盘上，以此提高重做日志的高可用性。在日志组中每个重做日志文件的大小一致，并以**循环写入**的方式运行</u>。InnoDB存储引擎先写重做日志文件1，当达到文件的最后时，会切换至重做日志文件2，再当重做日志文件2也被写满时，会再切换到重做日志文件1中。图3-2显示了一个拥有3个重做日志文件的重做日志文件组。
+
+![image](https://yqfile.alicdn.com/55f1a1c1a5eacc5301d4fbfb3e7503ea959b05f5.png)
+
+下列参数影响着重做日志文件的属性：
+
++ innodb_log_file_size
++ innodb_log_files_in_group
++ innodb_mirrored_log_groups
++ innodb_log_group_home_dir
+
+> 参数innodb_log_file_size指定每个重做日志文件的大小。在InnoDB1.2.x版本之前，重做日志文件总的大小不得大于等于4GB，而1.2.x版本将该限制扩大为了512GB。
+>
+> 参数innodb_log_files_in_group指定了日志文件组中重做日志文件的数量，默认为2。
+>
+> 参数innodb_mirrored_log_groups指定了日志镜像文件组的数量，默认为1，表示只有一个日志文件组，没有镜像。若磁盘本身已经做了高可用的方案，如磁盘阵列，那么可以不开启重做日志镜像的功能。
+>
+> 参数innodb_log_group_home_dir指定了日志文件组所在路径，默认为`./`，表示在MySQL数据库的数据目录下。
+
+​	重做日志文件的大小设置对于InnoDB存储引擎的性能有着非常大的影响。一方面重做日志文件不能设置得太大，如果设置得很大，在恢复时可能需要很长的时间；另一方面又不能设置得太小了，否则可能导致一个事务的日志需要多次切换重做日志文件。此外，重做日志文件太小会导致频繁地发生async checkpoint，导致性能的抖动。
+
+​	重做日志有一个capacity变量，该值代表了最后的检查点不能超过这个阈值，如果超过则必须将缓冲池（innodb buffer pool）中脏页列表（flush list）中的部分脏数据页写回磁盘，这时会导致**用户线程的阻塞**。
+
+​	同样是记录事务日志，**和二进制日志的区别**：
+
++ 首先，二进制日志会记录所有与MySQL数据库有关的日志记录，包括InnoDB、MyISAM、Heap等其他存储引擎的日志。而InnoDB存储引擎的重做日志只记录有关该存储引擎本身的事务日志。
+
++ 其次，记录的内容不同，无论用户将二进制日志文件记录的格式设为STATEMENT还是ROW，又或者是MIXED，其记录的都是关于一个事务的具体操作内容，即该日志是**逻辑日志**。而InnoDB存储引擎的重做日志文件记录的是关于每个页（Page）的更改的物理情况。
+
++ 此外，写入的时间也不同，二进制日志文件仅在事务提交前进行提交，即只写磁盘一次，不论这时该事务多大。而在事务进行的过程中，却不断有重做日志条目（redo entry）被写入到重做日志文件中。
+
+​	在InnoDB存储引擎中，对于各种不同的操作有着不同的重做日志格式。到InnoDB 1.2.x版本为止，总共定义了51种重做日志类型。虽然各种重做日志的类型不同，但是它们有着基本的格式，表3-2显示了重做日志条目的结构：
+![image](https://yqfile.alicdn.com/21119fc5462f28ffd52c48fc803e4145aa885731.png)
+
+从表3-2可以看到重做日志条目是由4个部分组成：
+
++ redo_log_type占用1字节，表示重做日志的类型
++ space表示表空间的ID，但采用压缩的方式，因此占用的空间可能小于4字节
++ page_no表示页的偏移量，同样采用压缩的方式
++ redo_log_body表示每个重做日志的数据部分，恢复时需要调用相应的函数进行解析
+
+​	<u>在第2章中已经提到，写入重做日志文件的操作不是直接写，而是先写入一个重做日志缓冲（redo log buffer）中，然后按照一定的条件顺序地写入日志文件</u>。图3-3很好地诠释了重做日志的写入过程。![image](https://yqfile.alicdn.com/8b6b2eabf3c46659228889e59ab641dbc0798443.png)
+
+​	**从重做日志缓冲往磁盘写入时，是按512个字节，也就是一个扇区的大小进行写入。因为扇区是写入的最小单位，因此可以保证写入必定是成功的。因此在重做日志的写入过程中不需要有doublewrite**。
+
+​	前面提到了从日志缓冲写入磁盘上的重做日志文件是按一定条件进行的，那这些条件有哪些呢？
+
++ 第2章分析了主线程（master thread），知道在主线程中每秒会将重做日志缓冲写入磁盘的重做日志文件中，不论事务是否已经提交。
++ 另一个触发写磁盘的过程是由参数`innodb_flush_log_at_trx_commit`控制，表示在提交（commit）操作时，处理重做日志的方式。
+
+> 参数`innodb_flush_log_at_trx_commit`的有效值有0、1、2。0代表当提交事务时，并不将事务的重做日志写入磁盘上的日志文件，而是等待主线程每秒的刷新。1和2不同的地方在于：1表示在执行commit时将重做日志缓冲同步写到磁盘，即伴有fsync的调用。2表示将重做日志异步写到磁盘，即写到文件系统的缓存中。因此不能完全保证在执行commit时肯定会写入重做日志文件，只是有这个动作发生。
+
+​	**为了保证事务的ACID中的持久性，必须将`innodb_flush_log_at_trx_commit`设置为1，也就是每当有事务提交时，就必须确保事务都已经写入重做日志文件**。那么当数据库因为意外发生宕机时，可以通过重做日志文件恢复，并保证可以恢复已经提交的事务。而将重做日志文件设置为0或2，都有可能发生恢复时部分事务的丢失。不同之处在于，设置为2时，当MySQL数据库发生宕机而操作系统及服务器并没有发生宕机时，由于此时未写入磁盘的事务日志保存在文件系统缓存中，当恢复时同样能保证数据不丢失。
+
+## 3.7 小结
+
+​	本章介绍了与MySQL数据库相关的一些文件，并了解了文件可以分为**MySQL数据库文件**以及与**各存储引擎相关的文件**。与MySQL数据库有关的文件中，错误文件和二进制日志文件非常重要。当MySQL数据库发生任何错误时，DBA首先就应该去查看错误文件，从文件提示的内容中找出问题的所在。当然，错误文件不仅记录了错误的内容，也记录了警告的信息，通过一些警告也有助于DBA对于数据库和存储引擎进行优化。
+
+​	**二进制日志的作用非常关键，可以用来进行point in time的恢复以及复制（replication）环境的搭建**。因此，**建议在任何时候时都启用二进制日志的记录**。从MySQL 5.1开始，二进制日志支持STATEMENT、ROW、MIX三种格式，这样可以更好地保证从数据库与主数据库之间数据的一致性。当然DBA应该十分清楚这三种不同格式之间的差异。
+
+​	本章的最后介绍了和InnoDB存储引擎相关的文件，包括表空间文件和**重做日志文件**。表空间文件是用来管理InnoDB存储引擎的存储，分为共享表空间和独立表空间。**重做日志非常的重要，用来记录InnoDB存储引擎的事务日志，也因为重做日志的存在，才使得InnoDB存储引擎可以提供可靠的事务**。
+
+# 4. 表
+
+P104
+
