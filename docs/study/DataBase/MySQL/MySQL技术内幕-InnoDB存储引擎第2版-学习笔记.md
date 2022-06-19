@@ -990,5 +990,104 @@ innodb_data_file_path = /db/ibdata1:2000M;/dr2/db/ibdata2:2000M:autoextend
 
 # 4. 表
 
-P104
+​	表的物理存储方式。
 
+## 4.1 索引组织表
+
+​	InnoDB存储引擎中，表按照主键顺序组织存放，这种存储方式的表称为**索引组织表**（index organized table）。InnoDB存储引擎表中，每张表都有主键（Primary Key），如果没有显式定义主键，InnoDB存储引擎会按如下方式选择or创建主键：
+
++ **首先判读表中是否有非空的唯一索引（Unique NOT NULL），如果有，则该列即为主键。**
++ **如果不符合上述条件，InnoDB存储引擎自动创建一个6字节大小的指针**。
+
+> 当表中有多个非空唯一索引时， InnoDB存储引擎将选择建表时**第一个**定义的非空唯索引为主键。这里需要非常注意的是，**主键的选择根据的是定义索引的顺序，而不是建表时列的顺序**。
+>
+> **在单个列为主键的情况下，`_rowid`可以显示表的主键值**
+
+##  * 4.2 InnoDB逻辑存储结构
+
+​	从 InnoDB存储引擎的逻辑存储结构看，所有数据都被逻辑地存放在一个空间中，称之为表空间(tablespace)。表空间又由段(segment)、区(extent)、页(page)组成。页在一些文档中有时也称为块(block)， InnoDB存储引擎的逻辑存储结构大致如图4-1所示。
+
+![c1e4cc3772d032509b85c3f2d06b5567.png](https://img-blog.csdnimg.cn/img_convert/c1e4cc3772d032509b85c3f2d06b5567.png)
+
+​	图4-1 InnoDB逻辑存储结构
+
+### 4.2.1 表空间
+
+​	<u>表空间可以看做是 Innodb存储引擎逻辑结构的最高层，所有的数据都存放在表空间中</u>。
+
+​	第3章中已经介绍了在默认情况下 Innodb存储引擎有一个共享表空间 ibdata1，即所有数据都存放在这个表空间内。如果用户启用了参数`innodb_file_per_table`，则每张表内的数据可以单独放到一个表空间内。
+
+> 如果启用了`innodb_ file_per_table`的参数，需要注意的是每张表的表空间内存放的只是数据、索引和插入缓冲Bitmap页，其他类的数据，如回滚(undo)信息，插入缓冲索引页、系统事务信息，二次写缓冲(Double write buffer)等还是存放在原来的共享表空间内。这同时也说明了另一个问题：即使在启用了参数`innodb _file_per_table`之后，共享表空间还是会不断地增加其大小。
+>
+> **产生undo信息后，即使对事务进行回滚rollback，共享表空间新增的undo信息占用的空间也不会被回收，但是InnoDB会在不需要这些undo信息时，将其占据的空间标记为可用空间，供下次undo使用**。
+
+### 4.2.2 段
+
+​	图4-1中显示了表空间是由各个段组成的，常见的段有数据段、索引段、回滚段等。因为前面已经介绍过了InnoDB存储引擎表是索引组织的(index organized)，因此数据即索引，索引即数据。那么数据段即为B+树的叶子节点(图4-1的Leaf node segment)，索引段即为B+树的非索引节点(图4-1的 Non-leaf node segment)。回滚段较为特殊，将会在后面的章节进行单独的介绍。
+
+​	在 Innodb存储引擎中，对段的管理都是由引擎自身所完成，DBA不能也没有必要对其进行控制。这和 Oracle数据库中的自动段空间管理(ASSM)类似，从一定程度上简化了DBA对于段的管理。
+
+### 4.2.3 区
+
+​	<u>区是由连续页组成的空间，在任何情况下每个区的大小都为1MB</u>。为了保证区中页的连续性， InnoDB存储引擎一次从磁盘申请4~5个区。在默认情况下， InnoDB存储引擎页的大小为16KB，即一个区中一共有64个连续的页。
+
+> InnoDB1.0.x版本开始引人压缩页，即每个页的大小可以通过参数`KEY_BLOCKSIZE`设置为2K、4K、8K，因此每个区对应页的数量就应该为512、256、128。
+>
+> InnoDB1.2.x版本新增了参数`innodb_page_size`，通过该参数可以将默认页的大小设置为4K、8K，但是页中的数据库不是压缩。这时区中页的数量同样也为256、128。总之，不论页的大小怎么变化，区的大小总是为1M。
+
+​	但是，这里还有这样一个问题：在用户启用了参数`innodb file_per_tabe`后，创建的表默认大小是96KB。区中是64个连续的页，创建的表的大小至少是1MB才对啊？其实这是因为**在每个段开始时，先用32个页大小的碎片页(fragment page)来存放数据，在使用完这些页之后才是64个连续页的申请。这样做的目的是，对于一些小表，或者是undo这类的段，可以在开始时申请较少的空间，节省磁盘容量的开销**。
+
+### 4.2.4 页
+
+​	同大多数数据库一样， **InnoDB有页(Page)的概念(也可以称为块)，页是InnoDB磁盘管理的最小单位**。在Innodb存储引擎中，默认每个页的大小为16KB。而从InnoDB 1.2.x版本开始，可以通过参数`innodb_page_size`将页的大小设置为4K、8K、16K。若设置完成，则所有表中页的大小都为`innodb_page_size`，不可以对其再次进行修改。除非通过 mysqldump导入和导出操作来产生新的库。
+
+​	在 InnoDB存储引擎中，常见的页类型有：
+
++ 数据页(B-tree Node)
++ undo页(undo Log Page)
++ 系统页(System Page)
++ 事务数据页(Transaction system Page)
++ 插入缓冲位图页(Insert Buffer Bitmap)
++ 插入缓冲空闲列表页(Insert Buffer Free List)
++ 未压缩的二进制大对象页(Uncompressed BLOB Page)
++ 压缩的二进制大对象页(compressed BLOB Page)
+
+### * 4.2.5 行
+
+​	InnoDB存储引擎是面向行的(row-oriented)，也就说数据是按行进行存放的。**每个页存放的行记录也是有硬性定义的，最多允许存放16KB/2-200行的记录，即7992行记录**。这里提到了row-oriented的数据库，也就是说，存在有column-oriented的数据库。MySQL infobright存储引擎就是按列来存放数据的，这对于数据仓库下的分析类SQL语句的执行及数据压缩非常有帮助。类似的数据库还有 Sybase IQ、 Google Big Table。面向列的数据库是当前数据库发展的一个方向，但这超出了本书涵盖的内容，有兴趣的读者可以在网上寻找相关资料。
+
+## * 4.3 InnoDB行记录格式
+
+​	InnoDB存储引檠和大多数数据库一样(如 Oracle和 Microsoft SQL Server数据库)，记录是以行的形式存储的。这意味着页中保存着表中一行行的数据。
+
+​	在 InnoDB 1.0.x版本之前， InnoDB存储引擎提供了 Compact和 Redundant两种格式来存放行记录数据，这也是目前使用最多的一种格式。 <u>Redundant格式是为兼容之前版本而保留的</u>，如果阅读过 InnoDB的源代码，用户会发现源代码中是用 PHYSICAL RECORD (NEW STYLE)和 PHYSICAL RECORD (OLD STYLE)来区分两种格式的。
+
+​	在 MYSQL5.1版本中，默认设置为 Compact 行格式。用户可以通过命令 SHOW TABLE STATUS LIKE 'tablename'来査看当前表使用的行格式，其中 row_format 属性表示当前所使用的行记录结构类型。
+
+### 4.3.1 Compact 行记录格式
+
+​	Compact行记录是在 MySQL5.0 中引入的，其设计目标是高效地存储数据。**简单来说一个页中存放的行数据越多，其性能就越高**。图4-2显示了 Compact行记录的存储方式：
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/2020112517190174.png#pic_center)
+
+​	图4-2 Compact 行记录的格式
+
+​	从图4-2 可以观察到， **Compact 行记录格式的首部是一个<u>非NULL 变长字段长度列表</u>，并且其是<u>按照列的顺序逆序放置</u>的**，其长度为：
+
++ 若列的长度小于255 字节，用1字节表示；
+
++ 若大于255个字节，用2字节表示。
+
+​	<u>变长字段的长度最大不可以超过2字节，这是因在MySQL数据库中VARCHAR类型的最大长度限制为65535</u> 。变长字段之后的第二个部分是NULL 标志位，该位指示了该行数据中是否有NULL 值，有则用1 表示。该部分所占的字节应该为1 字节。接下来的部分是记录头信息(record header) ，固定占用5 字节(40 位），每位的含义见表4-1 。
+
+​	表4-1 Compact 记录头信息
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/20201125171846565.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzM1MzcxMzIz,size_16,color_FFFFFF,t_70#pic_center)
+
+​	最后的部分就是实际存储每个列的数据。**<u>需要特别注意的是， NULL 不占该部分任何空间，即NULL 除了占有NULL 标志位，实际存储不占有任何空间</u>。**另外有一点需要注意的是，<u>每行数据除了用户定义的列外，还有两个隐藏列，**事务ID 列**和**回滚指针列**</u>，分别为6 字节和7 字节的大小。<u>**若InnoDB 表没有定义主键，每行还会增加一个6 字节的rowid 列**</u>。
+
+​	不管是CHAR类型还是VARCHAR类型，在compact格式下，NULL值都不占用任何存储空间。
+
+### 4.3.2 Redundant行记录格式
+
+P119
