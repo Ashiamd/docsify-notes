@@ -382,7 +382,7 @@ MySQL数据库提供的连接方式从本质上看即上述提及的进程通信
    >
    > 因此，申请了很大的InnoDB缓冲池时，也应考虑相应增加这个值。
 
-## 2.4 Checkpoint技术
+## * 2.4 Checkpoint技术
 
 ​	为了避免数据丢失，当前**事务数据库系统**普遍采用了**Write Ahead Log**策略。即当食物提交时，先写重做日志（磁盘），再修改页（内存）。*（宕机导致内存数据丢失时，即通过重做日志完成数据恢复，保证事务ACID的D，Durability）*
 
@@ -1064,7 +1064,7 @@ innodb_data_file_path = /db/ibdata1:2000M;/dr2/db/ibdata2:2000M:autoextend
 
 ​	在 MYSQL5.1版本中，默认设置为 Compact 行格式。用户可以通过命令 SHOW TABLE STATUS LIKE 'tablename'来査看当前表使用的行格式，其中 row_format 属性表示当前所使用的行记录结构类型。
 
-### 4.3.1 Compact 行记录格式
+### * 4.3.1 Compact 行记录格式
 
 ​	Compact行记录是在 MySQL5.0 中引入的，其设计目标是高效地存储数据。**简单来说一个页中存放的行数据越多，其性能就越高**。图4-2显示了 Compact行记录的存储方式：
 
@@ -1086,8 +1086,146 @@ innodb_data_file_path = /db/ibdata1:2000M;/dr2/db/ibdata2:2000M:autoextend
 
 ​	最后的部分就是实际存储每个列的数据。**<u>需要特别注意的是， NULL 不占该部分任何空间，即NULL 除了占有NULL 标志位，实际存储不占有任何空间</u>。**另外有一点需要注意的是，<u>每行数据除了用户定义的列外，还有两个隐藏列，**事务ID 列**和**回滚指针列**</u>，分别为6 字节和7 字节的大小。<u>**若InnoDB 表没有定义主键，每行还会增加一个6 字节的rowid 列**</u>。
 
-​	不管是CHAR类型还是VARCHAR类型，在compact格式下，NULL值都不占用任何存储空间。
+​	**<u>不管是CHAR类型还是VARCHAR类型，在compact格式下，NULL值都不占用任何存储空间</u>**。
 
-### 4.3.2 Redundant行记录格式
+### * 4.3.2 Redundant行记录格式
 
-P119
+​	**Redundant 是MySQL5.0 版本之前InnoDB 的行记录存储方式， MySQL5.0 支持Redundant 是为了兼容之前版本的页格式**。Redundant 行记录采用如图4-3 所示的方式存储。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/3ffe498c6b3d4e3aa46c36a5761a47fb.png)
+
+​	从图4-3 可以看到，不同于Compact 行记录格式， Redundant 行记录格式的首部是一个字段长度<u>偏移</u>列表，<u>同样是按照列的顺序逆序放置的</u>。若列的长度小于255 字节，用1 字节表示：若大于255 字节，用2 字节表示。
+
+​	第二个部分为记录头信息(recordheader) ，不同于Compact 行记录格式， Redundant 行记录格式的记录头占用6 字节(48位），每位的含义见表4-2 。从表4-2 中可以发现， **`n_fields` 值代表一行中列的数扯，占用10 位。同时这也很好地解释了为什么MySQL 数据库一行支持最多的列为1023** 。另一个需要注意的值为`1byte_offs_ flags` ，该值定义了偏移列表占用1字节还是2字节。而最后的部分就是实际存储的每个列的数据了。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/4694f6ee888546ec9dd14f9f2a03c8b9.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA5Zyf5ouo6byg6aWy5YW75ZGY,size_20,color_FFFFFF,t_70,g_se,x_16)
+
+​	**<u>对于VARCHAR类型的NULL值，Redudant行记录格式同样不会占用任何存储空间，而CHAR类型的NULL值需要占用空间</u>**。
+
+> 当表的字符集为Latin1, 每个字符最多只占用1 字节。若用户将表的字符集转换为utf8，CHAR字段固定长度类型将占用原本的`字节数*3`大小的字节数。**在Redundant 行记录格式下， CHAR 类型将会占用可能存放的最大值字节数**。
+
+### * 4.3.3 行溢出数据
+
+​	**InnoDB 存储引擎可以将一条记录中的某些数据存储在真正的数据页面之外**。
+
+​	一般认为BLOB 、LOB 这类的大对象列类型的存储会把数据存放在数据页面之外。但是，这个理解有点偏差， <u>BLOB 可以不将数据放在溢出页面，而且即便是VARCHAR 列数据类型，依然有可能被存放为行溢出数据</u>。
+
+​	首先对VARCHAR 数据类型进行研究。很多DBA 喜欢MySQL 数据库提供的VARCHAR 类型，因为相对于Oracle VARCHAR2 最大存放4000 字节， SQL Server 最大存放8000 字节， <u>MySQL 数据库的VARCHAR 类型可以存放65535 字节</u>。
+
+​	但是，这是真的吗？真的可以存放65535 字节吗？如果创建VARCHAR 长度为65535 的表，用户会得到下面的错误信息：
+
+ ```shell
+ mysql> CREATE TABLE test (
+ -> a VARCHAR(65535)
+ ->)CHARSET=latinl ENGINE=InnoDB;
+ ERROR 1118 (42000): Row size too large. The maximum row size for the used table
+ type, not counting BLOBs, is 65535. You have to change some columns to TEXT or
+ BLOBS
+ ```
+
+​	从错误消息可以看到**lnnoDB 存储引擎并不支持65535 长度的VARCHAR。这是因为还有别的开销，通过实际测试发现能存放VARCHAR 类型的最大长度为65532** 。例如，按下面的命令创建表就不会报错了。
+
+ ```shell
+ mysql> CREATE TABLE test (
+ -> a VARCHAR(65532)
+ ->)CHARSET=latinl ENGINE=InnoDB;
+ Query OK, 0 rows affected (0.15 sec)
+ ```
+
+​	需要注意的是，如果在执行上述示例的时候没有将SQL_MODE设为严格模式，或许可以建立表，但是MySQL 数据库会抛出一个warning，如：
+
+```shell
+mysql> CREATE TABLE test (
+-> a VARCHAR(65535)
+->)CHARSET=latinl ENGINE=InnoDB;
+Query OK, 0 rows affected, 1 warning (0.14 sec)
+
+mysql> SHOW WARNINGS\G;
+*************************** 1. row***************************
+Level: Note
+Code: 124 6
+Message: Converting column'a'from VARCHAR to TEXT
+1 row in set (0.00 sec)
+```
+
+<u>	warning 信息提示了这次可以创建是因为MySQL 数据库自动地将VARCHAR 类型转换成了TEXT 类型</u>。查看test 的表结构会发现：
+
+```shell
+mysql> SHOW CREATE TABLE test\G;
+*************************** 1. row***************************
+Table: test
+Create Table: CREATE TABLE'test'(
+'a'mediumtext
+ENGINE=InnoDB DEFAULT CHARSET=utf8
+1 row in set (0.00 sec)
+```
+
+​	还需要注意上述创建的VARCHAR 长度为65 532 的表，其字符类型是latinl 的，如果换成GBK 又或UTF-8 的，会产生怎样的结果呢？
+
+```shell
+mysql> CREATE TABLE test (
+-> a VARCHAR(65532)
+->)CHARSET=GBK ENGINE=InnoDB;
+ERROR 1074 (42000): Column length too big for column'a'(max = 32767); use
+BLOB or TEXT instead
+
+rnysql> mysql> CREATE TABLE test (
+-> a VARCHAR(65532)
+->)CHARSET=UTF8 ENGINE=InnoDB;
+ERROR 1074 (42000):
+```
+
+​	这次即使创建列的VARCHAR 长度为65532，也会提示报错，但是两次报错对max值的提示是不同的。因此从这个例子中用户也应该理解**VARCHAR (N) 中的N 指的是字符的长度。而文档中说明VARCHAR 类型最大支待65535，单位是字节。**
+
+​	**<u>此外需要注意的是， MySQL 官方手册中定义的65535 长度是指所有VARCHAR列的长度总和，如果列的长度总和超出这个长度，依然无法创建</u>**，如下所示：
+
+```shell
+mysql> CREATE TABLE test2
+-> a VARCHAR(22000),
+-> b VARCHAR(22000),
+-> c VARCHAR(22000)
+->)CHARSET=latinl ENGINE=InnoDB;
+ERROR 1118 (42000): Row size too large. The maximum row size for the used table
+type, not counting BLOBs, is 65535. You have to change some columns to TEXT or
+BLOBS
+```
+
+​	3 个列长度总和是66000, 因此InnoDB 存储引擎再次报了同样的错误。
+
+​	即使能存放65532 个字节，但是有没有想过， InnoDB 存储引擎的页为16KB， 即16384 字节，怎么能存放65532 字节呢？**<u>在一般情况下， InnoDB 存储引擎的数据都是存放在页类型为B-tree node 中。但是当发生行溢出时，数据存放在页类型为Uncompress BLOB 页中</u>**。
+
+​	对于行溢出数据，其存放采用图4-4的方式。数据页面其实只保存了VARCHAR (65532)的前768 字节的前缀(prefix) 数据（举例这里都是a) ，之后是偏移量，指向行溢出页，也就是前面用户看到的Uncompressed BLOB Page。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/90fbe66f21e64d2799eda4c54d4dfa8a.png)
+
+​	那多长的VARCHAR 是保存在单个数据页中的，从多长开始又会保存在BLOB页呢？可以这样进行思考： InnoDB 存储引擎表是索引组织的，即B+Tree 的结构，这样每个页中至少应该有两条行记录（否则失去了B+Tree 的意义，变成链表了）。因此，**<u>如果页中只能存放下一条记录，那么InnoDB 存储引擎会自动将行数据存放到溢出页中</u>**。
+
+​	但是，**<u>如果可以在一个页中至少放入两行数据，那VARCHAR 类型的行数据就不会存放到BLOB 页中去。经过多次试验测试，发现这个阔值的长度为8098</u>**。
+
+​	另一个问题是，对于TEXT 或BLOB 的数据类型，用户总是以为它们是存放在Uncompressed BLOB Page 中的，其实这也是不准确的。<u>**（TEXT或BLOB数据类型）是放在数据页中还是BLOB 页中，和前面讨论的VARCHAR 一样，至少保证一个页能存放两条记录**</u>。 
+
+> 当然既然用户使用了BLOB 列类型，一般不可能存放长度较小的数据。因此在大多数的情况下BLOB 的行数据还是会发生行溢出，实际数据保存在BLOB 页中，数据页只保存数据的前768 字节。
+
+### * 4.3.4 Compressed 和Dynamic 行记录格式
+
+​	InnoDB 1.0.x 版本开始引入了新的文件格式(file format, 用户可以理解为新的**页格式**），<u>以前支持的Compact 和Redundant 格式称为Antelope 文件格式</u>，新的文件格式称为Barracuda文件格式。Barracuda 文件格式下拥有两种新的行记录格式： Compressed 和Dynamic。
+
+​	**新的两种记录格式对千存放在BLOB 中的数据采用了<u>完全的行溢出</u>的方式**，如图4-5 所示，<u>在数据页中只存放20 个字节的指针，实际的数据都存放在Off Page 中，而之前的Compact 和Redundant 两种格式会存放768 个前缀字节</u>。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/6b81ac040aba44a98f81b1b5c9b0a673.png)
+
+​	**<u>Compressed 行记录格式的另一个功能就是，存储在其中的行数据会以zlib 的算法进行压缩，因此对于BLOB 、TEXT 、VARCHAR 这类大长度类型的数据能够进行非常有效的存储</u>**。
+
+### * 4.3.5 CHAR 的行结构存储
+
+​	通常理解VARCHAR 是存储变长长度的字符类型， CHAR 是存储固定长度的字符类型。而在前面的小节中，用户已经了解行结构的内部的存储，并可以发现每行的变长字段长度的列表都没有存储CHAR 类型的长度。
+
+​	**从MySQL4.l 版本开始， CHR(N) 中的N 指的是字符的长度，而不是之前版本的字节长度。也就说在不同的字符集下， CHAR 类型列内部存储的可能不是定长的数据**。
+
+​	**<u>对于多字节字符编码的CHAR 数据类型的存储， lnnoDB 存储引擎在内部将其视为变长字符类型。这也就意味着在变长长度列表中会记录CHAR数据类型的长度</u>**。此时，CHAR 类型被明确视为了变长字符类型，对于未能占满长度的字符还是填充0x20。
+
+​	InnoDB 存储引擎内部对字符的存储和我们用HEX函数看到的也是一致的。因此可以认为**在多字节字符集的情况下， CHAR 和VARCHAR 的实际行存储基本是没有区别的**。
+
+## 4.4 lnnoDB 数据页结构
+
+P133
