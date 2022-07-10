@@ -1666,4 +1666,852 @@ Empty set (0.00 sec)
 
 ## 7.5 对于事务操作的统计
 
-P342
+​	由于InnoDB 存储引擎是支持事务的，因此lnnoDB 存储引擎的应用需要在考虑**每秒请求数(Question Per Second, QPS)** 的同时，应该关注**每秒事务处理的能力(Transaction Per Second, TPS)** 。
+
+​	**计算TPS 的方法是(com_commit + com_rollback) / time**。但是<u>利用这种方法进行计算的前提是：所有的事务必须都是显式提交的，如果存在隐式地提交和回滚（默认autocommit=1) ，不会计算到com_commit和com_rollback变量中</u>。如：
+
+```shell
+mysql> SHOW GLOBAL STATUS LIKE 'com_commit'\G;
+*************************** 1. row**********＊＊＊ *** *********
+Variable name: Com commit
+Value: 5
+1 row in set (0.00 sec)
+
+mysql> INSERT INTO t SELECT 3;
+Query OK, 1 row affected (0.00 sec)
+Records: 1 Duplicates: 0 Warnings: 0
+
+mysql> SELECT * FROM t\G;
+*************************** 1. row *****＊＊ * ** * ** * * ** ** * * *
+a: 1
+*************************** 2. row***************************
+a: 2
+*************************** 3. row***************************
+a: 3
+3 rows in set (0.00 sec)
+
+mysql> SHOW GLOBAL STATUS LIKE 'com_commit'\G;
+***********＊＊＊＊＊＊＊＊＊＊＊＊＊ ** 1. row * * * * * * * * * * * * * * * * * * * *
+Variable name: Com commit
+Value: 5
+1 row in set (0.00 sec)
+```
+
+​	MySQL 数据库中另外还有两个参数handler_commit 和handler_rollback 用于事务的统计操作。但是我注意到这两个参数在MySQL 5.1 中可以很好地用来统计InnoDB 存储引擎显式和隐式的事务提交操作，但是在InnoDB Plugin 中这两个参数的表现有些“怪异“，并不能很好地统计事务的次数。所以，如果用户的程序都是显式控制事务的提交和回滚，那么可以通过com_commit 和com_rollback 进行统计。如果不是，那么情况就显得有些复杂。
+
+## * 7.6 事务的隔离级别
+
+​	令人惊讶的是，大部分数据库系统都没有提供真正的隔离性，最初或许是因为系统实现者并没有真正理解这些问题。如今这些问题已经弄清楚了，但是数据库实现者在正确性和性能之间做了妥协。ISO 和ANIS SQL 标准制定了四种事务隔离级别的标准，但是很少有数据库厂商遵循这些标准。比如Oracle 数据库就不支持READ UNCOMMITTED 和REPEATABLE READ 的事务隔离级别。
+
+​	SQL 标准定义的四个隔离级别为：
+
++ READ UNCOMMITTED
+
++ READ COMMITTED
+
++ REPEATABLE READ
+
++ SERIALIZABLE
+
+​	READ UNCOMMITTED 称为浏览访问(browse access) ，仅仅针对事务而言的READ COMMITTED 称为游标稳定(cursor stability) 。REPEATABLE READ 是2.9999°的隔离，没有幻读的保护。SERIALIZABLE 称为隔离，或3°的隔离。SQL 和SQL2 标准的默认事务隔离级别是SERIALIZABLE 。
+
+​	<u>InnoDB 存储引擎默认支持的隔离级别是REPEATABLE READ，但是与标准SQL不同的是， InnoDB 存储引擎在REPEATABLE READ 事务隔离级别下，使用Next-Key Lock 锁的算法，因此避免幻读的产生</u>。这与其他数据库系统（如Microsoft SQL Server数据库）是不同的。所以说， **lnnoDB 存储引擎在默认的REPEATABLE READ 的事务隔离级别下已经能完全保证事务的隔离性要求，即达到SQL 标准的SERIALIZABLE 隔离级别**。
+
+​	隔离级别越低，事务请求的锁越少或保持锁的时间就越短。这也是为什么大多数数据库系统默认的事务隔离级别是READ COMMITTED 。
+
+​	据了解，**大部分的用户质疑SERIALIZABLE 隔离级别带来的性能问题，但是根据Jim Gray 在《Transaction Processing》一书中指出，两者的开销几乎是一样的，甚至SERIALIZABLE 可能更优**！！！<u>因此在InnoDB 存储引擎中选择REPEATABLE READ 的事务隔离级别并不会有任何性能的损失。同样地，即使使用READ COMMITTED 的隔离级别，用户也不会得到性能的大幅度提升</u>。
+
+​	在InnoDB 存储引擎中，可以使用以下命令来设置当前会话或全局的事务隔离级别：
+
+```sql
+SET [GLOBAL | SESSION) TRANSACTION ISOLATION LEVEL
+{
+  READ UNCOMMITTED
+  | READ COMMITTED
+  | REPEATABLE READ
+  | SERIALIZABLE
+}
+```
+
+​	如果想在MySQL 数据库启动时就设置事务的默认隔离级别，那就需要修改MySQL的配置文件，在[mysqld] 中添加如下行：
+
+```none
+[mysqld]
+transaction-isolation = READ-COMMITTED
+```
+
+​	查看当前**会话**的事务隔离级别，可以使用：
+
+```shell
+mysql>SELECT @@tx_isolation\G;
+*************************** 1. row***************************
+@@tx_isolation: REPEATABLE-READ
+1 row in set (0.01 sec)
+```
+
+​	查看**全局**的事务隔离级别，可以使用：
+
+```shell
+mysql>SELECT @@global.tx_isolation\G;
+*************************** 1. row***************************
+@@global.tx_isolation: REPEATABLE-READ
+1 row in set (0.00 sec)
+```
+
+​	**在SERIALIABLE 的事务隔离级别， InnoDB 存储引擎会对每个SELECT 语句后自动加上LOCK IN SHARE MODE，即为每个读取操作加一个共享锁**。因此在这个事务隔离级别下，读占用了锁，对一致性的非锁定读不再予以支持。这时，事务隔离级别SERIALIZABLE 符合数据库理论上的要求，即事务是well-formed 的，并且是two-phrased的。有兴趣的读者可进一步研究。
+
+​	因为InnoDB 存储引擎在REPEATABLE READ 隔离级别下就可以达到3°的隔离，因此一般不在本地事务中使用SERIALIABLE 的隔离级别。**SERIALIABLE 的事务隔离级别主要用于InnoDB 存储引擎的分布式事务**。
+
+​	**在READ COMMITTED 的事务隔离级别下，除了唯一性的约束检查及外键约束的检查需要gap lock，InnoDB 存储引擎不会使用gap lock的锁算法**。但是使用这个事务隔离级别需要注意一些问题。首先，在MySQL 5.1 中， READ COMMITTED 事务隔离级别默认只能工作在replication （复制）二进制日志为ROW 的格式下。如果二进制日志工作在默认的STATEMENT 下，则会出现如下的错误：
+
+```shell
+mysql> CREATE TABLE a (
+		-> b INT,PRIMARY KEY(b)
+		->) ENGINE=INNODB;
+Query OK, 0 rows affected (0.01 sec)
+
+mysql>SET @@tx_isolation='READ-COMMITTED';
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> SELECT @@tx_isolation\G;
+*************************** 1. row***************************
+@@tx_isolation: REPEATABLE-READ
+1 row in set (0.00 sec)
+
+mysql> BEGIN;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql>INSERT INTO a SELECT l;
+ERROR 1598 {HYOOO) : Binary logging not possible. Message: Transaction level
+'READ-COMMITTED'in InnoDB is not safe for binlog mode'STATEMENT'
+```
+
+​	在MySQL 5.0 版本以前，在不支持ROW 格式的二进制日志时，也许有人知道通过将参数`innodb_locks_unsafe_for_bin_log`设置为1 可以在二进制日志为STATEMENT 下使用READ COMMITTED 的事务隔离级别：
+
+```shell
+mysql> SELCT @@version\G
+*************************** 1. row* ＊＊＊＊＊＊＊＊＊＊＊＊＊＊＊＊＊＊＊＊＊ *** *
+@@version: 5.0.77-log
+1 row in set (0.00 sec)
+
+mysql> SHOW VARIABLES LIKE'innodb_locks_unsafe_for_binlog'\G;
+*******************＊＊＊＊＊ * 1. row***************************
+Variable_name: innodb_locks_unsafe_for_binlog
+Value: ON
+1 row in set (0.00 sec)
+
+mysql> SET @@tx_isolation='READ-COMMITTED';
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> BEGIN;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> INSERT INTO a SELECT 1;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> COMMIT;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> SELECT * FROM a\G;
+*************************** 1. row***************************
+b: 1
+*************************** 2. row***************************
+b: 2
+*************************** 3. row***************************
+b: 4
+*************************** 4. row***************************
+b: 5
+4 rows in set (0.00 sec)
+```
+
+​	接着在master 上开启一个会话A 执行如下事务，并且不要提交：
+
+```shell
+# Session A on master
+mysql> BEGIN;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> DELETE FROM a WHERE b<=5;
+Query OK, 4 rows affected (0.01 sec)
+```
+
+​	同样，在master 上开启另一个会话B, 执行如下事务，并且提交：
+
+```shell
+# Session Bon master
+mysql> BEGIN;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> INSERT INTO a SELECT 3;
+Query OK, 0 rows affected (0.01 sec)
+
+mysql> COMMIT;
+Query OK, 0 rows affected (0.00 sec)
+```
+
+​	接着会话A 提交，并查看表a 中的数据：
+
+```shell
+# Session A on master
+mysql> COMMIT;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> SELECT * FROM a\G;
+*************************** 1. row***************************
+b: 3
+```
+
+​	但是在slave 上看到的结果却是：
+
+```shell
+# Slave
+mysql> SELECT * FROM a;
+Empty set (0.00 sec)
+```
+
+​	可以看到，数据产生了不一致。导致这个问题发生的原因有两点：
+
++ **在READ COMMITTED 事务隔离级别下，事务没有使用gap lock 进行锁定**，因此用户在会话B 中可以在小于等于5 的范围内插入一条记录；
+
++ **STATEMENT 格式记录的是master 上产生的SQL 语句，因此在master 服务器上执行的顺序为先删后插，但是在STATEMENT 格式中记录的却是先插后删，逻辑顺序上产生了不一致**。
+
+​	<u>要避免主从不一致的问题，只需解决上述问题中的一个就能保证数据的同步了。如使用READ REPEATABLE 的事务隔离级别可以避免上述第一种情况的发生，也就避免了master 和slave 数据不一致问题的产生</u>。
+
+​	在MySQL 5.1 版本之后，因为支持了ROW 格式的二进制日志记录格式，避免了第二种情况的发生，所以可以放心使用READ COMMITTED 的事务隔离级别。但**即使不使用READ COMMITTED 的事务隔离级别，也应该考虑将二进制日志的格式更换成ROW，因为这个格式记录的是行的变更，而不是简单的SQL 语句，所以可以避免一些不同步现象的产生，进一步保证数据的同步**。<u>InnoDB 存储引擎的创始人HeikkiTuuri 也在`http:// bugs.mysql.com/bug.php?id=33210`这个帖子中建议使用ROW 格式的二进制日志</u>。
+
+## 7.7 分布式事务
+
+### * 7.7.1 MySQL 数据库分布式事务
+
+​	**InnoDB 存储引擎提供了对XA 事务的支持，并通过XA 事务来支持分布式事务的实现**。分布式事务指的是允许多个独立的事务资源(transactional resources) 参与到一个全局的事务中。事务资源通常是关系型数据库系统，但也可以是其他类型的资源。<u>全局事务要求在其中的所有参与的事务要么都提交，要么都回滚，这对于事务原有的ACID 要求又有了提高。另外，**在使用分布式事务时， InnoDB 存储引擎的事务隔离级别必须设置为SERIALIZABLE**</u>。
+
+​	**XA 事务允许不同数据库之间的分布式事务，如一台服务器是MySQL 数据库的，另一台是Oracle 数据库的，又可能还有一台服务器是SQL Server 数据库的，只要参与在全局事务中的每个节点都支持XA 事务**。分布式事务可能在银行系统的转账中比较常见，如用户David 需要从上海转10 000 元到北京的用户Mariah 的银行卡中：
+
+```shell
+# Bank@Shanghai:
+UPDATE account SET money = money - 10000 WHERE user='David';
+
+# Bank@Beijing
+UPDATE account SET money = money + 10000 WHERE user='Mariah';
+```
+
+​	在这种情况下，一定需要使用分布式事务来保证数据的安全。如果发生的操作不能全部提交或回滚，那么任何一个结点出现问题都会导致严重的结果。要么是David的账户被扣款，但是Mariah 没收到，又或者是David 的账户没有扣款，Mariah 却收到钱了。
+
+​	**XA事务由一个或多个资源管理器(Resource Managers)、一个事务管理器(Transaction Manager) 以及一个应用程序(Application Program) 组成**。
+
++ 资源管理器：提供访问事务资源的方法。<u>通常一个数据库就是一个资源管理器</u>。
+
++ 事务管理器：协调参与全局事务中的各个事务。需要和参与全局事务的所有资源管理器进行通信。
+
++ 应用程序：定义事务的边界，指定全局事务中的操作。
+
+​	**在MySQL 数据库的分布式事务中，资源管理器就是MySQL 数据库，事务管理器为连接MySQL 服务器的客户端**。图7-22 显示了一个分布式事务的模型。
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/4f89e9fd4bb340a790c573102f0fe547.png?x-oss-process=image/watermark,type_ZHJvaWRzYW5zZmFsbGJhY2s,shadow_50,text_Q1NETiBA5pif5YWJ5LmL5a2QMDMxNw==,size_20,color_FFFFFF,t_70,g_se,x_16)
+
+​	图7-22 分布式事务模型
+
+​	**分布式事务使用两段式提交(two-phase commit) 的方式**。
+
++ 在第一阶段，所有参与全局事务的节点都开始准备(PREPARE) ，告诉事务管理器它们准备好提交了。
++ 在第二阶段，事务管理器告诉资源管理器执行ROLLBACK 还是COMMIT。如果任何一个节点显示不能提交，则所有的节点都被告知需要回滚。
+
+​	可见与本地事务不同的是，分布式事务需要多一次的PREPARE 操作，待收到所有节点的同意信息后，再进行COMMIT 或是ROLLBACK 操作。
+
+​	MySQL 数据库XA 事务的SQL 语法如下：
+
+```shell
+XA {START|BEGIN} xid [JOIN|RESUME]
+XA END xid [SUSPEND [FOR MIGRATE]]
+XA PREPARE xid
+XA COMMIT xid [ONE PHASE]
+XA ROLLBACK xid
+XA RECOVER
+```
+
+​	在单个节点上运行XA 事务的例子：
+
+```shell
+mysql> XA START 'a';
+Query OK, 0 rows affected (0.00 sec)
+
+mysql > INSERT INTO z SELECT 11;
+Query OK, 1 row affected (0.00 sec)
+Records: 1 Duplicates: 0 Warnings: O
+
+mysql> XA END'a';
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> XA PREPARE'a';
+Query OK, 0 rows affected (0.05 sec)
+
+mysql> XA RECOVER\G;
+*************************** 1. row***************************
+formatID: 1
+gtrid_length: 1
+bqual_length: 0
+data: a
+1 row in set (0.00 sec)
+
+mysql> XA COMMIT 'a';
+Query OK, 0 rows affected (0.05 sec)
+```
+
+​	在单个节点上运行分布式事务没有太大的实际意义，但是要在MySQL 数据库的命令下演示多个节点参与的分布式事务也是行不通的。通常来说，都是通过编程语言来完成分布式事务的操作的。当前Java 的JTA (Java Transaction API) 可以很好地支持MySQL 的分布式事务，需要使用分布式事务应该认真参考其API 。下面的一个示例显示了如何使用JTA 来调用MySQL 的分布式事务，就是前面所举例的银行转账的例子，代码如下，仅供参考：
+
+```java
+import java.sql.Connection;
+import javax.sql.XAConnection;
+import javax.transaction.xa.*;
+import com.mysql.jdbc.jdbc2.optional.MysqlXADataSource;
+import java.sql.*;
+
+class MyXid implements Xid
+{
+  public int formatId;
+  public byte gtrid[];
+  public byte bqual[];
+  
+  public MyXid() {
+  }
+  
+  public MyXid(int formatId, byte gtrid[], byte bqual[])
+  {
+    this.formatId = formatId;
+    this.gtrid = gtrid;
+    this.bqual = bqual;
+  }
+  
+  public int getFormatId ()
+  {
+    return formatId;
+  }
+  
+  public byte[] getBranchQualifier()
+  {
+    return bqual;
+  }
+  
+  public byte[] getGlobalTransactionid()
+  {
+    return gtrid;
+  }
+}
+public class xa_demo {
+  public static MysqlXADataSource GetDataSource(
+    String connString,String user,String passwd) {
+    try{
+      MysqlXADataSource ds = new MysqlXADataSource();
+      ds.setUrl(connString);
+      ds.setUser(user);
+      ds.setPassword(passwd);
+      return ds;
+    } catch(Exception e) {
+      System.out.println(e.toString());
+      return null;
+    }
+  }
+
+  public static void main(String[] args) {
+    String connStringl = "jdbc:mysql://192.168.24.43:3306/bank_shanghai";
+    String connString2 = "jdbc:mysql://192.168.24.166:3306/bank_beijing";
+    try {
+      MysqlXADataSource dsl = GetDataSource(connStringl,"peter","12345");
+      MysqlXADataSource ds2 = GetDataSource(connString2,"david","12345");
+      
+      XAConnection xaConnl = dsl.getXAConnection();
+      XAResource xaResl = xaConnl.getXAResource();
+      Connection connl = xaConnl.getConnection();
+      Statement stmtl = connl.createStatement();
+
+      XAConnection xaConn2 = ds2.getXAConnection();
+      XAResource xaRes2 = xaConn2.getXAResource();
+      Connection conn2 = xaconn2.getConnection();
+      Statement stmt2 = conn2.createStatement();
+
+      Xid xid1 = new MyXid(100, new byte[] {0x01}, new byte[]{0x02});
+      Xid xid2 = new MyXid(100, new byte[] {0x11}, new byte[]{0x12});
+
+      try{
+        xaRes1.start(xid1,XAResource.TMNOFLAGS);
+        stmt1.excute("UPDATE account SET money = money-10000 WHERE user='david'");
+        xaRes1.end(xid1,XAResoure.TMSUCCESS);
+        xaRes2.start(xid2,XAResoure.TMNOFLAGS);
+        stmt2.excute("UPDATE account SET money = money+10000 WHERE user='mariah'");
+        xaRes2.end(xid2,XAResoure.TMSUCCESS);
+        int ret2 = xaRes2.prepare(xid2);
+        int ret1 = xaRes1.prepare(xid1);
+        if(ret1 == XAResource.XA_OK && ret2 == XAResource.XA_OK) {
+          xaRes1.commit(xid1, false);
+          xaRes2.commit(xid2, false);
+        }
+      } catch(Exception e) {
+        e.printStackTrace();
+      }
+    } catch (Exception e) {
+      System.out.println(e.toString());
+    }
+  }
+}
+```
+
+通过参数innodb_support_xa 可以查看是否启用了XA事务的支持（默认为ON)：
+
+```shell
+mysql> SHOW VARIABLES LIKE'innodb_support_xa'\G;
+*************************** 1. row*********************************
+Variable_name: innodb_support_xa
+		Value: ON
+1 row in set (0.01 sec)
+```
+
+### 7.7.2 内部XA事务
+
+​	**之前讨论的分布式事务是外部事务，即资源管理器是MySQL 数据库本身。在MySQL 数据库中还存在另外一种分布式事务，其在存储引擎与插件之间，又或者在存储引擎与存储引擎之间，称之为内部XA 事务**。
+
+​	最为常见的内部XA 事务存在于binlog 与lnnoDB 存储引擎之间。由于复制的需要，因此目前绝大多数的数据库都开启了binlog 功能。**在事务提交时，先写二进制日志，再写InnoDB 存储引擎的重做日志。对上述两个操作的要求也是原子的，即二进制日志和重做日志必须同时写入。若二进制日志先写了，而在写入InnoDB 存储引擎时发生了宕机，那么slave 可能会接收到master 传过去的二进制日志并执行，最终导致了主从不一致的情况**。如图7-23 所示。
+
+​	<u>在图7-23 中，如果执行完➀、➁后在步骤➂之前MySQL 数据库发生了宕机，则会发生主从不一致的情况。为了解决这个问题， MySQL 数据库在binlog 与InnoDB 存储引擎之间采用XA 事务。当事务提交时， InnoDB 存储引擎会先做一个PREPARE 操作，将事务的xid 写入，接着进行二进制日志的写入，如图7-24 所示。如果在InnoDB 存储引擎提交前， MySQL 数据库宕机了，那么MySQL 数据库在重启后会先检查准备的UXID 事务是否已经提交，若没有，则在存储引擎层再进行一次提交操作</u>。
+
+![img](https://img-blog.csdnimg.cn/20181104194333555.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+## 7.8 不好的事务习惯
+
+### 7.8.1 在循环中提交
+
+​	开发人员非常喜欢在循环中进行事务的提交，下面是他们可能常写的一个存储过程：
+
+```sql
+CREATE PROCEDURE load1(count INT UNSIGNED)
+BEGIN
+DECLARE s INT UNSIGNED DEFAULT 1;
+DECLARE c CHAR(80) DEFAULT REPEAT('a',80);
+WHILE s <= count DO
+INSERT INTO tl SELECT NULL, c;
+COMMIT;
+SET s = s+l;
+END WHILE;
+END;
+```
+
+​	<u>其实，在上述的例子中，是否加上提交命令COMMIT 并不关键。因为lnnoDB 存储引擎默认为自动提交，所以在上述的存储过程中去掉COMMIT，结果其实是完全一样的</u>。这也是另一个容易被开发人员忽视的问题：
+
+```sql
+CREATE PROCEDURE load2(count INT UNSIGNED)
+BEGIN
+DECLARE s INT UNSIGNED DEFAULT l;
+DECLARE c CHAR(80) DEFAULT REPEAT('a',80);
+WHILE s <= count DO
+INSERT INTO tl SELECT NULL,c;
+SET s = s+l;
+END WHILE;
+END;
+```
+
+​	不论上面哪个存储过程都存在一个问题，当发生错误时，数据库会停留在一个未知的位置。例如，用户需要插入10 000 条记录，但是在插入5000 条时，发生了错误，这时前5000 条记录已经存放在数据库中，那应该怎么处理呢？另一个问题是性能问题，上面两个存储过程都不会比下面的存储过程load3 快，因为下<u>面的存储过程将所有的INSERT 都放在一个事务中</u>：
+
+```sql
+CREATE PROCEDURE load3{count INT UNSIGNED)
+BEGIN
+DECLARE s INT UNSIGNED DEFAULT l;
+DECLARE c CHAR (80) DEFAULT REPEAT {'a', 80);
+START TRANSACTION;
+WHILE s <= count DO
+INSERT INTO tl SELECT NULL, c;
+SET s = s+l;
+END WHILE;
+COMMIT;
+END;
+```
+
+​	比较这3 个存储过程的执行时间：
+
+```sql
+mysql> CALL loadl(lOOOO);
+Query OK, O rows affected (1 min 3.15 sec)
+
+mysql> TRUNCATE TABLE tl;
+Query OK, 0 rows affected (0.05 sec)
+
+mysql> CALL load2(10000);
+Query OK, 1 row affected (1 min 1.69 sec)
+
+mysql> TRUNCATE TABLE tl;
+Query OK, 0 rows affected (0.05 sec)
+
+mysql> CALL load3(10000);
+Query OK, 0 rows affected (0.63 sec)
+```
+
+​	显然，第三种方法要快得多！这是因为每一次提交都要写一次重做日志，存储过程load1和load2 实际写了10 000 次重做日志文件，而对千存储过程load3 来说，实际只写了1 次。可以对第二个存储过程load2 的调用进行调整，同样可以达到存储过程load3 的性能，如：
+
+```sql
+mysql> BEGIN;
+Query OK, O rows affected (0.00 sec)
+
+mysql> CALL load2(10000);
+Query OK, 1 row affected (0.56 sec)
+
+mysql> COMMIT;
+Query OK, 0 rows affected (0.03 sec)
+```
+
+​	大多数程序员会使用第一种或第二种方法，有人可能不知道InnoDB 存储引擎自动提交的情况，另外有些人可能持有以下两种观点：首先，在他们曾经使用过的数据库中，对事务的要求总是尽快地进行释放，不能有长时间的事务；其次，他们可能担心存在Oracle 数据库中由于没有足够undo 产生的Snapshot Too Old 的经典问题。**MySQL 的lnnoDB 存储引擎没有上述两个问题，因此程序员不论从何种角度出发，都不应该在一个循环中反复进行提交操作，不论是显式的提交还是隐式的提交**。
+
+### 7.8.2 使用自动提交
+
+​	**自动提交并不是一个好的习惯**，因为这会使初级DBA 容易犯错，另外还可能使一些开发人员产生错误的理解，如我们在前一小节中提到的循环提交问题。MySQL数据库默认设置使用自动提交(autocommit) ，可以使用如下语句来改变当前自动提交的方式：
+
+```shell
+mysql> SET autocommit=0;
+Query OK, 0 rows affected (0.00 sec)
+```
+
+​	也可以使用`START TRANSACTION`，`BEGIN`来显式地开启一个事务。在显式开启事务后，在默认设置下（即参数`completion_type`等于0)，MySQL 会自动地执行`SET AUTOCOMMIT=0`的命令，并在`COMMIT`或`ROLLBACK`结束一个事务后执行`SET AUTOCOMMIT=1`。
+
+​	**另外，对于不同语言的API，自动提交是不同的**。MySQL C API 默认的提交方式是自动提交，而MySQL Python API 则会自动执行`SET AUTOCOMMIT=0`，以禁用自动提交。因此在选用不同的语言来编写数据库应用程序前，应该对连接MySQL 的API 做好研究。
+
+​	我认为，在编写应用程序开发时，最好把事务的控制权限交给开发人员，即在程序端进行事务的开始和结束。同时，开发人员必须了解自动提交可能带来的问题。我曾经见过很多开发人员没有意识到自动提交这个特性，等到出现错误时应用就会遇到大麻烦。
+
+### 7.8.3 使用自动回滚
+
+​	**InnoDB 存储引擎支持通过定义一个HANDLER 来进行自动事务的回滚操作，如在一个存储过程中发生了错误会自动对其进行回滚操作**。因此我发现很多开发人员喜欢在应用程序的存储过程中使用自动回滚操作，例如下面所示的一个存储过程：
+
+```sql
+CREATE PROCEDURE sp_auto_rollback_demo()
+BEGIN
+DECLARE EXIT HANDLER FOR SQLEXCEPTION ROLLBACK;
+START TRANSACTION;
+INSERT INTO b SELECT 1;
+INSERT INTO b SELECT 2;
+INSERT INTO b SELECT 1;
+INSERT INTO b SELECT 3;
+COMMIT;
+END;
+```
+
+​	存储过程sp_auto_rollback_demo首先定义了一个exit 类型的HANDLER，当捕获到错误时进行回滚。结构如下：
+
+```shell
+mysql>SHOW CREATE TABLE b\G;
+*************************** 1. row ******************************
+Table: b
+Create Table: CREATE TABLE'b' (
+'a'int(ll) NOT NULL DEFAULT'0',
+PRIMARY KEY ('a')
+) ENGINE=InnoDB DEFAULT CHARSET=latinl
+1 row.in set (0. 00 sec)
+```
+
+​	因此插入第二个记录1 时会发生错误，但是因为启用了自动回滚的操作，因此这个存储过程的执行结果如下：
+
+```sql
+mysql>CALL sp_auto_rollback_demo;
+Query OK, 0 rows affected (0.06 sec)
+
+mysql>SELECT * FROM b;
+Empty set (0.00 sec)
+```
+
+​	看起来运行没有问题，非常正常。但是，执行sp_auto_rollback_demo这个存储过程的结果到底是正确的还是错误的？对于同样的存储过程sp_auto_rollback_demo，为了得到执行正确与否的结果，开发人员可能会进行这样的处理：
+
+```sql
+CREATE PROCEDURE sp_auto_rollback_demo ()
+BEGIN
+DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; SELECT -1; END;
+START TRANSACTION;
+INSERT INTO b SELECT 1;
+INSERT INTO b SELECT 2;
+INSERT INTO b SELECT 1;
+INSERT INTO b SELECT 3;
+COMMIT;
+SELECT 1;
+END;
+```
+
+​	当发生错误时，先回滚然后返回-1，表示运行有错误。运行正常返回值1 。因此这次运行的结果就会变成：
+
+```shell
+mysql>CALL sp_auto_rollback_demo (l\G;
+*********************** 1. row***************************
+-1: -1
+1 row in set (0.04 sec)
+
+mysql>SELECT * FROM b;
+Empty set (0.00 sec)
+```
+
+​	看起来用户可以得到运行是否准确的信息。但问题还没有最终解决，对于开发人员来说，重要的不仅是知道发生了错误，而是发生了什么样的错误。因此自动回滚存在这样的一个问题。
+
+​	习惯使用自动回滚的人大多是以前使用Microsoft SQL Server 数据库的开发人员。在Microsoft SQL Server 数据库中，可以使用SET XABORT ON 来自动回滚一个事务。但是Microsoft SQL Server 数据库不仅会自动回滚当前的事务，还会抛出异常，开发人员可以捕获到这个异常。因此，Microsoft SQL Server 数据库和MySQL数据库在这方面是有所不同的。
+
+​	就像之前小节中所讲到的，**<u>对事务的BEGIN 、COMMIT 和ROLLBACK 操作应该交给程序端来完成，存储过程需要完成的只是一个逻辑的操作，即对逻辑进行封装</u>**。下面演示用Python 语言编写的程序调用一个存储过程`sp_rollback_demo`，这里的存储过程`sp_rollback_demo`和之前的存储过程`sp_auto_rollback_demo`在逻辑上完成的内容大致相同：
+
+```sql
+CREATE PROCEDURE sp_rollback_demo ()
+BEGIN
+INSERT INTO b SELECT l;
+INSERT INTO b SELECT 2;
+INSERT INTO b SELECT 1;
+INSERT INTO b SELECT 3;
+END;
+```
+
+​	和sp_auto_rollback_demo 存储过程不同的是，在sp_rollback_demo 存储过程中去掉了对于事务的控制语句，将这些操作都交由程序来完成。接着来看test_demo.py 的程序源代码：
+
+```python
+#！/usr/bin/env python
+#encoding=<utf-8
+
+import MySQLdb
+try:
+  conn=MySQLdb.connect(host="l92.168.8.7",user="root",passwd="xx",db="test")
+  cur=conn.cursor()
+  cur.execute("SET autocommit=O")
+  cur.execute("CALL sp_rollback_demo")
+  cur.execute("COMMIT")
+  except: Exception,e:
+    cur.execute("ROLLBACK")
+    print e
+```
+
+​	观察运行test_demo.py 这个程序的结果：
+
+```shell
+[root@nineyou0-43 ~]# python test_demo.py
+starting rollback
+(1062, "Duplicate entry'l'for key'PRIMARY'")
+```
+
+​	在程序中控制事务的好处是，用户可以得知发生错误的原因。如在上述这个例子中，我们知道是因为发生了1062 这个错误，错误的提示内容是Duplicate entry '1' for key 'PRIMARY' ，即发生了主键重复的错误。然后可以根据发生的原因来进一步调试程序。
+
+## 7.9 长事务
+
+​	长事务(Long-Lived Transactions) ，顾名思义，就是执行时间较长的事务。比如，对于银行系统的数据库，每过一个阶段可能需要更新对应账户的利息。如果对应账号的数批非常大，例如对有1亿用户的表account，需要执行下列语句：
+
+```sql
+UPDATE account
+SET account_total = account_total + (1 + interest_rate)
+```
+
+​	这时这个事务可能需要非常长的时间来完成。可能需要1个小时，也可能需要4 、5个小时，这取决于数据库的硬件配置。DBA 和开发人员本身能做的事情非常少。然而，由于事务ACID 的特性，这个操作被封装在一个事务中完成。这就产生了一个问题，在执行过程中，当数据库或操作系统、硬件等发生问题时，重新开始事务的代价变得不可接受。数据库需要回滚所有巳经发生的变化，而这个过程可能比产生这些变化的时间还要长。因此，**对于长事务的问题，有时可以通过转化为小批量(mini batch) 的事务来进行处理。当事务发生错误时，只需要回滚一部分数据，然后接着上次已完成的事务继续进行**。
+
+​	例如，对于前面讨论的银行利息计算问题，我们可以通过分解为小批量事务来完成。例如将一个需要处理1亿用户的大事务分解为每次处理10 万用户的小事务，通过批量处理小事务来完成大事务的逻辑。每完成一个小事务，将完成的结果存放在batchcontext 表中，表示已完成批量事务的最大账号ID 。若事务在运行过程中产生问题，需要重做事务，可以从这个已完成的最大事务ID 继续进行批量的小事务，这样重新开启事务的代价就显得比较低，也更容易让用户接受。batchcontext 表的另外一个好处是，在长事务的执行过程中，用户可以知道现在大概已经执行到了哪个阶段。比如一共有1亿条的记录，现在表batchcontext 中最大的账号ID 为4000 万，也就是说这个大事务大概完成了40％的工作。
+
+​	这里还有一个小地方需要注意，<u>在从表account 中取得max_account_no 时，人为地加上了一个**共享锁**，以保证在事务的处理过程中，没有其他的事务可以来更新表中的数据，这是有意义的，并且也是非常有必要的操作</u>。
+
+## 7.10 小结
+
+​	在这一章中我们了解了InnoDB 存储引擎管理事务的许多方面。了解了事务如何工作以及如何使用事务，这在任何数据库中对于正确实现应用都是必要的。此外，事务是数据库区别于文件系统的一个关键特性。
+
+​	事务必须遵循ACID 特性，即Atomicity（原子性）、Consistency（一致性）、Isolation（隔离性）和Durability（持久性）。
+
++ **隔离性通过第6章介绍过的锁来完成**；
++ **原子性、一致性、隔离性通过redo 和undo 来完成**。
+
+​	通过对redo 和undo 的了解，可以进一步明白事务的工作原理以及如何更好地使用事务。接着我们讲到了InnoDB 存储引擎支持的四个事务隔离级别，知道了InnoDB 存储引擎的默认事务隔离级别是REPEATABLE READ的，不同于SQL 标准对于事务隔离级别的要求， <u>InnoDB 存储引擎在REPEATABLE READ 隔离级别下就可以达到3°的隔离要求</u>。
+
+​	本章最后讲解了操作事务的SQL 语句以及怎样在应用程序中正确使用事务。**在默认配置下， MySQL 数据库总是自动提交的一一如果不知道这点，可能会带来非常不好的结果**。<u>此外，在应用程序中，最好的做法是把事务的START TRANSACTION 、COMMIT 、ROLLBACK 操作交给程序端来完成，而不是在存储过程内完成</u>。在完整了解了InnoDB 存储引擎事务机制后，相信你可以开发出一个很好的企业级MySQLlnnoDB 数据库应用了。
+
+# 8. 备份与恢复
+
+​	对于DBA 来说，数据库的备份与恢复是一项最基本的操作与工作。在意外情况下（如服务器宕机、磁盘损坏、RAID 卡损坏等）要保证数据不丢失，或者是最小程度地丢失，每个DBA 应该每时每刻关心所负责的数据库备份情况。
+
+​	本章主要介绍对lnnoDB 存储引擎的备份，应该知道MySQL 数据库提供的大多数工具（如mysqldump 、ibbackup 、replication) 都能很好地完成备份的工作，当然也可以通过第三方的一些工具来完成，如xtrabacup 、LVM 快照备份等。DBA 应该根据自己的业务要求，设计出损失最小、对千数据库影响最小的备份策略。
+
+## * 8.1 备份与恢复概述
+
+​	可以根据不同的类型来划分备份的方法。根据备份的方法不同可以将备份分为：
+
++ Hot Backup （热备）
+
+  Hot Backup 是指**数据库运行中**直接备份，对正在运行的数据库操作没有任何的影响。这种方式在MySQL 官方手册中称为Online Backup （在线备份）。
+
++ Cold Backup （冷备）
+
+  Cold Backup 是指备份操作是在**数据库停止**的情况下，这种备份最为简单，**一般只需要复制相关的数据库物理文件即可**。这种方式在MySQL 官方手册中称为Offline Backup （离线备份）。
+
++ Warm Backup （温备）
+
+  WarmBackup 备份同样是在**数据库运行中**进行的，但是会**对当前数据库的操作有所影响**，<u>如加一个全局读锁以保证备份数据的一致性</u>。
+
+​	按照备份后文件的内容，备份又可以分为：
+
++ 逻辑备份
+
+  在MySQL 数据库中，逻辑备份是指备份出的文件内容是可读的，一般是文本文件。**内容一般是由一条条SQL语句，或者是表内实际数据组成。如`mysqldump`和`SELECT * INTO OUTFILE` 的方法**。这类方法的好处是可以观察导出文件的内容，一般适用于数据库的升级、迁移等工作。但其缺点是恢复所需要的时间往往较长。
+
++ 裸文件备份
+
+  **裸文件备份是指复制数据库的物理文件**，既可以是在数据库运行中的复制（如ibbackup 、xtrabackup 这类工具），也可以是在数据库停止运行时直接的数据文件复制。这类备份的恢复时间往往较逻辑备份短很多。	
+
+​	若按照备份数据库的内容来分，备份又可以分为：
+
++ 完全备份
+
+  完全备份是指对数据库进行一个完整的备份。
+
++ 增量备份
+
+  增量备份是指<u>在上次完全备份的基础上</u>，对于更改的数据进行备份。
+
++ 日志备份
+
+  日志备份主要是指<u>对MySQL 数据库二进制日志的备份</u>，通过对一个完全备份进行二进制日志的重做(replay) 来完成数据库的point-in-time 的恢复工作。**MySQL 数据库复制(replication) 的原理就是异步实时地将二进制日志重做传送并应用到从(slave/standby) 数据库**。
+
+​	<u>对于MySQL 数据库来说，官方没有提供真正的增量备份的方法，大部分是通过二进制日志完成增量备份的工作。这种备份较之真正的增量备份来说，效率还是很低的</u>。假设有一个100GB 的数据库，要通过二进制日志完成备份，可能同一个页需要执行多次的SQL 语句完成重做的工作。但是<u>对于真正的增量备份来说，只需要记录当前每页最后的检查点的LSN，如果大于之前全备时的LSN，则备份该页，否则不用备份，这大大加快了备份的速度和恢复的时间</u>，同时这也是xtrabackup工具增量备份的原理。
+
+​	此外还需要理解数据库备份的一致性，这种备份要求在备份的时候数据在这一时间点上是一致的。举例来说，在一个网络游戏中有一个玩家购买了道具，这个事务的过程是：先扣除相应的金钱，然后向其装备表中插入道具，确保扣费和得到道具是互相一致的。否则，在恢复时，可能出现金钱被扣除了而装备丢失的问题。
+
+​	对于lnnoDB 存储引擎来说，因为其支持MVCC 功能，因此实现一致的备份比较简单。用户可以先开启一个事务，然后导出一组相关的表，最后提交。当然用户的事务隔离级别必须设置为REPEATABLE READ，这样的做法就可以给出一个完美的一致性备份。然而这个方法的前提是需要用户正确地设计应用程序。对于上述的购买道具的过程，不可以分为两个事务来完成，如一个完成扣费，一个完成道具的购买。若备份这时发生在这两者之间，则由于逻辑设计的问题，导致备份出的数据依然不是一致的。
+
+​	**对于mysqldump备份工具来说，可以通过添加`--single-transaction`选项获得InnoDB存储引擎的一致性备份**，原理和之前所说的相同。需要了解的是，这时的备份是在一个执行时间很长的事务中完成的。另外，对于lnnoDB 存储引擎的备份，务必加上`--single-transaction`的选项（虽然是mysqldump的一个可选选项，但是我找不出任何不加的理由）。
+
+​	同时我建议每个公司要根据自己的备份策略编写一个备份的应用程序，这个程序可以方便地设置备份的方法及监控备份的结果，并且通过第三方接口实时地通知DBA，这样才能真正地做到24X7的备份监控。久游网开发过一套DAO (Database Admin Online) 系统，这套系统完全由DBA开发完成，整个平台用Python语言编写， Web 操作界面采用Django 。通过这个系统DBA 可以方便地对几百台MySQL 数据库服务器进行备份，同时查看备份完成后备份文件的状态。之后DBA 又对其进行了扩展，不仅可以完成备份的工作，也可以实时监控数据库的状态、系统的状态和硬件的状态，当发生问题时，通过飞信接口在第一时间以短信的方式告知DBA 。
+
+​	最后，**任何时候都需要做好远程异地备份，也就是容灾的防范**。只是同一机房的两台服务器的备份是远远不够的。我曾经遇到的情况是，公司在2008 年的汶川地震中发生一个机房可能被淹的的情况，这时远程异地备份显得就至关重要了。
+
+## 8.2 冷备
+
+​	**对于InnoDB 存储引擎的冷备非常简单，只需要备份MySQL 数据库的frm文件，共享表空间文件，独立表空间文件(*.ibd) ，重做日志文件。另外建议定期备份MySQL 数据库的配置文件my.cnf，这样有利于恢复的操作**。
+
+​	通常DBA 会写一个脚本来进行冷备的操作， DBA 可能还会对备份完的数据库进行打包和压缩，这都并不是难事。关键在于不要遗漏原本需要备份的物理文件，如共享表空间和重做日志文件，少了这些文件可能数据库都无法启动。**另外一种经常发生的情况是由于磁盘空间已满而导致的备份失败**， DBA 可能习惯性地认为运行脚本的备份是没有问题的，少了检验的机制。
+
+​	正如前面所说的，在同一台机器上对数据库进行冷备是远远不够的，至少还需要将本地产生的备份存放到一台远程的服务器中，确保不会因为本地数据库的的宕机而影响备份文件的使用。
+
+冷备的优点是：
+
++ 备份简单，只要复制相关文件即可。
+
++ 备份文件易于在不同操作系统，不同MySQL 版本上进行恢复。
+
++ 恢复相当简单，只需要把文件恢复到指定位置即可。
+
++ 恢复速度快，不需要执行任何SQL 语句，也不需要重建索引。
+
+冷备的缺点是：
+
++ InnoDB 存储引擎**冷备的文件通常比逻辑文件大很多**，因为表空间中存放着很多其他的数据，如undo 段，插入缓冲等信息。
+
++ **冷备也不总是可以轻易地跨平台。操作系统、MySQL 的版本、文件大小写敏感和浮点数格式都会成为问题**。
+
+## 8.3 逻辑备份
+
+### 8.3.1 mysqldump
+
+​	mysqldump备份工具最初由Igor Romanenko编写完成，通常用来完成转存(dump)数据库的备份及不同数据库之间的移植，如从MySQL 低版本数据库升级到MySQL 高版本数据库，又或者从MySQL数据库移植到Oracle 、Microsoft SQL Server数据库等。
+
+​	mysqldump的语法如下：
+
+```bash
+mysqldump [arguments] >file_name
+```
+
+​	如果想要备份所有的数据库，可以使用`--all-databases`选项：
+
+```bash
+mysqldump --all-databases >dump.sql
+```
+
+​	如果想要备份指定的数据库，可以使用`--databases`选项：
+
+```bash
+mysqldump --databases db1 db2 db3 >dump.sql
+```
+
+​	如果想要对test这个架构进行备份，可以使用如下语句：
+
+```bash
+mysqldump --single-transaction test >test_backup.sql
+```
+
+​	上述操作产生了一个对test架构的备份，使用`--single-transaction`选项来保证备的一致性。备份出的 test_backup.sql是文本文件，通过文本查看命令cat就可以得到文件的内容。
+
+​	备份出的文件内容就是表结构和数据，所有这些都是用SQL语句方式表示。文件开始和结束的注释部分是用来设置MySQL 数据库的各项参数，一般用来使还原工作更有效和准确地进行。之后的部分先是CREATE TABLE语句，接着就是INSERT的SQL语句了。
+
+​	mysqldump的参数选项很多，可以通过使用`mysqldump --help`命令来查看所有的参数，有些参数有缩写形式，如`--lock-tables`的缩写形式-l。这里列举一些比较重要的参数。
+
++ `--single-transaction`：在备份开始前，先执行START TRANSACTION命令，以此来获得备份的一致性，当前该参数只对 InnoDB存储引擎有效。<u>当启用该参数并进行备份时，确保没有其他任何的DDL语句执行，因为一致性读并不能隔离DDL操作</u>。
++ `--lock-tables(-l)`：在备份中，依次锁住**每个架构**下的所有表。一般用于 MyISAM存储引擎，<u>当备份时只能对数据库进行读取操作</u>，不过备份依然可以保证一致性。对于 InnoDB存储引擎，不需要使用该参数，用`-- single-transaction`即可。<u>并且`--lock-tables`和`--single-transaction`是互斥(exclusive)的，不能同时使用</u>。如果用户的 MySQL数据库中，既有 MyISAM存储引擎的表，又有 InnoDB存储引擎的表，那么这时用户的选择只有`--lock-tables`了。此外，正如前面所说的那样，`--lock-tables`选项是依次对每个架构中的表上锁的，因此**只能保证每个架构下表备份的一致性，而不能保证所有架构下表的一致性**。
++ `--lock-all-tables(-x)`：备份过程中，对**所有架构**中的所有表上锁。这个可以避免之前说的`--lock-tables`参数不能同时锁住所有表的问题。
++ `--add-drop-database`：在 CREATE DATABASE前先运行 DROP DATABASE。这个参数需要和`--all-databases`或者`--databases`选项一起使用。在默认情况下，导出的文本文件中并不会有CREATE DATABASE，除非指定了这个参数。
++ `--master-data[=value]`：通过该参数产生的备份转存文件主要用来建立一个replication。当value的值为1时，转存文件中记录CHANGE MASTER语句。当value的值为2时， CHANGE MASTER语句被写出SQL注释。在默认情况下，value的值为空。当 value值为1时，在备份文件中会看到:CHANGE MASTER TO MASTER_LOG_FILE='xen-server-bin.000006'，MASTER_LOG_POS=8095;当 value为2时，在备份文件中会看到 CHANGE MASTER语句被注释了。
++ `--master-data`：会自动忽略`--lock-tables`选项。如果没有使用`--single-transaction`选项，则会自动使用`--lock-all-tables`选项。
++ `--events(-E)`：备份事件调度器。
++ `--routines(-R)`：备份存储过程和函数。
++ `--triggers`：备份触发器。
++ `--hex-blob`：将 BINARY、VARBINARY、BLOG和BIT列类型备份为十六进制的格式。mysqldump导出的文件一般是文本文件，但是如果导出的数据中有上述这些类型,在文本文件模式下可能有些字符不可见，若添加`--hex-blob`选项，结果会以十六进制的方式显示。
++ `--tab=path(-T path)`：产生TAB分割的数据文件。对于每张表，mysqldump创建一个包含 CREATE TABLE语句的 table_name. sql文件，和包含数据的tbl_name. txt文件。可以使用`--fields-terminated-by=.…`，`--fields-enclosed-by=.…`，`--fields-optionally-enclosed-by=....`，`--fields-escaped-by=....`，`--lines-terminated-by=....`来改变默认的分割符、换行符等。
+
+​	大多数DBA 喜欢用SELECT…INTO OUTFILE 的方式来导出一张表，但是通过mysqldump 一样可以完成工作，而且可以一次完成多张表的导出，并且实现导出数据的一致性。
+
+- `--where='where_condition' (-W 'where_condition')`：导出给定条件的数据。
+
+### 8.3.2 SELECT...INTO OUTFILE
+
+​	SELECT... INTO 语句也是一种逻辑备份的方法，更准确地说是导出一张表中的数据。SELECT...INTO 的语法如下：
+
+![img](https://img-blog.csdnimg.cn/20181104215938832.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+​	其中FIELDS[TERMINATED BY 'string'] 表示每个列的分隔符，[[OPTIONALLY] ENCLOSED BY'char'］表示对于字符串的包含符，［ESCAPED BY 'char'］表示转义符。[STARTING BY 'string'] 表示每行的开始符号， TERMINATED BY 'string' 表示每行的结束符号。如果没有指定任何的FIELDS和LINES的选项，默认使用以下的设置：
+
+```shell
+FIELDS TERMINATED BY '\t' ENCLOSED BY''ESCAPED BY '\\'
+LINES TERMINATED BY '\n' STARTING BY''
+```
+
+​	file_name 表示导出的文件，但文件所在的路径的权限必须是mysql：mysql的，否则MySQL 会报没有权限导出：
+
+```shell
+mysql> select* into outfile'/root/a.txt'from a;
+ERROR 1 (HYOOO): Can't create/write to file'/root/a.txt'(Errcode: 13)
+```
+
+​	若已经存在该文件，则同样会报错：
+
+```shell
+[root@xen-server ~]# mysql test -e "select * into outfile '/home/mysql/a.txt'
+fields terminated by ',' from a";
+ERROR 1086 (HYOOO) at line 1: File '/home/mysql/a.txt' already exists
+```
+
+​	查看通过SELECT INTO 导出的表a 文件：
+
+```shell
+mysql> select * into outfile'/home/mysql/a.txt'from a;
+Query OK, 3 rows affected (0.02 sec)
+
+mysql> quit
+Bye
+[root@xen-server ~]# cat /home/mysql/a.txt
+1 a
+2 b
+3 C
+```
+
+​	可以发现，默认导出的文件是以TAB 进行列分割的，如果想要使用其他分割符，如“,＂，则可以使用FIELDS TERMINATED BY 'string' 选项，如：
+
+```shell
+[root@xen-server ~]# mysql test -e "select * into outfile'/home/mysql/a.txt'
+fields terminated by','from a";
+[root@xen-server ~]# cat /home/mysql/a.txt
+l,a
+2,b
+3,c
+```
+
+​	在Windows 平台下，由于换行符是"\r\n"，因此在导出时可能需要指定LINESTERMINATED BY 选项，如：
+
+```shell
+[root@xen-servermysql]# mysql test -e "select * into outfile'/home/mysql/a.txt'
+fields terminated by ',' lines terminated by'\r\n' from a";
+
+(root@xen-servermysql)# od -c a.txt
+0000000 l, a \r ＼n 2, b \r \n 3 c \r \n
+0000017
+```
+
+### 8.3.3 逻辑备份的恢复
+
+P375
+
