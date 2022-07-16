@@ -2513,5 +2513,414 @@ fields terminated by ',' lines terminated by'\r\n' from a";
 
 ### 8.3.3 逻辑备份的恢复
 
-P375
++ mysqldump备份的文件就是导出的SQL，但是不包含"视图"，需要用户自行导出视图的定义，或者备份视图定义的frm 文件，并在恢复时进行导入。
 
+---
+
+​	mysqldump 的恢复操作比较简单，因为<u>备份的文件就是导出的SQL 语句</u>，一般只需要执行这个文件就可以了，可以通过以下的方法：
+
+```shell
+[root@xen-server ~Ill mysql -uroot -p <test_backup.sql
+Enter password:
+```
+
+​	如果在导出时包含了创建和删除数据库的SQL 语句，那必须确保删除架构时，架构目录下没有其他与数据库相关的文件，否则可能会得到以下的错误：
+
+```shell
+mysql> drop database test;
+ERROR 1010 (HYOOO): Error dropping database (can't rmdir'./test', errno: 39)
+```
+
+​	因为逻辑备份的文件是由SQL 语句组成的，也可以通过SOURCE 命令来执行导出的逻辑备份文件，如下：
+
+```shell
+mysql> source /home/mysql/test_backup.sql;
+Query OK, O rows affected (0.00 sec)
+
+Query OK, 0 rows affected (0.00 sec)
+...
+Query OK, 0 rows affected (0.00 sec)
+Query OK, 0 rows affected (0.00 sec)
+```
+
+​	通过mysqldump 可以恢复数据库，但是经常发生的一个问题是， <u>mysqldump 可以导出存储过程、导出触发器、导出事件、导出数据，但是却**不能导出视图**</u>。因此，<u>如果用户的数据库中还使用了视图，那么在用mysqldump 备份完数据库后还需要导出视图的定义，或者备份视图定义的frm 文件，并在恢复时进行导入，这样才能保证mysqldump 数据库的完全恢复</u>。
+
+### 8.3.4 LOAD DATA INFILE
+
+​	若通过mysqldump-tab, 或者通过SELECT INTO OUTFILE 导出的数据需要恢复，这时可以通过命令LOAD DATA INFILE 来进行导入。LOAD DATA INFILE 的语法如下：
+
+```shell
+LOAD DATA INTO TABLE a IGNORE 1 LINES INFILE'/home/mysql/a.txt'
+[REPLACE | IGNORE]
+INTO TABLE tbl_name
+[CHARACTER SET charset_name]
+[{ FIELDS | COLUMNS}
+[TERMINATED BY 'string']
+[[OPTIONALLY) ENCLOSED BY 'char']
+[ESCAPED BY 'char']
+]
+[LINES
+[STARTING BY 'string']
+[TERMINATED BY 'string']
+]
+[IGNORE number LINES]
+[(col_name_or_user_var,...)]
+[SET col_ name= expr,...]
+```
+
+​	要对服务器文件使用LOAD DATA INFILE, 必须拥有FILE 权。其中对于导入格式的选项和之前介绍的SELECT INTO OUTFILE 命令完全一样。IGNORE number LINES选项可以忽略导入的前几行。下面显示一个用LOAD DATA INFILE 命令导入文件的示例，并忽略第一行的导入：
+
+```shell
+mysql> load data infile'/home/mysql/a.txt'into table a;
+Query OK, 3 rows affected (0.00 sec)
+Records: 3 Deleted: 0 Skipped: 0 Warnings: 0
+```
+
+​	为了加快InnoDB 存储引擎的导入，可能希望导入过程忽略对外键的检查，因此可以使用如下方式：
+
+```shell
+mysql>SET @@foreign_key_checks=0;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql>LOAD DATA INFILE '/home/mysql/a.txt' INTO TABLE a;
+Query OK, 4 rows affected (0.00 sec)
+Records: 4 Deleted: 0 Skipped: 0 Warnings: 0
+
+mysql>SET @@foreign_key_checks=l;
+Query OK, 0 rows affected (0.00 sec)
+```
+
+​	另外可以针对指定的列进行导入，如将数据导入列a 、b, 而c 列等于a 、b 列之和：
+
+```sql
+mysql>CREATE TABLE b (
+	->a INT,
+	->b INT,
+	->c INT,
+  -> PRIMARY KEY(a)
+	->)ENGINE=InnoDB;
+Query OK, O rows affected (0.01 sec)
+
+mysql>LOAD DATA INFILE'/home/mysql/a.txt'
+	->INTO TABLE b FIELDS TERMINATED BY ','(a,b)
+	-> SET c=a+b;
+Query OK, 4 rows affected (0.01 sec)
+Records: 4 Deleted: 0 Skipped: 0 Warnings: 0
+
+mysql>SELECT * FROM b;
+十一一一十一一一一一一十一一一一一一十
+I a 	 I b         I c
+＋－－－＋－－－－－－＋－－－－一一十
+I 1    I 2         I 3        I
+I 2    I 3         I 5        I
+I 4    I 5         I 9        I
+I 5    I 6         I 11       I
++---+------+------+
+4 rows in set (0.00 sec)
+```
+
+### 8.3.5 mysqlimport
+
+​	mysqlimport 是MySQL 数据库提供的一个命令行程序，从本质上来说，是LOAD DATA INFILE 的命令接口，而且大多数的选项都和LOAD DATA INFILE 语法相同。其语法格式如下：
+
+```shell
+shell>mysqlimport [options] db_name textfilel [textfile2... ]
+```
+
+​	<u>和LOAD DATA INFILE 不同的是， mysqlimport 命令可以用来导入多张表</u>。并且通过`--user-thread`参数并发地导入不同的文件。**这里的并发是指并发导入多个文件，而不是指mysqlimport 可以并发地导入一个文件，这是有明显区别的**。此外，**<u>通常来说并发地对同一张表进行导入，其效果一般都不会比串行的方式好</u>**。下面通过mysqlimport 并发地导入2 张表：
+
+```shell
+[root@xen-servermysql] # mysqlimport --use-threads=2 test /home/mysql/t.txt /home/mysql/s.txt
+test.s: Records: 5000000 Deleted: 0 Skipped: 0 Warnings: 0
+test.t: Records: 5000000 Deleted: 0 Skipped: 0 Warnings: 0
+```
+
+​	如果在上述命令的运行过程中，查看MySQL 的数据库线程列表，应该可以看到类似如下内容：
+
+```shell
+mysql>SHOW FULL PROCESSLIST\G;
+*************************** 1. row ***************************
+Id: 46
+User: rep
+Host: www.dao.com:1028
+db: NULL
+Command: Binlog Dump
+Time: 37651
+State: Master has sent all binlog to slave; waiting for binlog to be updated
+Info: NULL
+*************************** 2. row ***************************
+Id: 77
+User: root
+Host: localhost
+db: test
+Command: Query
+Time: 0
+State: NULL
+Info: show full processlist
+*************************** 3. row ***************************
+Id: 83
+User: root
+Host: localhost
+db: test
+Command: Query
+Time: 73
+State: NULL
+Info: LOAD DATA INFILE '/home/mysql/t.txt' INTO TABLE 't' IGNORE LINES
+*************************** 4. row ***************************
+Id: 84
+User: root
+Host: localhost
+db: test
+Command: Query
+Time: 73
+State: NULL
+Info: LOAD DATA INFILE '/home/mysql/s.txt' INTO TABLE 's' IGNORE LINES
+4 rows in set (0.00 sec)
+```
+
+​	可以看到**mysqlimport 实际上是同时执行了两句LOAD DTA INFILE 并发地导入数据**。
+
+## 8.4 二进制日志备份与恢复
+
+​	**二进制日志非常关键，用户可以通过它完成point-in-time的恢复工作。MySQL 数据库的replication同样需要二进制日志**。<u>在默认情况下并不启用二进制日志，要使用二进制日志首先必须启用它</u>。如在配置文件中进行设置：
+
+```ini
+[mysqld]
+log-bin=mysql-bin
+```
+
+​	在3.2.4 节中已经阐述过，对于InnoDB存储引擎只简单启用二进制日志是不够的，还需要启用一些其他参数来保证最为安全和正确地记录二进制日志，因此对于InnoDB存储引擎，推荐的二进制日志的服务器配置应该是：
+
+```ini
+(mysqld]
+log-bin= mysql-bin
+sync_binlog = 1
+innodb_support_xa = 1
+```
+
+​	<u>在备份二进制日志文件前，可以通过FLUSH LOGS 命令来生成一个新的二进制日志文件，然后备份之前的二进制日志</u>。
+
+​	要恢复二进制日志也是非常简单的，通过mysqlbinlog 即可。mysqlbinlog 的使用方法如下：
+
+```shell
+shell>mysqlbinlog [options] log_file...
+```
+
+​	例如要还原binlog.0000001, 可以使用如下命令：
+
+```shell
+shell>mysqlbinlog binlog.0000001 | mysql-uroot -p test
+```
+
+​	**如果需要恢复多个二进制日志文件，最正确的做法应该是同时恢复多个二进制日志文件，而不是一个一个地恢复**，如：
+
+```shell
+shell>mysqlbinlog binlog.[0-10]* | mysql -u root -p test
+```
+
+​	也可以先通过mysqlbinlog 命令导出到一个文件，然后再通过SOURCE 命令来导入，这种做法的好处是可以对导出的文件进行修改后再导入，如：
+
+```shell
+shell>mysqlbinlog binlog.000001 > /tmp/statements.sql
+shell>mysqlbinlog binlog.000002 >> /tmp/statements.sql
+shell>mysql -u root -p -e "source /tmp/statements.sql"
+```
+
+​	`--start-position`和`--stop-position`选项可以用来指定从二进制日志的某个偏移量来进行恢复，这样可以跳过某些不正确的语句，如：
+
+```shell
+shell>mysqlbinlog--start-position=107856 binlog.0000001 | mysql-uroot -p test
+```
+
+​	`--start-datetime`和`--stop-datetime`选项可以用来指定从二进制日志的某个时间点来进行恢复，用法和`--start-position`和`--stop-position`选项基本相同。
+
+## 8.5 热备
+
+### 8.5.1 ibbackup
+
+​	ibbackup是lnnoDB存储引擎官方提供的热备工具，可以同时备份MylSAM存储引擎和InnoDB存储引擎表。对于InnoDB 存储引擎表其备份工作原理如下：
+
+1. 记录备份开始时， InnoDB存储引擎重做日志文件检查点的LSN。
+
+2) 复制共享表空间文件以及独立表空间文件。
+
+3) 记录复制完表空间文件后， lnnoDB 存储引擎重做日志文件检查点的LSN 。
+
+4) 复制在备份时产生的重做日志。
+
+​	对于事务的数据库，如Microsoft SQL Server 数据库和Oracle 数据库，热备的原理大致和上述相同。可以发现，**在备份期间不会对数据库本身有任何影响，所做的操作只是复制数据库文件，因此任何对数据库的操作都是允许的，不会阻塞任何操作**。故ibbackup 的优点如下：
+
++ 在线备份，不阻塞任何的SQL 语句。
+
++ 备份性能好，**备份的实质是复制数据库文件和重做日志文件**。
+
++ 支持压缩备份，通过选项，可以支持不同级别的压缩。
+
++ 跨平台支持， ibbackup 可以运行在Linux 、Windows 以及主流的UNIX 系统平台上。
+
+​	ibbackup 对InnoDB 存储引擎表的恢复步骤为：
+
++ 恢复表空间文件。
+
++ 应用重做日志文件。
+
+​	ibbackup 提供了一种高性能的热备方式，是InnoDB 存储引擎备份的首选方式。不过它是收费软件，并非免费的软件。好在开源的魅力就在千社区的力最， Percona 公司给用户带来了开源、免费的XtraBackup 热备工具，它实现所有ibbackup 的功能，并且扩展支持了真正的增量备份功能。因此，更好的选择是使用XtraBackup 来完成热备的工作。
+
+### 8.5.2 XtraBackup
+
+​	XtraBackup 备份工具是由Percona 公司开发的开源热备工具。支持MySQL5.0 以上的版本。XtraBackup 在GPLv2 开源下发布。
+
+### 8.5.3 XtraBackup 实现增量备份
+
+​	MySQL 数据库本身提供的工具并不支持真正的增量备份，更准确地说，二进制日志的恢复应该是point-in-time 的恢复而不是增量备份。而XtraBackup 工具支持对于InnoDB 存储引擎的增量备份，其工作原理如下：
+
+1. 首选完成一个全备，并记录下此时检查点的LSN。
+
+2) 在进行增量备份时，比较表空间中每个页的LSN 是否大于上次备份时的LSN，如果是，则备份该页，同时记录当前检查点的LSN。
+
+## * 8.6 快照备份
+
+​	**MySQL 数据库本身并不支持快照功能，因此快照备份是指通过文件系统支持的快照功能对数据库进行备份**。
+
+​	<u>备份的前提是将所有数据库文件放在同一文件分区中，然后对该分区进行快照操作</u>。支持快照功能的文件系统和设备包括FreeBSD 的UFS文件系统， Solaris 的ZFS 文件系统， GNU/Linux 的逻辑管理器(Logical VolumeManager, LVM) 等。这里以LVM 为例进行介绍， UFS 和ZFS 的快照实现大致和LVM 相似。
+
+​	LVM 是LINUX 系统下对磁盘分区进行管理的一种机制。LVM 在硬盘和分区之上建立一个逻辑层，来提高磁盘分区管理的灵活性。管理员可以通过LVM 系统轻松管理磁盘分区，例如，将若干个磁盘分区连接为一个整块的卷组(Volume Group) ，形成一个存储池。管理员可以在卷组上随意创建逻辑卷(Logical Volumes) ，并进一步在逻辑卷上创建文件系统。管理员通过LVM 可以方便地调整卷组的大小，并且可以对磁盘存储按照组的方式进行命名、管理和分配。简单地说，用户可以通过LVM由物理块设备（如硬盘等）创建物理卷，由一个或多个物理卷创建卷组，最后从卷组中创建任意个逻辑卷（不超过卷组大小），如图8-1 所示。
+
+![img](https://img-blog.csdnimg.cn/20181104230017619.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+​	图8-2 显示了由多块磁盘组成的逻辑卷LV0 。
+
+![img](https://img-blog.csdnimg.cn/20181104230123464.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+​	通过vgdisplay 命令查看系统中有哪些卷组，如：
+
+![img](https://img-blog.csdnimg.cn/20181104230247487.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+​	vgdisplay 命令的输出结果显示当前系统有一个rep 的卷组，大小为260.77GB, 该卷组访问权限是read/write 等。命令lvdisplay 可以用来查看当前系统中有哪些逻辑卷：
+
+![img](https://img-blog.csdnimg.cn/20181104230428712.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+![img](https://img-blog.csdnimg.cn/20181104230509350.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+![img](https://img-blog.csdnimg.cn/2018110423053292.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+​	可以看到，一共有3 个逻辑卷，都属于卷组rep, 每个逻辑卷的大小都是100GB 。/dev/rep/repdata 这个逻辑卷有两个只读快照，并且当前都是激活状态的。
+
+​	**LVM 使用了写时复制(Copy-on-write) 技术来创建快照**。当创建一个快照时，仅复制原始卷中数据的元数据(meta data) ，并不会有数据的物理操作，因此快照的创建过程是非常快的。当快照创建完成，原始卷上有写操作时，快照会跟踪原始卷块的改变，将要改变的数据在改变之前复制到快照预留的空间里，因此这个原理的实现叫做写时复制。而对于快照的读取操作，如果读取的数据块是创建数据来源卷快照后没有修改过的，那么会将读操作直接重定向到原始卷上，如果要读取的是已经修改过的块，则将读取保存在快照中该块在原始卷上改变之前的数据。因此，采用写时复制机制保证了读取快照时得到的数据与快照创建时一致。
+
+![img](https://img-blog.csdnimg.cn/20181104230945655.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+​	图8-3 显示了LVM 的快照读取，可见B 区块被修改了，因此历史数据放入了快照区域。读取快照数据时， A 、C 、D 块还是从原有卷中读取，而B 块就需要从快照读取了。
+
+​	命令lvcreate 可以用来创建一个快照，`--permission r` 表示创建的快照是只读的：
+
+![img](https://img-blog.csdnimg.cn/20181104231049571.png)
+
+​	在快照制作完成后可以用Ivdisplay 命令查看，输出中的COW-table size 字段表示该快照最大的空间大小， Allocated to snapshot 字段表示该快照目前空间的使用状况：
+
+![img](https://img-blog.csdnimg.cn/20181104231309996.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+​	可以看到，当前快照只使用0.04％的空间。快照在最初创建时总是很小，当数据来源卷的数据不断被修改时，这些数据库才会放入快照空间，这时快照的大小才会慢慢增大。
+
+​	<u>用LVM 快照备份InnoDB 存储引擎表相当简单，只要把与InnoDB 存储引擎相关的文件如共享表空间、独立表空间、重做日志文件等放在同一个逻辑卷中，然后对这个逻辑卷做快照备份即可</u>。
+
+​	**在对InnoDB 存储引擎文件做快照时，数据库无须关闭，即可以进行在线备份。虽然此时数据库中可能还有任务需要往磁盘上写数据，但这不会妨碍备份的正确性。因为InnoDB 存储引擎是事务安全的引擎，在下次恢复时，数据库会自动检查表空间中页的状态，并决定是否应用重做日志，恢复就好像数据库被意外重启了**。
+
+## 8.7 复制
+
+### * 8.7.1 复制的工作原理
+
+​	复制（replication）是MySQL 数据库提供的一种高可用高性能的解决方案，一般用来建立大型的应用。总体来说， replication 的工作原理分为以下3 个步骤：
+
+1. **主服务器(master) 把数据更改记录到二进制日志(binlog) 中。**
+
+2) **从服务器(slave) 把主服务器的二进制日志复制到自己的中继日志(relay log) 中。**
+
+3) **从服务器重做中继日志中的日志，把更改应用到自己的数据库上，以达到数据的最终一致性**。
+
+​	复制的工作原理并不复杂，其实就是一个完全备份加上二进制日志备份的还原。不同的是这个二进制日志的还原操作基本上实时在进行中。这里特别**<u>需要注意的是，复制不是完全实时地进行同步，而是异步实时。这中间存在主从服务器之间的执行延时，如果主服务器的压力很大，则可能导致主从服务器延时较大</u>**。复制的工作原理如图8-4 所示。
+
+![img](https://img-blog.csdnimg.cn/2020062908045784.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L0FpbHViYnk=,size_16,color_FFFFFF,t_70)
+
+​	图8-4 MySQL 数据库的复制工作原理
+
+​	从服务器有2 个线程，一个是I/O线程，负责读取主服务器的二进制日志，并将其保存为中继日志；另一个是SQL 线程，复制执行中继日志。MySQL4.0 版本之前，从服务器只有1 个线程，既负责读取二进制日志，又负责执行二进制日志中的SQL 语句。这种方式不符合高性能的要求，目前已淘汰。因此如果查看一个从服务器的状态，应该可以看到类似如下内容：
+
+![img](https://img-blog.csdnimg.cn/20181104232033981.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+![img](https://img-blog.csdnimg.cn/20181104232128322.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+​	可以看到ID 为1 的线程就是I/O 线程，目前的状态是等待主服务器发送二进制日ID 为2 的线程是SQL 线程，负责读取中继日志并执行。目前的状态是已读取所有的中继日志，等待中继日志被I/O线程更新。
+
+​	在replication 的主服务器上应该可以看到一个线程负责发送二进制日志，类似内容如下：
+
+![img](https://img-blog.csdnimg.cn/20181104232256639.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+​	之前已经说过MySQL 的复制是异步实时的，并非完全的主从同步。若用户要想得知当前的延迟，可以通过命令`SHOW SLAVE STATUS`和`SHOW MASTER STATUS`得知，如：
+
+![img](https://img-blog.csdnimg.cn/2018110423245454.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+​	通过`SHOW SLAVE STATUS`命令可以观察当前复制的运行状态，一些主要的变量如表8-1 所示。
+
+​	表8-1 SHOW SLAVE STATUS 的主要变量
+
+| 变量                  | 说明                                                         |
+| --------------------- | ------------------------------------------------------------ |
+| Slave_IO_State        | 显示当前IO线程的状态,上述状态显示的是等待主服务发送二进制日志 |
+| Master_Log_File       | 显示当前同步的主服务器的二进制日志,上述显示当前同步的是主服务器的mysql-bin.000007 |
+| Read_master_Log_Pos   | 显示当前同步到主服务器上二进制日志的偏移量位置,单位是字节。上述的示例显示当前同步到 mysql-bin000007的551671偏移量位置,即已经同步了mysql-bin000007这个二进制日志中529MB (555176471/10241024)的内容 |
+| Relay_Master_Log_File | 当前中继日志同步的二进制日志                                 |
+| Relay_Log_File        | 显示当前写入的中继日志                                       |
+| Relay_Log_Pos         | 显示当前执行到中继日志的偏移量位置                           |
+| Slave_IO_Running      | 从服务器中IO线程的运行状态,YES表示运行正常                   |
+| Slave_SQL_Running     | 从服务器中SQL线程的运行状态,YES表示运行正常                  |
+| Exec_master_Log_Pos   | 表示同步到主服务器的二进制日志偏移量的位置。(Read_Master_Log_Pos-Exec_Master_Log._Pos)可以表示当前SQL线程运行的延时,单位是字节。上述例子显示当前主从服务器是完全同步的 |
+
+​	命令SHOW MASTER STATUS 可以用来查看主服务器中二进制日志的状态，如：
+
+![img](https://img-blog.csdnimg.cn/20181104233459678.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+​	可以看到，当前二进制日志记录了偏移量606181078 的位置，该值减去这一时间点时从服务器上的`Read_Master_Log_Pos`，就可以得知I/O线程的延时。
+
+​	对于一个优秀的MySQL 数据库复制的监控，用户不应该仅仅监控从服务器上I/O线程和SQL 线程运行得是否正常，同时也应该监控从服务器和主服务器之间的延迟，确保从服务器上的数据库总是尽可能地接近于主服务器上数据库的状态。
+
+### 8.7.2 快照+复制的备份架构
+
+​	复制可以用来作为备份，但功能不仅限于备份，其主要功能如下：
+
++ 数据分布。由于MySQL 数据库提供的复制并不需要很大的带宽要求，因此可以在不同的数据中心之间实现数据的复制。
+
++ **读取的负载平衡**。通过建立多个从服务器，可将读取平均地分布到这些从服务器中，并且减少了主服务器的压力。一般通过DNS 的Round-Robin 和Linux 的LVS 功能都可以实现负载平衡。
++ 数据库备份。复制对备份很有帮助，但是从服务器不是备份，不能完全代替备份。
++ 高可用性和故障转移。通过复制建立的从服务器有助于故障转移，减少故障的停机时间和恢复时间。
+
+​	可见，复制的设计不是简简单单用来备份的，并且只是用复制来进行备份是远远不够的。假设当前应用采用了主从的复制架构，从服务器作为备份。这时，一个初级DBA执行了误操作，如`DROP DATABASE`或`DROP TABLE`，这时从服务器也跟着运行了。这时用户怎样从服务器进行恢复呢？
+
+​	因此，<u>一个比较好的方法是通过对从服务器上的数据库所在分区做快照，以此来避免误操作对复制造成影响。当发生主服务器上的误操作时，只需要将从服务器上的快照进行恢复，然后再根据二进制日志进行point-in-time 的恢复即可</u>。因此快照＋复制的备份架构如图8-5 所示。
+
+![img](https://img-blog.csdnimg.cn/2018110423405093.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3NoZW5jaGFvaGFvMTIzMjE=,size_16,color_FFFFFF,t_70)
+
+​	还有一些其他的方法来调整复制，比如采用延时复制，即间歇性地开启从服务器上的同步，保证大约一小时的延时。这的确也是一个方法，只是数据库在高峰和非高峰期间每小时产生的二进制日志量是不同的，用户很难精准地控制。另外，这种方法也不能完全起到对误操作的防范作用。
+
+​	此外，**<u>建议在从服务上启用read-only 选项，这样能保证从服务器上的数据仅与主服务器进行同步，避免其他线程修改数据</u>**。如：
+
+```ini
+[mysqld]
+read-only
+```
+
+​	在启用read-only 选项后，如果操作从服务器的用户没有SUPER 权限，则对从服务器进行任何的修改操作会抛出一个错误，如：
+
+```shell
+mysql>INSERT INTO z SELECT 2;
+ERROR 1290 (HY000): The MySQL server is running with the --read-only option so
+it cannot execute this statement
+```
+
+## 8.8 小结
+
+​	本章中介绍了不同的备份类型，并介绍了MySQL 数据库常用的一些备份方式。同时主要介绍了对于InnoDB 存储引擎表的备份。不管是mysqldump 还是xtrabackup 工具，都可以对InnoDB 存储引擎表进行很好的在线热备工作。最后，介绍了复制，通过快照和复制技术的结合，可以保证用户得到一个异步实时的在线MySQL 备份解决方案。
+
+# 9. 性能调优
+
+P396

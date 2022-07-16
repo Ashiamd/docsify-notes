@@ -3173,7 +3173,7 @@ name2 [type] [DEFAULT|MATERIALIZED|ALIAS expr],
 
 2. ORDER BY [必填]：排序键，用于指定在一个数据片段内，数据以何种标准排序。**默认情况下主键（PRIMARY KEY）与排序键相同**。排序键既可以是单个列字段，例如`ORDER BY CounterID`，也可以通过元组的形式使用多个列字段，例如`ORDER BY（CounterID,EventDate）`。当使用多个列字段排序时，以`ORDER BY（CounterID,EventDate）`为例，在单个数据片段内，数据首先会以CounterID排序，相同CounterID的数据再按EventDate排序。
 
-3. PRIMARY KEY [选填]：主键，顾名思义，声明后会依照主键字段生成一级索引，用于加速表查询。<u>默认情况下，主键与排序键(ORDER BY)相同，所以通常直接使用ORDER BY代为指定主键，无须刻意通过PRIMARY KEY声明。所以在一般情况下，在单个数据片段内，数据与一级索引以相同的规则升序排列</u>。**与其他数据库不同，MergeTree主键允许存在重复数据（ReplacingMergeTree可以去重）**。
+3. PRIMARY KEY [选填]：主键，顾名思义，声明后会依照主键字段生成一级索引，用于加速表查询。<u>默认情况下，主键与排序键(ORDER BY)相同，所以通常直接使用ORDER BY代为指定主键，无须刻意通过PRIMARY KEY声明。所以在一般情况下，在单个数据片段内，数据与一级索引以相同的规则升序排列</u>。**与其他数据库不同，MergeTree主键允许存在重复数据（ReplacingMergeTree可以去重，但只是分区内去重，分区之间不去重）**。
 
 4. SAMPLE BY [选填]：抽样表达式，用于声明数据以何种标准进行采样。如果使用了此配置项，那么在主键的配置中也需要声明同样的表达式，例如：
 
