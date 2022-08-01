@@ -326,7 +326,7 @@ INSERT INTO z SELECT 2, 0;
 INSERT INTO z SELECT 6,7;
 ```
 
-​	从上面的例子中可以看到， **<u>Gap Lock 的作用是为了阻止多个事务将记录插入到同一范围内，而这会导致Phantom Problem 问题的产生</u>**。例如在上面的例子中，会话A 中用户已经锁定了b=3 的记录。若此时没有Gap Lock 锁定(3, 6) ，那么用户可以插人索引b 列为3 的记录，这会导致会话A 中的用户再次执行同样查询时会返回不同的记录，即导致Phantom Problem 问题的产生。
+​	从上面的例子中可以看到， **<u>Gap Lock 的作用是为了阻止多个事务将记录插入到同一范围内，而这会导致Phantom Problem 问题的产生</u>**。例如在上面的例子中，会话A 中用户已经锁定了b=3 的记录。若此时没有Gap Lock 锁定(3, 6) ，那么用户可以插入索引b 列为3 的记录，这会导致会话A 中的用户再次执行同样查询时会返回不同的记录，即导致Phantom Problem 问题的产生。
 
 ​	用户可以通过以下两种方式来显式地关闭Gap Lock：
 
@@ -348,7 +348,9 @@ INSERT INTO z SELECT 2, 2;
 INSERT INTO z SELECT 2,0;
 ```
 
-​	**最后需再次提醒的是，对于唯一键值的锁定， <u>Next-Key Lock 降级为Record Lock仅存在于查询所有的唯一索引列</u>**。**若唯一索引由多个列组成，而查询仅是查找多个唯一索引列中的其中一个，那么查询其实是range 类型查询，而不是point 类型查询，故lnnoDB 存储引擎依然使用Next-Key Lock 进行锁定**。
+​	**最后需再次提醒的是，对于唯一键值的锁定， <u>Next-Key Lock 降级为Record Lock仅存在于查询所有的唯一索引列</u>**。
+
+​	**<u>若唯一索引由多个列组成，而查询仅是查找多个唯一索引列中的其中一个，那么查询其实是range 类型查询，而不是point 类型查询，故lnnoDB 存储引擎依然使用Next-Key Lock 进行锁定</u>**。
 
 ### * 6.4.2 解决Phantom Problem
 
@@ -1196,7 +1198,7 @@ $$
 
 + `INNODB_TRX_UNDO`数据字典表用来记录事务对应的undo log
 + 事务提交时，undo页不会直接销毁，根据前面介绍的undo页重用，下次再有事务需要向该rollback segment 申请undo 页时，可以直接使用该页
-+ delete 操作并不直接删除记录，而只是将记录标记为已删除，也就是将记录的delete flag 设置为1 。而**记录最终的删除是在purge 操作中完成的**
++ <u>delete 操作并不直接删除记录，而只是将记录标记为已删除，也就是将记录的delete flag 设置为1 。而**记录最终的删除是在purge 操作中完成的**</u>
 + **update操作**：
   + **非主键**的操作。只产生一个类型为TRX_UNDO_UPD_EXIST_REC的undo log
   +  **主键**的操作分两步完成。首先将原主键记录标记为己删除，因此需要产生一个类型为TRX_UNDO_DEL_MARK_REC 的undo log，之后插入一条新的记录，因此需要产生一个类型为TRX_UNDO_INSERT _REC 的undo log
