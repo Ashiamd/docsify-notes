@@ -1065,6 +1065,255 @@ consumer.subscribe("test.*");
 
 ​	自动提交虽然方便， 不过并没有为开发者留有余地来避免重复处理消息。
 
-### 4.6.2 提交当前偏移量
+### * 4.6.2 提交当前偏移量
 
-P78
+​	**大部分开发者通过控制偏移量提交时间来消除丢失消息的可能性，井在发生再均衡时减少重复消息的数量**。消费者API提供了另一种提交偏移量的方式， <u>开发者可以在必要的时候提交当前偏移盘，而不是基于时间间隔</u>。
+
+​	把auto.commit.offset 设为false，让应用程序决定何时提交偏移量。使用commitSync()提交偏移量最简单也最可靠。<u>这个API会提交由poll()方法返回的最新偏移量，提交成功后马上返回，如果提交失败就抛出异常</u>。
+
+​	要记住，commitSync()将会提交由poll()返回的最新偏移量， 所以**在处理完所有记录后要确保调用了commitSync()，否则还是会有丢失消息的风险**。
+
+​	**如果发生了再均衡，从最近一批消息到发生再均衡之间的所有消息都将被重复处理**。
+
+​	下面是我们在处理完最近一批消息后使用commitSync()方怯提交偏移量的例子。
+
+```java
+while (true) {
+  ConsumerRecords<String, String> records = consumer.poll(100);
+  for (ConsumerRecord<String, String> record : records)
+  {
+    System.out.printf("topic = %s, partition = %s, offset =
+                      %d, customer = %s, country = %s\n",
+                      record.topic(), record.partition(),
+                      record.offset(), record.key(), record.value()); // 1
+  }
+  try {
+    consumer.commitSync(); // 2
+  } catch (CommitFailedException e) {
+    log.error("commit failed", e) // 3
+  }
+}
+```
+
+1. 我们假设把记录内容打印出来就算处理完毕，这个是由应用程序根据具体的使用场景来决定的。
+2. <u>处理完当前批次的消息，在轮询更多的消息之前， 调用commitSync()方法提交**当前**批次最新的偏移量</u>。
+3. **只要没有发生不可恢复的错误，commitSync()方法会一直尝试直至提交成功**。如果提交失败， 我们也只能把异常记录到错误日志里。
+
+### * 4.6.3 异步提交
+
+​	手动提交有一个不足之处，在broker对提交请求作出回应之前，应用程序会一直**阻塞**，这样会限制应用程序的吞吐量。我们可以通过降低提交频率来提升吞吐量，但如果发生了再均衡， 会增加重复消息的数量。
+
+​	这个时候可以使用异步提交API 。我们只管发送提交请求，无需等待broker的响应。
+
+```java
+while (true) {
+  ConsumerRecords<String, String> records = consumer.poll(100);
+  for (ConsumerRecord<String, String> record : records)
+  {
+    System.out.printf("topic = %s, partition = %s,
+                      offset = %d, customer = %s, country = %s\n",
+                      record.topic(), record.partition(), record.offset(),
+                      record.key(), record.value());
+  }
+  consumer.commitAsync(); // 1 提交最后一个偏移量，然后继续做其他事情。
+}
+```
+
+​	**在成功提交或碰到无怯恢复的错误之前，commitSync() 会一直重试，但是commitAsync()不会**，这也是commitAsync()不好的一个地方。**<u>它之所以不进行重试，是因为在它收到服务器响应的时候，可能有一个更大的偏移量已经提交成功</u>**。
+
+​	假设我们发出一个请求用于提交偏移量2000 ，这个时候发生了短暂的通信问题，服务器收不到请求，自然也不会作出任何响应。与此同时，我们处理了另外一批消息，并成功提交了偏移量3000 。如果commitAsync()重新尝试提交偏移量2000 ，它有可能在偏移量3000 之后提交成功。这个时候如果发生再均衡，就会出现重复消息。
+
+​	我们之所以提到这个问题的复杂性和提交顺序的重要性，是因为**commitAsync()也支持回调，在broker作出响应时会执行回调**。<u>回调经常被用于记录提交错误或生成度量指标， 不过如果你要用它来进行重试， 一定要注意提交的顺序</u>。
+
+```java
+while (true) {
+  ConsumerRecords<String, String> records = consumer.poll(100);
+  for (ConsumerRecord<String, String> record : records) {
+    System.out.printf("topic = %s, partition = %s,
+                      offset = %d, customer = %s, country = %s\n",
+                      record.topic(), record.partition(), record.offset(),
+                      record.key(), record.value());
+  }
+  consumer.commitAsync(new OffsetCommitCallback() {
+    public void onComplete(Map<TopicPartition,
+                           OffsetAndMetadata> offsets, Exception e) {
+      if (e != null)
+        log.error("Commit failed for offsets {}", offsets, e);
+    }
+  }); // 1 发送提交请求然后继续做其他事情，如果提交失败，错误信息和偏移量会被记录下来。
+}
+```
+
+> **重试异步提交**
+>
+> 我们可以使用一个单调递增的序列号来维护异步提交的顺序。在每次提交偏移量之后或在回调里提交偏移量时递增序列号。在进行重试前，先检查回调的序列号和即将提交的偏移量是否相等，如果相等，说明没有新的提交，那么可以安全地进行重试。如果序列号比较大，说明有一个新的提交已经发送出去了，应该停止重试。
+
+### * 4.6.4 同步和异步组合提交
+
+​	一般情况下，针对偶尔出现的提交失败，不进行重试不会有太大问题，因为如果提交失败是因为临时问题导致的，那么后续的提交总会有成功的<u>。但如果这是发生在关闭消费者或再均衡前的最后一次提交，就要确保能够提交成功</u>。
+
+​	**因此，在消费者关闭前一般会组合使用commitAsync()和commitSync()**。它们的工作原理如下（后面讲到再均衡监听器时，我们会讨论如何在发生再均衡前提交偏移量）：
+
+```java
+try {
+  while (true) {
+    ConsumerRecords<String, String> records = consumer.poll(100);
+    for (ConsumerRecord<String, String> record : records) {
+      System.out.println("topic = %s, partition = %s, offset = %d,
+                         customer = %s, country = %s\n",
+                         record.topic(), record.partition(),
+                         record.offset(), record.key(), record.value());
+    }
+    consumer.commitAsync(); // 1. 如果一切正常，我们使用commitAsync()方法来提交。这样速度更快，而且即使这次提交失败，下一次提交很可能会成功。
+  }
+} catch (Exception e) {
+  log.error("Unexpected error", e);
+} finally {
+  try {
+    consumer.commitSync(); // 2. 如果直接关闭消费者，就没有所谓的“下一次提交”了。使用commitSync()方法会一直重试，直到提交成功或发生无法恢复的错误。
+  } finally {
+    consumer.close();
+  }
+}
+```
+
+### 4.6.5 提交特定的偏移量
+
+​	**提交偏移量的频率与处理消息批次的频率是一样的**。
+
+​	如果poll()方法返回一大批数据，为了避免因再均衡引起的重复处理整批消息，想要在批次中间提交偏移量该怎么办？这种情况无法通过调用commitSync()或commitAsync()来实现，因为它们只会提交最后一个偏移量，而此时该批次里的消息还没有处理完。
+
+​	幸运的是，<u>消费者API允许在调用commitSync()和commitAsync()方法时传进去希望提交的分区和偏移量的map</u> 。假设你处理了半个批次的消息， 最后一个来自主题"customers"分区3 的消息的偏移量是5000 ， 你可以调用commitSync()方法来提交它。<u>不过，因为消费者可能不只读取一个分区， f尔需要跟踪所有分区的偏移量，所以在这个层面上控制偏移量的提交会让代码变复杂</u>。
+
+```java
+private Map<TopicPartition, OffsetAndMetadata> currentOffsets =
+  new HashMap<>(); // 1. 用于跟踪偏移量的map
+int count = 0;
+
+// ...
+
+while (true) {
+  ConsumerRecords<String, String> records = consumer.poll(100);
+  for (ConsumerRecord<String, String> record : records)
+  {
+    System.out.printf("topic = %s, partition = %s, offset = %d,
+                      customer = %s, country = %s\n",
+                      record.topic(), record.partition(), record.offset(),
+                      record.key(), record.value());
+    currentOffsets.put(new TopicPartition(record.topic(),
+                                          record.partition()), new
+                       OffsetAndMetadata(record.offset()+1, "no metadata")); // 2. 在读取每条记录之后，使用期望处理的下一个消息的偏移量更新map里的偏移量。下一次就从这里开始读取消息。
+    if (count % 1000 == 0) // 3. 每处理1000条记录就提交一次偏移量。在实际应用中，你可以根据时间或记录的内容进行提交。
+      consumer.commitAsync(currentOffsets,null); // 4. 调用commitSync()也是完全可以的。在提交特定偏移量时，仍然要处理可能发生的错误。
+    count++;
+  }
+}
+```
+
+## * 4.7 再均衡监听器
+
+​	在提交偏移量一节中提到过，消费者在退出和进行分区再均衡之前，会做一些清理工作。
+
+​	你会在消费者失去对一个分区的所有权之前提交最后一个已处理记录的偏移量。如果消费者准备了一个缓冲区用于处理偶发的事件，那么在失去分区所有权之前， 需要处理在缓冲区累积下来的记录。你可能还需要关闭文件句柄、数据库连接等。
+
+​	在为消费者分配新分区或移除旧分区时，可以通过消费者 API 执行一些应用程序代码，在调用 subscribe() 方法时传进去一个 ConsumerRebalanceListener 实例就可以了。 ConsumerRebalanceListener 有两个需要实现的方法。
+
+1. `public void onPartitionsRevoked(Collection<TopicPartitio> partitions)` 方法会<u>在再均衡开始之前和消费者停止读取消息之后被调用</u>。如果在这里提交偏移量，下一个接管分区的消费者就知道该从哪里开始读取了。
+2. `public void onPartitionsAssigned(Collection<TopicPartitio> partitions)` 方法会<u>在重新分配分区之后和消费者开始读取消息之前</u>被调用。
+
+​	下面的例子将演示如何<u>在失去分区所有权之前通过onPartitionsRevoked()方法来提交偏移量</u>。在下一节，我们会演示另一个同时使用了onPartitionsAssigned()方法的例子。
+
+```java
+private Map<TopicPartition, OffsetAndMetadata> currentOffsets=
+  new HashMap<>();
+
+private class HandleRebalance implements ConsumerRebalanceListener { // 1. 首先实现ConsumerRebalanceListener接口
+    public void onPartitionsAssigned(Collection<TopicPartition>
+      partitions) { // 2. 在获得新分区后开始读取消息，不需要做其他事情
+    }
+
+    public void onPartitionsRevoked(Collection<TopicPartition>
+      partitions) {
+        System.out.println("Lost partitions in rebalance.
+          Committing current
+        offsets:" + currentOffsets);
+        consumer.commitSync(currentOffsets); // 3. 如果发生再均衡，我们要在即将失去分区所有权时提交偏移量。要注意，提交的是最近处理过的偏移量，而不是批次中还在处理的最后一个偏移量。因为分区有可能在我们还在处理消息的时候被撤回。我们要提交所有分区的偏移量，而不只是那些即将失去所有权的分区的偏移量——因为提交的偏移量是已经处理过的，所以不会有什么问题。调用 commitSync() 方法，确保在再均衡发生之前提交偏移量
+    }
+}
+
+try {
+    consumer.subscribe(topics, new HandleRebalance()); // 4. 重要的一步
+
+    while (true) {
+        ConsumerRecords<String, String> records =
+          consumer.poll(100);
+        for (ConsumerRecord<String, String> record : records)
+        {
+            System.out.println("topic = %s, partition = %s, offset = %d,
+             customer = %s, country = %s\n",
+             record.topic(), record.partition(), record.offset(),
+             record.key(), record.value());
+             currentOffsets.put(new TopicPartition(record.topic(),
+             record.partition()), new
+             OffsetAndMetadata(record.offset()+1, "no metadata"));
+        }
+        consumer.commitAsync(currentOffsets, null);
+    }
+} catch (WakeupException e) {
+    // 忽略异常，正在关闭消费者
+} catch (Exception e) {
+    log.error("Unexpected error", e);
+} finally {
+    try {
+        consumer.commitSync(currentOffsets);
+    } finally {
+        consumer.close();
+        System.out.println("Closed consumer and we are done");
+    }
+}
+```
+
+## * 4.8 从特定偏移量处开始处理记录
+
+​	到目前为止，我们知道了如何使用 poll() 方法从各个分区的最新偏移量处开始处理消息。 不过，有时候我们也需要从特定的偏移量处开始读取消息。
+
+​	果你想从分区的起始位置开始读取消息，或者直接跳到分区的末尾开始读取消息， 可以使 用 `seekToBeginning(Collection<TopicPartition> tp)`和`seekToEnd(Collection<TopicPartition> tp)`这两个方法。
+
+​	<u>不过， Kafka也为我们提供了用于查找特定偏移量的 API。 它有很多用途，比如向后回退几个消息或者向前跳过几个消息(对时间比较敏感的应用程序在处理滞后的情况下希望能够向前跳过若干个消息)</u>。在使用 Kafka 以外的系统来存储偏移量时，它将给我们带来更大的惊喜。
+
+​	试想一下这样的场景：应用程序从 Kafka读取事件(可能是网站的用户点击事件流 )，对它们进行处理(可能是使用自动程序清理点击操作井添加会话信息)，然后把结果保存到数据库、 NoSQL 存储引擎或 Hadoop。假设我们真的不想丢失任何数据，也不想在数据库里多次保存相同的结果。
+
+​	这种情况下，消费者的代码可能是这样的 :
+
+```java
+while(true) {
+  ConsumerRecord<String, String> records = consumer.poll(100);
+  for(ConsumerRecord<String, String> record: records) {
+    currentOffsets.put(new TopicPartition(record.topic(), record.partition()),
+                       new OffsetAndMetadata(record.offset()+1);
+                       processRecord(record);
+                       storeRecordInDB(record);
+                       consumer.commitAsync(currentOffsets);
+  }
+}
+```
+
+​	<u>在这个例子里，每处理一条记录就提交一次偏移量。尽管如此， 在记录被保存到数据库之后以及偏移量被提交之前 ，应用程序仍然有可能发生崩溃，导致重复处理数据，数据库里就会出现重复记录</u>。
+
+​	如果保存记录和偏移量可以在一个原子操作里完成，就可以避免出现上述情况。记录和偏移量要么都被成功提交，要么都不提交。**如果记录是保存在数据库里而偏移量是提交到 Kafka 上，那么就无法实现原子操作**。
+
+​	不过 ，如果在同一个事务里把记录和偏移量都写到数据库里会怎样呢？那么我们就会知道记录和偏移量要么都成功提交，要么都没有，然后重新处理记录。
+
+​	现在的问题是：如果偏移量是保存在数据库里而不是 Kafka里，那么消费者在得到新分区 时怎么知道该从哪里开始读取？这个时候可以使用 seek() 方法。**在消费者启动或分配到新分区时 ，可以使用 seek()方法查找保存在数据库里的偏移量**。
+
+​	下面的例子大致说明了如何使用这个 API。 使用 ConsumerRebalancelistener和 seek() 方法确保我们是从数据库里保存的偏移量所指定的位置开始处理消息的。
+
+![img](https://cdnimg.copyfuture.com/imagesLocal/201906/06/2019060608364159144uls65hbjmzgvl_10.png)
+
+![img](https://cdnimg.copyfuture.com/imagesLocal/201906/06/2019060608364159144uls65hbjmzgvl_7.png)
+
+​	**通过把偏移量和记录保存到同一个外部系统来实现单次语义可以有很多种方式，不过它们都需要结合使用 ConsumerRebalancelistener和 seek() 方法来确保能够及时保存偏移量， 井保证消费者总是能够从正确的位置开始读取消息**。
+
+## 4.9 如何退出
+
+P85
