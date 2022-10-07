@@ -1056,6 +1056,29 @@ class Solution {
 }
 ```
 
+代码2（1ms，100%）：两边双指针，找平方后比较大的数字，往新数组的最右边存储。
+
+```java
+class Solution {
+  public int[] sortedSquares(int[] nums) {
+    int left = 0,right = nums.length -1,newNumsRight = right;
+    int[] newNums = new int[nums.length];
+    while(left <= right) {
+      int leftNum = nums[left] * nums[left];
+      int rightNum = nums[right] * nums[right];
+      if(rightNum >= leftNum) {
+        newNums[newNumsRight--] = rightNum;
+        --right;
+      } else {
+        newNums[newNumsRight--] = leftNum;
+        ++left;
+      }
+    }
+    return newNums;
+  }
+}
+```
+
 ### 52. N皇后 II
 
 >[52. N皇后 II](https://leetcode-cn.com/problems/n-queens-ii/)
@@ -1314,6 +1337,59 @@ class Solution {
   }
 }
 ```
+
+代码2（0ms，100%）：两个指针遍历两个字符串。两个字符串都先根据规则遇到'#'从后往前删除字符，直到某一个位置起是有效的字符时再进行比较。
+
+```java
+class Solution {
+  public boolean backspaceCompare(String s, String t) {
+    int i = s.length()-1, j = t.length()-1;
+    int sFlag = 0, tFlag = 0;
+    while(i>= 0 || j >= 0) {
+      //根据 # 消除 s的 字符
+      while(i>=0) {
+        if(s.charAt(i)== '#') {
+          --i;
+          ++sFlag;
+        } else if (sFlag > 0) {
+          --i;
+          --sFlag;
+        } else {
+          break;
+        }
+      } 
+      //根据 # 消除 t的 字符
+      while(j>=0) {
+        if(t.charAt(j)== '#') {
+          --j;
+          ++tFlag;
+        } else if (tFlag > 0) {
+          --j;
+          --tFlag;
+        } else {
+          break;
+        }
+      }
+      // 消除后，如果不相等，返回false.相等则 同时跳过一个字符
+      if(i>=0&&j>=0 ) {
+        if(s.charAt(i) != t.charAt(j)) {
+          return false;
+        }
+        --i;
+        --j;
+        continue;
+      }
+      // 如果 最后有一个没遍历完，说明还有剩余字符（比另一个字符串多字符）
+      if(i!=j){
+        return false;
+      }
+    }
+    return true;
+  }
+}
+```
+
+
 
 ### 143. 重排链表
 
@@ -3510,6 +3586,559 @@ class Solution {
       ++index;
     }
     return dp[n-1];
+  }
+}
+```
+
+### 670. 最大交换
+
+> [670. 最大交换 - 力扣（LeetCode）](https://leetcode.cn/problems/maximum-swap/)
+
+语言：java
+
+思路：许久没有做题了，脑子烂掉。
+
++ 最优情况即整个数字串就是从大到小排序好的，无需调换位置。例如9973
++ 坏一点的情况，例如9937，则是和最优情况差一点，<u>右边某部分存在不是 从大到小排序好的</u>，则需要调换。
+
+所以，先对原数字串从到小排序得到新数字串，然后左到右遍历新数字串，和原本数字串对比，找到第一个不一样的数字，这个数字需要被调换位置。接着为了让数字尽量大，从右边往左在原来的数字串中找到对应的数字，将这两个下标进行调换。
+
+代码（1ms，38.17%）
+
+```java
+class Solution {
+  public int maximumSwap(int num) {
+    char[] rawArray = String.valueOf(num).toCharArray();
+    char[] numberCharArray = String.valueOf(num).toCharArray();
+    Arrays.sort(numberCharArray);
+    int len = numberCharArray.length;
+    for (int i = 0; i < len - 1 - i; ++i) {
+      swap(numberCharArray, i, len - i - 1);
+    }
+    int left = 0, right = len - 1;
+    while (right > left) {
+      while (right > left && numberCharArray[left] == rawArray[left]) {
+        ++left;
+      }
+      while (right > left && rawArray[right] != numberCharArray[left]) {
+        --right;
+      }
+      if (right > left) {
+        swap(rawArray, left, right);
+        break;
+      }
+    }
+    int result = 0;
+    for (int i = 0; i < len; ++i) {
+      result *= 10;
+      result += rawArray[i] - '0';
+    }
+    return result;
+  }
+
+  public void swap(char[] arr, int i, int j) {
+    char tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+}
+```
+
+参考代码1（0ms，100%）：
+
+> [【爪哇缪斯】图解LeetCode - 最大交换 - 力扣（LeetCode）](https://leetcode.cn/problems/maximum-swap/solution/by-muse-77-hwnt/)
+
+```java
+class Solution {
+  public int maximumSwap(int num) {
+    char[] numArr = String.valueOf(num).toCharArray();        
+    int[] maxIndexs = new int[numArr.length];
+
+    int index = numArr.length - 1;
+    for (int i = numArr.length - 1; i >= 0; i--) {
+      if (numArr[i] > numArr[index]) index = i;
+      maxIndexs[i] = index;
+    }
+
+    for (int i = 0; i < numArr.length; i++) {
+      if (numArr[i] != numArr[maxIndexs[i]]) {
+        char temp = numArr[i];
+        numArr[i] = numArr[maxIndexs[i]];
+        numArr[maxIndexs[i]] = temp;
+        break;
+      }
+    }
+
+    return Integer.valueOf(new String(numArr));
+  }
+}
+```
+
+参考后重写：
+
+（1）什么情况需要调换位置 => 某下标 右边部分 存在数字比自己当前数字大 => 如何表示 某下标右边的值比自己大 => 试图用当前下标表示右边比自己大的数字
+
+（2）怎么调换位置最划算 => 同样是需要兑换位置的情况，左边的数字尽量靠近左边，右边的数字尽量靠近右边，且右边的数字尽量大
+
+（3）最后怎么调换位置
+
+解决（1）：`rightMaxIndex[i] = j` （i <= j），表示 i 右边 比自己大的最大值数字对应的下标j
+
+在（1）的前提下，思考（2），从右边往左遍历数字串，找到右边侧最大值，记录下标到rightMaxIndex[i]，并且下标只记录最大的下标值（即j尽量大）。
+
+在（1）、（2）下思考（3），当`数字串[rightMaxIndex[i]]!=数字串[i]`时，表示某下标对应的数字其右边存在比自己大的数字（其右边部分比自己大的数字中下标最大的下标值是j），对换i和j对应位置的数字，最好替换左边的数字，所以从左到右遍历，找到第一个符合这个情况的，然后对换位置
+
+```java
+class Solution {
+  public int maximumSwap(int num) {
+    char[] rawArray = String.valueOf(num).toCharArray();
+    int len = rawArray.length;
+    int[] rightMaxIndex = new int[len];
+    int max = -1;
+    for (int i = len - 1, maxIndex = i; i >= 0; --i) {
+      if (rawArray[i] > rawArray[maxIndex]) {
+        maxIndex = i;
+      }
+      rightMaxIndex[i] = maxIndex;
+    }
+    for (int i = 0; i < len; ++i) {
+      if (rawArray[i] != rawArray[rightMaxIndex[i]]) {
+        swap(rawArray, i, rightMaxIndex[i]);
+        break;
+      }
+    }
+    int result = 0;
+    for (int i = 0; i < len; ++i) {
+      result *= 10;
+      result += rawArray[i] - '0';
+    }
+    return result;
+  }
+  // 2736 => 1133
+
+  public void swap(char[] arr, int i, int j) {
+    char tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+}
+```
+
+### 27. 移除元素
+
+语言：java
+
+思路：
+
+1. 最简单暴力的方法，就是一次for循环找到需要删除的数字，第二次for从后往前找不是要删除的数字，和预删除数字对换，然后整理len-1。如果从后往前都是要删除的数字，则只需要len-1。
+2. 双指针法(学习)：一个指针用于寻找非删除的值，一个指针用于存储非删除的值。即把指针1找到的不用删除的数据，放到指针2所在位置中（指针2相当于一个新数组，只不过空间刚好和原来数组重叠）。
+
+代码1（0ms，100%）：
+
+```java
+class Solution {
+  public int removeElement(int[] nums, int val) {
+    int len = nums.length;
+    for(int i = 0; i < len; ++i) {
+      if(nums[i] == val) {
+        for(int j = len -1; j >= i ; --j) {
+          // 后面的数字不需要删除，则和前面要删除的数字对换
+          if(nums[j] != val) {
+            int tmp = nums[j];
+            nums[j] = nums[i];
+            nums[i] = tmp;
+            // 删除一个数字后，len-1
+            len = len - 1;
+            break;
+          } 
+          // 原本靠后的数字就==要删除的数字，所以直接len-1
+          len = len - 1;
+        }
+      }
+    }
+    return len;
+  }
+}
+```
+
+代码2（0ms，100%）：
+
+```java
+class Solution {
+  public int removeElement(int[] nums, int val) {
+    // i 用于寻找原数组中不用删除的元素，j用于存放不用删除的元素
+    int j = 0;
+    for(int i = 0,len = nums.length;i< len; ++ i) {
+      if(nums[i] != val) {
+        nums[j] = nums[i];
+        ++j;
+      }
+    }
+    return j;
+  }
+}
+```
+
+代码3，双向指针（0ms，100%）：目标是用两个指针，实现把删除的元素挪到右边。这里需要注意的是边界什么时候可以取=号。
+
++ 最外层while（left <=right）因为在[left,right]找数据，left可以=right
++ 中间left、right移动时，可取=号，因为[left，right]找数据
++ 只有left<right才有替换的必要。替换后，left和right当前位置无意义，可以继续挪动指针
+
+```java
+class Solution {
+  public int removeElement(int[] nums, int val) {
+    int len = nums.length;
+    int left = 0,right = len -1;
+    while(left <= right) {
+      // 左到右，寻找需要删除的数据
+      while(left <= right && nums[left] != val) {
+        ++left;
+      }
+      // 右到左，寻找可以保留的数据
+      while(right >= left && nums[right] == val) {
+        --right;
+      }
+      if(left < right) {
+        nums[left++] = nums[right--];
+      }
+    } 
+    return left;
+  }
+}
+```
+
+### 26. 删除有序数组中的重复项
+
+语言：java
+
+思路：双指针，一个指针找不一样的数字，一个指针存储不重复的数字
+
+代码（0ms，100%）：
+
+```java
+class Solution {
+  public int removeDuplicates(int[] nums) {
+    // 题目说 至少1个数字，那么从j从nums[1]开始，用于记录不重复的数字，而i找不重复的数字，找到则存到j中
+    int j = 1;
+    for(int i =1,len = nums.length;i < len; ++i) {
+      if(nums[i] != nums[i-1]) {
+        nums[j++] = nums[i];
+      }
+    } // 223344
+    return j;
+  }
+}
+```
+
+参考代码1（0ms，100%）：进行了局部判断的优化
+
+> [【双指针】删除重复项-带优化思路 - 删除有序数组中的重复项 - 力扣（LeetCode）](https://leetcode.cn/problems/remove-duplicates-from-sorted-array/solution/shuang-zhi-zhen-shan-chu-zhong-fu-xiang-dai-you-hu/)
+>
+> 原题解p+1用于存储不重复的数字，如果完全没有数字重复，就会有多余的重复赋值的步骤。
+>
+> 而没有重复数字时，p和q只相差1，所以当p和q相差 > 1的时候才有必要显式赋值。
+
+```java
+public int removeDuplicates(int[] nums) {
+  if(nums == null || nums.length == 0) return 0;
+  int p = 0;
+  int q = 1;
+  while(q < nums.length){
+    if(nums[p] != nums[q]){
+      if(q - p > 1){
+        nums[p + 1] = nums[q];
+      }
+      p++;
+    }
+    q++;
+  }
+  return p + 1;
+}
+```
+
+### 283. 移动零
+
+语言：java
+
+思路：相当于类似把0删除，即挪到数组最后面。最后在把后面位置填充0
+
+代码（1ms，100%）：
+
+```java
+class Solution {
+  public void moveZeroes(int[] nums) {
+    int j =0,len = nums.length;
+    for(int i = 0;i< len ;++i) {
+      if(nums[i]!=0) {
+        nums[j++] = nums[i];
+      }
+    }
+    while(j<len) {
+      nums[j++] = 0;
+    }
+  }
+}
+```
+
+参考代码1： 
+
+> [动画演示 283.移动零 - 移动零 - 力扣（LeetCode）](https://leetcode.cn/problems/move-zeroes/solution/dong-hua-yan-shi-283yi-dong-ling-by-wang_ni_ma/)
+>
+> 下方评论区
+
+```java
+public void moveZeroes(int[] nums)  {
+  int length;
+  if (nums == null || (length = nums.length) == 0) {
+    return;
+  }
+  int j = 0;
+  for (int i = 0; i < length; i++) {
+    if (nums[i] != 0) {
+      if (i > j) {// 当i > j 时，只需要把 i 的值赋值给j，并把原位置的值置0。同时这里也把交换操作换成了赋值操作，减少了一条操作语句，理论上能更节省时间。
+        nums[j] = nums[i];
+        nums[i] = 0;
+      }
+      j++;
+    }
+  }
+}
+```
+
+### 209. 长度最小的子数组
+
+语言：java
+
+思路：最外情况即包含整个数组。使用滑动窗口，先只移动右边界，直到第一个能够满足的情况。如果满足条件，则尝试移动左边界，直到不满足条件为止，再此挪动右边界。
+
+代码（1ms，99.99%）：
+
+```java
+class Solution {
+  public int minSubArrayLen(int target, int[] nums) {
+    int min = Integer.MAX_VALUE;
+    int left = 0,right = 0,sum = 0, len = nums.length;
+    while(left <= right) { // 一开始 left = right，所以 可以 =
+      if(sum>=target) { // 如果 当前 和 >= target，可以尝试缩小左边界
+        min = Math.min(min, right-left);
+        sum-=nums[left];
+        ++left;
+      }else if(right < len){ // 如果 right 可以继续挪动，则尝试移动右边界
+        sum += nums[right];
+        ++right;
+      } else { // 如果到这里，说明 sum < target并且右边界不能继续扩大了，sum只会越来越小，直接退出
+        break;
+      }
+    }
+    return min == Integer.MAX_VALUE ? 0 : min;
+  }
+}
+```
+
+参考代码1（1ms，99.99%）：
+
+> [长度最小的子数组 - 长度最小的子数组 - 力扣（LeetCode）](https://leetcode.cn/problems/minimum-size-subarray-sum/solution/chang-du-zui-xiao-de-zi-shu-zu-by-leetcode-solutio/)
+>
+> 一样是滑动窗口，不过代码更简洁
+
+```java
+class Solution {
+    public int minSubArrayLen(int s, int[] nums) {
+        int n = nums.length;
+        if (n == 0) {
+            return 0;
+        }
+        int ans = Integer.MAX_VALUE;
+        int start = 0, end = 0;
+        int sum = 0;
+        while (end < n) {
+            sum += nums[end];
+            while (sum >= s) {
+                ans = Math.min(ans, end - start + 1);
+                sum -= nums[start];
+                start++;
+            }
+            end++;
+        }
+        return ans == Integer.MAX_VALUE ? 0 : ans;
+    }
+}
+```
+
+### 904. 水果成篮
+
+语言：java
+
+思路：滑动窗口，默认先只移动有边界，直到达到2种果实的最大上限限制后，在移动左边界。这里和普通的滑动窗口不一样的是，如何判断滑动窗口内种类超过2种（这个我判断的方法写的不好，一直没过，蛋疼）。
+
+参考代码（58ms，21.75%）：
+
+> [水果成篮 - 水果成篮 - 力扣（LeetCode）](https://leetcode.cn/problems/fruit-into-baskets/solution/shui-guo-cheng-lan-by-leetcode/)
+
+```java
+class Solution {
+  public int totalFruit(int[] tree) {
+    int ans = 0, i = 0;
+    Counter count = new Counter();
+    for (int j = 0; j < tree.length; ++j) {
+      count.add(tree[j], 1);
+      while (count.size() >= 3) {
+        count.add(tree[i], -1);
+        if (count.get(tree[i]) == 0)
+          count.remove(tree[i]);
+        i++;
+      }
+
+      ans = Math.max(ans, j - i + 1);
+    }
+
+    return ans;
+  }
+}
+
+class Counter extends HashMap<Integer, Integer> {
+  public int get(int k) {
+    return containsKey(k) ? super.get(k) : 0;
+  }
+
+  public void add(int k, int v) {
+    put(k, get(k) + v);
+  }
+}
+```
+
+参考代码2（5ms，97.39%）：
+
+> 评论区题解。我最早的写法类似这个，但是对2个篮子的记录处理写得不妥过不了。
+
+```java
+// 本题要求，选择一个最长只有两个元素的子序列
+class Solution {
+  public int totalFruit(int[] fruits) {
+    if(fruits.length == 1 && fruits.length == 2) {
+      return fruits.length;
+    }
+    int basket1 = -1, basket2 = -1; //记录当前篮子里的水果
+    int sum = 0;
+    int curFruit = -1, curFruitLoc = 0; //记录当前的水果，和当前水果的起始位置
+    int subSum = 0;
+    int j = 0; // 记录篮子起始位置
+    for (int i = 0; i < fruits.length; ++i) {
+      if (fruits[i] == basket1 || fruits[i] == basket2)
+      {
+        if (fruits[i] != curFruit) {// 记录在篮子里的连续最近，在更换篮子里水果的时候使用
+          curFruit = fruits[i];
+          curFruitLoc = i;
+        }
+      }
+      else {
+        j = curFruitLoc;
+        curFruitLoc = i;
+        if (basket1 == curFruit) { // 更新水果篮
+          basket2 = fruits[i];
+          curFruit = basket2;
+
+        }
+        else {
+          basket1 = fruits[i];
+          curFruit = basket1;
+        }
+      }
+      subSum = (i - j + 1); // 计算最长子序列
+      sum = sum > subSum ? sum : subSum;
+    }
+    return sum;
+  }
+}
+```
+
+参考后重写（6ms，87%）：
+
+```java
+// 本题要求，选择一个最长只有两个元素的子序列
+class Solution {
+  public int totalFruit(int[] fruits) {
+    int len = fruits.length;
+    if(len <= 2) {
+      return len;
+    }
+    // [0,0,1,1]
+    // [3,3,3,1,2,1,1,2,3,3,4]
+    int right = 0 ,left = 0,basket1 = -1,basket2 = -1,lastFruit =-1,lastIndex = 0,max = 0;
+    while(right < len) {
+      // 当前遍历的果子 和 之前 框里 的一致
+      if(fruits[right] == basket1 || fruits[right] == basket2) {
+        if(fruits[right]!=lastFruit) { // 当right边界不是连续的果子时，记录边界点，比如2234的3,后面更换篮子用
+          lastFruit = fruits[right];
+          lastIndex = right;
+        }
+
+      }else {
+        // 如果和框里的不一致，说明出现第3种果子，替换掉果子种类最早的一种（left=前一次遇到的第二种果子）
+        left = lastIndex;
+        lastIndex = right;
+        // 决定把本次遇到的不一样的果子放到哪个框里（二选一）
+        if(lastFruit == basket1) {
+          basket2 = fruits[right];
+          lastFruit = fruits[right];
+        } else {
+          basket1 = fruits[right];
+          lastFruit = fruits[right];
+        }
+      }
+      max = Math.max(max, right-left+1);
+      ++right;
+    }
+    return max;
+  }
+}
+```
+
+### 79. 最小覆盖子串
+
+语言：java
+
+思路：能看出来是滑动窗口，暴力的滑动窗口的话，需要至少2个Map，一个记录当前遍历的字符，一个记录要求匹配的字符。
+
+参考代码（2ms，96.55%）：
+
+> [最小覆盖子串 - 最小覆盖子串 - 力扣（LeetCode）](https://leetcode.cn/problems/minimum-window-substring/solution/zui-xiao-fu-gai-zi-chuan-by-leetcode-solution/)
+> 评论区大神：
+
+```java
+// 常规思路是右指针一直右移，直到窗口中包含t，然后左指针一直右移，直到窗口中不包含t，此过程中要一直验证窗口中是否包含t，时间复杂度高
+// 思想：滑动窗口（优化版） 面对窗口中是否包含某一字符串这一问题，可以用数组统计每个字符出现的次数的方式。在该题中，右指针是一直右移直到窗口包含t，此时左指针不一定移动，只有当左指针指向的字符在窗口出现的次数太多时，即抛弃该字符窗口内仍包含t，此时才移动左指针。
+// 时间复杂度：O(N) 空间复杂度：O(C)
+class Solution {
+  public String minWindow(String s, String t) {
+    char[] cs = s.toCharArray(), ct = t.toCharArray();
+
+    // 将字符串t中每个字母出现的次数统计出来，这里--可以理解为有这么多的坑要填
+    int[] count = new int[128];
+    for(char c:ct) count[c]--;
+
+    String res = "";
+    for(int i=0,j=0,cnt=0; i<cs.length; i++){
+      // 利用字符cs[i]去填count数组的坑
+      count[cs[i]]++;
+      // 如果填完坑之后发现，坑没有满或者刚好满，那么这个填坑是有效的，否则如果坑本来就是满的，这次填坑是无效的
+      // 注意其他非t中出现的字符，count数组的值是0，原来坑就是满的，那么填入count数组中，count[cs[i]]肯定大于0
+      if(count[cs[i]]<=0) cnt++;
+      // 如果cnt等于ct.length，那么说明窗口内已经包含t了，这时就要考虑移动左指针了，只有当左指针指向的字符是冗余的情况下，即count[cs[j]]>0，才能保证去掉该字符后，窗口中仍然包含t
+      // 注意cnt达到字符串t的长度后，它的值就不会再变化了，因为窗口内包含t之后，就会一直包含
+      while(cnt==ct.length && count[cs[j]]>0){
+        count[cs[j]]--;
+        j++;
+      }
+      // 当窗口内包含t后，计算此时窗口内字符串的长度，更新res
+      if(cnt==ct.length){
+        if(res.equals("") || res.length()>(i-j+1))
+          res = s.substring(j, i+1);
+      }
+    }
+
+    return res;
   }
 }
 ```
