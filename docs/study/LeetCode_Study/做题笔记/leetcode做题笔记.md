@@ -4143,3 +4143,125 @@ class Solution {
 }
 ```
 
+### 19. 删除链表的倒数第 N 个结点
+
+语言：java
+
+思路：一般来说倒数，即需要从后往前数。但是从后往前数，这个动作不一定需要先遍历到最后一个节点再执行，提前数好倒数N个节点的窗口，然后挪动整个窗口，最后右边界在最后一个节点，我们就找到倒数第N个节点了。
+
+代码（0ms，100%）：
+
+```java
+/**
+ * Definition for singly-linked list.
+ * public class ListNode {
+ *     int val;
+ *     ListNode next;
+ *     ListNode() {}
+ *     ListNode(int val) { this.val = val; }
+ *     ListNode(int val, ListNode next) { this.val = val; this.next = next; }
+ * }
+ */
+class Solution {
+  public ListNode removeNthFromEnd(ListNode head, int n) {
+    ListNode result = new ListNode();
+    ListNode lastN = result;
+    result.next = head;
+    head = result;
+    while(n-- > 0) {
+      head = head.next;
+    }
+    while(head.next != null){
+      head = head.next;
+      lastN = lastN.next;
+    }
+    lastN.next = lastN.next.next;
+    return result.next;
+  }
+}
+```
+
+### 面试题02.07. 链表相交
+
+语言：java
+
+思路：以前做过，这个思路比较巧妙。两个链表长度可能不一致，如果要他们长度一致，那么就是两个链表各自遍历完自己的链表后，再遍历别人的链表。如果两个链表有交集，那么他们经过相同的路程长后（A链表+B链表），一定会相遇。
+
+代码（1ms，97.42%）：
+
+```java
+/**
+ * Definition for singly-linked list.
+ * public class ListNode {
+ *     int val;
+ *     ListNode next;
+ *     ListNode(int x) {
+ *         val = x;
+ *         next = null;
+ *     }
+ * }
+ */
+public class Solution {
+  public ListNode getIntersectionNode(ListNode headA, ListNode headB) {
+    ListNode aNode = headA,bNode = headB;
+    while(aNode!= null || bNode != null) {
+      if(aNode == bNode) {
+        return aNode;
+      }
+      aNode = aNode == null? headB : aNode.next;
+      bNode = bNode == null? headA : bNode.next;
+    }
+    return null;
+  }
+}
+```
+
+参考代码1（1ms，97.42%）：思路更加清晰，其实遍历的次数也一样，就是先统计两个链表的长度，然后较长的一个先移动（长度差）个节点，之后再两个链表节点挨个判断是否相交。
+
+```java
+public class Solution {
+  public ListNode getIntersectionNode(ListNode headA, ListNode headB) {
+    ListNode curA = headA;
+    ListNode curB = headB;
+    int lenA = 0, lenB = 0;
+    while (curA != null) { // 求链表A的长度
+      lenA++;
+      curA = curA.next;
+    }
+    while (curB != null) { // 求链表B的长度
+      lenB++;
+      curB = curB.next;
+    }
+    curA = headA;
+    curB = headB;
+    // 让curA为最长链表的头，lenA为其长度
+    if (lenB > lenA) {
+      //1. swap (lenA, lenB);
+      int tmpLen = lenA;
+      lenA = lenB;
+      lenB = tmpLen;
+      //2. swap (curA, curB);
+      ListNode tmpNode = curA;
+      curA = curB;
+      curB = tmpNode;
+    }
+    // 求长度差
+    int gap = lenA - lenB;
+    // 让curA和curB在同一起点上（末尾位置对齐）
+    while (gap-- > 0) {
+      curA = curA.next;
+    }
+    // 遍历curA 和 curB，遇到相同则直接返回
+    while (curA != null) {
+      if (curA == curB) {
+        return curA;
+      }
+      curA = curA.next;
+      curB = curB.next;
+    }
+    return null;
+  }
+
+}
+```
+
