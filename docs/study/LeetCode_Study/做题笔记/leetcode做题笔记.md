@@ -1,6 +1,6 @@
 # LeetCode做题笔记
 
-### 739. 每日温度
+## 739. 每日温度
 
 语言：java
 
@@ -64,7 +64,7 @@ class Solution {
 }
 ```
 
-### 71. 简化路径
+## 71. 简化路径
 
 语言：java
 
@@ -189,7 +189,7 @@ class Solution {
 }
 ```
 
-###  93. 复原IP地址
+## 93. 复原IP地址
 
 语言：java
 
@@ -430,7 +430,7 @@ class Solution00{
 }
 ```
 
-### 695. 岛屿的最大面积
+## 695. 岛屿的最大面积
 
 语言：java
 
@@ -471,7 +471,7 @@ class Solution {
 }
 ```
 
-### 75. 颜色分类
+## 75. 颜色分类
 
 语言：java
 
@@ -508,7 +508,7 @@ class Solution {
 }
 ```
 
-### 最小的K个数
+## 面试题 17.14. 最小K个数
 
 > [面试题 17.14. 最小K个数](https://leetcode-cn.com/problems/smallest-k-lcci/)
 
@@ -624,7 +624,7 @@ class Solution {
 }
 ```
 
-###  518. 零钱兑换 II
+## 518. 零钱兑换 II
 
 > [518. 零钱兑换 II](https://leetcode-cn.com/problems/coin-change-2/)
 
@@ -666,7 +666,7 @@ class Solution {
 }
 ```
 
-### 416. 分割等和子集
+## 416. 分割等和子集
 
 > [416. 分割等和子集](https://leetcode-cn.com/problems/partition-equal-subset-sum/)
 >
@@ -861,7 +861,7 @@ public class Solution {
 }
 ```
 
-### 474. 一和零
+## 474. 一和零
 
 > [474. 一和零](https://leetcode-cn.com/problems/ones-and-zeroes/)
 
@@ -946,7 +946,7 @@ class Solution {
 }
 ```
 
-### 530. 二叉搜索树的最小绝对差
+## 530. 二叉搜索树的最小绝对差
 
 > [530. 二叉搜索树的最小绝对差](https://leetcode-cn.com/problems/minimum-absolute-difference-in-bst/)
 
@@ -1015,7 +1015,7 @@ class Solution {
 }
 ```
 
-### 977. 有序数组的平方
+## 977. 有序数组的平方
 
 > [977. 有序数组的平方](https://leetcode-cn.com/problems/squares-of-a-sorted-array/)
 
@@ -1079,7 +1079,7 @@ class Solution {
 }
 ```
 
-### 52. N皇后 II
+## 52. N皇后 II
 
 >[52. N皇后 II](https://leetcode-cn.com/problems/n-queens-ii/)
 
@@ -1208,7 +1208,7 @@ class Solution {
 }
 ```
 
-### 844. 比较含退格的字符串
+## 844. 比较含退格的字符串
 
 > [844. 比较含退格的字符串](https://leetcode-cn.com/problems/backspace-string-compare/)
 
@@ -1389,9 +1389,7 @@ class Solution {
 }
 ```
 
-
-
-### 143. 重排链表
+## 143. 重排链表
 
 > [143. 重排链表](https://leetcode-cn.com/problems/reorder-list/)
 
@@ -1521,7 +1519,7 @@ class Solution {
 }
 ```
 
-### 925. 长按键入
+## 925. 长按键入
 
 语言：java
 
@@ -1578,7 +1576,7 @@ class Solution {
 }
 ```
 
-### 763. 划分字母区间
+## 763. 划分字母区间
 
 > [763. 划分字母区间](https://leetcode-cn.com/problems/partition-labels/)
 
@@ -1719,7 +1717,7 @@ class Solution {
 }
 ```
 
-### 47. 全排列 II
+## 47. 全排列 II
 
 > [47. 全排列 II](https://leetcode-cn.com/problems/permutations-ii/)
 
@@ -1803,7 +1801,7 @@ class Solution {
 }
 ```
 
-### 17. 电话号码的字母组合
+## 17. 电话号码的字母组合
 
 > [17. 电话号码的字母组合](https://leetcode-cn.com/problems/letter-combinations-of-a-phone-number/)
 
@@ -1844,7 +1842,7 @@ class Solution {
 }
 ```
 
-### 39. 组合总和
+## 39. 组合总和
 
 > [39. 组合总和](https://leetcode-cn.com/problems/combination-sum/)
 
@@ -1918,7 +1916,7 @@ class Solution {
 }
 ```
 
-### 40. 组合总和 II
+## 40. 组合总和 II
 
 > [40. 组合总和 II](https://leetcode-cn.com/problems/combination-sum-ii/)
 
@@ -2047,7 +2045,7 @@ public class Solution {
 }
 ```
 
-### 51. N皇后
+## 51. N皇后
 
 > [51. N 皇后](https://leetcode-cn.com/problems/n-queens/)
 
@@ -2217,7 +2215,7 @@ class Solution {
 }
 ```
 
-### 416. 分割等和子集
+## 416. 分割等和子集
 
 > [416. 分割等和子集](https://leetcode-cn.com/problems/partition-equal-subset-sum/)
 
@@ -2295,7 +2293,7 @@ public class Solution {
 }
 ```
 
-### 474. 一和零
+## 474. 一和零
 
 > [474. 一和零](https://leetcode-cn.com/problems/ones-and-zeroes/)
 
@@ -2454,7 +2452,7 @@ class Solution {
 }
 ```
 
-### 494. 目标和
+## 494. 目标和
 
 > [494. 目标和](https://leetcode-cn.com/problems/target-sum/)
 
@@ -2530,7 +2528,7 @@ class Solution {
 }
 ```
 
-### 1025. 除数博弈
+## 1025. 除数博弈
 
 > [1025. 除数博弈](https://leetcode-cn.com/problems/divisor-game/)
 
@@ -2578,7 +2576,7 @@ class Solution {
 }
 ```
 
-### 112. 路径总和
+## 112. 路径总和
 
 > [112. 路径总和](https://leetcode-cn.com/problems/path-sum/)
 
@@ -2609,7 +2607,7 @@ class Solution {
 }
 ```
 
-### 面试题 01.04. 回文排列
+## 面试题 01.04. 回文排列
 
 > [面试题 01.04. 回文排列](https://leetcode-cn.com/problems/palindrome-permutation-lcci/)
 
@@ -2642,7 +2640,7 @@ class Solution {
 }
 ```
 
-### 647. 回文子串
+## 647. 回文子串
 
 > [647. 回文子串](https://leetcode-cn.com/problems/palindromic-substrings/)
 
@@ -2746,7 +2744,7 @@ class Solution {
 }
 ```
 
-### 1392. 最长快乐前缀
+## 1392. 最长快乐前缀
 
 > [最长快乐前缀](https://leetcode-cn.com/problems/longest-happy-prefix/)
 
@@ -2855,7 +2853,7 @@ class Solution {
 }
 ```
 
-### 572. 另一个树的子树
+## 572. 另一个树的子树
 
 > [572. 另一个树的子树](https://leetcode-cn.com/problems/subtree-of-another-tree/)
 
@@ -3117,7 +3115,7 @@ class Solution {
 }
 ```
 
-### 1143. 最长公共子序列
+## 1143. 最长公共子序列
 
 > [1143. 最长公共子序列](https://leetcode-cn.com/problems/longest-common-subsequence/)
 
@@ -3210,7 +3208,7 @@ class Solution {
 }
 ```
 
-### 剑指 Offer 48. 最长不含重复字符的子字符串
+## 剑指 Offer 48. 最长不含重复字符的子字符串
 
 >[剑指 Offer 48. 最长不含重复字符的子字符串](https://leetcode-cn.com/problems/zui-chang-bu-han-zhong-fu-zi-fu-de-zi-zi-fu-chuan-lcof/)
 
@@ -3246,7 +3244,7 @@ class Solution {
 }
 ```
 
-### 781. 森林中的兔子
+## 781. 森林中的兔子
 
 >[781. 森林中的兔子](https://leetcode-cn.com/problems/rabbits-in-forest/)
 
@@ -3325,7 +3323,7 @@ class Solution {
 }
 ```
 
-### 310. 最小高度树
+## 310. 最小高度树
 
 >[310. 最小高度树](https://leetcode-cn.com/problems/minimum-height-trees/)
 
@@ -3493,7 +3491,7 @@ class Solution {
 }
 ```
 
-### 264. 丑数 II
+## 264. 丑数 II
 
 >[264. 丑数 II](https://leetcode-cn.com/problems/ugly-number-ii/)
 
@@ -3590,7 +3588,7 @@ class Solution {
 }
 ```
 
-### 670. 最大交换
+## 670. 最大交换
 
 > [670. 最大交换 - 力扣（LeetCode）](https://leetcode.cn/problems/maximum-swap/)
 
@@ -3724,7 +3722,7 @@ class Solution {
 }
 ```
 
-### 27. 移除元素
+## 27. 移除元素
 
 语言：java
 
@@ -3808,7 +3806,7 @@ class Solution {
 }
 ```
 
-### 26. 删除有序数组中的重复项
+## 26. 删除有序数组中的重复项
 
 语言：java
 
@@ -3857,7 +3855,7 @@ public int removeDuplicates(int[] nums) {
 }
 ```
 
-### 283. 移动零
+## 283. 移动零
 
 语言：java
 
@@ -3906,7 +3904,7 @@ public void moveZeroes(int[] nums)  {
 }
 ```
 
-### 209. 长度最小的子数组
+## 209. 长度最小的子数组
 
 语言：java
 
@@ -3966,7 +3964,7 @@ class Solution {
 }
 ```
 
-### 904. 水果成篮
+## 904. 水果成篮
 
 语言：java
 
@@ -4095,7 +4093,7 @@ class Solution {
 }
 ```
 
-### 79. 最小覆盖子串
+## 79. 最小覆盖子串
 
 语言：java
 
@@ -4143,7 +4141,7 @@ class Solution {
 }
 ```
 
-### 19. 删除链表的倒数第 N 个结点
+## 19. 删除链表的倒数第 N 个结点
 
 语言：java
 
@@ -4181,7 +4179,7 @@ class Solution {
 }
 ```
 
-### 面试题02.07. 链表相交
+## 面试题02.07. 链表相交
 
 语言：java
 
@@ -4263,5 +4261,2700 @@ public class Solution {
   }
 
 }
+```
+
+## 349. 两个数组的交集
+
+语言：java
+
+思路：题目限制数值只会出现在0～1000，用数组代替Set存储出现过的数字，后续再统计哪些在另一个数组出现过就好了。
+
+代码（1ms，98.83%）：
+
+```java
+class Solution {
+  public int[] intersection(int[] nums1, int[] nums2) {
+    int[] numMap = new int[1000];
+    int count = 0;
+    for(int i = 0,len = nums1.length; i< len; ++i) {
+      numMap[nums1[i]] = 1;
+    }
+    for(int i = 0,len = nums2.length; i< len; ++i) {
+      if(numMap[nums2[i]]==1) {
+        numMap[nums2[i]] = 2;
+        count+=1;
+      }
+    }
+    int[] result = new int[count];
+    for(int i= 0,j = 0;i<1000;++i){
+      if(numMap[i]==2) {
+        result[j++] = i;
+      }
+    }
+    return result;
+  }
+}
+```
+
+## 383. 赎金信
+
+语言：java
+
+思路：记录第一个字符串出现的每个字符的数量；然后遍历另一个字符串，如果出现完相同数量的字符，就返回true
+
+代码（1ms，99.92%）：
+
+```java
+class Solution {
+  public boolean canConstruct(String ransomNote, String magazine) {
+    int[] alphabet = new int[26];
+    char[] aChars = ransomNote.toCharArray();
+    char[] bChars = magazine.toCharArray();
+    int count = aChars.length;
+    for(int i = 0;i<count;++i){
+      ++ alphabet[aChars[i]-'a'];
+    }
+    for(int i = 0,len = bChars.length; i < len; ++i) {
+      int index = bChars[i]-'a';
+      if(alphabet[index] > 0) {
+        --alphabet[index];
+        --count;
+      }
+      if(count==0) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+```
+
+## 18. 四数之和
+
+语言：java
+
+思路：第一反应和三数之和很像，想办法把四数之和化简成三数之和。先排序，然后这里双层for遍历nums获取`nums[i]+nums[j]`，右边的部分则还是靠双指针。主要需要注意的就是，怎么跳过相同的已经出现过的元祖数组。
+
+代码（18ms，33.20%）：
+
+```java
+class Solution {
+  public List<List<Integer>> fourSum(int[] nums, int target) {
+    Arrays.sort(nums);
+    List<List<Integer>> result = new ArrayList<>();
+    for(int i = 0, len = nums.length;i< len-3;++i) {
+      if(nums[i] > 0 && target <= 0) {
+        return result;
+      }
+      while(i> 0 && i<len-3&&nums[i] == nums[i-1]) {
+        ++i;
+      } 
+      for(int j = i+1; j< len-2;++j) {
+        int left = j + 1;
+        int right = len-1;
+        while(right > left) {
+          int sum = nums[i]+nums[j]+nums[left]+nums[right];
+          if(sum == target) {
+            result.add(Arrays.asList(nums[i],nums[j],nums[left],nums[right]));
+            while(j< len-2 && nums[j] == nums[j+1]) {
+              ++j;
+            }
+            while(right > left && nums[right] == nums[right-1]) {
+              --right;
+            } 
+            while(right > left && nums[left] == nums[left+1]) {
+              ++left;
+            }
+            --right;
+            ++left;
+          } else if(sum > target) {
+            --right;
+          } else{
+            ++left;
+          }
+        }      
+      } 
+    }
+    return result;
+  }
+}
+```
+
+参考代码1（2ms，100%）：一样的思路，就是减支做得更彻底
+
+> [四数之和 - 四数之和 - 力扣（LeetCode）](https://leetcode.cn/problems/4sum/solution/si-shu-zhi-he-by-leetcode-solution/)
+
+```java
+class Solution {
+  public List<List<Integer>> fourSum(int[] nums, int target) {
+    List<List<Integer>> quadruplets = new ArrayList<List<Integer>>();
+    if (nums == null || nums.length < 4) {
+      return quadruplets;
+    }
+    Arrays.sort(nums);
+    int length = nums.length;
+    for (int i = 0; i < length - 3; i++) {
+      if (i > 0 && nums[i] == nums[i - 1]) {
+        continue;
+      }
+      if ((long) nums[i] + nums[i + 1] + nums[i + 2] + nums[i + 3] > target) {
+        break;
+      }
+      if ((long) nums[i] + nums[length - 3] + nums[length - 2] + nums[length - 1] < target) {
+        continue;
+      }
+      for (int j = i + 1; j < length - 2; j++) {
+        if (j > i + 1 && nums[j] == nums[j - 1]) {
+          continue;
+        }
+        if ((long) nums[i] + nums[j] + nums[j + 1] + nums[j + 2] > target) {
+          break;
+        }
+        if ((long) nums[i] + nums[j] + nums[length - 2] + nums[length - 1] < target) {
+          continue;
+        }
+        int left = j + 1, right = length - 1;
+        while (left < right) {
+          long sum = (long) nums[i] + nums[j] + nums[left] + nums[right];
+          if (sum == target) {
+            quadruplets.add(Arrays.asList(nums[i], nums[j], nums[left], nums[right]));
+            while (left < right && nums[left] == nums[left + 1]) {
+              left++;
+            }
+            left++;
+            while (left < right && nums[right] == nums[right - 1]) {
+              right--;
+            }
+            right--;
+          } else if (sum < target) {
+            left++;
+          } else {
+            right--;
+          }
+        }
+      }
+    }
+    return quadruplets;
+  }
+}
+```
+
+## 541. 反转字符串 II
+
+语言：java
+
+思路：和反转字符串第一题差不多，区别就是多了些if条件而已。需要注意的是交换的边界(i+k-1)
+
+代码（0ms，100%）：
+
+```java
+class Solution {
+  public String reverseStr(String s, int k) {
+    char[] chars = s.toCharArray();
+    int len = chars.length;
+    for(int i = 0;i<len;i+=2*k) {
+      if(i+k > len) {
+        reverse(chars, i, len-1);
+        break;
+      } else if(i+2*k >len) {
+        reverse(chars, i, i+k-1);
+        break;
+      } else {
+        reverse(chars, i, i+k-1);
+      }
+    }
+    return new String(chars);
+  }
+
+  public void reverse(char[] array,int left, int right) {
+    while(left < right) {
+      array[left]^=array[right];
+      array[right]^=array[left];
+      array[left]^=array[right];
+      ++left;
+      --right;
+    }
+  }
+}
+```
+
+## 151. 反转字符串中的单词
+
+语言：java
+
+思路：题目进阶要求中，说尝试O(1)空间复杂度的原地算法。题目包含两个要求，一、字符串中单词顺序反转；二、去除前后空格和中间多余空格（每个单词之间只有一个空格）。
+
+（1）单词顺序反转，可以先反转整个字符串；然后在对中间每次遇到的字符串在反转一遍
+（2）去除多余空格，双指针，一个用于找单词，一个用于存放单词（两个指针一开始都在字符串的第一个位置），然后存单词的指针，每次存完后额外往后跳一个空格位置。最后再删除最后额外多跳过的这个空格。
+
+这里先删除多余空格，然后按要求反转所有单词的顺序
+
+代码（2ms，96.82%）：
+
+```java
+class Solution {
+  public String reverseWords(String s) {
+    String noBlankStr = removeBlanks(s);
+    char[] chars = noBlankStr.toCharArray();
+    reverse(chars, 0, noBlankStr.length());
+    int left = 0,right = 0, len = chars.length;
+    while(right < len) {
+      if(chars[right]==' '){
+        reverse(chars,left,right);
+        left = right + 1;
+      }
+      ++right;
+    }
+    //反转最后一个单词，因为上面遇到空格才会执行一次反转
+    reverse(chars,left,right);
+    return new String(chars);
+  }
+
+  public void reverse(char[] chars, int left,int right) {
+    int l = left, r = right-1;
+    while(l < r) {
+      chars[l] ^= chars[r];
+      chars[r] ^= chars[l];
+      chars[l] ^= chars[r];
+      ++l;
+      --r;
+    }
+  }
+
+  public String removeBlanks(String s) {
+    int slow = 0,len = s.length() ,fast = len-1;
+    boolean hasWord = false;
+    // 先去掉尾部空格
+    while(fast > 0 && s.charAt(fast) == ' '){
+      --fast;
+    }
+    // 去掉头部空格
+    while(slow < len && s.charAt(slow) == ' '){
+      ++slow;
+    }
+    // 获取去掉头尾空格后的 char[]
+    char[] chars = s.substring(slow, fast+1).toCharArray();
+    fast = 0;
+    slow = 0;
+    len = chars.length;
+    while(fast < len) {
+      if(chars[fast]!=' '){
+        chars[slow++] = chars[fast];
+        hasWord = true;
+      }else if(hasWord){
+        chars[slow++] = ' ';
+        hasWord = false;
+      }
+      ++fast;
+    }
+    // 中间可能还有空格，对我们来说有用的字符串刚好到[0,slow)
+    return new String(chars).substring(0,slow);
+  }
+}
+```
+
+参考代码1（6ms，62.16%）：
+
+```java
+class Solution {
+  /**
+     * 不使用Java内置方法实现
+     * <p>
+     * 1.去除首尾以及中间多余空格
+     * 2.反转整个字符串
+     * 3.反转各个单词
+     */
+  public String reverseWords(String s) {
+    // System.out.println("ReverseWords.reverseWords2() called with: s = [" + s + "]");
+    // 1.去除首尾以及中间多余空格
+    StringBuilder sb = removeSpace(s);
+    // 2.反转整个字符串
+    reverseString(sb, 0, sb.length() - 1);
+    // 3.反转各个单词
+    reverseEachWord(sb);
+    return sb.toString();
+  }
+
+  private StringBuilder removeSpace(String s) {
+    // System.out.println("ReverseWords.removeSpace() called with: s = [" + s + "]");
+    int start = 0;
+    int end = s.length() - 1;
+    while (s.charAt(start) == ' ') start++;
+    while (s.charAt(end) == ' ') end--;
+    StringBuilder sb = new StringBuilder();
+    while (start <= end) {
+      char c = s.charAt(start);
+      if (c != ' ' || sb.charAt(sb.length() - 1) != ' ') {
+        sb.append(c);
+      }
+      start++;
+    }
+    // System.out.println("ReverseWords.removeSpace returned: sb = [" + sb + "]");
+    return sb;
+  }
+
+  /**
+     * 反转字符串指定区间[start, end]的字符
+     */
+  public void reverseString(StringBuilder sb, int start, int end) {
+    // System.out.println("ReverseWords.reverseString() called with: sb = [" + sb + "], start = [" + start + "], end = [" + end + "]");
+    while (start < end) {
+      char temp = sb.charAt(start);
+      sb.setCharAt(start, sb.charAt(end));
+      sb.setCharAt(end, temp);
+      start++;
+      end--;
+    }
+    // System.out.println("ReverseWords.reverseString returned: sb = [" + sb + "]");
+  }
+
+  private void reverseEachWord(StringBuilder sb) {
+    int start = 0;
+    int end = 1;
+    int n = sb.length();
+    while (start < n) {
+      while (end < n && sb.charAt(end) != ' ') {
+        end++;
+      }
+      reverseString(sb, start, end - 1);
+      start = end + 1;
+      end = start + 1;
+    }
+  }
+}
+```
+
+参考代码2（7ms，50.91%）：使用队列存储单词，然后重新拼接。
+
+> [翻转字符串里的单词 - 反转字符串中的单词 - 力扣（LeetCode）](https://leetcode.cn/problems/reverse-words-in-a-string/solution/fan-zhuan-zi-fu-chuan-li-de-dan-ci-by-leetcode-sol/)
+
+```java
+class Solution {
+  public String reverseWords(String s) {
+    int left = 0, right = s.length() - 1;
+    // 去掉字符串开头的空白字符
+    while (left <= right && s.charAt(left) == ' ') {
+      ++left;
+    }
+
+    // 去掉字符串末尾的空白字符
+    while (left <= right && s.charAt(right) == ' ') {
+      --right;
+    }
+
+    Deque<String> d = new ArrayDeque<String>();
+    StringBuilder word = new StringBuilder();
+
+    while (left <= right) {
+      char c = s.charAt(left);
+      if ((word.length() != 0) && (c == ' ')) {
+        // 将单词 push 到队列的头部
+        d.offerFirst(word.toString());
+        word.setLength(0);
+      } else if (c != ' ') {
+        word.append(c);
+      }
+      ++left;
+    }
+    d.offerFirst(word.toString());
+
+    return String.join(" ", d);
+  }
+}
+```
+
+## 28. 找出字符串中第一个匹配项的下标
+
+语言：java
+
+思路：一个指针遍历haystack数组，一个指针遍历needle数组。
+
++ 匹配时，两个指针都++。
++ 遇到不匹配时，
+  + needle指针为0，则haystack指针继续遍历
+  + needle指针>0（已经匹配过几个字符），haystack指针-=needle指针，从之前匹配的第一个字符的下一个位置重新匹配
+
+代码（0ms，100%）：
+
+```java
+class Solution {
+  public int strStr(String haystack, String needle) {
+    int hPointer = 0, nPointer = 0,hLen = haystack.length(), nLen = needle.length();
+    char[] hChars = haystack.toCharArray(), nChars = needle.toCharArray();
+    while(hPointer < hLen) {
+      if(nPointer == nLen) {
+        return hPointer-nLen;
+      }
+      if(hChars[hPointer] == nChars[nPointer]) {
+        ++nPointer;
+      } else {
+        if(nPointer > 0) {
+          hPointer -= nPointer;
+        }
+        nPointer = 0;
+      }
+      ++hPointer;
+    }
+    return nPointer == nLen? hLen-nLen : -1;
+  }
+}
+```
+
+代码2（0ms，100%）：改用KMP算法，KMP果然是容易忘记的算法，哈哈。
+
+```java
+class Solution {
+  public int strStr(String haystack, String needle) {
+    int hLen = haystack.length();
+    int nLen = needle.length();
+    // 匹配串比原来字符串长，直接不用比了
+    if(nLen > hLen) {
+      return -1;
+    }
+    int[] next = getNextArray(needle);
+    int i = 0,j = 0;
+    while(i<hLen && j < nLen) {
+      // 字符不匹配，匹配串的指针找到最近一次能匹配字符的位置
+      while(j > 0 && haystack.charAt(i) != needle.charAt(j)) {
+        j = next[j-1];
+      }
+      // 有字符匹配，则继续遍历
+      if(haystack.charAt(i) == needle.charAt(j)) {
+        ++j;
+      }
+      ++i;
+    }
+    return j == nLen ? i-j : -1;
+  }
+
+  public int[] getNextArray(String needle) {
+    int len = needle.length(), j = 0;
+    int[] next = new int[len];
+    // i相当于是后缀串的指针(匹配的第一个字符相当于当前[0,i]字符串的后缀第一个字符)，只有长度>1才有后缀，所以从1开始
+    for(int i = 1; i < len; ++i) {
+      // 处理不相同时，j回退的情况。j相当于是前缀串的头指针
+      while(j > 0 && needle.charAt(j) != needle.charAt(i)) {
+        j = next[j-1];
+      }
+      if(needle.charAt(j) == needle.charAt(i)) {
+        // 前后缀多个字符相同时，i和j相当于当时匹配的第一个位置[x,往后)的字符串的遍历指针
+        next[i] = ++j;
+      }
+    }
+    return next;
+  }
+}
+```
+
+## 459. 重复的子字符串
+
+语言：java
+
+思路：只想到比较暴力的写法，看了网络视频后得知可用KMP巧妙处理。用KMP求最大相同前后缀，然后求前后缀不重叠的部分，它就是组成重复串的最小字符串。如果整个字符串长度被该字符串长度整除，则说明该字符串都由该子串组成
+
+> [字符串这么玩，可有点难度！ | LeetCode：459.重复的子字符串_哔哩哔哩_bilibili](https://www.bilibili.com/video/BV1cg41127fw/?spm_id_from=333.788&vd_source=ba4d176271299cb334816d3c4cbc885f)
+>
+> [代码随想录 (programmercarl.com)](https://programmercarl.com/0459.重复的子字符串.html#其他语言版本)
+
+代码（8ms，81.71%）：
+
+```java
+class Solution {
+  public boolean repeatedSubstringPattern(String s) {
+    int len = s.length();
+    int[] next = getNextArray(s);
+    // "abac" ，next[len-1] > 0 保证 至少存在相同前后缀；后面一个判断则是判断是不是整个字符串由前后缀中不重叠的部分组成（这部分就是最小重复字符串）
+    return next[len-1] > 0 && 0 == (len % (len - next[len-1]));
+  }
+
+  public int[] getNextArray(String s) {
+    int j = 0,len = s.length();
+    int[] next = new int[len];
+    for(int i = 1; i < len; ++i) {
+      while(j> 0 && s.charAt(j) != s.charAt(i)) {
+        j = next[j-1];
+      }
+      if(s.charAt(j) == s.charAt(i)) {
+        next[i] = ++j;
+      }
+    }
+    return next;
+  }
+}
+```
+
+参考代码1（5ms，91.15%）：整体思路也是KMP求出重复的子串（理论上的），然后判断原字符串是否真由该字符串堆砌成
+
+> [代码随想录 (programmercarl.com)](https://programmercarl.com/0459.重复的子字符串.html#其他语言版本)
+
+```java
+class Solution {
+  public boolean repeatedSubstringPattern(String s) {
+    if (s.equals("")) return false;
+
+    int len = s.length();
+    // 原串加个空格(哨兵)，使下标从1开始，这样j从0开始，也不用初始化了
+    s = " " + s;
+    char[] chars = s.toCharArray();
+    int[] next = new int[len + 1];
+
+    // 构造 next 数组过程，j从0开始(空格)，i从2开始
+    for (int i = 2, j = 0; i <= len; i++) {
+      // 匹配不成功，j回到前一位置 next 数组所对应的值
+      while (j > 0 && chars[i] != chars[j + 1]) j = next[j];
+      // 匹配成功，j往后移
+      if (chars[i] == chars[j + 1]) j++;
+      // 更新 next 数组的值
+      next[i] = j;
+    }
+
+    // 最后判断是否是重复的子字符串，这里 next[len] 即代表next数组末尾的值
+    if (next[len] > 0 && len % (len - next[len]) == 0) {
+      return true;
+    }
+    return false;
+  }
+}
+```
+
+参考代码2（2ms，99.95%）：很巧妙，（1）基串能够整除；（2）基串在头和尾是一致的；（2）“只去掉头”和“只去掉尾”的字符串需要相等
+
+```java
+class Solution {
+  public boolean repeatedSubstringPattern(String s) {
+    int lens = s.length(), i = 0;
+    while (++i < lens) {
+      if (lens % i != 0) continue;
+      if (s.substring(lens - i, lens).equals(s.substring(0, i))) // 判断x是不是基串
+        if (s.substring(i, lens).equals(s.substring(0, lens - i))) return true; // 判断拿去x后是否相等
+    }
+    return false;
+  }
+}
+```
+
+## 20. 有效的括号
+
+语言：java
+
+思路：用栈做匹配即可，这里直接拿字符串的字符数组作为stack。
+
+代码（0ms，100%）：
+```java
+class Solution {
+  public boolean isValid(String s) {
+    char[] chars = s.toCharArray();
+    int i = 0, stackIndex = 0, len = chars.length;
+    while(i < len) {
+      switch(chars[i]) {
+        case '(':
+        case '[':
+        case '{':
+          chars[stackIndex++] = chars[i];
+          break;
+        case ')':
+          if(stackIndex == 0 || chars[--stackIndex] != '(') {
+            return false;
+          }
+          break;
+        case ']':
+          if(stackIndex == 0 || chars[--stackIndex] != '[') {
+            return false;
+          }
+          break;
+        case '}':
+          if(stackIndex == 0 || chars[--stackIndex] != '{') {
+            return false;
+          }
+          break;
+      }
+      ++i;
+    }
+    return stackIndex == 0;
+  }
+}
+```
+
+## 1047. 删除字符串中的所有相邻重复项
+
+语言：java
+
+思路：经典的栈消消乐，用原本的chars作为栈，然后消除相同元素即可。
+
+代码（3ms，100%）：
+
+```java
+class Solution {
+  public String removeDuplicates(String s) {
+    char[] chars = s.toCharArray();
+    int stackIndex = -1;
+    // abb
+    for(int i = 0, len = s.length(); i < len; ++i) {
+      if(stackIndex >= 0 && chars[stackIndex] == chars[i]) {
+        --stackIndex;
+      } else {
+        chars[++stackIndex] = chars[i];
+      }
+    }
+    return new String(chars).substring(0,stackIndex+1);
+  }
+}
+```
+
+## 107. 二叉树的层序遍历 II
+
+语言：java
+
+思路：
+
++ 第一种方法，BFS利用队列从上到下层次遍历，最后翻转结果（就得到题目要求的自底向上的层次遍历）
++ 第二种方法，可以用DFS，递归时记录层数，最后翻转结果
+
+代码1（方法1，BFS+翻转遍历结果）（1ms，91.77%）：
+
+```java
+/**
+ * Definition for a binary tree node.
+ * public class TreeNode {
+ *     int val;
+ *     TreeNode left;
+ *     TreeNode right;
+ *     TreeNode() {}
+ *     TreeNode(int val) { this.val = val; }
+ *     TreeNode(int val, TreeNode left, TreeNode right) {
+ *         this.val = val;
+ *         this.left = left;
+ *         this.right = right;
+ *     }
+ * }
+ */
+class Solution {
+  public List<List<Integer>> levelOrderBottom(TreeNode root) {
+    List<List<Integer>> result = new ArrayList<>();
+    if(null == root) {
+      return result;
+    }
+    Queue<TreeNode> queue = new LinkedList<>();
+    queue.add(root);
+    while(!queue.isEmpty()) {
+      int size = queue.size();
+      List<Integer> tmp = new LinkedList<>();
+      while(size-- > 0) {
+        TreeNode cur = queue.poll();
+        tmp.add(cur.val);
+        if(null != cur.left) {
+          queue.add(cur.left);
+        }
+        if(null != cur.right) {
+          queue.add(cur.right);
+        }
+      }
+      // 每次在头一个位置插入，相当于翻转
+      result.add(0, tmp);
+    }
+    return result;
+  }
+}
+```
+
+代码2（DFS，记录层数，最后翻转结果）（0ms，100%）：
+
+```java
+/**
+ * Definition for a binary tree node.
+ * public class TreeNode {
+ *     int val;
+ *     TreeNode left;
+ *     TreeNode right;
+ *     TreeNode() {}
+ *     TreeNode(int val) { this.val = val; }
+ *     TreeNode(int val, TreeNode left, TreeNode right) {
+ *         this.val = val;
+ *         this.left = left;
+ *         this.right = right;
+ *     }
+ * }
+ */
+class Solution {
+  public List<List<Integer>> levelOrderBottom(TreeNode root) {
+    List<List<Integer>> result = new ArrayList<>();
+    if(null == root) {
+      return result;
+    }
+    dfs(result, root, 1);
+    Collections.reverse(result);
+    return result;
+  }
+
+  public void dfs(List<List<Integer>> result, TreeNode root, int depth) {
+    if(null == root) {
+      return;
+    }
+    if(depth > result.size()) {
+      result.add(new LinkedList<>());
+    }
+    result.get(depth-1).add(root.val);
+    dfs(result,root.left, depth+1);
+    dfs(result,root.right, depth+1);
+  }
+}
+```
+
+## 199. 二叉树的右视图
+
+语言：java
+
+思路：乍一看以为是只需要遍历最右侧节点，实际上是尽可能遍历"最靠右边"的节点。主要也是层次遍历，BFS、DFS都可以。
+
+代码1（BFS，每层遍历时只添加最右边一个元素）（1ms，81.63%）：
+
+```java
+class Solution {
+  public List<Integer> rightSideView(TreeNode root) {
+    List<Integer> result = new LinkedList<>();
+    while(null==root) {
+      return result;
+    }
+    Queue<TreeNode> queue = new LinkedList<>();
+    queue.add(root);
+    while(!queue.isEmpty()) {
+      int size = queue.size();
+      // 每层只添加最右边的元素到结果集
+      if(size > 0) {
+        result.add(queue.peek().val);
+      }
+      while(size--> 0) {
+        TreeNode cur = queue.poll();
+        // 先右后左，保证下次result一定先取最右边元素
+        if(cur.right!=null) {
+          queue.add(cur.right);
+        }
+        if(cur.left!=null) {
+          queue.add(cur.left);
+        }
+      }
+    }
+    return result;
+  }
+}
+```
+
+代码2（DFS，每层递归时只添加一个元素）(0ms，100%)：
+
+```java
+class Solution {
+  public List<Integer> rightSideView(TreeNode root) {
+    List<Integer> result = new LinkedList<>();
+    while(null==root) {
+      return result;
+    }
+    dfs(result, root, 1);
+    return result;
+  }
+
+  public void dfs(List<Integer> result, TreeNode root, int depth) {
+    if(null == root) {
+      return;
+    }
+    // 保证每层只添加一个元素
+    if(depth > result.size()) {
+      result.add(root.val);
+    }
+    // 先右后左，保证尽量取最右边的元素
+    dfs(result, root.right, depth+1);
+    dfs(result, root.left, depth+1);
+  }
+}
+```
+
+## 637. 二叉树的层平均值
+
+语言：java
+
+思路：就是在层次遍历的基础上，BFS可直接求平均值。DFS则还需要维护层次遍历的求和List、每层的个数List，比较麻烦。
+
+代码1（BFS）（2ms，95.02%）：
+
+```java
+class Solution {
+  public List<Double> averageOfLevels(TreeNode root) {
+    List<Double> result = new LinkedList<>();
+    if(null == root) {
+      return result;
+    } 
+    Queue<TreeNode> queue = new LinkedList<>();
+    queue.add(root);
+    while(!queue.isEmpty()) {
+      int size = queue.size();
+      // 这里 需要long，不然测试用例会有 两个MAX最大值相加的情况
+      long sum = 0;
+      for(int i = 0;i < size; ++i) {
+        TreeNode cur = queue.poll();
+        sum += cur.val;
+        if(cur.left != null) {
+          queue.add(cur.left);
+        }
+        if(cur.right != null) {
+          queue.add(cur.right);
+        }
+      }
+      result.add(sum/(double)size);
+    }
+    return result;
+  }
+}
+```
+
+代码2（DFS）（3ms，23.97%）：
+
+```java
+class Solution {
+  public List<Double> averageOfLevels(TreeNode root) {
+    if(null == root) {
+      return new ArrayList<>();
+    } 
+    List<Double> result = new LinkedList<>();
+    List<Double> sumList = new LinkedList<>();
+    List<Integer> countList = new LinkedList<>();
+    dfs(sumList, countList, root, 0);
+    for(int i = 0, len = sumList.size();i<len; ++i) {
+      result.add(sumList.get(i) / countList.get(i));
+    }
+    return result;
+  }
+
+  public void dfs(List<Double> sumList,List<Integer> countList, TreeNode root, int depth) {
+    if(null == root) {
+      return ;
+    }
+    if(depth == sumList.size()){
+      sumList.add((double)root.val);
+      countList.add(1);
+    }else {
+      sumList.set(depth, sumList.get(depth) + root.val);
+      countList.set(depth, countList.get(depth) + 1);
+    }
+    dfs(sumList,countList, root.left, depth+1);
+    dfs(sumList,countList, root.right, depth+1);
+  }
+}
+```
+
+参考代码（1ms，100%）：和我的DFS差不多，但是就是莫名要快一点。
+
+```java
+class Solution {
+  public List<Double> averageOfLevels(TreeNode root) {
+    List<Integer> counts = new ArrayList<Integer>();
+    List<Double> sums = new ArrayList<Double>();
+    dfs(root, 0, counts, sums);
+    List<Double> averages = new ArrayList<Double>();
+    int size = sums.size();
+    for (int i = 0; i < size; i++) {
+      averages.add(sums.get(i) / counts.get(i));
+    }
+    return averages;
+  }
+
+  public void dfs(TreeNode root, int level, List<Integer> counts, List<Double> sums) {
+    if (root == null) {
+      return;
+    }
+    if (level < sums.size()) {
+      sums.set(level, sums.get(level) + root.val);
+      counts.set(level, counts.get(level) + 1);
+    } else {
+      sums.add(1.0 * root.val);
+      counts.add(1);
+    }
+    dfs(root.left, level + 1, counts, sums);
+    dfs(root.right, level + 1, counts, sums);
+  }
+}
+```
+
+## 429. N 叉树的层序遍历
+
+语言：java
+
+思路：和普通的二叉树BFS没什么区别，借用队列实现；或者DFS也可以
+
+代码1（BFS）（2ms，92.86%）：
+
+```java
+class Solution {
+  public List<List<Integer>> levelOrder(Node root) {
+    if(null == root) {
+      return new ArrayList<>();
+    }
+    List<List<Integer>> result = new LinkedList<>();
+    Queue<Node> queue = new LinkedList<>();
+    queue.add(root);
+    while(!queue.isEmpty()) {
+      int size = queue.size();
+      List<Integer> tmp = new LinkedList<>();
+      while(size-- > 0) {
+        Node cur = queue.poll();
+        tmp.add(cur.val);
+        if(!cur.children.isEmpty()) {
+          queue.addAll(cur.children);
+        }
+      }
+      result.add(tmp); 
+    }
+    return result;
+  }
+}
+```
+
+代码2（DFS）（1ms，94.95%）：
+
+```java
+class Solution {
+  public List<List<Integer>> levelOrder(Node root) {
+    if(null == root) {
+      return new ArrayList<>();
+    }
+    List<List<Integer>> result = new LinkedList<>();
+    dfs(result, Collections.singletonList(root), 0);
+    return result;
+  }
+
+  public void dfs(List<List<Integer>> resultList, List<Node> root, int depth) {
+    if(null == root || root.isEmpty()) {
+      return;
+    }
+    if(depth== resultList.size()) {
+      resultList.add(new LinkedList<>());
+    }
+    List<Integer> tmp = resultList.get(depth);
+    ++depth;
+    for(int i = 0, len = root.size();i < len ;++i) {
+      tmp.add(root.get(i).val);
+      dfs(resultList, root.get(i).children, depth);
+    }
+  }
+}
+```
+
+## 515. 在每个树行中找最大值
+
+语言：java
+
+思路：还是层次遍历，因为找最大值需要每层都遍历一次。DFS、BFS都可以。
+
+代码1（BFS）（2ms，83.87%）：
+
+```java
+class Solution {
+  public List<Integer> largestValues(TreeNode root) {
+    List<Integer> maxResult = new LinkedList<>();
+    if(null == root) {
+      return maxResult;
+    }
+    Queue<TreeNode> queue = new LinkedList<>();
+    queue.add(root);
+    while(!queue.isEmpty()) {
+      int size = queue.size();
+      int maxValue = Integer.MIN_VALUE;
+      for(int i = 0;i<size; ++i) {
+        TreeNode cur =  queue.poll();
+        maxValue = Math.max(maxValue, cur.val);
+        if(cur.left != null) {
+          queue.add(cur.left);
+        }
+        if(cur.right != null) {
+          queue.add(cur.right);
+        }
+      }
+      maxResult.add(maxValue);
+    }
+    return maxResult;
+  }
+}
+```
+
+代码2（DFS）（1ms，96.48%）：
+
+```java
+class Solution {
+  public List<Integer> largestValues(TreeNode root) {
+    List<Integer> maxResult = new LinkedList<>();
+    if(null == root) {
+      return maxResult;
+    }
+    dfs(maxResult, root, 0);
+    return maxResult;
+  }
+
+  public void dfs(List<Integer> maxResult, TreeNode root, int depth) {
+    if(null == root) {
+      return;
+    }
+    if(depth == maxResult.size()) {
+      maxResult.add(Integer.MIN_VALUE);
+    }
+    if(maxResult.get(depth) < root.val) {
+      maxResult.set(depth, root.val);
+    }
+    dfs(maxResult, root.left, depth + 1);
+    dfs(maxResult, root.right, depth + 1);
+  }
+}
+```
+
+参考代码（0ms。100%）：一样是DFS，就是填充结果的地方和我不一样
+
+```java
+class Solution {
+  public List<Integer> largestValues(TreeNode root) {
+    if (root == null) {
+      return new ArrayList<Integer>();
+    }
+    List<Integer> res = new ArrayList<Integer>();
+    dfs(res, root, 0);
+    return res;
+  }
+
+  public void dfs(List<Integer> res, TreeNode root, int curHeight) {
+    if (curHeight == res.size()) {
+      res.add(root.val);
+    } else {
+      res.set(curHeight, Math.max(res.get(curHeight), root.val));
+    }
+    if (root.left != null) {
+      dfs(res, root.left, curHeight + 1);
+    }
+    if (root.right != null) {
+      dfs(res, root.right, curHeight + 1);
+    }
+  }
+}
+```
+
+## 117. 填充每个节点的下一个右侧节点指针 II
+
+语言：java
+
+思路：BFS
+
+代码1（BFS）（1ms，66.71%）：
+
+```java
+class Solution {
+  public Node connect(Node root) {
+    if(null == root) {
+      return root;
+    }
+    Queue<Node> queue = new LinkedList<>();
+    queue.add(root);
+    while(!queue.isEmpty()) {
+      int size = queue.size();
+      Node pre = null;
+      while(size-- > 0) {
+        Node cur = queue.poll();
+        if(pre!=null) {
+          pre.next = cur;
+        }
+        pre = cur;
+        if(cur.left!=null) {
+          queue.add(cur.left);
+        }
+        if(cur.right!=null) {
+          queue.add(cur.right);
+        }
+      }
+    }
+    return root;
+  }
+}
+```
+
+参考代码1（0ms）：BFS，但是常量级空间。
+
+```java
+class Solution {
+  public Node connect(Node root) {
+    if (root == null)
+      return root;
+    //cur我们可以把它看做是每一层的链表
+    Node cur = root;
+    while (cur != null) {
+      //遍历当前层的时候，为了方便操作在下一
+      //层前面添加一个哑结点（注意这里是访问
+      //当前层的节点，然后把下一层的节点串起来）
+      Node dummy = new Node(0);
+      //pre表示访下一层节点的前一个节点
+      Node pre = dummy;
+      //然后开始遍历当前层的链表
+      while (cur != null) {
+        if (cur.left != null) {
+          //如果当前节点的左子节点不为空，就让pre节点
+          //的next指向他，也就是把它串起来
+          pre.next = cur.left;
+          //然后再更新pre
+          pre = pre.next;
+        }
+        //同理参照左子树
+        if (cur.right != null) {
+          pre.next = cur.right;
+          pre = pre.next;
+        }
+        //继续访问这一行的下一个节点
+        cur = cur.next;
+      }
+      //把下一层串联成一个链表之后，让他赋值给cur，
+      //后续继续循环，直到cur为空为止
+      cur = dummy.next;
+    }
+    return root;
+  }
+}
+```
+
+参考后重写（0ms）：
+
+```java
+class Solution {
+  public Node connect(Node root) {
+    if(null == root) {
+      return null;
+    }
+    Node cur = root;
+    // 外层while，深度遍历，最左边节点
+    while(cur != null) {
+      // 内层while，下一层的层级遍历 (downHead是临时节点，链表头指针)
+      Node downHead = new Node(0);
+      Node pre = downHead;
+      while(cur!=null) {
+        if(cur.left!=null) {
+          pre.next = cur.left;
+          pre = pre.next;
+        }
+        if(cur.right!=null) {
+          pre.next = cur.right;
+          pre = pre.next;
+        }
+        cur = cur.next;
+      }
+      // cur 遍历到下一层
+      cur = downHead.next;
+      // 释放临时节点内存
+      downHead.next = null;
+      downHead = null;
+    }
+    return root;
+  }
+}
+```
+
+## 111. 二叉树的最小深度
+
+语言：java
+
+思路：DFS，这里有个坑，这里的最小深度，首先要到某个节点其没有任何左右节点，然后才算深度。
+
+代码（11ms，16.42%）：
+
+```java
+class Solution {
+  public int minDepth(TreeNode root) {
+    if(root == null) {
+      return 0;
+    }
+    return dfs(root, 1);
+  }
+
+  public int dfs(TreeNode root, int depth) {
+    if(root.left == null && root.right == null) {
+      return depth;
+    }
+    if(root.left!=null && root.right!=null) {
+      return Math.min(dfs(root.left, depth+1), dfs(root.right, depth+1));
+    }else if(root.left == null) {
+      return dfs(root.right,depth+1);
+    } else return dfs(root.left,depth+1);
+  } 
+}
+```
+
+参考代码1（12ms，9.42%）：DFS
+
+> [二叉树的最小深度 - 二叉树的最小深度 - 力扣（LeetCode）](https://leetcode.cn/problems/minimum-depth-of-binary-tree/solution/er-cha-shu-de-zui-xiao-shen-du-by-leetcode-solutio/)
+
+```java
+class Solution {
+  public int minDepth(TreeNode root) {
+    if (root == null) {
+      return 0;
+    }
+
+    if (root.left == null && root.right == null) {
+      return 1;
+    }
+
+    int min_depth = Integer.MAX_VALUE;
+    if (root.left != null) {
+      min_depth = Math.min(minDepth(root.left), min_depth);
+    }
+    if (root.right != null) {
+      min_depth = Math.min(minDepth(root.right), min_depth);
+    }
+
+    return min_depth + 1;
+  }
+}
+```
+
+参考代码2（1ms）：BFS
+
+```java
+class Solution {
+  public int minDepth(TreeNode root) {
+    if (root == null) {
+      return 0;
+    }
+
+    Queue<TreeNode> q = new LinkedList<>();
+    //Set<TreeNode> visited = new HashSet<>();
+
+    q.offer(root);
+    int step = 1;
+
+    while (!q.isEmpty()) {
+      int size = q.size();
+      for (int i = 0; i < size; i++) {
+        TreeNode node = q.poll();
+        if (node.left == null && node.right == null) {
+          return step;
+        }
+
+        if (node.left != null) {
+          q.offer(node.left);
+        }
+
+        if (node.right != null) {
+          q.offer(node.right);
+        }
+      }
+      step++;
+    }
+
+    return step;
+  }
+}
+```
+
+参考后重写（BFS）（0ms，100%）：
+```java
+class Solution {
+  public int minDepth(TreeNode root) {
+    if (root == null) {
+      return 0;
+    }
+    int depth = 1;
+    Queue<TreeNode> queue = new LinkedList<>();
+    queue.add(root);
+    while(!queue.isEmpty()) {
+      int size = queue.size();
+      while(size-- > 0) {
+        TreeNode cur = queue.poll();
+        if(cur.left == null && cur.right == null) {
+          return depth;
+        }
+        if(cur.left != null) {
+          queue.add(cur.left);
+        }
+        if(cur.right != null) {
+          queue.add(cur.right);
+        }
+      }
+      ++depth;
+    }
+    return depth;
+  }
+}
+```
+
+## 226. 翻转二叉树
+
+语言：java
+
+思路：DFS，边往下遍历的时候边做翻转
+
+代码（0ms，100%）：
+
+```java
+class Solution {
+  public TreeNode invertTree(TreeNode root) {
+    if(null == root) {
+      return root;
+    }
+    TreeNode tmp = root.right;
+    root.right = root.left;
+    root.left = tmp;
+    invertTree(root.left);
+    invertTree(root.right);
+    return root;
+  }
+}
+```
+
+## 559. N 叉树的最大深度
+
+语言：java
+
+思路：最大深度 = 根节点的高度，求高度可以用后序遍历（深度则是前序遍历）
+
+代码（DFS）（0ms，100%）：
+
+```java
+class Solution {
+  public int maxDepth(Node root) {
+    if(null == root) {
+      return 0;
+    }
+    int max = 1;
+    for(Node node : root.children) {
+      max = Math.max(maxDepth(node)+1, max);
+    }
+    return max;
+  }
+}
+```
+
+## 222. 完全二叉树的节点个数
+
+语言：java
+
+思路：DFS遍历所有节点，每个节点计数。这里后序遍历就好了
+
+代码1（DFS）（0ms）：
+
+```java
+class Solution {
+  public int countNodes(TreeNode root) {
+    if(null == root) return 0;
+    return countNodes(root.left) + countNodes(root.right) + 1;
+  }
+}
+```
+
+代码2（0ms）：利用完全二叉树、满二叉树的定义计算节点数量。要点就是判断当前子树是不是满二叉树（判断方式即当前root的最左和最右向下遍历的深度一致）
+
+```java
+class Solution {
+  public int countNodes(TreeNode root) {
+    if(null == root) return 0;
+    TreeNode left = root;
+    TreeNode right = root;
+    int lDepth = 0, rDepth = 0;
+    // 当前节点到最左子节点深度
+    while(left!=null) {
+      left = left.left;
+      ++lDepth;
+    }
+    // 当前节点到最右子节点深度
+    while(right!=null) {
+      right = right.right;
+      ++rDepth;
+    }
+    // 左深度 = 右深度，表示当前子树是满二叉树
+    if(lDepth == rDepth) {
+      return (1 << lDepth) - 1;
+    }
+    // 非满二叉树的情况，像正常后序遍历一样求节点个数
+    return countNodes(root.left) + countNodes(root.right) + 1;
+  }
+}
+```
+
+## 110. 平衡二叉树
+
+语言：java
+
+思路：DFS求左右子树高度差就好了
+
+代码1（1ms，45.10%）：
+
+```java
+class Solution {
+    public boolean isBalanced(TreeNode root) {
+        if(null == root) return true;
+      	// 当前节点满足 && 左 满足 &&  右 满足
+        return Math.abs(dfs(root.left)-dfs(root.right)) <=1 && isBalanced(root.left) && isBalanced(root.right);
+    }
+		// 求树高度
+    public int dfs(TreeNode root) {
+        if(null == root) return 0;
+        return Math.max(dfs(root.left), dfs(root.right)) + 1;
+    }
+}
+```
+
+代码2（0ms）：减枝优化逻辑，当向下求左右子树高度，发现某处已经不是平衡二叉树了，那么直接返回-1，表示整体已经不是平衡二叉树
+
+```java
+class Solution {
+  public boolean isBalanced(TreeNode root) {
+    return dfs(root) > -1;
+  }
+
+  public int dfs(TreeNode root) {
+    if(null == root) return 0;
+    int left = dfs(root.left) ;
+    // 这里最好改成提前判断 left == -1 的情况，这样要是左子树已经判断不是平衡二叉树了，就不需要判断右子树了
+    int right = dfs(root.right);
+    if(left == -1 || right == -1 || Math.abs(left-right) > 1) {
+      return -1;
+    }
+    return Math.max(left, right) + 1;
+  }
+}
+```
+
+参考代码1（0ms）：一样DFS，就是left提前判断是否平衡二叉树，减枝更彻底
+
+> [110. 平衡二叉树 - 力扣（Leetcode）](https://leetcode.cn/problems/balanced-binary-tree/solutions/8737/balanced-binary-tree-di-gui-fang-fa-by-jin40789108/)
+
+```java
+class Solution {
+  public boolean isBalanced(TreeNode root) {
+    return recur(root) != -1;
+  }
+
+  private int recur(TreeNode root) {
+    if (root == null) return 0;
+    int left = recur(root.left);
+    if(left == -1) return -1;
+    int right = recur(root.right);
+    if(right == -1) return -1;
+    return Math.abs(left - right) < 2 ? Math.max(left, right) + 1 : -1;
+  }
+}
+```
+
+## 257. 二叉树的所有路径
+
+语言：java
+
+思路：DFS前序遍历
+
+代码（1ms，100%）：
+
+```java
+class Solution {
+  public List<String> binaryTreePaths(TreeNode root) {
+    List<String> result = new LinkedList<>();
+    if (null == root) {
+      return result;
+    }
+    dfs(result, root, new LinkedList<>());
+    return result;
+  }
+
+  public void dfs(List<String> result, TreeNode root, Deque<TreeNode> deque) {
+    deque.addLast(root);
+    if(root.left == null && root.right ==null) {
+      StringBuilder sb = new StringBuilder();
+      for(TreeNode cur : deque) {
+        sb.append(cur.val).append("->");
+      }
+      sb.delete(sb.length()-2, sb.length());
+      result.add(sb.toString());
+    }
+    if(null!=root.left) {
+      dfs(result,root.left, deque);
+    }
+    if(null!= root.right) {
+      dfs(result,root.right, deque);
+    }
+    deque.removeLast();
+  }
+}
+```
+
+## 404. 左叶子之和
+
+语言：java
+
+思路：求的是左叶子之和，所以可以考虑中/后序遍历DFS，左中右的中没有用，所以选左右中（后序）
+
+代码（0ms，100%）：
+
+```java
+class Solution {
+  public int sumOfLeftLeaves(TreeNode root) {
+    if(null == root) {
+      return 0;
+    }
+    return dfs(root,false);
+  }
+
+  public int dfs(TreeNode root, boolean isLeft) {
+    if(null == root.left && null == root.right) {
+      return isLeft ? root.val : 0;
+    }
+    int left = 0,right = 0;
+    if(null != root.left) {
+      left = dfs(root.left, true);
+    }
+    if(null!= root.right) {
+      right = dfs(root.right, false);
+    }
+    return left + right;
+  }
+}
+```
+
+## 513. 找树左下角的值
+
+语言：java
+
+思路：最底层，其次最左边，层次优先，可以用BFS
+
+代码1（BFS）（2ms，14.97%）：
+
+```java
+class Solution {
+  public int findBottomLeftValue(TreeNode root) {
+    if(null == root) {
+      return 0;
+    }
+    int result = 0;
+    Queue<TreeNode> queue = new LinkedList<>();
+    queue.add(root);
+    while(!queue.isEmpty()) {
+      int size = queue.size();
+      for(int i = 0;i <size;++i) {
+        TreeNode cur = queue.poll();
+        if(i==0) {
+          result = cur.val;
+        }
+        if(null!=cur.left) {
+          queue.add(cur.left);
+        }
+        if(null!=cur.right) {
+          queue.add(cur.right);
+        }
+      }
+    }
+    return result;
+  }
+}
+```
+
+代码2（DFS）（0ms，100%）：后序遍历
+
+```java
+class Solution {
+  public int findBottomLeftValue(TreeNode root) {
+    if(null == root) {
+      return 0;
+    }
+    int[] record = new int[2];
+    dfs(root,1, record);
+    return record[1];
+  }
+
+  public void dfs(TreeNode root,int depth, int[] depthValuePair) {
+    if(null == root) {
+      return;
+    }
+    dfs(root.left,depth+1,depthValuePair);
+    dfs(root.right,depth+1,depthValuePair);
+    if(depth > depthValuePair[0]) {
+      depthValuePair[0] = depth;
+      depthValuePair[1] = root.val;
+    }
+  }
+}
+```
+
+## 113. 路径总和 II
+
+语言：java
+
+思路：后序遍历DFS
+
+代码（1ms，100%）：
+
+```java
+class Solution {
+  public List<List<Integer>> pathSum(TreeNode root, int targetSum) {
+    List<List<Integer>> pathList = new LinkedList<>();
+    if(null == root) {
+      return pathList;
+    }
+    dfs(pathList, new LinkedList<>(), root, targetSum);
+    return pathList;
+  }
+
+  public void dfs(List<List<Integer>> resultList,List<Integer> path, TreeNode root, int targetSum) {
+    if(null == root.left && null == root.right) {
+      if(targetSum == root.val) {
+        List<Integer> tmp = new LinkedList<>();
+        tmp.addAll(path);
+        tmp.add(root.val);
+        resultList.add(tmp);
+      }
+    }
+    if(null != root.left) {
+      path.add(root.val);
+      dfs(resultList, path, root.left, targetSum-root.val);
+      path.remove(path.size()-1);
+    }
+    if(null != root.right) {
+      path.add(root.val);
+      dfs(resultList, path, root.right, targetSum-root.val);
+      path.remove(path.size()-1);
+    }
+  }
+}
+```
+
+参考代码1：同样DFS，主要精简在添加节点到临时List和最后回溯弹出节点。
+
+> [113. 路径总和 II - 力扣（Leetcode）](https://leetcode.cn/problems/path-sum-ii/solutions/427759/lu-jing-zong-he-ii-by-leetcode-solution/)
+
+```java
+class Solution {
+  List<List<Integer>> ret = new LinkedList<List<Integer>>();
+  Deque<Integer> path = new LinkedList<Integer>();
+
+  public List<List<Integer>> pathSum(TreeNode root, int targetSum) {
+    dfs(root, targetSum);
+    return ret;
+  }
+
+  public void dfs(TreeNode root, int targetSum) {
+    if (root == null) {
+      return;
+    }
+    path.offerLast(root.val);
+    targetSum -= root.val;
+    if (root.left == null && root.right == null && targetSum == 0) {
+      ret.add(new LinkedList<Integer>(path));
+    }
+    dfs(root.left, targetSum);
+    dfs(root.right, targetSum);
+    path.pollLast();
+  }
+}
+```
+
+## 106. 从中序与后序遍历序列构造二叉树
+
+语言：java
+
+思路：中序和后序的区别，就是 中和右节点的遍历顺序；通过后序遍历确定中节点，在中序遍历中找对应中节点的右子树，进而继续划分左右子树.
+
+代码（3ms，39.79%）：主要麻烦点就是后续遍历，怎么确认下一次拆分的左区间和右区间
+
+```java
+class Solution {
+  public TreeNode buildTree(int[] inorder, int[] postorder) {
+    // 1、后序 找 中
+    // 2、中序 划分 左/右
+    // 3、构造中节点
+    // 4、对于左/右子树，拆分新inorder[], postorder[]，向下继续划分
+    return buildTree(inorder,postorder,0,inorder.length-1,0,postorder.length-1);
+  }
+
+  public TreeNode buildTree(int[] inorder, int[] postorder, int leftIn, int rightIn, int leftPost,int rightPost) {
+    if(leftIn < 0 || rightIn >= inorder.length || rightIn < 0 || rightPost>= postorder.length || leftIn > rightIn || leftPost > rightPost) {
+      return null;
+    }
+    int midValue = postorder[rightPost];
+    // 中节点
+    TreeNode mid = new TreeNode(midValue);
+    // 中序遍历的 中节点 pos
+    int midPos = pos(inorder,leftIn, rightIn, midValue);
+    // 通过midPos可以得到 midPos左子树的个数，从而推算出 后续遍历前面几个节点是 属于左子树的
+    mid.left = buildTree(inorder,postorder, leftIn, midPos-1, leftPost, leftPost+midPos-leftIn-1);
+    mid.right = buildTree(inorder,postorder, midPos+1, rightIn, leftPost+midPos-leftIn, rightPost-1);
+    return mid;
+  }
+
+  public int pos(int[] arr, int left, int right,int num) {
+    while(left <= right) {
+      if(arr[left]==num) {
+        return left;
+      }
+      ++left;
+    }
+    return left;
+  }
+}
+```
+
+参考代码1（0ms）：有点过于抽象，难理解
+
+```java
+class Solution {
+  int[] inorder, postorder;
+  public TreeNode buildTree(int[] _inorder, int[] _postorder) {
+    inorder = _inorder;
+    postorder = _postorder;
+    return recursion(postorder.length-1, postorder.length-1, 0);
+  }
+  public TreeNode recursion(int index, int start, int end){
+    if(start < end){
+      return null;
+    }else if(start == end){
+      return new TreeNode(postorder[index]);
+    }
+    TreeNode root = new TreeNode(postorder[index]);
+    for(int i = start; i >= end; i--){
+      if(inorder[i] == postorder[index]){
+        index--;
+        root.right = recursion(index, start, i+1);
+        root.left = recursion(index + i - start, i-1, end);
+        break;
+      }
+    }
+    return root;
+  }
+}
+```
+
+参考代码2（1ms，99.58%）：
+
+> [代码随想录 (programmercarl.com)](https://programmercarl.com/0106.从中序与后序遍历序列构造二叉树.html#java)
+
+```java
+class Solution {
+  Map<Integer, Integer> map;  // 方便根据数值查找位置
+  public TreeNode buildTree(int[] inorder, int[] postorder) {
+    map = new HashMap<>();
+    for (int i = 0; i < inorder.length; i++) { // 用map保存中序序列的数值对应位置
+      map.put(inorder[i], i);
+    }
+
+    return findNode(inorder,  0, inorder.length, postorder,0, postorder.length);  // 前闭后开
+  }
+
+  public TreeNode findNode(int[] inorder, int inBegin, int inEnd, int[] postorder, int postBegin, int postEnd) {
+    // 参数里的范围都是前闭后开
+    if (inBegin >= inEnd || postBegin >= postEnd) {  // 不满足左闭右开，说明没有元素，返回空树
+      return null;
+    }
+    int rootIndex = map.get(postorder[postEnd - 1]);  // 找到后序遍历的最后一个元素在中序遍历中的位置
+    TreeNode root = new TreeNode(inorder[rootIndex]);  // 构造结点
+    int lenOfLeft = rootIndex - inBegin;  // 保存中序左子树个数，用来确定后序数列的个数
+    root.left = findNode(inorder, inBegin, rootIndex,
+                         postorder, postBegin, postBegin + lenOfLeft);
+    root.right = findNode(inorder, rootIndex + 1, inEnd,
+                          postorder, postBegin + lenOfLeft, postEnd - 1);
+
+    return root;
+  }
+}
+```
+
+## 654. 最大二叉树
+
+语言：java
+
+思路：每次先构造根节点，然后才是左右节点。即前序DFS，构造二叉树都是前序
+
+代码（2 ms，87.67%）：
+
+```java
+class Solution {
+  public TreeNode constructMaximumBinaryTree(int[] nums) {
+    return null == nums || nums.length ==0 ? null : dfs(nums, 0, nums.length-1);
+  }
+
+
+  public TreeNode dfs(int[] nums,int left,int right) {
+    if(left > right) {
+      return null;
+    }
+    if(left == right) {
+      return new TreeNode(nums[left]);
+    }
+    int maxIndex = maxIndex(nums,left,right);
+    TreeNode root = new TreeNode(nums[maxIndex]);
+    root.left = dfs(nums, left, maxIndex-1);
+    root.right = dfs(nums, maxIndex+1, right);
+    return root;
+  }
+
+  public int maxIndex(int[] nums, int left, int right) {
+    int maxIndex = left;
+    while(left <= right) {
+      if(nums[left] > nums[maxIndex]) {
+        maxIndex = left;
+      }
+      ++left;
+    }
+    return maxIndex;
+  }
+}
+```
+
+## 617.合并二叉树
+
+语言：java
+
+思路：简单的前序遍历DFS
+
+代码（0ms，100%）：
+
+```java
+class Solution {
+  public TreeNode mergeTrees(TreeNode root1, TreeNode root2) {
+    if(null == root1) {
+      return root2;
+    }
+    if(null == root2) {
+      return root1;
+    }
+    root1.val += root2.val;
+    root1.left = mergeTrees(root1.left, root2.left);
+    root1.right = mergeTrees(root1.right, root2.right);
+    return root1;
+  }
+}
+```
+
+## 700.二叉搜索树中的搜索
+
+语言：java
+
+思路：前序遍历DFS即可
+
+代码1（0ms，100%）：
+
+```java
+class Solution {
+  public TreeNode searchBST(TreeNode root, int val) {
+    if(null == root) {
+      return null;
+    }
+    if(root.val == val) {
+      return root;
+    }
+    TreeNode left = searchBST(root.left, val);
+    return left != null ? left : searchBST(root.right, val);
+  }
+}
+```
+
+代码2（0ms，100%）：利用二叉搜索树性质，减枝搜索
+
+```java
+class Solution {
+  public TreeNode searchBST(TreeNode root, int val) {
+    if(null == root) {
+      return null;
+    }
+    if(root.val == val) {
+      return root;
+    } 
+    return root.val > val ? searchBST(root.left, val) : searchBST(root.right, val) ;
+  }
+}
+```
+
+代码3（0ms，100%）：迭代法
+
+```java
+class Solution {
+  public TreeNode searchBST(TreeNode root, int val) {
+    while(null != root) {
+      if(root.val == val) break;
+      root = root.val > val ? root.left : root.right;
+    }
+    return root;
+  }
+}
+```
+
+## 501. 二叉搜索树中的众数
+
+语言：java
+
+思路：简单思路就是直接Map存每个数字出现次数，以及某数字出现次数最大值；复杂点的，可以去掉Map，用一个List存储众数（中间实时更新该List）
+
+代码（0ms，100%）：
+
+```java
+class Solution {
+  int maxCount = 0;
+  int curCount = 0;
+  List<Integer> tmpList = new ArrayList<>();
+  TreeNode pre;
+  public int[] findMode(TreeNode root) {
+    dfs(root);
+    int[] result = new int[tmpList.size()];
+    for(int i =0;i< tmpList.size();++i) {
+      result[i] = tmpList.get(i);
+    }
+    return result;
+  }
+
+  public void dfs(TreeNode root) {
+    if(null == root) {
+      return;
+    }
+    dfs(root.left);
+    // 如果上一个为空，说明现在遍历第一个非节点
+    if(pre==null) {
+      curCount = 1;
+      // 与上一相同，则继续 计数
+    } else if (pre.val == root.val) {
+      curCount +=1;
+      // 与上一个不同，重新计数（这个是二叉搜索树，后面肯定不会再出现和pre.val一样的root.val）
+    } else {
+      curCount = 1;
+    }
+    // 出现新的 计数最大的众数，清空之前维护的众数集合
+    if(curCount > maxCount) {
+      tmpList.clear();
+      tmpList.add(root.val);
+      maxCount = curCount;
+      // 与现有的众树出现次数相同
+    }else if(curCount == maxCount) {
+      tmpList.add(root.val);
+    }
+    pre = root;
+    dfs(root.right);
+  }
+}
+```
+
+## 236. 二叉树的最近公共祖先
+
+语言：java
+
+思路：需要回溯才返回结果，所以后序（左右中）；用一个额外节点表示已经找到result，减枝返回
+
+代码（6ms，99.99%）：
+
+```java
+/**
+ * Definition for a binary tree node.
+ * public class TreeNode {
+ *     int val;
+ *     TreeNode left;
+ *     TreeNode right;
+ *     TreeNode(int x) { val = x; }
+ * }
+ */
+class Solution {
+  TreeNode result = null; // 公共祖先
+
+  public TreeNode lowestCommonAncestor(TreeNode root, TreeNode p, TreeNode q) {
+    if(result!= null) {
+      return result;
+    }
+    if(root == null) {
+      return null;
+    }
+    if(root == p || root == q) {
+      return root;
+    }
+    TreeNode left = lowestCommonAncestor(root.left,p,q);
+    if(null!= result ) {
+      return result;
+    }
+    if(left == p && root == q || left == q && root == p) {
+      result = root;
+      return root;
+    }
+    TreeNode right = lowestCommonAncestor(root.right,p,q);
+    if(null!= result ) {
+      return result;
+    }
+    if(right == p && root == q || right == q && root == p) {
+      result = root;
+      return root;
+    }
+    if(left == p && right == q || left == q && right == p) {
+      result = root;
+      return root;
+    }
+    return left != null? left : right;
+  }
+}
+```
+
+参考代码（6ms，99.99%）：
+
+> [236. 二叉树的最近公共祖先 - 力扣（Leetcode）](https://leetcode.cn/problems/lowest-common-ancestor-of-a-binary-tree/solutions/240096/236-er-cha-shu-de-zui-jin-gong-gong-zu-xian-hou-xu/)
+
+```java
+class Solution {
+  public TreeNode lowestCommonAncestor(TreeNode root, TreeNode p, TreeNode q) {
+    if(root == null || root == p || root == q) return root;
+    TreeNode left = lowestCommonAncestor(root.left, p, q);
+    TreeNode right = lowestCommonAncestor(root.right, p, q);
+    if(left == null && right == null) return null; // 1.
+    if(left == null) return right; // 3.
+    if(right == null) return left; // 4.
+    return root; // 2. if(left != null and right != null)
+  }
+}
+```
+
+## 235. 二叉搜索树的最近公共祖先
+
+语言：java
+
+思路：整体还是后序DFS（左右中），因为需要回溯才能返回数据；通过二叉搜索树的性质，可以提前减枝（提前确定接下去是左子树还是右子树）。
+
+代码1（DFS）（5ms，99.98%）
+
+```java
+class Solution {
+  public TreeNode lowestCommonAncestor(TreeNode root, TreeNode p, TreeNode q) {
+    if(null==root || p == root || q == root ) {
+      return root;
+    }
+    if(root.val < p.val && root.val < q.val) {
+      return lowestCommonAncestor(root.right, p , q);
+    }
+    if(root.val > p.val && root.val > q.val) {
+      return lowestCommonAncestor(root.left, p , q);
+    }
+    return root;
+  }
+}
+```
+
+代码2（迭代法）（5ms，99.98%）：
+```java
+class Solution {
+  public TreeNode lowestCommonAncestor(TreeNode root, TreeNode p, TreeNode q) {
+    while(null != root) {
+      if(root.val > p.val && root.val > q.val) {
+        root = root.left;
+      }
+      else if(root.val < p.val && root.val < q.val) {
+        root = root.right;
+      } else {
+        return root;
+      }
+    }
+    return null;
+  }
+}
+```
+
+## 701. 二叉搜索树中的插入操作
+
+语言：java
+
+思路：搜索树（左右中）后序DFS或者迭代法。其实某种意义上，相当于找到目标节点，在原二叉搜索树中应该在的位置。
+
+代码1（后序DFS）（0ms，100%）：
+
+```java
+class Solution {
+  public TreeNode insertIntoBST(TreeNode root, int val) {
+    if(null == root) {
+      return new TreeNode(val);
+    }
+    dfs(root,val);
+    return root;
+  }
+
+  public void dfs(TreeNode root, int val) {
+    if(null == root) {
+      return;
+    }
+    if(root.val > val) {
+      if(root.left != null) {
+        dfs(root.left, val);
+      }else {
+        root.left = new TreeNode(val);
+        return;
+      }    
+    } 
+    if(root.val < val) {
+      if(root.right != null) {
+        dfs(root.right, val);
+      }else {
+        root.right = new TreeNode(val);
+        return;
+      }    
+    }
+  }
+}
+```
+
+代码2（迭代法）（0ms，100%）：
+
+```java
+class Solution {
+  public TreeNode insertIntoBST(TreeNode root, int val) {
+    if(null == root) {
+      return new TreeNode(val);
+    }
+    TreeNode result = root;
+    while(null != root) {
+      if(root.val > val) {
+        if(root.left !=null) {
+          root = root.left;
+          continue;
+        } else {
+          root.left = new TreeNode(val);
+          break;
+        }
+      }
+      if(root.val < val) {
+        if(root.right !=null) {
+          root = root.right;
+          continue;
+        } else {
+          root.right = new TreeNode(val);
+          break;
+        }
+      }
+    }
+    return result;
+  }
+}
+```
+
+参考代码1（递归法）（0ms，100%）：更加简洁。每次向下递归相当于重新构造子树
+
+> [代码随想录 (programmercarl.com)](https://programmercarl.com/0701.二叉搜索树中的插入操作.html#java)
+
+```java
+class Solution {
+  public TreeNode insertIntoBST(TreeNode root, int val) {
+    if (root == null) // 如果当前节点为空，也就意味着val找到了合适的位置，此时创建节点直接返回。
+      return new TreeNode(val);
+
+    if (root.val < val){
+      root.right = insertIntoBST(root.right, val); // 递归创建右子树
+    }else if (root.val > val){
+      root.left = insertIntoBST(root.left, val); // 递归创建左子树
+    }
+    return root;
+  }
+}
+```
+
+参考代码2（迭代法）（0ms，100%）：减少中间null值判断，最后再判断一次插入位置，但需要额外维护指针
+
+> [代码随想录 (programmercarl.com)](https://programmercarl.com/0701.二叉搜索树中的插入操作.html#java)
+
+```java
+class Solution {
+  public TreeNode insertIntoBST(TreeNode root, int val) {
+    if (root == null) return new TreeNode(val);
+    TreeNode newRoot = root;
+    TreeNode pre = root;
+    while (root != null) {
+      pre = root;
+      if (root.val > val) {
+        root = root.left;
+      } else if (root.val < val) {
+        root = root.right;
+      } 
+    }
+    if (pre.val > val) {
+      pre.left = new TreeNode(val);
+    } else {
+      pre.right = new TreeNode(val);
+    }
+
+    return newRoot;
+  }
+}
+```
+
+## 450. 删除二叉搜索树中的节点
+
+语言：java
+
+思路：DFS题目相当于（1）删除指定节点；（2）用两个子树构造二叉搜索树
+
+代码（DFS找节点，迭代合并子树构造二叉搜索树）（0ms，100%）：
+
+```java
+class Solution {
+  public TreeNode deleteNode(TreeNode root, int key) {
+    if(null == root) {
+      return root;
+    }
+    if(root.val > key) {
+      root.left = deleteNode(root.left, key);
+    }
+    else if(root.val < key) {
+      root.right = deleteNode(root.right, key);
+    } else {
+      return mergeTreeNode(root.left, root.right);
+    }
+    return root;
+  }
+
+  public TreeNode mergeTreeNode(TreeNode left, TreeNode right) {
+    if(right == null) {
+      return left;
+    }
+    TreeNode tmpLeft = right;
+    while(tmpLeft.left !=null) {
+      tmpLeft = tmpLeft.left;
+    }
+    tmpLeft.left = left;
+    return right;
+  }
+}
+```
+
+参考代码1（迭代法）（0ms，100%）：
+
+> [代码随想录 (programmercarl.com)](https://programmercarl.com/0450.删除二叉搜索树中的节点.html#迭代法)
+
+```java
+class Solution {
+  public TreeNode deleteNode(TreeNode root, int key) {
+    root = delete(root,key);
+    return root;
+  }
+
+  private TreeNode delete(TreeNode root, int key) {
+    if (root == null) return null;
+
+    if (root.val > key) {
+      root.left = delete(root.left,key);
+    } else if (root.val < key) {
+      root.right = delete(root.right,key);
+    } else {
+      if (root.left == null) return root.right;
+      if (root.right == null) return root.left;
+      TreeNode tmp = root.right;
+      while (tmp.left != null) {
+        tmp = tmp.left;
+      }
+      root.val = tmp.val;
+      root.right = delete(root.right,tmp.val);
+    }
+    return root;
+  }
+}
+```
+
+参考代码2（递归法）（0ms，100%）：
+
+> [代码随想录 (programmercarl.com)](https://programmercarl.com/0450.删除二叉搜索树中的节点.html#迭代法)
+
+```java
+class Solution {
+  public TreeNode deleteNode(TreeNode root, int key) {
+    if (root == null) return root;
+    if (root.val == key) {
+      if (root.left == null) {
+        return root.right;
+      } else if (root.right == null) {
+        return root.left;
+      } else {
+        TreeNode cur = root.right;
+        while (cur.left != null) {
+          cur = cur.left;
+        }
+        cur.left = root.left;
+        root = root.right;
+        return root;
+      }
+    }
+    if (root.val > key) root.left = deleteNode(root.left, key);
+    if (root.val < key) root.right = deleteNode(root.right, key);
+    return root;
+  }
+}
+```
+
+## 669. 修剪二叉搜索树
+
+语言：java
+
+思路：遍历的节点在区间外时，尝试寻找其符合区间的子树；其他情况和"删除二叉搜索树中的节点"基本一致。这里用DFS重新构造遍历的子树，只保留符合条件的节点。
+
+代码1（DFS）（0ms，100%）：
+
+```java
+class Solution {
+  public TreeNode trimBST(TreeNode root, int low, int high) {
+    if(null == root) {
+      return root;
+    }
+    if(root.val < low) {
+      return trimBST(root.right, low, high);
+    }
+    if(root.val > high ) {
+      return trimBST(root.left, low, high);
+    }
+    root.left = trimBST(root.left, low, high);
+    root.right = trimBST(root.right, low, high);
+    return root;
+  }
+}
+```
+
+代码2（迭代法）（0ms，100%）：先找到符合区间的root，然后裁剪这个root的左右子树
+
+```java
+class Solution {
+  public TreeNode trimBST(TreeNode root, int low, int high) {
+    // 寻找符合区间的 根 节点
+    while(null != root && (root.val < low || root.val > high)) {
+      if(root.val < low) {
+        root = root.right;
+      }
+      else if(root.val > high) {
+        root = root.left;
+      }
+    }
+    if(null == root) {
+      return root;
+    }
+    // 对 左子树减枝
+    TreeNode cur = root;
+    while(cur!=null && cur.left!=null) {
+      if(cur.left.val  < low) {
+        cur.left = cur.left.right;
+        continue;
+      }
+      cur = cur.left;
+    }
+    cur = root;
+    // 对 右子树减枝
+    while(cur !=null && cur.right!=null) {
+      if(cur.right.val > high) {
+        cur.right = cur.right.left;
+        continue;
+      }
+      cur = cur.right;
+    }
+    return root;
+  }
+}
+```
+
+参考代码1（0ms，100%）：迭代法，先找到符合区间的root；然后对左右子树进行减枝
+
+> [669. 修剪二叉搜索树 - 力扣（Leetcode）](https://leetcode.cn/problems/trim-a-binary-search-tree/solutions/1813384/xiu-jian-er-cha-sou-suo-shu-by-leetcode-qe7q1/)
+
+```java
+class Solution {
+  public TreeNode trimBST(TreeNode root, int low, int high) {
+    while (root != null && (root.val < low || root.val > high)) {
+      if (root.val < low) {
+        root = root.right;
+      } else {
+        root = root.left;
+      }
+    }
+    if (root == null) {
+      return null;
+    }
+    for (TreeNode node = root; node.left != null; ) {
+      if (node.left.val < low) {
+        node.left = node.left.right;
+      } else {
+        node = node.left;
+      }
+    }
+    for (TreeNode node = root; node.right != null; ) {
+      if (node.right.val > high) {
+        node.right = node.right.left;
+      } else {
+        node = node.right;
+      }
+    }
+    return root;
+  }
+}
+```
+
+## 538. 把二叉搜索树转换为累加树
+
+语言：java
+
+思路：想像成有序数组，则从右往左，每个数字加上前面的数字和。这里用一个pre指针模拟该过程（右中左）
+
+代码1（DFS）（0ms，100%）：
+
+```java
+class Solution {
+  TreeNode pre = null;
+  public TreeNode convertBST(TreeNode root) {
+    if(null == root) {
+      return null;
+    }
+    dfs(root);
+    return root;
+  }
+
+  public void dfs(TreeNode root) {
+    if(null == root) {
+      return;
+    }
+    dfs(root.right);
+    if(pre!=null) {
+      root.val += pre.val;
+    }
+    pre = root;
+    dfs(root.left);
+  }
+}
+```
+
+代码2（迭代法）（0ms，100%）：拆解问题就是后中左遍历，然后每次遍历到的节点val变成之前遍历的总和+自己val
+
+```java
+class Solution {
+  int pre = 0;
+  public TreeNode convertBST(TreeNode root) {
+    if(null == root) {
+      return null;
+    }
+    Deque<TreeNode> stack = new LinkedList<>();
+    TreeNode cur = root;
+    while(null != cur || !stack.isEmpty()) {
+      if(cur!=null) {
+        stack.addLast(cur);
+        cur = cur.right;
+      } else {
+        cur = stack.pollLast();
+        cur.val += pre;
+        pre = cur.val;
+        cur = cur.left;
+      }
+    }
+    return root;
+  }
+}
+```
+
+参考代码1：迭代法
+
+> [代码随想录 (programmercarl.com)](https://programmercarl.com/0538.把二叉搜索树转换为累加树.html#递归)
+
+```c++
+class Solution {
+  private:
+  int pre; // 记录前一个节点的数值
+  void traversal(TreeNode* root) {
+    stack<TreeNode*> st;
+    TreeNode* cur = root;
+    while (cur != NULL || !st.empty()) {
+      if (cur != NULL) {
+        st.push(cur);
+        cur = cur->right;   // 右
+      } else {
+        cur = st.top();     // 中
+        st.pop();
+        cur->val += pre;
+        pre = cur->val;
+        cur = cur->left;    // 左
+      }
+    }
+  }
+  public:
+  TreeNode* convertBST(TreeNode* root) {
+    pre = 0;
+    traversal(root);
+    return root;
+  }
+};
+```
+
+## 77. 组合
+
+语言：java
+
+思路：回溯遍历每一种情况，然后存储。因为是组合，避免重复，所以让后续的数字都比之前的大
+
+代码（13ms，13.95%）：
+
+```java
+class Solution {
+  public List<List<Integer>> combine(int n, int k) {
+    List<List<Integer>> result = new ArrayList<>();
+    trackBacking(result, new LinkedList<>(), n,1,k);
+    return result;
+  }
+
+  public void trackBacking(List<List<Integer>> result,List<Integer> path, int n,int start, int k) {
+    if(k == 0) {
+      result.add(new ArrayList<>(path));
+      return;
+    }
+    for(int i = start;i <= n;++i) {
+      path.add(i);
+      trackBacking(result, path, n,i+1, k-1);
+      path.remove(path.size()-1);
+    }
+  }
+}
+```
+
+参考代码1（1ms，99.99%）：整体思路一致，就是提前减枝。找规律得出 `begin > n - k + 1` 就没必要再往下递归了
+
+> [77. 组合 - 力扣（Leetcode）](https://leetcode.cn/problems/combinations/solutions/13436/hui-su-suan-fa-jian-zhi-python-dai-ma-java-dai-ma-/)
+
+```java
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.List;
+
+public class Solution {
+
+  public List<List<Integer>> combine(int n, int k) {
+    List<List<Integer>> res = new ArrayList<>();
+    if (k <= 0 || n < k) {
+      return res;
+    }
+
+    // 为了防止底层动态数组扩容，初始化的时候传入最大长度
+    Deque<Integer> path = new ArrayDeque<>(k);
+    dfs(1, n, k, path, res);
+    return res;
+  }
+
+  private void dfs(int begin, int n, int k, Deque<Integer> path, List<List<Integer>> res) {
+    if (k == 0) {
+      res.add(new ArrayList<>(path));
+      return;
+    }
+
+    // 基础版本的递归终止条件：if (begin == n + 1) {
+    if (begin > n - k + 1) {
+      return;
+    }
+    // 不选当前考虑的数 begin，直接递归到下一层
+    dfs(begin + 1, n, k, path, res);
+
+    // 不选当前考虑的数 begin，递归到下一层的时候 k - 1，这里 k 表示还需要选多少个数
+    path.addLast(begin);
+    dfs(begin + 1, n, k - 1, path, res);
+    // 深度优先遍历有回头的过程，因此需要撤销选择
+    path.removeLast();
+  }
+}
+```
+
+## 216. 组合总和 III
+
+语言：java
+
+思路：回溯，剪枝方式：如果和已经超过预期值n或者数字个数超过k则直接返回
+
+代码（0ms，100%）：
+
+```java
+class Solution {
+  List<List<Integer>> result = new ArrayList<>();
+  public List<List<Integer>> combinationSum3(int k, int n) {
+    backTracking(new LinkedList<>(), 1, k, n);
+    return result;
+  }
+
+  public void backTracking(List<Integer> path,int start ,int k, int n) {
+    if(k == 0) {
+      if(n==0) {
+        result.add(new ArrayList<>(path));
+      }
+      return;
+    }
+    for(int i = start; i <= 9 && n - i >=0; ++i) {
+      path.add(i);
+      backTracking(path, i+1,k-1,n - i);
+      path.remove(path.size()-1);
+    }
+  }
+}
+```
+
+## 93. 复原 IP 地址
+
+语言：java
+
+思路：回溯。减枝思路：
+
++ 整体字符串长度 < 4 或者 > 12，那么肯定是无效IP（最小IP：0000，最大255255255255）
++ 中间切割IP时，单个IP切割后，剩余字符串长度应该 <= 还需切割的IP子个数 *3，比如第一个数字获取后，剩下三个数字要获取，后面剩余的字符串长度 最多不超过 3 * 3 = 9。（因为每个子数字都是最多3位）
++ 每个回溯过程，i最多遍历3位数字，因为每个IP子数字最多255
++ 每个子数字，0开头只有1位才生效，数字超过1位则0开头肯定无效。
++ 每个子数字，只能是0～255的值。
+
+代码（1ms，95.75%）：
+
+```java
+class Solution {
+  List<String> result = new LinkedList<>();
+  public List<String> restoreIpAddresses(String s) {
+    // 0000, 255255255255 两个极限情况
+    if(s.length() < 4 || s.length() > 12) {
+      return result;
+    }
+    char[] chars = s.toCharArray();
+    backTracking(chars, 0, chars.length, 0, new int[4]);
+    return result;
+  }
+
+  // path 存的是 切割的 右边界Index
+  public void backTracking(char[] chars, int start, int end, int numberIndex, int[] path) {
+    if(numberIndex == 4) {
+      StringBuilder sb = new StringBuilder();
+      for(int i = 0,pre= 0;i < 4; ++i) {
+        sb.append(new String(chars,pre, path[i]-pre+1));
+        if(i < 3 ) {
+          sb.append(".");
+        }
+        pre = path[i]+1;
+      }
+      result.add(sb.toString());
+      return;
+    }
+    for(int i = start; i < start + 3 && i < end; ++i) {
+      if(end - i -1 <= (4-numberIndex-1) * 3 && isValid(chars, start, i)) {
+        path[numberIndex] = i;
+        backTracking(chars, i+1, end, numberIndex+1, path);
+      }
+    }
+  }
+
+  public boolean isValid(char[] chars,int start, int end) {
+    // 仅一个数字 (0～9)
+    if(start == end) {
+      return true;
+    }
+    // 超过1个数字，并且开头是0，不合法
+    if(chars[start] == '0') {
+      return false;
+    }
+    // 超过3个数字，肯定不合法
+    if(end-start+1 > 3) {
+      return false;
+    }
+    // 求数字和，是否在有效的 1～255 内 
+    int num = 0;
+    while(start <= end) {
+      num *= 10;
+      num += chars[start++] - '0';
+    }
+    return num <= 255;
+  }
+} 
+```
+
+## 90. 子集 II
+
+语言：java
+
+思路：
+
+代码：
+
+```java
 ```
 
