@@ -6951,10 +6951,357 @@ class Solution {
 
 语言：java
 
-思路：
+思路：回溯。关键字不重复，所以先排序，后面跳过重复元素。
 
-代码：
+代码（1ms，99.76%）：
 
 ```java
+class Solution {
+  List<List<Integer>> result = new LinkedList<>();
+  public List<List<Integer>> subsetsWithDup(int[] nums) {
+    // 不重复，一般就需要先排序，方便跳过重复的元素
+    Arrays.sort(nums);
+    backTracking(nums, new LinkedList<>(), 0, nums.length);
+    return result;
+  }
+
+  public void backTracking(int[] nums, List<Integer> path, int start, int end) {
+    result.add(new LinkedList<>(path));
+    for(int i = start; i < end; ++i) {
+      path.add(nums[i]);
+      backTracking(nums, path, i+1, end);
+      path.remove(path.size()-1);
+      while(i+1 < end && nums[i] == nums[i+1]) {
+        ++i;
+      }
+    }
+  }
+}
+```
+
+## 491. 递增子序列
+
+语言：java
+
+思路：要求至少两个元素，即每次遍历的节点满2个节点就可以添加到结果集中。本题是子序列，还不能直接通过排序再跳过重复元素去重。`[1,2,3,1,1]`可能出现开始的1和后面任意一个1组成`[1,1]`，然后后面单独两个1，又重复组成`[1,1]`的情况。这里改成每层遍历时，使用一个Set临时存储当前层遍历过的元素，重复的就不再遍历
+
+代码（6ms，26.51%）：
+
+```java
+class Solution {
+  List<List<Integer>> result = new LinkedList<>();
+  public List<List<Integer>> findSubsequences(int[] nums) {
+    backTracking(nums, new LinkedList<>(), 0, nums.length);
+    return result;
+  }
+
+  public void backTracking(int[] nums, List<Integer> path,int start, int end) {
+    if(path.size() > 1) {
+      result.add(new LinkedList<>(path));
+    }
+    Set<Integer> usedSet = new HashSet<>();
+    for(int i = start; i < end; ++i) {
+      if(usedSet.contains(nums[i])) {
+        continue;
+      }
+      if(path.size() == 0 || nums[i] >= path.get(path.size()-1)) {
+        usedSet.add(nums[i]);
+        path.add(nums[i]);
+        backTracking(nums, path, i+1, end);
+        path.remove(path.size()-1);
+      }
+    }
+  }
+}
+```
+
+参考代码1（5ms，62.31%）：用数组代替Set做去重。
+
+> [代码随想录 (programmercarl.com)](https://programmercarl.com/0491.递增子序列.html#总结)
+
+```java
+class Solution {
+  private List<Integer> path = new ArrayList<>();
+  private List<List<Integer>> res = new ArrayList<>();
+  public List<List<Integer>> findSubsequences(int[] nums) {
+    backtracking(nums,0);
+    return res;
+  }
+
+  private void backtracking (int[] nums, int start) {
+    if (path.size() > 1) {
+      res.add(new ArrayList<>(path));
+    }
+
+    int[] used = new int[201];
+    for (int i = start; i < nums.length; i++) {
+      if (!path.isEmpty() && nums[i] < path.get(path.size() - 1) ||
+          (used[nums[i] + 100] == 1)) continue;
+      used[nums[i] + 100] = 1;
+      path.add(nums[i]);
+      backtracking(nums, i + 1);
+      path.remove(path.size() - 1);
+    }
+  }
+}
+```
+
+参考代码2（4ms，89.7%）：其实光说思路，和我的基本一样，就是写法有点不一样。利用了Set.add的返回值，有做contains判断的特性。
+
+```java
+class Solution {
+  List<List<Integer>> lists = new ArrayList<>();
+
+  public List<List<Integer>> findSubsequences(int[] nums) {
+    dfs(new ArrayList<>(), 0, nums);
+    return lists;
+  }
+
+  // 含有2个元素，3个，4个
+  private void dfs(ArrayList<Integer> list, int left, int[] nums) {
+    if (list.size() >= 2) {
+      lists.add(new ArrayList<>(list));
+    }
+
+    Set<Integer> set = new HashSet<>();
+    for (int i = left; i < nums.length; i++) {
+      if (!set.add(nums[i])) {
+        continue;
+      }
+
+      if (list.size() == 0 || list.get(list.size() - 1) <= nums[i]) {
+        list.add(nums[i]);
+        dfs(list, i + 1, nums);
+        list.remove(list.size() - 1);
+      }
+    }
+  }
+}
+```
+
+## 332. 重新安排行程
+
+语言：java
+
+思路：先把行程二元组按照(value1, value2) 字母序进行升序排序，其中"JFK"比较特殊，如果value1是"JFK"则需要排序到最前面。
+
+其次，按照回溯法DFS遍历，如果能使所有行程二元组都used一遍，则找到答案。由于事先做了排序，找到答案时一定是最小行程组合。
+
+代码（28ms，7.65%）：
+
+```java
+class Solution {
+  public List<String> findItinerary(List<List<String>> tickets) {
+    // 1. 对tickets 排序
+    Collections.sort(tickets, Comparator.comparing((List<String> a) -> a.get(0)).thenComparing(a -> a.get(1)));
+    // 2. 构造一个 Map <String, List<Integer>>， key: tickets.get(下标).get(0)，value: tickets下标集合(小到大)
+    Map<String, List<Integer>> nodeIndexMap = new HashMap<>();
+    for(int i = 0;i < tickets.size();++i) {
+      List<String> path = tickets.get(i);
+      String pathNode = path.get(0);
+      List<Integer> pathNodeIndexList = nodeIndexMap.getOrDefault(pathNode, new ArrayList<>());
+      pathNodeIndexList.add(i);
+      nodeIndexMap.put(pathNode, pathNodeIndexList);
+    }
+    // 3. 回溯法DFS尝试方案，直到找到唯一路径为止
+    LinkedList<String> path = new LinkedList<>();
+    path.add("JFK");
+    return backTracking(tickets, path, new boolean[tickets.size()], tickets.size());
+  }
+
+  public List<String> backTracking(List<List<String>> tickets, List<String> path, boolean[] used, int end) {
+    if(path.size() == end + 1) {
+      return path;
+    }
+    String lastNode = path.get(path.size()-1);
+    for(int i = 0; i < end; ++i) {
+      if(lastNode.equals(tickets.get(i).get(0)) && !used[i]) {
+        used[i] = true;
+        path.add(tickets.get(i).get(1));
+        List<String> tmpPath = backTracking(tickets, path,used,end);
+        if(path.size() == end + 1) {
+          return tmpPath;
+        }
+        path.remove(path.size()-1);
+        used[i] = false;
+      }
+    }
+    return path;
+  }
+}
+```
+
+参考代码1（12ms，42.13%）：
+
+（1）这里只对每个路径的出口排序，推测是因为入口往后是固定的，即每个下一步入口是固定的，只需尽可能选择出口更小的就好了。
+
+（2）boolean返回值，因为只需要找到一个路径（到叶子节点），就可以直接返回结果了。
+
+> [代码随想录 (programmercarl.com)](https://programmercarl.com/0332.重新安排行程.html#其他语言版本)
+
+```java
+class Solution {
+  private LinkedList<String> res;
+  private LinkedList<String> path = new LinkedList<>();
+
+  public List<String> findItinerary(List<List<String>> tickets) {
+    Collections.sort(tickets, (a, b) -> a.get(1).compareTo(b.get(1)));
+    path.add("JFK");
+    boolean[] used = new boolean[tickets.size()];
+    backTracking((ArrayList) tickets, used);
+    return res;
+  }
+
+  public boolean backTracking(ArrayList<List<String>> tickets, boolean[] used) {
+    if (path.size() == tickets.size() + 1) {
+      res = new LinkedList(path);
+      return true;
+    }
+
+    for (int i = 0; i < tickets.size(); i++) {
+      if (!used[i] && tickets.get(i).get(0).equals(path.getLast())) {
+        path.add(tickets.get(i).get(1));
+        used[i] = true;
+
+        if (backTracking(tickets, used)) {
+          return true;
+        }
+
+        used[i] = false;
+        path.removeLast();
+      }
+    }
+    return false;
+  }
+}
+```
+
+参考代码2（9ms，62.20%）：思路基本没变，就是事先把tickets转成有序的Map作遍历和递归回溯。
+
+（1）Map的key：路径的入口，value：新Map（key：路径的出口，value：该路径出现的次数）
+
+> [代码随想录 (programmercarl.com)](https://programmercarl.com/0332.重新安排行程.html#其他语言版本)
+
+```java
+class Solution {
+  private Deque<String> res;
+  private Map<String, Map<String, Integer>> map;
+
+  private boolean backTracking(int ticketNum){
+    if(res.size() == ticketNum + 1){
+      return true;
+    }
+    String last = res.getLast();
+    if(map.containsKey(last)){//防止出现null
+      for(Map.Entry<String, Integer> target : map.get(last).entrySet()){
+        int count = target.getValue();
+        if(count > 0){
+          res.add(target.getKey());
+          target.setValue(count - 1);
+          if(backTracking(ticketNum)) return true;
+          res.removeLast();
+          target.setValue(count);
+        }
+      }
+    }
+    return false;
+  }
+
+  public List<String> findItinerary(List<List<String>> tickets) {
+    map = new HashMap<String, Map<String, Integer>>();
+    res = new LinkedList<>();
+    for(List<String> t : tickets){
+      Map<String, Integer> temp;
+      if(map.containsKey(t.get(0))){
+        temp = map.get(t.get(0));
+        temp.put(t.get(1), temp.getOrDefault(t.get(1), 0) + 1);
+      }else{
+        temp = new TreeMap<>();//升序Map
+        temp.put(t.get(1), 1);
+      }
+      map.put(t.get(0), temp);
+
+    }
+    res.add("JFK");
+    backTracking(tickets.size());
+    return new ArrayList<>(res);
+  }
+}
+```
+
+参考代码3（4ms，100%）：
+```java
+class Solution {
+  // key: 入口， value: 出口升序排序的集合
+  private Map<String, PriorityQueue<String>> mapOfFindItinerary1;
+  // 答案 (中间存节点的List)
+  private List<String> resOfFindItinerary1;
+  public List<String> findItinerary(List<List<String>> tickets) {
+    mapOfFindItinerary1 = new HashMap<>();
+    resOfFindItinerary1 = new ArrayList<>(tickets.size());
+    // 先构造 key: 入口， value：出口升序排序的集合
+    for (List<String> ticket : tickets) {
+      String src = ticket.get(0);
+      String dst = ticket.get(1);
+      if (!mapOfFindItinerary1.containsKey(src)) {
+        PriorityQueue<String> pq = new PriorityQueue<>();
+        mapOfFindItinerary1.put(src, pq);
+      }
+      mapOfFindItinerary1.get(src).add(dst);
+    }
+    // DFS遍历，这里大佬用poll特性保证每个边只用一次，着实佩服
+    dfs("JFK");
+    // 因为是回溯的时候添加节点，所以顺序是反向的，需要 reverse颠倒
+    Collections.reverse(resOfFindItinerary1);
+    return resOfFindItinerary1;
+  }
+
+  private void dfs(String src) {
+    PriorityQueue<String> pq = mapOfFindItinerary1.get(src);
+    while (pq != null && !pq.isEmpty())
+      dfs(pq.poll());
+    (resOfFindItinerary1).add(src);
+  }
+}
+```
+
+参考代码4（7ms，81.4%）：
+
+> [332. 重新安排行程 - 力扣（Leetcode）](https://leetcode.cn/problems/reconstruct-itinerary/solutions/389885/zhong-xin-an-pai-xing-cheng-by-leetcode-solution/)
+>
+> Hierholzer 算法用于在连通图中寻找欧拉路径，其流程如下：
+>
+> 1、从起点出发，进行深度优先搜索。
+>
+> 2、每次沿着某条边从某个顶点移动到另外一个顶点的时候，都需要删除这条边。
+>
+> 3、如果没有可移动的路径，则将所在节点加入到栈中，并返回。
+
+```java
+class Solution {
+  Map<String, PriorityQueue<String>> map = new HashMap<String, PriorityQueue<String>>();
+  List<String> itinerary = new LinkedList<String>();
+
+  public List<String> findItinerary(List<List<String>> tickets) {
+    for (List<String> ticket : tickets) {
+      String src = ticket.get(0), dst = ticket.get(1);
+      if (!map.containsKey(src)) {
+        map.put(src, new PriorityQueue<String>());
+      }
+      map.get(src).offer(dst);
+    }
+    dfs("JFK");
+    Collections.reverse(itinerary);
+    return itinerary;
+  }
+
+  public void dfs(String curr) {
+    while (map.containsKey(curr) && map.get(curr).size() > 0) {
+      String tmp = map.get(curr).poll();
+      dfs(tmp);
+    }
+    itinerary.add(curr);
+  }
+}
 ```
 
