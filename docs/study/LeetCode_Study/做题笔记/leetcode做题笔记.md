@@ -7305,3 +7305,128 @@ class Solution {
 }
 ```
 
+## 37. 解数独
+
+语言：java
+
+思路：由于每次回溯需要擦除的错误填充，跨越X行Y列，所以每次回溯过程需要直接判断整个棋盘的填充，而不是每次只遍历一行。
+
+代码（6ms，49.81%）：
+
+```java
+class Solution {
+  public void solveSudoku(char[][] board) {
+    backTracking(board);
+  }
+
+  public boolean backTracking(char[][] board) {
+    for(int row = 0; row < 9; ++row) {
+      for(int col = 0; col < 9; ++col) {
+        if(board[row][col] != '.')
+          continue;
+        for(char num = '1'; num <= '9'; ++num) {
+          if(valid(board,row,col,num)) {
+            board[row][col] = num;
+            if(backTracking(board)){
+              return true;
+            }
+            board[row][col] = '.';
+          }
+        }
+        return false;
+      }
+    }
+    return true;
+  }
+
+  public boolean valid(char[][] board,int row, int col, char num) {
+    // 1、当前行是否重复
+    for(int i = 0; i < 9; ++ i) {
+      if(board[row][i] == num) return false;
+    } 
+    // 2、当前列是否重复
+    for(int i = 0; i < 9; ++i) {
+      if(board[i][col] == num) return false;
+    }
+    // 3、当前9宫格是否重复
+    for(int i = row/3*3; i< row/3*3+3; ++i) {
+      for(int j = col/3*3; j < col/3*3+3;++j) {
+        if(board[i][j]== num) return false;
+      }
+    }
+    return true;
+  }
+}
+```
+
+参考代码1（6ms，49.81%）：思路一样的
+
+> [代码随想录 (programmercarl.com)](https://programmercarl.com/0037.解数独.html#其他语言版本)
+
+```java
+class Solution {
+  public void solveSudoku(char[][] board) {
+    solveSudokuHelper(board);
+  }
+
+  private boolean solveSudokuHelper(char[][] board){
+    //「一个for循环遍历棋盘的行，一个for循环遍历棋盘的列，
+    // 一行一列确定下来之后，递归遍历这个位置放9个数字的可能性！」
+    for (int i = 0; i < 9; i++){ // 遍历行
+      for (int j = 0; j < 9; j++){ // 遍历列
+        if (board[i][j] != '.'){ // 跳过原始数字
+          continue;
+        }
+        for (char k = '1'; k <= '9'; k++){ // (i, j) 这个位置放k是否合适
+          if (isValidSudoku(i, j, k, board)){
+            board[i][j] = k;
+            if (solveSudokuHelper(board)){ // 如果找到合适一组立刻返回
+              return true;
+            }
+            board[i][j] = '.';
+          }
+        }
+        // 9个数都试完了，都不行，那么就返回false
+        return false;
+        // 因为如果一行一列确定下来了，这里尝试了9个数都不行，说明这个棋盘找不到解决数独问题的解！
+        // 那么会直接返回， 「这也就是为什么没有终止条件也不会永远填不满棋盘而无限递归下去！」
+      }
+    }
+    // 遍历完没有返回false，说明找到了合适棋盘位置了
+    return true;
+  }
+
+  /**
+     * 判断棋盘是否合法有如下三个维度:
+     *     同行是否重复
+     *     同列是否重复
+     *     9宫格里是否重复
+     */
+  private boolean isValidSudoku(int row, int col, char val, char[][] board){
+    // 同行是否重复
+    for (int i = 0; i < 9; i++){
+      if (board[row][i] == val){
+        return false;
+      }
+    }
+    // 同列是否重复
+    for (int j = 0; j < 9; j++){
+      if (board[j][col] == val){
+        return false;
+      }
+    }
+    // 9宫格里是否重复
+    int startRow = (row / 3) * 3;
+    int startCol = (col / 3) * 3;
+    for (int i = startRow; i < startRow + 3; i++){
+      for (int j = startCol; j < startCol + 3; j++){
+        if (board[i][j] == val){
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+}
+```
+

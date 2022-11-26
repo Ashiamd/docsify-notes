@@ -4,6 +4,8 @@
 
 # Lecture1 概述和举例
 
+Introdution and Example
+
 ## 1.1 一些OS的基本概念
 
 + 硬件抽象 Abstract
@@ -280,9 +282,11 @@ int main()
 }
 ```
 
-# Lecture3 OS组成和系统调用
+# Lecture3 OS和系统调用
 
-## 3.1 本节重点
+OS Organization and System Calls
+
+## 3.1 本节重点概述
 
 + Isolatoin
 + Kernel / User Mode，隔离操作系统内核和用户应用程序
@@ -526,3 +530,382 @@ XV6启动时，大致步骤如下：
 ​	init程序配置好console，调用fork，并在fork得到的子进程中执行shell。
 
 ​	这里简单的介绍了一下XV6是如何从0开始直到第一个Shell程序运行起来。并且我们也看了一下第一个系统调用是在什么时候发生的。我们并没有看系统调用背后的具体机制，这个在后面会介绍。
+
+# Lecture4 页表Page Table(虚拟内存VM)
+
+Page Table (VM, Virtual Memory)
+
+## 4.1 虚拟内存概述
+
+​	隔离性是我们讨论虚拟内存的主要原因。这节课主要关注虚拟内存的工作机制，以及如何运用这些机制完成一些技巧操作。
+
++ 地址空间（Address Spaces）
++ 支持虚拟内存的硬件
++ XV6中的虚拟内存代码，kernel address space and user address spaces
+
+## 4.2 地址空间 (Address Spaces) 概述
+
+> [DRAM动态随机存取存储器_百度百科 (baidu.com)](https://baike.baidu.com/item/动态随机存取存储器/12717044?fromtitle=DRAM&fromid=149572&fr=aladdin)
+>
+> [SRAM（静态随机存取存储器）_百度百科 (baidu.com)](https://baike.baidu.com/item/SRAM/7705927?fromModule=lemma_inlink)
+>
+> [地址空间_百度百科 (baidu.com)](https://baike.baidu.com/item/地址空间/1423980?fr=aladdin)
+>
+> 就像进程的概念创造了一类抽象的CPU以运行程序一样，地址空间为程序创造了一种抽象的内存。地址空间是一个进程可用于寻址内存的一套地址集合。每个进程都有一个自己的地址空间，并且这个地址空间独立于其他进程的地址空间（除了在一些特殊情况下进程需要共享它们的地址空间外）
+>
+> + 物理地址 (physical address): 放在寻址总线上的地址。放在寻址总线上，如果是读，电路根据这个地址每位的值就将相应地址的物理内存中的数据放到数据总线中传输。如果是写，电路根据这个地址每位的值就将相应地址的物理内存中放入数据总线上的内容。**物理内存是以字节(8位)为单位编址的**。
+>
+> + 虚拟地址 (virtual address): CPU启动保护模式后，程序运行在虚拟地址空间中。注意，并不是所有的“程序”都是运行在虚拟地址中。**CPU在启动的时候是运行在实模式的，内核在初始化页表之前并不使用虚拟地址，而是直接使用物理地址的**。
+
+​	*回顾之前的知识点，通过虚拟内存和正确的管理page table，能实现强隔离性。这节课，我们着重关注内存的隔离性*。
+
+​	所有程序在运行时，最终都需要处于物理内存中的某一位置。假设不存在内存隔离，那么进程A可能由于错误操作导致进程B的地址所在内存被写覆盖。**地址空间（Address Spaces）是一种能够将不同程序之间的内存隔离开的机制**。
+
+## 4.3 页表(Page Table)
+
+> [页表_百度百科 (baidu.com)](https://baike.baidu.com/item/页表/679625?fr=aladdin)
+>
+> 页表是一种特殊的[数据结构](https://baike.baidu.com/item/数据结构/1450?fromModule=lemma_inlink)，放在系统空间的页表区，存放逻辑页与物理页帧的对应关系。 每一个[进程](https://baike.baidu.com/item/进程/382503?fromModule=lemma_inlink)都拥有一个自己的页表，[PCB](https://baike.baidu.com/item/PCB/16067368?fromModule=lemma_inlink)表中有指针指向页表。
+>
+> [MMU_百度百科 (baidu.com)](https://baike.baidu.com/item/MMU/4542218?fr=aladdin)
+>
+> MMU是Memory Management Unit的缩写，中文名是[内存管理](https://baike.baidu.com/item/内存管理?fromModule=lemma_inlink)单元，有时称作**分页内存管理单元**（英语：**paged memory management unit**，缩写为**PMMU**）。它是一种负责处理[中央处理器](https://baike.baidu.com/item/中央处理器?fromModule=lemma_inlink)（CPU）的[内存](https://baike.baidu.com/item/内存?fromModule=lemma_inlink)访问请求的[计算机硬件](https://baike.baidu.com/item/计算机硬件?fromModule=lemma_inlink)。它的功能包括[虚拟地址](https://baike.baidu.com/item/虚拟地址?fromModule=lemma_inlink)到[物理地址](https://baike.baidu.com/item/物理地址?fromModule=lemma_inlink)的转换（即[虚拟内存](https://baike.baidu.com/item/虚拟内存?fromModule=lemma_inlink)管理）、内存保护、中央处理器[高速缓存](https://baike.baidu.com/item/高速缓存?fromModule=lemma_inlink)的控制，在较为简单的计算机体系结构中，负责[总线](https://baike.baidu.com/item/总线?fromModule=lemma_inlink)的[仲裁](https://baike.baidu.com/item/仲裁?fromModule=lemma_inlink)以及存储体切换（bank switching，尤其是在8位的系统上）。
+>
+> [操作系统中的多级页表到底是为了解决什么问题？ - 知乎 (zhihu.com)](https://www.zhihu.com/question/63375062) （知乎用户6AIBRo，该用户的回答图文并茂，更易理解）
+>
+> [4.3 页表（Page Table） - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/270577411) => 图片出处
+
+​	页表(Page Table)是常见且灵活的实现地址空间(Address Spaces)隔离的一种方式。
+
+​	页表(Page Table)的实现，需要硬件支持，所以实际上是处理器在硬件上实现的，或者具体说是通过内存管理单元（MMU，Memory Management Unit）实现的。
+
+​	实际上CPU进行数据读写时，并不是直接操作物理地址，而是操作虚拟地址。虚拟地址传递到MMU后，MMU再将虚拟地址翻译成物理地址。后续再从具体的物理地址加载或写入数据。
+
+​	从CPU的角度来看，一旦MMU已启动（正常运作中），那么CPU操作的每条指令对应的地址都是虚拟内存地址。**为了将虚拟地址转换为物理地址，MMU读取虚拟地址到物理地址的映射表。该映射表实际也存储在内存中，CPU用寄存器来存储该映射表在物理内存的实际地址（MMU启动时，CPU的寄存器告知MMU其映射表在物理内存中具体地址是什么）**。
+
+​	**实际上，MMU本身并没有存储(虚拟地址到物理地址)映射表，MMU只是读取了CPU寄存器中指定物理地址的内存中存储的映射表，然后处理虚拟地址到物理地址映射的工作**。
+
+​	**页表(Page Table)的基本思想即让每个进程都有属于自己的虚拟映射表。当操作系统将CPU从进程A切换到晋城B时，同时也需要切换CPU用于存放映射表物理地址信息的寄存器存储的内容**。正因如此，切换进程后，即使访问的虚拟地址看似一致，但实际映射的物理地址并不相同（因为每个进程都有各自的虚拟映射表）。
+
+​	*假设存储映射表物理地址的CPU寄存器能存储64bit，那么理论上能映射2^64个物理地址。如果我们直接用2^64个地址管理物理内存，那么表单变得十分大，所有内存都会被耗尽，这不合理*。
+
+（1）第一步：**不要为每个地址创建一个表单条目，而是以表单page为单位创建一个表单条目**。每一次MMU地址翻译针对一整个page。在RISC-V中，一个Page大小是4KB(连续的4096Bytes)，**几乎所有的处理器都使用或支持4KB大小的page**。此时，虚拟内存地址被分为两部分，index和offset，index用于查找page，offset表示偏移量(page内具体某一字节)。MMU先用index通过映射表翻译成物理内存中某一页Page(4KB，4096Bytes)的物理地址，而offset则表示该page中偏移量(某一具体字节)。
+
+​	在RISC-V中，存储器的64bit并非都用做表示虚拟地址(仅使用39bit)，实际高25位没有使用，只有2^39个虚拟地址(512GB)，39bit中，高27bit作index，而低12bit作offset（2^12正好对应4KB）。
+
+​	在RISC-V中，物理内存地址共56bit，大于单个虚拟内存地址空间。大多数主板还不支持2^56规模的物理内存。该方案中，<u>高44bit是物理page号（PPN，Physical Page Number），低12bit继承自虚拟地址，表示offset（连续的4KB，页内偏移量，定位到某一Byte）</u>。
+
+​	想象一下，由于每个进程都有一张page table，那么如果每个进程都有个2^27个条目映射表单，那存储映射表就需要消耗大量的物理内存。
+
+​	**实际上page table是一个多级结构**。前面提到RISC-V虚拟地址27bit作index，该27bit又拆成3部分，高9bit索引top level page table directory（L2），一个directory大小为4KB（2^12，和page保持一致），一个条目被称为PTE（Page Table Entry），大小8B(2^3，和寄存器大小64bit一致)，这意味着一个directory page有512个(2^9)条目。存储映射表地址的寄存器，实际存储的地址是top level page table directory条目的地址。这时我们读取index的高9bit得到一个PPN（物理page号），该PPN指向中层级的page directory（L1，index中间9bit），再通过L1完成索引，到L0（index低9bit），此时查询L0才真正将虚拟地址映射到物理地址。
+
+​	<u>多级页表的优势在于，如果地址空间中大部分地址都没有用，那不需要为它们在page table directory中记录page table条目</u>。假设当前进程A需要一个4KB空间的内存，刚好是1page大小，那么在多级页表中，只需要L2、L1、L0各一条记录，共3个page directory，共3*512个PTE。而在单一page table的方案中，即使只需要1page大小的内存地址，仍然需要2^27个PTE。
+
+​	**显然，通过多级页表比起单级页表，更节省内存地址空间资源**。
+
+---
+
+问题：如果通过3级page table directory的PPN翻译到最后的物理地址？
+
+回答：最高级的L2 page table directory中的PPN包含了下一级L1的物理地址，以此类推，在最低级L0 page table directory，最终得到44bit PPN，这里包含实际想要翻译的内存物理地址。
+
+**问题：为什么存在page table directory中的PTE记录的是PPN（物理地址），而不是虚拟地址？**
+
+**回答：因为我们需要在物理内存中查找下一个page table directory的物理地址，毕竟我们不能让地址翻译依赖另一个地址翻译，否则就无限递归循环了。所以page table directory本身必须存储在物理地址中，且PTE记录PPN（下一个Level page table directory的物理地址）。**
+
+**问题：既然page table directory必须存储在物理地址，那么记录页表地址的寄存器（教材是SATP寄存器），其存储的64bit内容，是物理地址信息，还是虚拟地址信息？**
+
+**回答：这里SATP寄存器（记录页表地址的寄存器）存储的信息必须是page table directory的物理地址，毕竟最高级L2 page table directory存储在物理地址中。**根据前面提到的不能依赖地址翻译来进行另一项地址翻译，这里SATP必须知道L2 page table directory的物理地址。
+
+问题：前面提到虚拟地址index由27bit组成，在多级页表的视线中，27bit拆成3个9bit对应3个page table directory的索引，怎么理解这3部分9bit的关系？
+
+回答：虚拟地址27bit的index中，最高9bit索引L2 page table directory，中间9bit索引L1 page table directory，后续的9bit索引L0 page table directory。
+
+问题：当一个进程请求一个虚拟内存地址时，CPU会查看SATP寄存器，（从物理地址加载寄存器存储的物理地址信息，）得到最高层级L2 page table directory，然后接下去该做什么呢？
+
+回答：之后会使用虚拟内存地址的top 27bit完成对page table directory内PTE的索引。
+
+问题：如果虚拟地址对page table directory索引后，发现结果为空，MMU会新建一个page table吗？
+
+回答：不会，MMU会告知操作系统or处理器，当前虚拟地址无法翻译，这种情况会转换成一个page fault，后续会讲这个话题。 如果一个虚拟地址无法被翻译成物理地址，那么MMU就不会翻译这个地址，就像CPU在计算时会拒绝除0操作一样。
+
+**问题：读取L2 page table directory后，通过虚拟地址index中top 9bit索引到L2的page table directory中PTE44bit的PPN+虚拟地址的12bit的offset获取完整的56bit page table 物理地址？**
+
+**回答：这里L2 page table directory索引到L1 page table directory的过程，不会加上虚拟地址的offset，而是使用12bit的0。这里用44bit的PPN+12bit的0，得到56bit的物理地址，即下一级L1 page table directory的物理地址。因为这里要求每级page table directory都和物理的page对齐。**
+
+问题：3级page table directory是操作系统实现的，还是由硬件自己实现的？
+
+回答：由硬件实现，所以3级page table directory的查找都发生在硬件中。MMU是硬件的一部分，而不是操作系统的一部分。在XV6教学操作系统中，有一个叫`walk`函数实现了page table的查找，因为XV6有时候也需要完成硬件的工作。`walk`函数在软件中实现了等同于MMU硬件page table查找的功能。
+
+![img](https://pic1.zhimg.com/80/v2-0534c528dc7123ea3f448a050a3fceb0_1440w.webp)
+
+​	**在RISC-V中，PTE(54bit)由44bit（PPN，物理页编号）+10bit（Flags，标志位，用于控制地址权限）组成，还有10bit用于未来扩展**。
+
+​	下面介绍PTE的Flags标记(用于控制地址权限)，这里只介绍前5位重要标识，后3位未介绍：
+
++ Valid（V）：1表示当前是一条valid PTE，可以直接用于地址翻译（虚拟地址=>物理地址）。为0时，MMU不能直接使用当前PTE。
+
++ Readable（R）：为1表示可以读取对应的page
++ Writable（W）：为1表示可以写对应的page
++ Executable（X）：为1表示可以从对应page执行指令
++ User（U）：为1表示对应page可以被运行在用户空间的进程访问
++ Global（G）：
++ Accessed（A）：
++ Dirty（D）：0 in page directory
++ Reserved for supervisor software（8-9两位）
+
+## 4.4 转译后备缓冲区(TLB, Translation Lookaside Buffer)
+
+> [(TLB, Translation Lookaside Buffer)转译后备缓冲区_百度百科 (baidu.com)](https://baike.baidu.com/item/转译后备缓冲区/22685572?fromtitle=TLB&fromid=2339981&fr=aladdin)
+>
+> **转译后备缓冲器**，也被翻译为**页表缓存**、**转址旁路缓存**，为[CPU](https://baike.baidu.com/item/CPU?fromModule=lemma_inlink)的一种缓存，由存储器管理单元用于改进[虚拟地址](https://baike.baidu.com/item/虚拟地址?fromModule=lemma_inlink)到物理地址的转译速度。当前所有的桌面型及服务器型处理器（如 [x86](https://baike.baidu.com/item/x86?fromModule=lemma_inlink)）皆使用TLB。
+>
+> TLB 用于缓存一部分标签页表条目。TLB可介于 CPU 和[CPU缓存](https://baike.baidu.com/item/CPU缓存?fromModule=lemma_inlink)之间，或在 CPU 缓存和[主存](https://baike.baidu.com/item/主存?fromModule=lemma_inlink)之间，这取决于缓存使用的是物理寻址或是虚拟寻址。<u>如果缓存是虚拟定址，定址请求将会直接从 CPU 发送给缓存，然后从缓存访问所需的 TLB 条目。如果缓存使用物理定址，CPU 会先对每一个存储器操作进行 TLB 查寻，并且将获取的物理地址发送给缓存</u>。两种方法各有优缺点。
+>
+> **指令与数据可以分别使用不同的TLB ，即Instruction TLB (ITLB)与 Data TLB (DTLB)，或者指令与数据使用统一的TLB，即Unified TLB (UTLB)，再或者使用分块的TLB (BTLB)**
+>
+> **在任务（task）切换时，部分 TLB 条目可能会失效，例如先前运行的进程已访问过一个页面，但是将要执行的进程尚未访问此页面。最简单的策略是清出整个 TLB。较新的 CPU 已有更多有效的策略；例如在Alpha EV6中，每一个 TLB 条目会有一个“地址空间号码”（address space number，ASN）的标记，而且只有匹配当前工作的 ASN 的 TLB 条目才会被视为有效**。
+>
+> 两种在现代体系结构中常用的解决 TLB 不命中的方案：
+>
+> - **硬件式 TLB 管理**，CPU 自行遍历标签页表，查看是否存在包含指定的虚拟地址的有效标签页表条目。如果存在这样的分页表条目，就把此分页表条目存入 TLB ，并重新执行 TLB 访问，而此次访问肯定会寻中，程序可正常运行。如果 CPU 在标签页表中不能找到包含指定的虚拟地址有效条目，就会发生标签页错误[异常](https://baike.baidu.com/item/异常?fromModule=lemma_inlink)，[操作系统](https://baike.baidu.com/item/操作系统?fromModule=lemma_inlink)必须处理这个异常。处理标签页错误通常是把被请求的数据载入物理存储器中，并在标签页表中创建将出错的虚拟地址映射到正确的物理地址的相应条目，并重新启动程序（详见标签页错误）。
+> - **软件管理式 TLB**，TLB 不命中时会产生“TLB 失误”异常，且操作系统遍历标签页表，以软件方式进行虚实地址转译。然后操作系统将分页表中响应的条目加载 TLB 中，然后从引起 TLB 失误的指令处重新启动程序。如同硬件式 TLB 管理，如果 操作系统 在标签页表中不能找到有效的虚实地址转译条目，就会发生标签页错误， 操作系统 必须进行相应的处理
+>
+> [mfence, lfence, sfence什么作用?_清海风缘的博客-CSDN博客_sfence](https://blog.csdn.net/liuhhaiffeng/article/details/106493224)
+
+​	**根据前文，这里RISC-V使用三级页表，每次处理器从内存加载数据时，虚拟地址到物理地址的翻译，就需要读取3次内存**。
+
+（1）第一次根据SATP寄存器存储的信息，读取对应物理地址的L2 page table directory
+（2）第二次根据虚拟地址的top 9bit 索引 L2 page table direcotry的某条PPN（44bit），然后补充12bit 0，读取对应物理地址（56bit）的L1 page table directory
+
+（3）第三次根据虚拟地址 middle 9bit 索引 L1 page table directory的某条PPN（44bit），然后补充12bit 0，读取对应物理地址（56bit）的L0 page table directory，
+
+​	后续通过最低9bit索引L0 page table directory的某条PPN（44bit），加上虚拟地址12offet，即将虚拟地址翻译成具体的物理地址。
+
+​	**实际操作中，为了减少虚拟地址翻译带来的性能损耗，几乎所有处理器都会对最近使用的虚拟地址的翻译结果进行缓存。这种缓存通常称为Translation look-aside buffer（TLB），也就是Page Table Entry（PTE）的缓存。**
+
+​	**当处理器第一次查询一个虚拟地址（对应的物理地址）时，硬件通过3级page table directory最后得到PPN，TLB会保存本次虚拟地址到物理地址的映射关系（VA，PA，PN，PA）。下次如果访问同一个虚拟地址，处理器先查看TLB，发现有映射记录则直接返回对应的物理地址**。
+
+​	**page table提供了一层抽象（a level of indirection），这层抽象指的是虚拟地址到物理地址的映射，且这层抽象完全由操作系统控制。正因这层抽象由操作系统控制，操作系统可以实现很多功能。比如，当一个PTE（在MMU中）是无效的，硬件会raise page fault，操作系统发现page fault后，可以尝试更新page table，然后重新执行（原本在执行的）指令**。显然，通过操作page table，可以在运行完成很多复杂操作，后续会针对page table和page fault讲解操作系统能做哪些有趣的事情。page table为操作系统带来更多灵活性，这也是为什么page table得以流行。
+
+---
+
+问题：TLB map VA（virtual address）along the with offset to PA（physical address）of the page，TLB缓存虚拟地址（带有offset）到物理地址的具体映射，在page级别做cache缓存是不是更高效？
+
+回答：实现TLB有很多方式，但这不是我们讨论的重点，因为**TLB的实现是CPU的一些固有逻辑，即使操作系统也不可见**，操作系统也不需要知道TLB如何运作。**我们需要关注的关于TLB的知识是，当切换了page table，操作系统OS需要告诉处理器CPU当前正在切换page table，TLB needs to be flushed（TLB需要被CPU即使擦除/清空）。本质上，如果你切换了一个新的page table，TLB中的缓存条目将不再有效，它们需要被移除removed，否则虚拟地址的翻译会不准确**。所以，操作系统OS只知道TLB的存在，并且时不时通知硬件当前TLB缓存无效，因为需要切换page table了。在RISC-V中，flush the TLB（擦除/清空 TLB）的指令是`sfence_vma`。
+
+问题：TLB缓存虚拟地址到物理地址映射到机制，发生在什么地方？
+
+回答：**TLB、MMU都在CPU核中（每个CPU核都有自己的TLB、MMU）**。
+
+**问题：除了TLB这种维护虚拟地址到物理地址的映射的缓存以外，有时候CPU并没有直接访问内存，这时CPU是从什么缓存中获取数据的？**
+
+**回答：RISC-V处理器有L1、L2缓存。有些缓存是根据物理地址索引的，有些缓存是根据虚拟地址索引的。由虚拟地址索引的cache位于MMU之前（即直接访问cache获取数据，而不需要再通过MMU转译物理地址查找物理内存）；而由物理地址索引的cache在MMU之后（即需要MMU将虚拟地址翻译成物理地址后再索引该cache中的数据）。**
+
+**问题：既然硬件TLB能够自己缓存虚拟地址到物理地址的映射，并且MMU的page table directory索引也是发生在硬件中，那么为什么还需要软件实现`walk`函数，来达到page table查找的效果？**
+
+**回答：这有许多原因。首先，XV6的`walk`函数设置了initial page table，它需要对3级page table进行编程，所以它首先需要能模拟3级page table。另外一点，你们在systcall实验中遇到了，XV6中，内核有它自己的page table，用户进程也有它自己的page table。例如，用户进程指针指向sys_info结构体，该指针处于用户空间的page table，但是内核需要将这个指针翻译成自己能够读写的物理地址。如果你看copy_in或copy_out，会发现内核使用用户进程的page table翻译user virtual address到物理地址，这样内核后续就能（根据物理地址）读写对应的物理内存。这就是XV6需要实现`walk`函数的一些原因。**
+
+问题：为什么硬件不开发类似`walk`的函数，这样我们（软件）就不需要另外开发，减少不必要的bug。为什么没有一个特殊权限指令，接收虚拟地址，然后返回物理地址？
+
+回答：这就像，你往一个虚拟地址写数据，硬件会自动帮你完成工作一样（即硬件帮你自动将虚拟地址翻译成物理地址，然后后续操作物理地址的内存进行写数据操作）。你们在page table实验中，会完成相同的工作，你可以将page table设置得稍微不一样，这样就可以避免copy_in和copy_instr中的walk函数。
+
+## 4.5 内核页表(Kernel Page layout)
+
+> [4.5 Kernel Page Table - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/270578959) <= 图片出处
+>
+> [中断控制器_百度百科 (baidu.com)](https://baike.baidu.com/item/中断控制器/15732992?fr=aladdin)
+>
+> 多个外部中断源共享中断资源，必须解决相应的一些问题，例如CPU芯片上只有一个INTR输入端，多个中断源如何与INTR连接、中断矢量如何区别、各中断源的优先级如何判定等。
+>
+> 当CPU响应中断并进入[中断服务程序](https://baike.baidu.com/item/中断服务程序/10510195?fromModule=lemma_inlink)的处理过程后，中断控制器仍负责对外部中断请求的管理。
+
+​	下图中，左边是内核的虚拟地址，右边上半部分是内核的物理地址(或者说对应DRAM)，右边下半部分是IO设备。**左边部分（虚拟地址），完全由硬件决定，在硬件设计时就确定了结构**。
+
+![img](https://pic2.zhimg.com/80/v2-a38d82284c87bb98970e671ff9dd53c5_1440w.webp)
+
+​	**在教学操作系统中，操作系统启动时，从虚拟地址`0x80000000`开始运行，该地址也由硬件设计者决定。基本上，主板的设计人员决定了，在虚拟地址翻译成物理地址后，如果物理地址高于`0x80000000`，就会走DRAM芯片（下图CPU下面的DRAM）；如果物理地址低于`0x80000000`，就会走不同的IO设备。这种物理结构的布局，完全由主板设计人员决定。**如果想了解物理结构布局的细节，可以阅读主板对应的手册。
+
+​	上图中，右侧物理地址最下方0地址是未使用的地址，而`0x1000`是boot ROM的物理地址。**当主板通电时，主板第一件做的事情就是运行存储在boot ROM中的代码，当boot完成后，会跳转后物理地址`0x80000000`，操作系统设计者需要保证在该物理地址有一些数据/指令能够启动操作系统**。
+
+​	在boot ROM到操作系统之间的物理地址范围内，还有一些其他IO设备，比如上图中：
+
++ `0x0C000000`物理地址指向中断控制器（PLIC，Platform-Level Interrupt Controller），`0x02000000`物理地址指向的CLINT（Core Local Interruptor）也是中断控制器的一部分。**基本上，多个设备都可以产生中断interrupt，需要由中断控制器路由将这些中断信号路由到合适的中断处理函数（这些功能都由中断控制器实现）**。
++ `0x10000000`物理地址指向的UART（Universal Asynchronus Receiver/Transmitter），负责与console、显示器交互。 
++ `0x10001000`物理地址指向VIRTIO_disk，该设备负责与磁盘进行交互。
+
+​	<u>当你向上图中`0x02000000`虚拟地址（也映射到相同的物理地址）进行读写指令，实际你是向实现了CLINT的芯片进行读写操作。后续会介绍细节，这里可以先认为是直接和硬件设备进行了交互，而不是读写物理内存</u>。
+
+​	上图的左侧，即XV6的虚拟内存地址空间，当机器当boot启动，还没有可用的page，XV6操作系统会先设置好内核使用的虚拟地址空间page table。为了让教学XV6操作系统简单易懂，大部分虚拟地址到物理地址的映射直接是等同的关系（即虚拟地址值和物理地址一致）。在上图中，低于PHYSTOP所在的虚拟地址`0x86400000`的虚拟地址，与右侧的物理地址值是一样的。
+
+​	<u>上图中，有一些page在虚拟地址的高段位，比如kernel stack，因为在它之前（较低的虚拟地址）有一个未被映射的Guard page，这个Guard page对应PTE条目的Valid标记位bit没有设置（即等于0值）。因此，如果Kernel stack耗尽了，会导致触发page falut（当然这样好过内存越界），这让我们能及时发现Kernel stack出错了。同时我们也不想浪费物理内存给Guard page，所以Guard page只是在高段的虚拟地址中，并且它的PTE没有消耗任何物理内存（毕竟Valid = 0）</u>。在上面的例子中，Kernel stack（Kstack）对应的物理地址被映射了两次，第二次在PHYSTOP下的Kernel data。**通过page table机制，你可以实现虚拟地址到物理地址一对一、一对多、多对一的映射**。XV6有至少1-2个例子用上这个技巧，上图stack和Guard page就是XV6的page table使用技巧的一个例子，主要是为了追踪漏洞。
+
+​	另外一个，关于权限，例如上图左侧Kernel text page被标记为R-X，意味着能在这块虚拟地址内进行读、执行操作，但是不能进行写操作。通过权限设置，能尽早发现bug和避免bug。而上图左侧Kernel data标记RW-，能够对这个虚拟地址进行读写操作，但不能进行执行操作，所以没有设置X标识位。
+
+![img](https://pic4.zhimg.com/80/v2-84540695386e8abb924ffb4d7518a5ff_1440w.webp)
+
+![img](https://pic3.zhimg.com/80/v2-3b17dd0b606c3d8f15c5ebe3442af1ea_1440w.webp)
+
+![img](https://pic1.zhimg.com/80/v2-428206cddd1491b332599cf2f2cf53e8_1440w.webp)
+
+​	由上图手册可知道，物理地址0保留未使用，物理地址`0x10090000`对应以太网(Ethernet MAC)，物理地址`0x80000000`对应DDR Memory。
+
+---
+
+问题：这里说的内存物理结构布局由硬件决定，硬件指的是CPU还是CPU所在的主板？
+
+回答：CPU所在的主板。毕竟CPU只是主板上的一部分，包括DRAM出现在物理内存布局中也只是主板的一部分，且DRAM并不在CPU内。主板设计者将处理器CPU、DRAM，其他许多IO设备汇总在一起。同理，对于操作系统OS而言，CPU只是一部分，设计操作系统时，需要考虑CPU和其他IO设备等硬件。比如当你需要向互联网发送一个报文时，操作系统需要调度网卡驱动（network driver）和网卡（NIC）来完成这工作。
+
+问题：低于`0x80000000`的物理地址，它们并不存在于DRAM中，当我们使用这些地址时，指令会直接走其他硬件对吗？
+
+回答：是的，高于`0x80000000`的物理地址对应DRAM芯片。比如以太网Ethernet对应低于`0x80000000`的一个物理地址`0x10090000`，我们可以对这个叫做内存映射I/O（memory mapped IO）的地址进行读写操作，我们通过load加载和store存储指令，可以为以太网控制器Ethernet Controller编程。
+
+问题：为什么上图中物理地址最上面一块的物理地址被标记为未使用Unused？
+
+回答：物理地址总共有2^56这么多，但是你不需要真的在主板上接入那么多内存设备。正因为一般不会真的在主板上插入那么大且多的内存条，所以物理内存地址最上方总会有用不到Unused的部分。且实际上，在XV6教学操作系统中，我们限制了内存的上限为128MB。
+
+问题：当读指令从CPU发出后，它是怎么路由到正确的I/O设备的？比如说，当CPU要发出指令时，发现地址低于`0x80000000`，但是它怎么将指令送到正确的IO设备？且确保指令不会被发送到其他地方，比如DRAM芯片中？
+
+回答：你可以认为在RSIC-V有一个多路输出选择器（demultiplexer），是由内存控制器路由的。
+
+问题：对于不同的进程会有不同的Kernel stack吗？
+
+回答：是的，每个用户进程都有一个对应的Kernel stack。之后会讲相关知识。
+
+问题：用户进程的虚拟地址会映射到未使用的物理地址空间吗？
+
+回答：如上面左侧虚拟地址有Free Memory，右侧物理地址也有Free Memory，XV6使用Free Memory存放用户进程的page table。如果某个时间点运行特别多用户进程，导致Free Memory耗尽，这时候再执行fork或者exec会返回error。
+
+问题：接上一个问题的回答，这意味着用户进程的虚拟地址空间比内核的虚拟地址空间小得多，对吗？
+
+回答：本质上用户进程和内核的虚拟地址空间大小一样，只是用户进程通常虚拟地址空间使用率更低（即虚拟地址中，实际使用且分配对应物理内存的，占整个可分配的虚拟地址空间比例小）。
+
+问题：如果每个进程都将大块的虚拟地址映射到了同一个物理地址，这里会优化合并这一个mapping映射吗？
+
+回答：XV6不会做这种事情，但是有一个page table实验就是做这个事情。真正的操作系统能做到这点。
+
+## 4.6 页表初始化代码讲解
+
+> [4.6 kvminit 函数 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/270579809) <= 图片出处，这部分主要边调试边讲。
+
+​	首先启动XV6操作系统，通过QEMU模拟主板，用gdb调试boot流程。上次调试到main函数，main函数中调用过kvminit，kvminit会设置好kernel的地址空间。
+
+```c
+#include "param.h"
+#include "types.h"
+#include "memlayout.h"
+#include "elf.h"
+#include "riscv.h"
+#include "defs.h"
+#include "fs.h"
+
+void vmprint(pagetable_t);
+
+/*
+ * the kernel's page table
+ */
+pagetable_t kernel_pagetable;
+
+extern char etext[]; // kernel.ld sets this to end of kernel code.
+
+extern char trampoline[]; // trampoline.S
+
+/*
+ * create a direct-map page table for the kernel.
+ */
+void kvminit()
+{
+  // 函数第一步为最高一级的page table directory分配physical page
+  kernel_pagetable = (page_table_t) kalloc();
+  // 然后将将这段directory的PTE都初始化为0
+  memset(kernel_pagetable, 0, PGSIZE);
+  // 通过kvmmap函数，将IO设备映射到内，例如这里将UART0映射到内核地址空间。在memlayout.h文件中，可以看到UART0对应值为0x10000000。通过kvmmap，可以将虚拟地址映射到等值的物理地址上。
+  // uart registers
+  kvmmap(UART0, UART0, PGSIZE, PTE_R | PTE_W);
+  
+  // 打印最高级内核page table directory信息。后面内核也是持续用kvmmap设置地址空间
+  vmprint(kernel_pagetable);
+  
+  // 同理，这里对VIRTIO0进行地址映射，下面的kvmmap也是同理。
+  // virtio mmio disk interface
+  kvmmap(VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+  
+  // CLINT
+  kvmmap(CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+  
+  // PLIC
+  kvmmap(PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+  
+  // map kernel text executable abd read-only.
+  kvmmap(KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_W);
+  
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel
+  kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+  // 打印完整的page table directory信息
+  vmprint(kernel_pagetable);
+}
+
+// 这个函数首先设置了SATP寄存器，内核告知MMU使用刚刚设置好的page table。
+// 这里需要思考的是，在这个函数执行之前，都是使用物理地址，而MMU开始使用该page table后，后续指令中使用的地址都是虚拟地址。
+// Switch h/w page table register to the kernel's page table.
+// and enable paging.
+void kvminithart()
+{
+  w_satp(MAKE_SATP(kernel_pagetable));
+  sfence_vma();
+}
+```
+
+​	memlayout.h文件部分内容如下：
+
+![img](https://pic4.zhimg.com/80/v2-bcf567bdc67647ca8c7494bdde0ee63f_1440w.webp)
+
+​	管理虚拟内存的一个难点是，一旦执行了类似SATP这样的指令，你相当于把一个page table加载到了SATP寄存器，后续每一个地址都会被设置到的page table所翻译。如果假设这里page table设置错误了，会产生page fault，因为错误的page table会导致虚拟地址可能根本就没法翻译，进而导致内核kernel停止工作并panic。如果page table中有bug，你将会看到奇怪的错误和崩溃（errors and crashes）。
+
+---
+
+问题：`walk`函数，从代码看它返回了最高级L2 page table directory的PTE，但是它是如何工作的？就像其他函数一样，它们期望返回的是PTE而不是物理地址。
+
+回答：从代码中可以看出，`walk`函数返回了page table的PTE，而内核可以读写PTE。比如现在可以把值插入PTE中。
+
+问题：接上一个问题，疑惑为什么需要到第三级page table，然后才返回第一个PTE？
+
+回答：不，实际上返回的是第三级page table directory的PTE。
+
+问题：每个进程都有自己的三级page table directory，用于将虚拟地址映射到物理地址。但当我们将内核虚拟地址映射到物理地址时，我想我们没有考虑内核虚拟地址的页表或者其他进程虚拟地址在哪里？例如页表树和页表树实际指向的物理内存。
+
+回答：当kernel为进程分配一个proc和page table时，它们将被分配到内核中未被使用的虚拟地址（Free Memory），Kernel会编程，对用户进程分配几个page table并且填充PTEs。当Kernel运行这个进程时，它将加载分配给用户进程的页表对应的root physical address或者建立在SATP寄存器中的页表。此时，处理器将在kernel为该进程构造的虚拟地址空间运行。
+
+问题：接上一问回答，所以Kernel会为该进程放弃一些自己的内存。但是理论上，用户进程和Kernel的虚拟空间一样大，实际上根本不是，对吧？
+
+回答：是的，下面是用户级进程的虚拟地址空间布局图（the layout of virtual address space of a user level process）。同样，它从0到MAXVA，和内核地址空间一样。它也同样有自己的页表用于映射kernel为它设置的虚拟地址到物理地址的翻译。
+
+问题：但是用户进程并不能使用所有MAXVA的虚拟地址，对吧？
+
+回答：是的，我们不能。因为内存不足以支持。所以实际上许多用户进程占用的物理内存大小比总的可分配的虚拟地址空间小得多。
+
+![img](https://pic2.zhimg.com/v2-1e94512320719c3f602d7b145be0f1c5_r.jpg)
+
+问题：`walk`函数，在写完SATP寄存器后，内核还能直接访问物理地址吗？在代码中，看起来像是后来都通过page table将虚拟地址翻译成了物理地址。由于SATP寄存器已经被设置了，这时如果再拿到一个本该是物理地址的值，会不会被错认为是虚拟地址？
+
+回答：我们回顾`kvminithart`函数，`kvminit`函数构造了内核地址空间，内核页表最初是一个物理地址，（然后又）被翻译成物理地址，这些实际也是写入到SATP寄存器中的。从那之后，我们的代码都运行在我们构造出来的地址空间中，就像之前的`kvminit`函数一样。`kvmmap`会对每个地址或者每个page调用`walk`函数。
+
+问题：在SATP寄存器设置完之后，`walk`函数是不是还是按照原本的方式工作？
+
+回答：是的。原因是，内核设置了虚拟地址等于物理地址的映射关系。（换言之就是前面"4.5 内核页表(Kernel Page layout)"提到过，内核虚拟地址空间中，比PHYSTOP`0x86400000`低的虚拟地址，都是直接和物理地址进行了等值映射）有很多函数能正常工作，正是因为内核设置了（一部分）等值的虚拟地址到物理地址的映射。
+
+问题：每一个进程的SATP寄存器在哪里？
+
+回答：每个CPU核只有一个SATP寄存器。但是阅读`proc.h`能知道，在每个proc结构体中，有一个指向page table的指针。
+
+问题：3级页表为什么就比单级的大page table好？
+
+回答：在3级page table directory中，你可以保持大量PTE为空不填充值（leave a lot of entries empty）。如果最高级的page table directory中一个PTE为空，那么你完全不需要创建它对应的中间级L1或者最底层L0的page table。这就像是，在虚拟地址空间中，有一大部分地址都不需要有映射一样（前面看到的内核虚拟地址分布图，就有大块的Free Memory）。
+
+问题：前面讲解的`kvminit`函数中，`kvmmap(KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_W);`会不会分配到它不应该分配的内存？
+
+回答：不会。这里`KERNABSE`是内核在内存中的起始位置，而`etext`是内核最后一条指令的位置，所以相减就能算出内核所需要占用的内存大小，而DRAM完全足以支撑这些内存。
+
+# Lecture5 RISC-V的调用定义和栈帧(Calling Convention and Stack Frames)
+
