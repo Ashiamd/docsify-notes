@@ -1,6 +1,8 @@
 # MIT6.S081网课学习笔记
 
 > [MIT6.S081 操作系统工程中文翻译 - 知乎 (zhihu.com)](https://www.zhihu.com/column/c_1294282919087964160) => 知乎大佬视频中文笔记，很全
+>
+> [6.S081 / Fall 2020 (mit.edu)](https://pdos.csail.mit.edu/6.S081/2020/schedule.html) => 课表+实验超链接等信息
 
 # Lecture1 概述和举例
 
@@ -787,6 +789,28 @@ Page Table (VM, Virtual Memory)
 ## 4.6 页表初始化代码讲解
 
 > [4.6 kvminit 函数 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/270579809) <= 图片出处，这部分主要边调试边讲。
+>
+> [关于用户进程页表和内核页表_ONIM的博客-CSDN博客_内核页表和用户页表的区别](https://blog.csdn.net/DKH63671763/article/details/104996395/)
+>
+> [页表到底是保存在内核空间中还是用户空间中？ - 知乎 (zhihu.com)](https://www.zhihu.com/question/493153133) => 有不少优质回答，建议看看
+>
+> **第一个问题“那如果页表在[内核空间](https://www.zhihu.com/search?q=内核空间&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A2185333892})中，访问页表不是会陷入内核？”**
+>
+> 创建和删除[页表](https://www.zhihu.com/search?q=页表&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A2185333892})的确是在内核空间操作的。页表不能在用户空间进行操作一点都不奇怪，你要知道**页表的作用不仅仅是[虚拟地址](https://www.zhihu.com/search?q=虚拟地址&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A2185333892})到物理地址的映射，还有关键的权限[访问控制](https://www.zhihu.com/search?q=访问控制&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A2185333892})和页面属性的记录**。下图是[armv8](https://www.zhihu.com/search?q=armv8&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A2185333892})中level 1的页表格式，类似于x86中的PUD的结构：
+>
+> ![img](https://pica.zhimg.com/80/v2-2c8453aa638c3eae1d007e5d4d46bf66_1440w.webp?source=1940ef5c)
+>
+> 其中权限控制是[内核代码](https://www.zhihu.com/search?q=内核代码&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A2185333892})区分内核态与[用户态](https://www.zhihu.com/search?q=用户态&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A2185333892})的基础，如果页表数据让用户进程控制，那区分内核空间和用户空间也没有什么意思了。这样的话的用户进程就能看见很多关键数据，安全性怎么来保证呢？你还要知道用户进程的页表是覆盖整个[地址空间](https://www.zhihu.com/search?q=地址空间&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A2185333892})的，也就是说，用户进程页表中的内核部分对所有进程来说都是一样的，这怎么能让用户进程去控制呢？
+>
+> **回答你的第二个问题“这样不会影响效率吗？”**
+>
+> 第一，就算再多的进程去分配内存，就目前的页表操作数量级来说，相对于硬件中断和[进程调度](https://www.zhihu.com/search?q=进程调度&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A2185333892})，操作页表是小概率事件。
+>
+> 第二，你以为在用户进程中分配内存的时候，就马上通过[系统调用](https://www.zhihu.com/search?q=系统调用&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A2185333892})陷入内核，然后进行页表操作吗？内核如今已经发展的很成熟了，当然不会这么傻。在你兴高采烈的分配好一块内存后，内核只是给你找了一块独一无二的[虚拟内存](https://www.zhihu.com/search?q=虚拟内存&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A2185333892})空间，并没有映射到物理内存，所以根本没有页表的操作。只有你真正用到你的内存时，MMU发现无法进行虚拟内存到物理内存的转换，只好抛出page fault异常，然后进入内核进行物理内存的分配过程，接着就给你把页表创建好了，这个整个过程叫做**惰性分配**。更重要的是，其实[libc库](https://www.zhihu.com/search?q=libc库&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A2185333892})在进程创建的时候，就已经把堆空间用内存池的方式管理起来，在进程分配小于128kb的内存时，根本不需要内核进行任何操作，因为堆这个段的虚拟内存早就映射好了物理内存，何谈效率的影响？
+>
+> **第三个问题“[内核页表](https://www.zhihu.com/search?q=内核页表&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A2185333892})和普通的页表到底有什么区别？”**
+>
+> 对于所有进程来说它们页表中的内核空间页表部分都是一模一样的，它们都是从1号进程的init_mm结构中copy的，只有[用户空间](https://www.zhihu.com/search?q=用户空间&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A2185333892})的页表不尽相同。用户空间的页表是用来进行不同进程地址空间隔离的，所以相同的虚拟地址可以映射到不同的物理地址，当然一般情况下这也是必须的，而内核只有一个。
 
 ​	首先启动XV6操作系统，通过QEMU模拟主板，用gdb调试boot流程。上次调试到main函数，main函数中调用过kvminit，kvminit会设置好kernel的地址空间。
 
@@ -907,5 +931,178 @@ void kvminithart()
 
 回答：不会。这里`KERNABSE`是内核在内存中的起始位置，而`etext`是内核最后一条指令的位置，所以相减就能算出内核所需要占用的内存大小，而DRAM完全足以支撑这些内存。
 
-# Lecture5 RISC-V的调用定义和栈帧(Calling Convention and Stack Frames)
+## 4.7 实验描述中的一些知识点
 
+> [边信道攻击_百度百科 (baidu.com)](https://baike.baidu.com/item/边信道攻击/7342042?fr=aladdin)
+>
+> 边信道攻击(side channel attack 简称SCA)，又称侧信道攻击，核心思想是通过加密软件或硬件运行时产生的各种泄漏信息获取密文信息。
+
++ 直到几年前，不少内核在用户空间、内核空间下使用相同的per-process页表，该页表同时维护用户态、内核态的地址映射，避免用户态和内核态之间切换时还需要切换页表。但这种实现方式，也导致一些边侧信道攻击能够得逞。Until a few years ago many kernels used the same per-process page table in both user and kernel space, with mappings for both user and kernel addresses, to avoid having to switch page tables when switching between user and kernel space. However, that setup allowed side-channel attacks such as Meltdown and Spectre.
+
+# Lecture5 RISC-V的调用协议和栈帧(Calling Convention and Stack Frames)
+
+## 5.1 汇编、指令集概述
+
+​	**处理器并不能直接处理C语言代码，处理器只能处理汇编对应的二进制编码**。
+
+​	当我们提到处理器是RISC-V时，意味着处理器能理解的是RISC-V指令集（instruction set）。**每个处理器都有一个关联的ISA或指令集。每条指令都有一个关联的二进制编码（binary encoding）或者操作码（op code）。当一个处理器运行时，它看到一个特定的编码，然后知道该做什么。**
+
+​	让C程序在处理器上运行的一般流程是，编写C代码，然后编译成汇编语言（assembly，`.S`文件），之后ASM被翻译成二进制文件（object或者说`.o`文件）。
+
+​	这里需要强调的是，课程使用的是RISC-V指令集。如果你用RISC-V指令集，那么你的程序很可能不能在Linux上运行。因为大多数现代计算机运行在x86或x86-64处理器上，它们使用的是另一套ISA。x86拥有一套不同的指令集，尽管看上去和RISC-V指令集相似。Intl和AMD的CPU都实现了x86。
+
+​	<u>RISC-V的"RISC"是精简指令集（reduced instruction set）的意思，而x86通常被称为CISC，复杂指令集（complex instruction set）</u>。
+
+​	RISC和CISC之间有一些关键性的区别：
+
+|            | CISC                                 | RISC                                       |
+| ---------- | ------------------------------------ | ------------------------------------------ |
+| 指令数量   | 特别多                               | 相对少                                     |
+| 指令复杂度 | 大多数指令内部执行多项操作，复杂度高 | 单条指令一般内部操作少，运行的时间周期更短 |
+| 是否开源   | 否                                   | 是，市面上唯一的开源指令集                 |
+
+​	当然，两者各有着重的应用场景，没有绝对的优劣之分。
+
+​	在日常中，ARM也是使用RISC指令集。如果你使用安卓手机，那么大概率运行在RISC上。
+
+## 5.2 C语言到汇编代码讲解
+
+​	教程中的C语言代码，经过每个人电脑的编译后得到的汇编代码可能不同。原因有很多，比如编译器优化。
+
+```assembly
+.section .text
+.global sum_to
+
+/*
+	int sum_to(int n) {
+		int acc = 0;
+		for(int i = 0; i <= n; ++i) {
+			acc += i;
+		}
+		return acc;
+	}
+*/
+
+sum_to:
+	mv t0, a0				# to <- a0
+	li a0, 0				# a0 <- 0
+ loop:
+ 	add a0, a0, t0	# a0 <- a0 + t0
+ 	addi t0, t0, -1	# t0 <- t0 - 1
+ 	bnez t0, loop		# if t0 != 0: pc <- loop
+ 	ret
+```
+
+​	上面的汇编代码中，首先`mv t0, a0`将a0寄存器的值在t0保存一份，然后`li a0, 0`将a0寄存器的值置0。`loop`进入循环，循环`add a0, a0, t0`将a0寄存器和t0寄存器内的值相加后存入a0寄存器，t0寄存器的值每次减1，直到t0寄存器内的值为0时退出循环。
+
+​	需要注意的是，这里调试的代码都在内核中，不在用户空间中，所以不会在设置断点时遇到麻烦问题。
+
+---
+
+问题：这些汇编代码中，`.global`、`.section`、`.text`是什么意思？
+
+回答：`.global`代表你可以在其他文件中调用这个函数。`.text`代表当前文件内写的是代码code。拓展，如果你对内核感兴趣，编译后，可以查看`kernel.asm`文件，可以看到XV6完整内核的汇编代码。文本中每一行左边的数字代表当前这条指令在内存中哪个位置。
+
+问题：`.asm`和`.S`文件有什么区别？
+
+回答：两者都是汇编文件，但`.asm`文件包含大量的额外注释，而`.S`文件没有。而一般C语言编译后得到的是不包含行号的汇编代码，即`.S`文件。如果想知道怎么获取`.asm`文件，makefile里包含了具体的步骤。
+
+## 5.3 寄存器和汇编
+
+> [5.4 RISC-V寄存器 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/295439950) <= 图片出处
+
+​	**每个CPU核都有一套寄存器，它们被预先定义好用来存储数据。实际上，汇编代码经常操作寄存器的数据，而非只是直接操作内存数据**。因为寄存器比内存快，所以我们更倾向于使用寄存器。
+
+​	所以我们经常看到，汇编代码的模式是，先用`load`或类似的指令将数据从寄存器or内存加载到另一个寄存器，之后在对寄存器中的数据进行运算，如果关注结果值，那还会用`store`或类似的指令将数据存到寄存器或者内存某个地址。
+
+​	通常讨论寄存器时，我们使用它们的ABI name，因为写汇编代码时需要使用它们的ABI name。
+
+![img](https://pic1.zhimg.com/80/v2-b6b20bee8d933246a9692a706f0deab8_1440w.webp)
+
+​	<u>a0～a7寄存器用来存储函数的参数值，如果一个函数有超过8个参数，我们就需要用内存存储参数</u>。（隐含含义，尽量不要定义参数超过8个的函数，否则不得不用内存存储参数）
+
+​	上图中，第四列Saver，Caller表示not preserved across fn call，Callee表示preserved across fn call。比如ra寄存器是Caller类型的，表示函数A中调用函数B得到函数B的返回值时，函数B可以覆盖ra寄存器的值。如果一个寄存器是Callee saved类型的，则被调用的函数需要考虑如何存储这些寄存器的值。
+
+​	由于RISC-V用的寄存器是64bit的，各类数据会被以64bit为单位进行处理，保证能存到寄存器中。比如一个32bit的整数，根据其是否负数，通常会在前面补全32个0或者1，使得这个整数变成64bit存放到寄存器中。
+
+​	提醒一下，上图的f寄存器，即浮点数寄存器，在这节课不会提到，可以先不管。
+
+----
+
+问题：返回值可以放到a1寄存器中吗？
+
+回答：理论上是可以的。如果一个函数的返回值是long long，即128bit类型，我们可以考虑把返回值存到a0~a1寄存器中。
+
+问题：为什么寄存器不是连续的？为什么上图中s1寄存器后续紧接着a0寄存器？
+
+回答：我猜测是因为有一个压缩版的RISC-V指令集，它的大小是16bit，而不是64bit，你可以用压缩指令集使得占用更少的内存。而当你使用16bit指令时，你只能访问寄存器x8～15。我认为s1与s2-11分开，是因为他们想要明确在压缩指令模式下，s1可用，但是s2-11不行。我不知道为什么他们选择x8-15，但是如果看一些代码，会发现这些是最常用的寄存器。
+
+问题：除了帧指针frame pointer，还有栈指针stack pointer，我不认为我们需要更多的Callee Saved寄存器，但是实际上却有很多，这是为啥？
+
+回答：s0-s11都是Callee寄存器，供编译器或程序员使用。在一些特定场景下，你会想要确保一些数据在函数调用之后仍然能保存，这时候编译器可以选择使用s1～s11寄存器。很遗憾我手头没有具体的例子可以进行说明，但我确定会有这种场景以至于需要这么多的Callee寄存器。但基本上都是编译器or程序员会选择使用s1~s11寄存器。
+
+## 5.4 函数调用栈Stack
+
+> [5.5 Stack - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/295440833) <= 图片来源
+
+![img](https://pic3.zhimg.com/v2-1bb012d535c8fbb60510a401c534759e_r.jpg)
+
+​	上图中，每一个区域就是一个stack frame栈帧。每调用一个函数，函数本身会为自己创建一个Stack Frame。函数通过移动Stack Pointer来完成另一次函数调用。上图中sp表示stack pointer的当前位置。**Stack从高地址往低地址方向使用，所以stack总是向低地址延伸**。想创建一个新stack frame时，通过地址做减法而非加法。
+
+​	<u>stack frame for function函数栈帧，包括寄存器register和局部变量local variables。如果argument register用完了，额外的参数就会出现在stack中，所以Stack Frame大小总是不尽相同，尽管上图看上去一致。不同的函数有不同数量的本地变量、寄存器的诉求，所以Stack Frame总是不一样</u>。
+
+​	**能确定的是，Return address总是在Stack Frame第一位（栈顶），而指向前一个Stack Frame的指针，总是在它前一个位置（栈顶往下数第二个位置）**。
+
+​	Stack Frame有两个重要的寄存器：
+
++ SP（Stack Pointer），指向Stack的底部，表示当前Stack Frame的位置。
++ FP（Frame Pointer），指向当前Stack Frame的顶部。当我们想快速找到Return address或指向前一个Stack Frame的指针，就可以通过FP寄存器快速定位。
+
+​	**我们存储指向前一个Stack Frame的指针，是为了可以回溯跳转。所以当函数返回时，我们可以将它存储到FP寄存器中，以次将FP指向上一个Stack Frame的顶部位置，确保我们总是指向正确的函数**。
+
+​	Stack Frame需要汇编代码创建，你读到的任何约定文档convertions document，都会指出这由编译器完成。即编译器遵循convertion生成了汇编代码，进而创建正确的stack frame。
+
+​	**通常在ASM function汇编函数的开头，你会看到funciton prologue，之后是the body of function，最后才是epilogue**。
+
+​	前面"5.2 C语言到汇编代码讲解"提到的`sum_to`汇编函数，只有函数体，没有其他部分，因为它足够简单，只是个leaf函数，**leaf函数指不调用其他函数的函数**。leaf函数不需要考虑保存自己的Return address或者其他Caller Saved寄存器的值，因为它不调用其他函数。
+
+​	而下面一个例子，`sum_then_double`就不是一个leaf函数，因为它调用了`sum_to`函数。
+
+```assembly
+.global sum_then_double
+sum_then_double:
+	addi sp, sp, -16
+	sd ra, 0(sp)
+	call sum_to
+	li t0, 2
+	mul a0, a0, t0
+	ld ra, 0(sp)
+	addi sp, sp, 16
+	ret
+```
+
+​		上面可以看到`call sum_to`调用了`sum_to`函数，所以`sum_then_double`函数需要包含prologue。这里我们通过`addi sp, sp, -16`对Stack Pointer减16，这样我们为新的Stack Frame创建了16字节的空间，之后我们将Return address保存在stack中，然后`call sum_to`调用`sum_to`，后续两行将`sum_to`结果值乘以2。最后是epilogue，先将Return address值加载回ra寄存器，再对sp加16以删除刚创建的Stack Frame。最后通过ret返回/退出函数。
+
+​	这里如果删除call之前的prologue，以及删除mul之后的epilogue，会发生什么？如果删掉这两个操作，由于调用了`sum_to`会覆盖ra寄存器的值，进而导致`sum_then_double`最后ret跳转时，按照`sum_to`覆盖的ra寄存器值跳转，陷入无限循环一直重复执行`sum_then_double`中call往后的指令（li、mul、ret）。
+
+---
+
+问题：为什么`sum_then_double`最开始要对sp-16？
+
+回答：这是为了给Stack Frame创建空间，-16相当于地址向前16字节，这样我们有足够空间存Stack Frame，可以在那存储数据。我们并不想直接覆盖原本stack pointer位置的数据。
+
+问题：上一问接着，为什么-16，而不是-4？
+
+回答：是的，我们确实不需要-16那么多，但-4也太少了，至少需要-8，因为接下去要存ra寄存器的是64bit（8字节）。这里习惯用16字节，是因为我们要存Return address和指向上一个Stack Frame的pointer。
+
+## 5.5 C语言Struct的内存结构
+
+​	基本上，C语言的Struct在内存中是一段连续的地址。通常，我们可以将Struct作为参数传递给函数。
+
+---
+
+问题：谁创建了编译器来将C代码转换成各种各样的汇编代码，是不同的指令集创建者，还是第三方？
+
+回答：我认为不是指令集的创建者，通常是第三方创建的。你们常见的两大编译器，一个是gcc，这是由GNU基金会维护的；一个是Clang llvm，这个是开源的，你可以查到相应的代码。当一个新的指令集，例如RISC-V，发布之后，调用约定文档和指令文档一起发布，我认为会指令集的创建者和编译器的设计者之间会有一些高度合作。简言之，我认为是第三方与指令集作者一起合作创建了编译器。RISC-V或许是个例外，因为它是来自于一个研究项目，他们的团队或许自己写了编译器，但是我不认为Intel对于gcc或者llvm有任何输入。
+
+# Lecture6 Isolation & System Call Entry_Exit
