@@ -1106,3 +1106,349 @@ sum_then_double:
 回答：我认为不是指令集的创建者，通常是第三方创建的。你们常见的两大编译器，一个是gcc，这是由GNU基金会维护的；一个是Clang llvm，这个是开源的，你可以查到相应的代码。当一个新的指令集，例如RISC-V，发布之后，调用约定文档和指令文档一起发布，我认为会指令集的创建者和编译器的设计者之间会有一些高度合作。简言之，我认为是第三方与指令集作者一起合作创建了编译器。RISC-V或许是个例外，因为它是来自于一个研究项目，他们的团队或许自己写了编译器，但是我不认为Intel对于gcc或者llvm有任何输入。
 
 # Lecture6 Isolation & System Call Entry_Exit
+
+## 6.1 user/kernel space切换的Traps机制
+
+​	本节主要讲用户进程在运行时**在用户态、内核态之间切换的Traps机制**。
+
+​	当程序发起系统调用请求(make a system call)或者遇到诸如缺页(page fault)、除0(divide by zero)等fault，或者一个设备触发了中断(decides to interrupt)需要得到内核设备驱动(kernel device driver)的响应，这里就会发生<u>用户态和内核态之间的切换，对应的机制即Traps</u>。
+
+​	traps的实现细节加强了操作系统的**隔离安全性(isolation security)**、**性能(performance)**。因为系统调用、缺页等高频事件经常需要从用户态切换到内核态，所以traps实现需要尽量简单且高效。
+
+​	在用户态到内核态的切换时，我们需要关注硬件的状态，因为很多工作都是硬件从执行用户代码(user code)切换到执行内核代码(kernel code)。其中比较需要注意的是CPU的32个用户寄存器(user register)，<u>其中程序计数器寄存器（program counter register）表明当前是内核态还是用户态</u>；前面虚拟内存章节的SATP寄存器包含指向page table directory物理内存地址的指针；**STVEC寄存器，指向了内核处理traps的指令的起始地址；SEPC寄存器在trap过程中保存PC程序计数器的值**。
+
+​	显然，我们需要对这些表示状态的寄存器进行一些操作，才能切换到执行内核中的C程序（比如系统调用）。
+
+​	在trap的起初阶段，CPU的所有状态都被设置成在执行user code，而非kernel code。**在切换到内核态前，我们需要先保存32个用户寄存器，以便后续恢复用户进程状态**，尤其是用户程序时不时会被其他设备硬件中断而暂时暂停执行。<u>我们希望内核在用户进程无感知的情况下完成响应中断，然后再恢复用户程序的执行</u>。
+
++ 由于寄存器数量就那么多，我们在内核中执行代码时还是需要占用32个用户寄存器，所以我们需要在别处存储原本用户进程的32个用户寄存器的值。
++ 并且在内核态执行时，需要将mode切换成supervisor mode，因为我们需要在内核中执行各种特权指令。
++ SATP寄存器原本存的user table page directory，并不包含整个内核数据的内存映射。运行kernel code之前也需要切换页表。
++ 另外，我们需要SP堆栈寄存器指向内核某个地址，毕竟后续要用一个栈帧(stack frame)执行内核的C代码函数。
++ ....
+
+​	一旦这些前置工作都准备好，就可以切换到内核中执行C代码，后续整体流程就和在执行用户代码无差别。
+
+​	**操作系统出于安全、隔离性考虑，帮助我们抽象了这些前置工作，避免用户程序直接参与user/kernel的切换，破坏系统安全性。这意味着traps机制涉及到内核、硬件操作，并且不能依赖用户空间(user space)的任何事物**。比如不能依赖32个用户寄存器，它们可能存储恶意数据，XV6的trap机制不会查看这些寄存器而仅仅是将它们的值保存起来。与隔离性同样重要的是，**需要对用户代码透明**，在trap机制运行时，用户代码应该无感知。
+
+## 6.2 supervisor mode简述
+
+​	当mode从user mode切换到supervisor mode时，实际上享有的特权也没有很夸张。我们来看看supervisor mode能做什么？
+
++ 能够读写寄存器（SATP寄存器、STVEC寄存器、SEPC寄存器、SSCRATCH寄存器等）
++ **仅**能够使用`pte_u`标记位=0的PTE。（`pte_u` flag=1表明user code可以使用该PTE）
+
+​	**上面两点就是supervisor mode能做的事情了，其他额外的事情做不了**。比如supervisor mode code不能读写arbitrary physical address，它同样需要通过page table访问内存。如果一个虚拟地址不不在当前SATP寄存器指向的page table中，或者对应PTE的`pte_u`标识=0，那么supervisor mode不能访问这个虚拟地址。
+
+## 6.3 Trap代码执行流程简述
+
+> [6.2 Trap代码执行流程 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/318442190) <= 图片来源
+>
+> [内存映射文件_百度百科 (baidu.com)](https://baike.baidu.com/item/内存映射文件/7167095?fr=aladdin)
+>
+> 内存映射文件，是由一个文件到一块内存的映射。Win32提供了允许应用程序把文件映射到一个进程的函数 (CreateFileMapping)。内存映射文件与[虚拟内存](https://baike.baidu.com/item/虚拟内存/101812?fromModule=lemma_inlink)有些类似，通过内存映射文件可以保留一个[地址空间](https://baike.baidu.com/item/地址空间/1423980?fromModule=lemma_inlink)的区域，同时将[物理存储器](https://baike.baidu.com/item/物理存储器/7414328?fromModule=lemma_inlink)提交给此区域，内存文件映射的物理存储器来自一个已经存在于磁盘上的文件，而且在对该文件进行操作之前必须首先对文件进行映射。**使用内存映射文件处理存储于磁盘上的文件时，将不必再对文件执行[I/O操作](https://baike.baidu.com/item/I%2FO操作/469761?fromModule=lemma_inlink)，使得内存映射文件在处理大数据量的文件时能起到相当重要的作用**。
+>
+> 内存映射文件是由一个文件到进程地址空间的映射。Win32中，每个进程有自己的地址空间，一个进程不能轻易地访问另一个进程地址空间中的数据，所以不能像16位Windows那样做。Win32系统允许多个进程（运行在同一计算机上）使用内存映射文件来共享数据。**实际上，其他共享和传送数据的技术，诸如使用SendMessage或者PostMessage，都在内部使用了内存映射文件**。
+>
+> 这种函数最适用于需要读取文件并且对文件内包含的信息做[语法分析](https://baike.baidu.com/item/语法分析?fromModule=lemma_inlink)的应用程序，如：对输入文件进行语法分析的彩色语法编辑器，编译器等。
+>
+> 把文件映射后进行读和分析，能让应用程序使用内存操作来操纵文件，而不必在文件里来回地读、写、移动[文件指针](https://baike.baidu.com/item/文件指针?fromModule=lemma_inlink)。
+>
+> [内存映射文件(memory-mapped file)能让你创建和修改那些大到无法读入内存的文件。_UCJJff的博客-CSDN博客](https://blog.csdn.net/UCJJff/article/details/2404555)
+>
+> 下面这些材料很详细，感兴趣的可以看看
+>
+> [Memory-Mapped Files | Microsoft Learn](https://learn.microsoft.com/en-us/dotnet/standard/io/memory-mapped-files?redirectedfrom=MSDN)
+>
+> [Managing Memory-Mapped Files | Microsoft Learn](https://learn.microsoft.com/en-us/previous-versions/ms810613(v=msdn.10))
+>
+> [Memory-Mapped File Information - Win32 apps | Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/psapi/memory-mapped-file-information)
+>
+> [What is Memory-Mapped File in Java? - GeeksforGeeks](https://www.geeksforgeeks.org/what-is-memory-mapped-file-in-java/) <= 包括java实际操作代码
+>
+> Memory-mapped files are casual special files in Java that help to access content directly from memory. Java Programming supports memory-mapped files with java.nio package.  Memory-mapped I/O uses the filesystem to establish a virtual memory mapping from the user directly to the filesystem pages. It can be simply treated as a large array. Memory used to load Memory-mapped files is outside of Java Heap Space.
+>
+> **Merits of the memory-mapped file are as follows:**
+>
+> - **Performance**: Memory-mapped Files are way faster than the standard ones.
+> - **Sharing latency:** File can be shared, giving you shared memory between processes and can be more 10x lower latency than using a Socket over loopback.
+> - **Big Files:** It allows us to showcase the larger files which are not accessible otherwise. They are much faster and cleaner.
+>
+> **Demerits of the memory-mapped file are as follows:**
+>
+> - **Faults**: One of the demerits of the Memory Mapped File is its increasing number of page faults as the memory keeps increasing. Since only a little of it gets into memory, the page you might request if isn’t available into the memory may result in a page fault. But thankfully, most operating systems can generally map all the memory and access it directly using Java Programming Language.
+
+​	后续会通过gdb跟踪代码，看trap如何进入内核空间，这里先绘图讲解trap机制的代码执行大致流程。
+
+![img](https://pic1.zhimg.com/80/v2-26e8cea84bf7a60d10670768383aa48c_1440w.webp)
+
+​	在Shell中请求`write`系统调用，对于Shell来说实际是执行`write()`这个C语言函数，而该**函数内部通过ECALL来执行系统调用**。ECALL指令会切换到supervisor mode的内核中。
+
+（1）ECALL切换到supervisor mode的kernel后，第一条指令的指令是汇编语言的函数`uservec`。这个函数是内核代码`trampoline.S`文件的一部分。
+
+（2）在`uservec`汇编函数中，jump跳转到C语言函数`usertrap`中。这个函数在`trap.c`文件中。
+
+（3）`usertrap`函数中执行了`syscall`函数，该函数根据系统调用编号索引到具体的内核系统调用函数(which looks at the system call number in a table and calls the particular function inside the kernel)
+
+（4）根据系统调用编号找到的`sys_write`被执行，将需要输出的内容输出到console。
+
+（5）`sys_write`执行完毕后，返回到`syscall`函数。为了返回到用户空间(user space)，还需执行`usertrapret`函数，该C函数完成了一部分从内核返回到用户空间的工作，`usertrapret`函数也在`trap.c`文件中。
+
+（6）剩下一部分从内核到用户空间的工作，只能由`trampoline.S`文件中的汇编语言`userret`函数完成。
+
+（7）在`userret`汇编函数中，执行机器指令(machine instruction)返回到用户空间，并恢复ECALL之后的用户程序执行。
+
+---
+
+问题：`vm.c`运行在什么mode？
+
+回答：`vm.c`中的所有函数都是kernel的一部分，所以都运行在supervisor mode。
+
+问题：这些函数如此命名是有什么规则or含义吗？
+
+回答：supervisor mode下执行的，都是以`s`开头。
+
+问题：`vm.c`中的函数不是直接访问access物理内存physical memory吗？
+
+回答：是的，这些函数能这么做是因为内核在page table已经小心地设置好了PTEs。每当内核试图读写一个虚拟地址时，会通过kernel page table将其翻译成等值的物理地址（也就达到了直接访问物理地址的效果），然后再进行读写。kernel page table方便在kernel中使用这些(虚拟地址到物理地址的)映射关系，但直到trap机制真正切换到内核之前，kernel page table显然是不可用的（不可访问）。在trap完成切换之前，我们使用的仍然是user page table。
+
+**问题：`read`和`write`系统调用，相比直接的内存读写，还需要模式切换，性能代价更高。有没有可能在打开一个文件时直接获取page table mapping而不是返回文件描述符？这样就能往映射到设备的地址上读写，并且为了隔离性可以考虑类似文件描述符能设置只读只写一类的，在PTE上增加类似的标志位。这样就不需要用户态/内核态之间切换来操作文件了。**
+
+**回答：实际上，很多操作系统都提供了内存映射文件(Memory-mapped file access)机制。这种机制能够将用户虚拟地址和文件内容通过page table完成映射，这样就能直接通过内存读写文件。**在后续的mmap实验你们就需要实现这个机制。对于大多数程序而言，这样确实比`read/write`系统调用效率高。
+
+## 6.4 跟踪XV6系统调用代码执行流程
+
+> [6.3 ECALL指令之前的状态 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/318448376) <= 这节主要都是调试流程，详细可以看该博主文章。下面只写一些我自己觉得相对重要的知识点。
+>
+> [6.5 uservec函数 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/318458722)
+>
+> [6.6 usertrap函数 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/318464618)
+
+​	本节主要通过跟踪XV6中Shell请求write系统调用到后来操作系统输出的流程。
+
+​	在Shell中调用的write实际只是关联到Shell的一个库函数，可以在`usys.S`查看该库函数的源代码。
+
+```assembly
+# usys.S 文件内代码片段
+Write:
+	# 将 数字SYS_write(也就是16) 加载到 a7寄存器。告诉 kernel要执行 编号16的系统调用。16对应的就是write系统调用
+	li a7, SYS_write
+	# ecall后，即跳转到 kernel
+	ecall
+	# kernel完成工作后，返回用户空间，往下执行ecall往下的指令，这里直接就是ret。后续就返回到Shell中了，因为ret从write库函数返回到了Shell中。
+	ret
+```
+
+​	<u>在调试过程中，在ecall指令处打断点（当前状态即正要执行ecall指令之前），可以注意sp和pc指向的位置，都是接近0的位置，用户空间的所有地址通常都在低地址，验证了这时仍在用户空间下执行代码。后续如果跳转到内核空间，由于内核都是用高地址，就能观察到sp和pc指向的值明显变化</u>。
+
+​	**在系统调用的时间点，会有大量状态（寄存器值）发生变化，在切换内核之前最重要的且仍需依赖的状态即当前的page table**。
+
+​	这里通过QEMU打印当前用户的page table，看到6条PTE（与shell的指令、数据有关），然后**还有一个invalid page用做stack guard page，以防止Shell尝试使用过多的stack page**。
+
+![img](https://pic2.zhimg.com/80/v2-08e159f806646ae682ebf3246a6edf15_1440w.webp)
+
+​	上图第三行PTE的attr标记位`rwx`表示可读、可写、可执行，但是u标识位0，而**用户空间只能使用u标识位1的PTE**。<u>其他标记位比如a（Access）表示当前PTE是否被使用过，d（Dirty）表示当前PTE是否被写过</u>。
+
+​	上图中，最后两条PTE有很高的虚拟地址，非常接近虚拟地址的顶部。如果看过XV6的书，就会知道这两个PTE分别对应trapframe page和trampoline page，它们都没有u标识，用户不能访问这两个PTE，但是切换到supervisor mode后就能访问了。
+
+​	<u>对于这里的page table，需要注意的是，它没有包含任何kernel的映射关系，没有到kernel data、kernel insructions的任何物理地址映射。而最后两条PTE（虽然没有u标识），基本上是为了用户代码执行而创建的，对在kernel中执行代码没有什么直接的特殊作用</u>。
+
+​	**这里接着断点位置执行ecall指令，执行前我们还在用户空间，执行后我们就在内核空间了**。ecall执行完后，查看pc程序计数器，之前指向低虚拟地址（0xde6），而现在指向一个高虚拟地址（`0x3ffffff000`）。
+
+​	此时通过QEMU查看page table，发现page table和之前一致，且发现我们pc指向的即trampoline page，这些指令是内核在supervisor mode中将要执行的最开始几条指令，即前面"6.3 Trap代码指令流程简述"中提到的trap机制最开始要执行的几条指令。
+
+​	此时观察寄存器的值，发现里面都还是之前的用户程序的数据。现在初步切换到内核中，我们需要将这些寄存器的值保存到某处，以免后续内核执行完毕返回用户空间时无法恢复用户程序当时的状态值。
+
+​	我们此时在`0x3ffffff000`，处于trampoline page，这个page内包含了内核的trap处理代码。
+
+​	**正如我们所见，ecall并不会切换page table**。**所以这也意味着trap处理代码必须存在于每一个用户页表中，因为ecall不切换page table，我们需要在user page table中某个地方执行kernel最初的代码。而trampoline page，是由内核小心地映射到每个user page table中的，使我们仍在user page table中时，内核也能在此执行trap机制的最开始一些指令。**
+
+​	**（pc程序计数器跳转到user page table中的`0x3ffffff000`这一虚拟地址）这由STVEC寄存器完成控制，这是一个只能在supervisor mode下读写的特权寄存器。在从内核空间进入到用户空间之前，内核会设置好STVEC寄存器指向内核希望traps代码运行的位置**。查看寄存器当前情况，确实会发现STVEC寄存器当前值为`0x3ffffff000`，也就是trampoline page的起始位置。<u>正因为STVEC寄存器的内容是`0x3ffffff000`，在ecall指令执行之后，pc程序计数器就跳转到了`0x3ffffff000`（trampoline page）</u>。
+
+​	需要注意的是，即使trampoline page是映射到user address space中的user page table，user code也不能修改这条PTE，因为PTE的u标识位是0（用户代码只能访问u标识位1的PTE，而前面"6.2 supervisor mode简述"提过supervisor则只能访问u标识位0的PTE）。正因trampoline page的PTE无法被用户代码影响，所以trap机制是安全的。
+
+​	**虽然强调了现在是supervisor mode了，但是我们没有手段直接确认我们处于何种mode。不过我们通过观察，可以发现pc程序计数器在执行trampoline page内的代码，而该PTE没有设置`pte_u` flag。只有supervisor mode执行代码，才能保证访问`pte_u`为0的PTE不崩溃或报错，所以推导出我们当前必然在supervisor mode**。
+
+​	实际上，ecall只会改变3个事情：
+
+（1）ecall改变mode从user mode 到 supervisor mode。
+
+（2）ecall将pc程序计数器的值保存到SEPC寄存器中。
+
+（3）ecall会跳转到STVEC寄存器指向的指令（即将PC寄存器设置成控制寄存器STVEC的内容）。
+
+​	虽然ecall帮我们做了一部分工作，但我们到执行内核C代码之前还有其他要做的工作，比如：
+
++ 需要保存32个用户寄存器的内容，后续如果从内核切换回用户空间，才能保证用户代码正常执行。
++ 需要切换到 kernel page table（目前仍在user page table中）。
++ 需要创建或找到一个stack，将SP寄存器指向kernel stack，后续给C代码提供stack。
++ 需要跳转到内核中C代码的某处合理位置
+
+​	<u>ecall不会做上述任何一件事，当然我们也可以编程硬件使ecall完成上述工作，而不是让软件完成。实际上，确实有一些机器在系统调用时，会在硬件层面完整上诉这几点工作</u>。但是教学的RISC-V并不会，ecall在RISC-V中只完成尽量少且必须完成的工作，其他的需要软件实现。RISC-V如此设计的初衷是为软件开发者提供最大的灵活性，操作系统开发者可以根据喜好自行设计操作系统程序。
+
++ 为何RISC-V的ecall不直接做保存用户寄存器的工作
+
+  或许在一些系统调用过程中，有些寄存器不需要保存。哪些需要/不需要保存，取决于软件、编程语言和编译器。通常不保存所有32个用户寄存器或许可以节省大量时间。所以你不希望ecall强迫保存所有用户寄存器值。
+
++ 为何RISC-V的ecall不直接做page table切换的工作
+
+  或许某些操作系统可以在不切换页表的情况下执行部分系统调用（因为切换page table成本高），如果ecall强制完成了切换页表的操作，那就不能实现这类不需要切换page table的系统调用了。还有些操作系统同时将user和kernel的虚拟地址映射到同一个page table，这样user和kernel之间切换时根本就不需要切换page table。
+
++ 为何RISC-V的ecall不将SP寄存器指向kernel stack
+
+  对于某些简单的系统调用或许根本不需要任何stack。对于某些关注性能的操作系统，肯定希望ecall不自动做stack切换。
+
+​	出于性能考虑，ecall做的事情越简单越好（越少越好）。
+
+​	回到我们讨论的点，ecall执行完后我们进入kernel了。<u>此时需要做的第一件事就是保存寄存器内容</u>，在RISC-V上，大多数操作离不开寄存器。其他机器可能直接将32个用户寄存器写到物理内存某处，而RISC-V不能这么做，因为在RISC-V中，supervisor mode的代码不能直接访问物理内存。虽然在XV6没有这么做，但是有一种做法是直接将SATP寄存器指向kernel page table，之后我们就可以直接使用所有kernel mapping来辅助存储用户寄存器。这时合法操作，因为supervisor mode可以修改SATP寄存器。然而在trap代码的当前位置（目前就是trap的起始位置），我们不知道kernel page table的地址，并且更改SATP寄存器的指令要求写入SATP寄存器的内容来自另一个寄存器。
+
+​	ecall后第一步——保存寄存器内容，XV6在RISC-V上的实现包括两个部分：
+
+（1）XV6在每个user page table映射了trapframe page，这样每个进程有自己的trapframe page。这个page存了各种数据，其中最为重要的即用来保存32个用户寄存器的预留内存空槽。trap执行到这里，kernel事先已经为每个user page table设置了trapframe page PTE（其指向的内存可以用来存储当前进程的用户寄存器内容），该虚拟地址固定为`0x3ffffffe000`。
+
+（2）在进入user space之前，kernel会将trapframe page的地址写入SSCRATCH寄存器（`0x3fffffe000`）。SSCRATCH寄存器的作用就是保存另一个寄存器的值，并将自己的值加载到另一个寄存器（RISC-V的csrrw指令运行交换任意两个寄存器的值）。实际上`trampoline.S`第一行之行的指令`csrrw a0,sscratch,a0`就将a0寄存器和sscratch寄存器的值进行了交换。
+
+---
+
+​	下面是`proc.h`的trapframe结构体，有很多unit64字段用于存储对应的用户寄存器值。前5个是kernel事先存放在trapframe中的数据。比如第一个`kernel_satp`存储kernel page table 指针值（地址值）。
+
+![img](https://pic3.zhimg.com/80/v2-6f4f910813bb76ad01f471221f89e6ba_1440w.webp)
+
+​	在trampoline code的开头（即`uservec`函数），我们可以看到它做的第一件事情就是执行csrrw指令（这里交换了a0和sccratch寄存器的值）。通过交换寄存器值，我们将a0寄存器的值保存起来了，并且拿到sccratch寄存器存的指向trapframe page的指针，下面30多行代码通过sd指令将用户寄存器的值写入trapframe page指向的内存的不同偏移量位置。
+
+![img](https://pic2.zhimg.com/80/v2-b789d1f4c42b4dd6153c38ee48653ed5_1440w.webp)
+
+​	`ld sp, 8(a0)`将a0寄存器值往后偏移8字节的数据加载到SP寄存器，查`proc.h`的trapframe结构体，可以得知这里就是将a0寄存器指向的trapframe page的kernel_sp的值存到SP寄存器。`kernel_sp`的值在内核进入用户空间之前就被设置成kernel stack。所以这条指令作用就是初始化SP寄存器，使其指向当前进程的kernel stack的顶部(point to the top of this process's kernel stack)。打印SP寄存器值，会发现是一个高地址（当前进程的kernel stack），因为XV6在每个kernel stack下面设置了一个guard page。
+
+​	下一条指令`ld t0,32(a0)`同理查`proc.h`的trapframe结构体，得知将`kernel_hartid`的值写入到了tp寄存器。在RISC-V中，没有一个直接的方法用于确认当前运行在多核处理器的哪个核上，XV6会将CPU核的编号(hardid)保存到tp寄存器中。内核通过这个指确定某个CPU核上运行了哪些进程。这里打印TP寄存器的值会发现是0，因为我们之前配置QEMU模拟器只给XV6分配和一个核。
+
+​	下一条指令`ld t0,16(a0)`，同理查`proc.h`的trapframe结构体，得知将`kernel_trap`的值写入t0寄存器，这个值是我们将要执行的第一个C函数`usertrap()`的指针。
+
+​	再往下`ld t1,0(a0)`，同理查`proc.h`的trapframe结构体，得知将`kernel_satp`的值写入t0寄存器，即写入kernel page table的地址。
+
+​	再往下`csrw satp,t1`，将t1的值写入satp，即切换到kernel page table。
+
+​	到这里为止，我们的SP已经指向了kernel stack，并且SATP指向了kernel page table。我们已经可以准备执行内核中的C代码了。
+
+​	**这里有个问题，为什么切换到kernel page table后，程序还能正常执行(没有崩溃)，PC当前指向的虚拟地址之后不会通过kernel page table寻址走到一些无关的page中？因为在kernel page table和之前在user page tabe中，当前正在执行的代码所在的trampoline page对应的mapping是一致的。这两个page table其他的所有mappings都是不同的，只有trampoline page映射是一样的。**trampoline page之所以这么命名，是因为它某种程度进行了"弹跳"，从用户空间到了内核空间。
+
+![img](https://pic1.zhimg.com/80/v2-8340790fb87af0d2e282037831d36368_1440w.webp)
+
+​	最后一条指令`jr t0`执行后，从trampoline跳转到t0指向的内核C代码`usertrap()`函数中。`usertrap`函数是`trap.c`文件中的一个函数。**`usertrap`就像一个trampoline page似的，有很多情况会进到`usertrap`函数中，比如系统调用、除0、使用未被映射的虚拟地址（page fault）、device interrupts等**。
+
+​	usertrap某种程度上存储并恢复硬件状态，但它也需要检查触发trap的原因，以确定相应的处理方式。后续sertrap执行过程中会看到这两个行为。
+
+​	usertrap做的第一件事情就是更改STVEC寄存器的值。**XV6处理trap的方式不同，取决于trap来自user space还是kernel space。我们这里只讨论trap是由user space发起时发生的事情**。*如果trap在kernel space中运行，由于本身仍处于kernel table page，所以很多user space需要做的事情都不需要了*。这里代码`w_stvec((uint64)kernelvex);`先将STVEC指向了kernelvec变量，这是在内核空间中，而不是用户空间中trap处理代码的位置(which is the kernel trap handler，而不是user trap handler)。
+
+​	接下来我们要保存user PC，它仍然保存在SEPC寄存器中。如果程序在内核执行中时，我们切换到另一个进程并进入另一个进程的用户空间，这时如果该进程又请求系统调用，就可能导致SEPC寄存器的内容被覆盖。所以，我们需要保存当前进程的SEPC寄存器到一个与该进程关联的内存中（这里用trapframe保存user PC），保证数据不会被覆盖。
+
+​	接下来我们要找出我们出现在usertrap函数的原因（前面提到多种情况会进入usertrap），**根据触发trap的原因，RISC-V的SCAUSE寄存器会有不同的数字，数字8则表示我们在trap代码中是因为系统调用**。这里可以看到SCAUSE寄存器的值就是8。
+
+​	下面的if中第一件事确认是不是有其他进程杀kill了当前用户进程（如果有，则异常退出），这里我们Shell没有被kill，继续往下执行。**在RISC-V中，存储在SEPC寄存器中的PC程序计数器，是用户程序触发trap的指令的地址。但是当我们后续恢复用户程序时，我们希望在下一条(用户)指令恢复执行，所以对于系统调用，我们对保存的用户程序计数器+4，这样我们会在ecall的下一条指令恢复执行，而不是重复执行ecall指令**。
+
+​	再往下`intr_on()`，**XV6会在处理系统调用的时候设置允许被中断，这之后如果有其他地方发起中断，XV6也可以考虑先处理其他中断，因为有些系统调用需要占用大量时间。中断总是会被RISC-V的trap hardware关闭，所以这里我们需要显式地打开中断**。
+
+​	往下执行`syscall()`，该函数定义在`syscall.c`文件中，它的作用是查找syscall的表单，根据系统调用编号查找对应的系统调用函数。如果你记得之前的内容，Shell调用的write函数将a7设置成了16（对应系统调用sys_write，无参的C函数，在`sysfile.c`中）。**需要注意的是，系统调用需要找它们的参数，前面write函数的参数分别是文件描述符2，写入缓存的buffer pointer，写入长度2，而syscall函数直接通过trapframe来获取这些参数**。
+
+​	现在syscall中系统调用真正执行了，之后`sys_write`返回，在`syscall.c`中的`p->trapframe->a0 = syscalls[num]();`，这里用trapframe中的a0寄存器接收返回值。**所有的系统调用都有一个返回值，比如`sys_write`返回写入的字节数，而RISC-V上的C代码习惯/约定(conversion)是不管调用什么函数，都将函数的返回值存储在a0寄存器中**。当我们后面返回到用户空间时，会发现trapframe中a0槽位的字段值被写回到实际的a0寄存器中。Shell会认为a0寄存器中的数值是write系统调用的返回值。
+
+​	从syscall函数返回之后，我们回到`trap.c`中的`usertrap`函数，再次检查当前用户进程是否被kill，因为我们不想恢复一个被杀掉的进程。当然，Shell在目前没有被kill。
+
+​	**最后usertrap调用了usertrapret函数，来处理返回到用户空间之前，内核需要做的工作**。在`trap.c`中可以查看usertrapret具体执行的逻辑。
+
+​	<u>usertrapret中，它首先执行`intr_off`停止响应其他地方发起的中断请求，确保在更新STVEC指向到用户空间的trap handler时，仍在内核中执行代码。因为如果在此时处理其他地方的中断，程序会走向用户空间的trap handler代码，即使这时我们仍在内核中，出于其他细节原因，会导致内核错误</u>。
+
+​	往下，`w_stvec(TRAMPOLINE + (uservec - trampoline))`设置STVEC寄存器指向trampoline，在那里执行的代码最后最执行sret指令返回到用户空间。**位于trampoline代码最后的sret指令会重新打开中断`intr_on`，这样后续执行用户代码时就能继续正常响应中断请求了**。
+
+​	再往下几行向trapframe的slots填充数据，对后面执行trampoline代码很有帮助。
+
+```c
+// set up trapframe values that uservec will need when
+// the process next re-enter the kernel.
+p->trapframe->kernel_satp = r_satp(); // kernel page table
+p->trapframe->kernel_sp = p->kstack + PGSIZE; // process's kernel stack
+p->trapframe->kernel_trap = (uint64)usertrap;
+p->trapframe->kernel_hartid = r_tp(); // hartid for cpuid()
+```
+
+​	当usertrapret准备trap时，我们在trapframe准备好了下一次需要的值。下一次trap时从用户空间到内核的过度。我们在sstatus控制寄存器中设置一些东西。sstatus寄存器的SSP bit位控制sret指令的行为，这里设置0表示下次执行sret需要切换到user mode了（而不是切换到supervisor mode）。sstaus寄存器的SPIE bit位控制我们后续进入用户空间后，希望打开中断（即允许响应中断请求），这里设置1。
+
+​	我们在trampoline代码最后执行了sret指令，sret会将PC寄存器设置成SEPC寄存器中的值，所以现在我们将SEPC的值设置成用户程序计数器的值（保证后面PC指向用户程序）。
+
+​	后续，我们需要**切换kernel page table到user page table，这也需要在trampoline汇编代码中执行，因为只有trampoline的PTE映射在user space和kernel space都是一样的**。
+
+​	由于我们还在C代码usertrapret函数中，所以需要将page table指针提前准备好（后续才能跳转到trampoline汇编代码完成kernel page table切换到user page table）。
+
+​	usertrapret函数倒数第二行`uint64 fn = TRAMPOLINE + (userret - trampoline)`，算出要跳转到的trampoline汇编代码函数`userret`函数的位置，这个函数包含所有能将我们带回到用户空间的指令。
+
+​	usertrapret最后一行，将fn作为函数指针执行对应的函数，传入TRAPFRAME，stap作为参数（分别存到了a0和a1寄存器）。
+
+​	程序跳转到trampoline汇编代码的userret函数。userret会将user page table存储到SATP寄存器中。正如前面多次强调，因为trampoline在user space、kernel space的PTC mapping一样，所以程序还能正常执行。
+
+​	....
+
+​	后续将之前保存的用户寄存器的值重新载入用户寄存器。
+
+​	在trampoline倒数第二行，返回用户空间之前，执行`csrrw a0,sscratch,a0`，交换a0和sscratch寄存器的值。原本a0寄存器内是trapframe的地址，执行完这个指令后，a0寄存器变成持有系统调用的返回值，而SSCRATCH持有trapframe的地址，也就是内存的最后一页。之后SSCRATCH会一直存储着trapframe的地址，直到某个程序执行了trap。
+
+​	最后执行sret，切换回用户模式。sret会将sepc的值复制到pc。此时从write系统调用返回到Shell中了。
+
+![img](https://pic3.zhimg.com/80/v2-8d88bf3f994f32df450d5ca79cabaf0e_1440w.webp)
+
+![img](https://pic1.zhimg.com/80/v2-3a09709d9f658c2255fe6a9ab1341224_1440w.webp)
+
+---
+
+问题：PTE中的a标识位是什么意思？
+
+回答：a表示当前这条PTE管辖的地址范围是否曾被访问过（Access）。d（Dirty）表示PTE是否被写指令访问过。**这些标识位由硬件维护以方便操作系统使用**。对于比XV6更复杂的操作系统，当剩余物理内存吃紧时，我们需要释放这些页表，方式可能是将一些页表对应的内存数据写入到磁盘，同时将PTE设置为无效，以释放物理内存。这里有很策略让操作系统抉择哪些页表能够被释放，比如我们通过看a标识位判断这个PTE最近是否被使用过，如果它没有被使用或最近一段时间没被使用，那么可以将PTE对应的内存数据保存到磁盘，释放该page对应物理内存。
+
+问题：csrrw指令干啥用的？`csrrw a0,sscratch,a0`
+
+回答：后续会介绍，这条指令交换了寄存器a0和sscratch的内容（将a0寄存器的值保存到sscratch，同时又将sscratch内的数据保存到a0寄存器中）。这之后，内核就可以任意的使用a0寄存器了。这指令很重要，使得内核中的trap代码能够在不使用任何寄存器的前提下做任何操作（因为要避免修改用户寄存器导致后续切换回用户空间时，用户进程由于部分寄存器值被修改导致执行错误）。
+
+问题：当sscratch寄存器和a0寄存器进行交换时，trapframe的地址是怎么出现在sscratch寄存器中的？
+
+回答：在内核前一次切换回user space时，kernel会设置sscratch的内容为`0x3fffffe000`，也就是trapframe page的虚拟地址。所以当我们运行用户程序Shell时，sscratch寄存器保存的就已经是指向trapframe的地址。而之后Shell执行了ecall指令，跳转到了STVEC寄存器存储的地址，即trampoline page。在trampoline page中第一条指令就是交换a0和sscratch寄存器的内容，后续a0寄存器也就存储了指向trapframe的指针。
+
+问题：接上一个问题回答，这流程发生在进程创建的过程中吗？这个sscratch寄存器在哪里？
+
+回答：它是CPU上一个特殊的寄存器。而内核什么时候设置sscratch寄存器的值，这比较复杂。在`trampoline.S`中最后执行的代码，是内核返回用户空间之前执行的最后两条指令——`csrrw a0,sscratch,a0` ，以及下一行`sret`。在内核返回用户空间前，会恢复所有之前保存的用户寄存器，然后再执行`csrrw`恢复a0寄存器的值（sscratch寄存器则又变回存储指向trapframe page地址的指针）。而最后的`sret`返回到user spage。你或许会好奇a0如何有trapframe page的地址，查看`trap.c`代码，可以看到最后执行的C代码`((void (*)(uint64,uint64))fn)(TRAPFRAME, satp)`，而C代码中函数的第一个参数会被存到寄存器a0中，所以a0里的数值是指向trapframe的指针。这里`fn`函数就是之前位于`trampoline.S`的代码。
+
+问题：当你启动一个进程，之后进程在某个时间点执行了ecall指令，那么在什么时候会执行上一个问题中提到的fn函数呢？因为这里是进程第一次调用ecall指令，这进程之前应该没有调用过fn函数吧。我不明白你说的usertrapret是什么。
+
+回答：一台机器总是从boots up in the kernel。**任何时候，从kernel到user space的唯一方法就是执行sret指令**。`sret`指令是`RISC-V`定义用来从supervisor mode切换到user mode的指令。所以，在任何用户代码执行之前，kernel会执行fn函数，并设置好所有东西，比如SSCRATCH、STVEC寄存器。
+
+问题：当我们在汇编代码中执行ecall指令，是什么触发了trampoline代码的执行。是CPU的从user到supervisor的标志位切换吗？
+
+回答：在我们的例子中，Shell在用户空间执行了ecall指令。**ecall设置当前mode为supervisor mode，保存PC程序计数器到SEPC寄存器，将PC寄存器设置成控制寄存器STVEC的内容**。STVEC是内核在进入用户空间之前设置好的众多数据之一。内核会事先就将STVEC设置成trampoline page的起始位置，所以当用户程序执行ecall指令时，ecall拷贝STVEC的值到PC寄存器，之后程序执行会执行程序计数器指向的地址，即trampoline page对应内存的代码。
+
+问题：ecall之后，trampoline page指向的代码将32个用户寄存器保存到了trapframe page。**为什么这里要用另一块内存（trapframe page）来存储用户寄存器，而不是直接使用程序堆栈(program stack)？**
+
+回答：两个问题，一，为什么保存寄存器，内核保存寄存器是因为之后运行的C代码会覆盖这些寄存器，确保之后恢复用户程序正常，就需要能将寄存器恢复成ecall调用之前的数值，所以我们将所有寄存器的值保存到trapframe page中。二，**为什么保存到trapframe page，而不是直接存到user stack中，因为我们不确定用户程序是否有stack，必然有一些编程语言没有stack，对于这些编程语言的程序，SP的值就是0；或者有些语言虽然有stack，但是格式奇怪以至于kernel不能理解，比如有些编程语言从heap中取small blocks分配给stack，编程语言运行时知道如何使用这些small blocks of memory作为stack，但是kernel不知道。所以，如果我们想运行人意编程语言实现的用户程序，内核就不能假设用户内存的哪一部分可以访问，内核需要自己管理这些寄存器的保存。这就是为啥kernel将寄存器保存到trapframe而不是user memory。**
+
+问题：为什么在gdb中看不到ecall的具体内容？好像我们是直接跳到trampoline代码的。
+
+回答：我们确实跳过了ecall。ecall会更新CPU中mode标志位为supervisor，设置PC寄存器为STVEC寄存器的值，而内核事先将trampoline page的地址存到了STVEC寄存器。所以ecall下一条指令的位置是STVEC指向的地址，也就是trampoline page的起始地址。
+
+问题：为什么trampoline代码中不保存SEPC寄存器？
+
+回答：可以存储，trampoline代码没有像其他寄存器一样保存SEPC寄存器。但是我们欢迎大家修改XV6来保存它。这个SEPC寄存器实际上在C代码中usertrap中保存，而不是在汇编代码trampoline中保存。我想不出这里哪种方式更好。**用户寄存器必须在汇编代码中保存，因为任何需要经过编译的语言（比如C语言），都不能修改renew用户寄存器。所以对于用户寄存器，必须在进入C代码之前在汇编代码中保存好**。但是对于SEPC寄存器，我们早点或晚点保存都行。
+
+问题：在内核要切换回用户空间时，执行到trampoline汇编代码函数userret中时，这里trapframe中的a0寄存器存储的是当前系统调用的返回值吗？（前面说过所有函数返回值会放到a0寄存器）
+
+回答：是的，系统调用的返回值覆盖了a0寄存器，我们希望切换回用户进程Shell时，看到a0寄存器的值是系统调用的返回值。
+
+问题：sret执行时，如果其他程序触发中断，会怎么样？
+
+回答：sret是在supervisor mode中的最后一条指令，其会重新打开中断（允许响应其他中断请求）。同时也会设置PC为SEPC的值，且切换到user mode。
+
+问题：我看到有一个uie位，我想它在sstaus寄存器中，但是我们不使用它，我们只用spie，并且在user space将它设置为false。我想知道我们为什么不用uie。
+
+回答：我对uie不太清楚，我猜测sret最后会把spie复制到任何控制中断和用户模式的地方，可能是sstatus中的bit位uie。这仅仅是我的猜想。
+
+## 6.5 系统调用小结
+
+​	系统调用被刻意设计得像是普通的函数调用，虽然系统调用更加复杂，因为其需要保持user/kernel之间的隔离性，内核不能信任任何来自user space的东西。同时，系统调用希望有更简单快速的硬件机制(hardware mechanisms)。实际上XV6设计上不太注重性能。但现实中的操作系统设计者、CPU设计者会非常关心如何提高trap的效率。显然其他操作系统还有很多有别于XV6的trap实现方式。
+
+# Lecture7 Q&A for Labs
