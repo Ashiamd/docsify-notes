@@ -128,9 +128,19 @@ int main()
 
 ### 1.3.3 fork
 
-> [pipe和fork浅析_qq_43812167的博客-CSDN博客](https://blog.csdn.net/qq_43812167/article/details/113483030)
+> [pipe和fork浅析_qq_43812167的博客-CSDN博客 ](https://blog.csdn.net/qq_43812167/article/details/113483030)<= 建议阅读
 >
 > [Linux rm删除文件后磁盘空间不释放 - 简书 (jianshu.com)](https://www.jianshu.com/p/ded2ada16aad) => 文件描述符占用，引用计数 > 0
+>
+> [文件描述符表、文件表、索引结点表 - PKICA - 博客园 (cnblogs.com)](https://www.cnblogs.com/guxuanqing/p/13377422.html) <= 建议阅读
+>
+> 每个进程都有一个属于自己的文件描述符表。
+>
+> 文件表存放在内核空间，由系统里的所有进程共享。
+>
+> 索引结点表也存放在内核空间，由所有进程所共享。
+>
+> 文件描述符表项有一个指针指向文件表表项，文件表表项有一个指针指向索引结点表表项。
 
 fork创建一个新的进程，如下`fork.c`
 
@@ -189,7 +199,7 @@ int main()
 }
 ```
 
-exec系统调用，保留了当前文件描述符表（table of file descriptors），不管当前程序引用过0、1、2或其他文件描述符，在新程序中也引用相同的东西（即我们已加载过的指令）。
+**exec系统调用，保留了当前文件描述符表（table of file descriptors）**，不管当前程序引用过0、1、2或其他文件描述符，在新程序中也引用相同的东西（即我们已加载过的指令）。
 
 原始进程中，exec不会有返回值，因为exec已经完全替换了当前进程的内存。
 
@@ -1105,7 +1115,7 @@ sum_then_double:
 
 回答：我认为不是指令集的创建者，通常是第三方创建的。你们常见的两大编译器，一个是gcc，这是由GNU基金会维护的；一个是Clang llvm，这个是开源的，你可以查到相应的代码。当一个新的指令集，例如RISC-V，发布之后，调用约定文档和指令文档一起发布，我认为会指令集的创建者和编译器的设计者之间会有一些高度合作。简言之，我认为是第三方与指令集作者一起合作创建了编译器。RISC-V或许是个例外，因为它是来自于一个研究项目，他们的团队或许自己写了编译器，但是我不认为Intel对于gcc或者llvm有任何输入。
 
-# Lecture6 Isolation & System Call Entry_Exit
+# Lecture6 隔离性和系统调用mode切换(Isolation & System Call Entry_Exit)
 
 ## 6.1 user/kernel space切换的Traps机制
 
@@ -1452,3 +1462,71 @@ p->trapframe->kernel_hartid = r_tp(); // hartid for cpuid()
 ​	系统调用被刻意设计得像是普通的函数调用，虽然系统调用更加复杂，因为其需要保持user/kernel之间的隔离性，内核不能信任任何来自user space的东西。同时，系统调用希望有更简单快速的硬件机制(hardware mechanisms)。实际上XV6设计上不太注重性能。但现实中的操作系统设计者、CPU设计者会非常关心如何提高trap的效率。显然其他操作系统还有很多有别于XV6的trap实现方式。
 
 # Lecture7 Q&A for Labs
+
+> [Lecture 7 - Q&A for Labs 中文版Beta_哔哩哔哩_bilibili](https://www.bilibili.com/video/BV1rS4y1n7y1/?p=6&spm_id_from=pageDriver&vd_source=ba4d176271299cb334816d3c4cbc885f)
+
++ 每个进程都有自己的Kernel页表
+
+  + 方法一，copy：每次都复制一个新的kernel page
+  + 方法二，share：共享kernel page
+
+  两种方式各有利弊，该课讲师更偏向方法二，但没有说方法二就一定更好。
+
++ 我们实际在Kernel页表的PLIC条目下的地址存储user page table。用户程序实际在Kernel页表的底部。
+
++ exec基本上做的就是，构造一个新的用户地址空间，然后将新用户空间复制到kernel页表的一行记录中。
+
++ 一个stack只占用一页（4096byte），如果超过了会触及guard page（无映射到物理地址），会触发page fault。
+
+---
+
+**提问：有个page的flag标志位是f，即V、R、W、X都是1，而U正好是0，有人知道这个page是什么吗？**
+
+**回答：guard page，守护页。图中stack从高往低地址扩展，stack和data之间夹杂guard page，如果栈中条目超过4096条，触及guard page时，由于guard page没有设置U（User）位标识，此时会触发page fault或trap into the kernel。因为MMU不能转换guard page上的地址到物理地址（因为没有设置user位，所以被禁止转换）。**
+
+提问：上图中最后一条标志位是b的page是什么？（b=11=8+2+1，X、R、V）
+
+回答：trampoline页，它设置了X位，可执行，R可读，这就是我们用来恢复和保存寄存器的那个页。这里需要注意的是没有设置U，意味着用户程序不能执行指令。往前一页标识位WRV，同样没有设置U，只有内核能够读写。
+
+问题：我记得书上说trampoline和trapframe位于地址空间的顶部，但上图中，却处于root page table的255而不是511条目，这是为啥？
+
+回答：我们总说trampoline位于地址空间的顶部，即指向top level directory的第511条目，而现在却是255，有人知道为什么吗？
+
+再回答：我记得说过有一个bit我们要用但实际没有用，因为符号扩展问题，且为了更简单，我们不需要那么多内存。
+
+回答：这是一个技术细节，虚拟地址原则上是39bit，但是实际上在XV6中，只有38bit。因此顶端的MAXVA对于我们来说只有255条目。我们不使用39bit的原因是没有合适的理由需要这么做。如果设置了第39bit，则64bit的其他剩余位都必须是1，我们不想处理这个问题。如果我们设置了第39位，那么就还需要设置40、41...一直到64位。
+
+问题：为什么文本text和数据data在同一页上？
+
+回答：为什么我们不把它们放到单独page上呢？这样不是能更仔细地设置权限了。我们这样做的主要原因是为了简单。通常`exec`会很复杂，但是我们想让`exec`尽量简单点。**在一个真正的操作系统上，是不会同一页中同时包含text和data的**。实际上，你看makefile中的loader flag，会看到一个`-N`选项，我们强制数据data和文本text在一个连续的page，而不是在各自的pages中。
+
+问题：你说我们只用了38bit，是硬件提供给我们39bit，但我们自己设计操作系统时只用38bit吗？
+
+回答：是的。所以如果机器有超过2^38 bytes的内存，那么我们就用不着那些内存了。所以我们现在假设我们运行的内存远小于2^38bytes。但如果是真正的操作系统，我们会做得更好，我们现在这么做只是为了更简单。
+
+问题：你是不是把CLINT映射到新的进程Kernel page table了？
+
+回答：是的。因为用户进程不会比CLINT更大，当我映射PLIC和CLINT时，我认为assignment告诉我们，PLIC是最低的地址，而用户进程不会大于PLIC地址。这么做仅仅是为了更简单。
+
+问题：能不能复制0～512，然后每次进程切换时，仍然用全局的root page table，你只是复制了first root page table。那么每次切换进程，你都把用户地址进行复制。能不能这么做？
+
+回答：理论上可以，而不是分配一个进程再释放它。你可以在调度程序切换期间动态执行，这看着会更复杂且花费更多的时间。这意味着每次切换进程，都必须去复制Kernel页表的一部分，性能上可能有影响。你这么做的话，可能在usertests（作业测试程序）中超时。（后面同学补充说他试过觉得这很糟糕，但只是确认下这种思路是否可行。老师认为理论上可行，可以每次分配新页表并切换，并在切换出来的时候再释放它。我不认为这简单，但理论上确实可行。）
+
+提问：我们目前的设计中，用户程序的页表，最多增长到CLIENT地址。如果后续我们想一直增长到更高的地址，怎么做？
+
+回答：我们可以将CLIENT等重新映射到更高的地址空间，腾出空间用于用户空间。真正的操作系统就是这么做的。因为内核本身用不着太多的地址空间，很多都是空闲的。
+
+**问题：一旦我们有了进程的Kernel页表，这是否意味着在trap代码中，我们就不需要切换页表了？**
+
+**回答：是的，这是个很好的设计问题。主要原因在于，Kernel或trampoline代码，麻烦就麻烦在我们需要复制用户页表，我们必须从Kernel页表切换到用户页表或其他没有kernel映射的页表。换种说法，你可以简化entry和exit，如果你在Kernel中有一个单独的page table映射user，这样你就不需要切换了。你需要对XV6进行更多的修改，才能做到这点。但原则上可以做到。<u>实际上，直到最近LInux还在使用这种策略，即Kernel and user code位于同一个single page table，依赖u flag标识位来确保用户程序无法修改任何Kernel pages。在这种情况下，entry、exit code会更加简单一些，因为在进入/离开Kernel时不必切换页表。但这也可能导致一些问题，比如meltdown attack熔断攻击，side channel attack侧信道攻击</u>。针对侧信道攻击，Linux会切换到另一种模式运行，它有两种模式，一种叫kpti mode，该模式下和XV6所做的事类似，有一个单独的Kernel page table和单独的user page table**。
+
+**追问：假设每个用户进程和Kernel使用相同的page table，如果用户内存必须设置u bit，kernel将无法访问该用户内存，对吗？**
+
+**回答：实际上，在Intel处理器上就没有这条rule。在Intel处理器上，如果设置了u flag，Kernel仍然可以写入和读取那个页**。
+
+**追问：那就是说设置u flag后，kernel无法访问，这个rule只限于RISC-V上吗？**
+
+**回答：实际即使在RISC-V上，你可以修改它，在sstatus寄存器有一个bit，你可以修改它。如果你修改了，那么在Kernel mode中，u flag位就会被忽略**。
+
+# Lecture8 Page Faults
+
