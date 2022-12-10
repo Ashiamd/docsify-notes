@@ -1530,3 +1530,338 @@ p->trapframe->kernel_hartid = r_tp(); // hartid for cpuid()
 
 # Lecture8 Page Faults
 
+## 8.1 page fault概述
+
+> [谈谈缺页、swap、惰性分配和overcommit - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/471040485) <= 推荐阅读
+
+​	围绕page fault的virtual memory functions
+
++ lazy allocation
++ copy-on-write fork
++ demand paging
++ memory mapped files（mmap）
+
+​	几乎所有操作系统都实现了这些功能，比如Linux就实现了以上所有功能。但在XV6中，一个都没有实现。在XV6中，一旦用户空间进程触发了page fault，会导致用户进程被kill，这是非常保守的处理方式。
+
+---
+
+​	回顾一下虚拟内存的两个优点：
+
++ Isolation：使得操作系统能够为每个应用程序提供属于各自的地址空间（user-user之间，user-kernel之间，提供隔离性）。
++ level of indirection：处理器和所有指令都可以使用虚拟地址，而内核会定义从虚拟地址到物理地址的映射关系。
+
+​	虽然XV6有很多虚拟地址是直接映射到物理地址，但也有一些有趣的地方，比如：
+
++ trampoline page：它使得内核可以将一个物理内存page映射到多个用户地址空间中。
++ guard page：它同时在内核空间和用户空间用来保护Stack。
+
+---
+
+​	之前我们提到的关于page table的场景，都比较静态，基本上最初设置好页表后，就不再有任何变动。而利用page fault机制，可以让内核动态更新page table。
+
+## 8.2 触发page fault
+
+​	当发生page fault时，内核需要什么信息才能响应page fault？
+
++ 触发page fault的虚拟地址
+
+  当page fault出现时，XV6内核会打印具体的虚拟地址，而这个地址会被保存到**STVAL寄存器**中。当一个用户程序触发了page fault，trap机制会切换到内核模式，同时将虚拟地址存放到STVAL寄存器中。
+
++ 触发page fault的原因类型（触发原因）
+
+  我们可能需要对不同的page fault作出不同处理，比如load指令触发的page fault，又或者是store、jump等其他指令触发的page fault。实际上如果看RISC-V的文档，有介绍引起page fault的源头信息会存放在**SCAUSE寄存器**中。有3类原因与page fault有关，分别是read、write、instruction。
+
++ 触发page fault的指令的虚拟地址
+
+  在XV6中，作为trap代码的一部分，该值存放在**SEPC寄存器**（Supervisor Exception Program Counter）中。
+
+## 8.3 lazy allocation理论
+
+​	sbrk是XV6提供的系统调用，使应用程序能调整自己的heap大小。
+
+​	**当一个应用程序启动时，sbrk指向heap的底部，stack的顶部**。它通过进程数据结构的sz字段表示，即`p->sz`。
+
+​	当调用sbrk时，它的参数是整数，代表想要申请的page数量。
+
++ 传入正数，内核会分配一些物理内存，并将这些内存映射到用户应用程序的地址空间，然后将内存内容初始化为0，再返回sbrk系统调用。这样，应用程序可以通过多次sbrk系统调用来增加它所需要的内存。
++ 传入负数，减少或者压缩它的地址空间。
+
+​	在XV6中，sbrk的默认实现是eager allocation。即一旦调用了sbrk，内核会立即分配应用程序所需要的物理内存。但是实际上，应用程序本身很难预测自己需要多少内存，所以通常应用进程倾向申请多于实际需求的内存，意味着进程会浪费更多内存（有些多申请的内存永远用不上）。
+
+---
+
+​	lazy allocation的核心思想非常简单。sbrk系统调用只改变地址空间的指向，即修改`p->sz + n`，n表示需要新分配或缩减的内存page的数量，<u>但此时内核并不真正调整物理内存的分配</u>。**当应用程序真正使用到这片内存时，会触发page fault，因为我们没有将新内存映射到page table**。此时触发page fault时，发现当前虚拟地址小于当前`p->sz`，并且大于stack地址，那么虚拟地址一定在stack之上，是来自heap的地址，但是内核还没有分配对应的物理内存。在page fault handler中，通过kalloc函数分配一个内存page，初始化page内容为0，并将该page映射到user page table，最后重新执行（原本在执行的）指令，由于此时分配了物理内存，重新执行指令一般就能正常运行了。
+
+---
+
+问题：在eager allocation场景下，应用程序可能耗尽物理内存。而在lazy allocation下，应用程序怎么知道当前已经没有物理内存可用了？
+
+回答：从应用角度会有一个错觉——存在无限多可用的物理内存。在某个时间点，要是应用程序真的申请耗尽了物理内存，此时如果再访问一个未被分配的page，但又没有更多物理内存，此时内核有两个选择：返回错误并kill当前进程，因为Out of Memory了；另一个更聪明的方式后续介绍。
+
+问题：为什么虚拟地址必须从0开始？
+
+回答：在地址空间中，我们有stack、data、text。通常我们将`p->sz`设置成一个更大的值（越过stack很大一块地址）。此时如果使用的地址低于`p->sz`，认为这是一个用户空间中有效的地址；而使用的地址大于`p->sz`，则认为是个程序错误，程序尝试解析一个不属于自己的内存地址。
+
+问题：为什么内存耗尽之后，要kill当前进程。就不能是返回个类似OOM的错误，尝试做一些别的操作么？
+
+回答：在XV6的page fault中，默认操作就是kill当前进程。实际的操作系统会处理得更妥善，但如果最终还是找不到可用内存，还是可能会kill当前进程，基本没别的选择。
+
+## 8.4 lazy allocation代码
+
+> [8.2 Lazy page allocation - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/336624464) <= 图片出处
+>
+> [6.S081/Fall 2020 lab5 lazy allocation - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/372148138) <= 实验
+
+​	我们首先要修改的是`sys_sbrk`函数，`sys_sbrk`会完成实际增加应用程序的地址空间，分配内存等等一系列相关的操作。
+
+```c
+// 1. 修改前
+uint64
+  sys_sbrk(void)
+{
+  int addr;
+  int n;
+  if(argint(0, &n) < 0)
+    return -1;
+  addr = myproc()->sz;
+  if(growproc(n)<0)
+    return -1;
+  return addr;
+}
+```
+
+​	这里我们要修改这个函数，让它只对`p->sz`加n，并不执行增加内存的操作。
+
+```c
+// 2. 修改后
+uint64
+  sys_sbrk(void)
+{
+  int addr;
+  int n;
+  if(argint(0, &n) < 0)
+    return -1;
+  addr = myproc()->sz;
+  myproc()->sz = myproc()->sz+n;
+  //if(growproc(n)<0)
+  //  return -1;
+  return addr;
+}
+```
+
+​	修改完后，执行`echo hi`得到一个page fault。
+
+![img](https://pic1.zhimg.com/80/v2-7c01ee32d7d6333ebcaa9339d4f31e28_1440w.webp)
+
+​	因为Shell中执行echo会先fork一个子进程，子进程中exec执行echo。这过程需要申请内存，于是Shell调用了`sys_sbrk`，然后就出现page fault。因为刚才修改了`sys_sbrk`代码，不会实际分配物理内存。
+
+​	上图可以看出：
+
++ SCAUSE寄存器的值15，触发page fault的原因类型，15表示store page fault。
+
++ SEPC寄存器的值`0x12a4`，触发page fault的指令的虚拟地址，查看Shell汇编代码，得知`0x12a4`对应store指令。
++ STVAL寄存器的值`0x4008`，触发page fault的当前虚拟地址，查看Shell汇编代码，发现当前操作的地址为a0寄存器值偏移8个字节，即`0x4000`+8。
+
+![img](https://pic4.zhimg.com/80/v2-2724ac4410f4532acffd0f8197950627_1440w.webp)
+
+---
+
+​	以上就是page fault的信息。我们接下来看看如何能够聪明的处理这里的page fault。
+
+​	首先查看`trap.c`中的usertrap函数。在usertrap中根据不同的SCAUSE完成不同的操作。
+
+![img](https://pic4.zhimg.com/80/v2-00d9f1e72d46e20b8d72f543a29af4cf_1440w.webp)
+
++ `SCAUSE==8`，处理普通系统调用，然后其中有一行检查是否有其他设备中断和处于设备中断内的进程，如果两个条件都不满足，则打印一些信息并kill进程。
++ 我们在这里加上`SCAUSE==15`的相关处理逻辑代码，在增加的代码中，首先打印一些调试信息，之后分配一个物理内存page。
+  + 没有足够物理内存（OOM）时，我们直接kill进程。
+  + 如果有物理内存，首先会将内存内容设置为0，之后将物理内存page指向用户地址空间中合适的虚拟内存地址。具体来说，我们首先**将虚拟地址向下取整**。比如这里引起page fault的虚拟地址是`0x4008`（进入第五页的第8字节），我们想将这个物理page映射到虚拟page底部，即`0x4000`，PTE需要设置常用的权限标志位，u，w，r bit位。
+
+![img](https://pic2.zhimg.com/80/v2-2b8a27560554fc281bbf5d5115877849_1440w.webp)
+
+​	此时修改完代码，重新运行`echo hi`，抛出两个page fault。第一个是前面见到的`0x4008`，第二个`0x13f48`，在`uvmunmap`报错，它尝试`unmap`的page并不存在。有人知道这里`unmap`的内存是什么吗？
+
+![img](https://pic4.zhimg.com/80/v2-02542f1797f9cbb04cb65bfa9f7ccc7b_1440w.webp)
+
+​	这里unmap的内存，即lazy allocated，但是还没实际使用的内存，这里还没有对应的物理内存。当PTE的v flag为0，并且没有对应的mapping，panic打印信息，符合预期。
+
+![img](https://pic2.zhimg.com/80/v2-e0a27fa36739b8020b849ca8d2f52241_1440w.webp)
+
+​	这里修改`uvmunmap`的代码，去掉panic，直接continue，因为前面修改`usertrap`代码，已经为当前情况分配物理内存了。
+
+![img](https://pic2.zhimg.com/80/v2-bf899617f9017f0a07668720503cad25_1440w.webp)
+
+​	重新执行`echo hi`，虽然看到page fault，但正常打印"hi"。
+
+​	![img](https://pic3.zhimg.com/80/v2-abff7a44dad73a739a2ce9a40588e51a_1440w.webp)
+
+​	这里没有严谨的检查触发page fault的虚拟地址是否小于`p->sz`，后续做实验需要自己注意边界问题。
+
+----
+
+问题：为什么这里`uvmunmap`可以直接删掉`panic`，改成`continue`？
+
+回答：这个bug表明我们试图释放没有映射的page，发生这种情况的唯一原因是sbrk移动了`p->sz`，但是应用程序还没有使用那部分内存。这时由于lazy allocation，那对应的物理内存还没分配，新增的内存没有映射关系。因为没有分配内存，没有mapping，那么对应内存当然也不能释放。由于没有对应的虚拟地址，毕竟实际没有分配物理内存，这时我们对这个page不用做释放，直接跳过，处理下一个page即可。
+
+追问：在`uvmunmap`中，我认为之前的panic存在是有原因的。我们是不是该判断下，对特定场景仍然panic？
+
+回答：为什么之前这里有panic，过去未经修改的XV6，永远不会出现用户内存未map的情况，所以一旦出现这种意外情况就需要panic（前面说了XV6默认的sbrk实现，会直接分配物理内存和设置映射关系）。但这里我们修改了XV6，lazy allocation就会存在这种情况，所以去掉panic。
+
+问题：前面说过sbrk的参数是整数，可以传负数事吗？
+
+回答：是的，负数意味着缩小用户的内存。
+
+## 8.5 基于page fault和page table的zero-fill-on-demand
+
+> [8.3 Zero Fill On Demand - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/336625055) <= 图片出处
+
+​	基于page fault和page table，一个简单但频繁使用的功能，zero-fill-on-demand。
+
+​	在操作系统中，有很多空页。在一个正常的操作系统执行exec，会看到申请的**用户程序地址空间包含Text（用户程序指令）、Data（初始化后的全局变量）、BSS（未被初始化或初始化为0的全局变量）三部分**。
+
+​	**BSS这里有很多内容全是0的page，对应的调优操作，物理内存只需要分配一个page，这个page内容全是0，然后将所有虚拟地址空间全0的page都map到这个物理page上**。
+
+​	需要注意的是，这里mapping后，不能允许对这个page进行写操作，因为所有虚拟地址空间page都期望page的内容是全0。**这里PTE都得是read only只读的**。
+
+​	**当用户进程需要修改BSS中某一个page内的一两个变量的值，会得到page fault。此时，如何处理该page fault？假设store指令发生在BSS顶端的page中，我们想做的是在物理内存中申请一个新的page，并将其内容设置为0，之后更新这个page 的mapping关系。首先将PTE设置成read write，然后将其指向新物理page。这里相当于copy and update PTE，然后继续执行指令**。
+
+​	为什么要这么做？这里类似lazy allocation，假设程序申请了初始为0的全局变量大数组，但或许最后只使用其中一部分。第二个好处，在exec中需要做的工作更少了，程序可以启动更快，因为你不需要分配内存，不需要将内存设置值为0。你只需要分配一个内容全是0的物理page。你只需要写这个PTE。
+
+![img](https://pic1.zhimg.com/80/v2-2e021fe6c4a82fc54c4a0f5580ba944c_1440w.webp)
+
+---
+
+问题：这里BSS类似lazy allocation的处理方式，是不是会导致update或write更慢？因为每次都会触发一个page fault。
+
+回答：这是一个好观点。我们将一些操作推迟到了page fault再去执行，并且期望不是所有page都被使用。如果一个page是4096字节，我们只需要对每4096字节消耗一次page fault即可。我们的确增加了一些由page fault带来的代价。但是我们要想想如何衡量这个page fault的代码，比如会和store指令相当吗？或甚至更高？
+
+追问：page fault代价是不是更高？我们store指令可能会消耗一些时间访问RAM，但是page fault需要进入kernel 。
+
+回答：是的，仅在trap处理代码中，就有至少100个store指令用来存储当前的寄存器。除此之外，还有从用户空间到内核空间的额外开销，以及为保存和恢复状态而执行的所有指令的开销等等。所以page fault并不是没有代价的。
+
+## 8.6 copy-on-write fork(COW fork)
+
+> [8.4 Copy On Write Fork - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/336625238) <= 图片出处
+>
+> [再谈 copy-on-write - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/136428913)
+>
+> [6.S081/Fall 2020 lab6 Copy-on-Write Fork for xv6 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/372428507) <= 实验
+
+​	许多操作系统都实现了copy-on-write fork(COW fork)。
+
+​	原始fork操作直接申请新page，复制父进程的page内容，但是后续执行exec由释放这些page，重新申请page执行其他代码。这过程显得第一次申请的page毫无意义，反而额外性能浪费。
+
+​	这里有一个优化方法。当创建子进程时，不直接分配新的物理内存page，而是让子进程PTE直接指向父进程原本的物理内存。这里mapping要很小心，为了确保父子进程之间有强隔离性，可以将父进程和子进程的PTE都设置为read only。某个时间点需要修改对应内存内容时，由于尝试向一个只读的PTE写数据，即得到page fault。此时，我们需要拷贝对应的物理page，将原本的物理内存page内容拷贝到新分配的物理page中，将新分配的物理page映射到子进程，新PTE修改成RW，原本父进程的PTE也修改成RW。然后重新指令用户指令，即调用userret函数（前面提过的返回用户空间的方法）。（ps：<u>这里只需要拷贝这个被修改的PTE对应的page，其他PTE暂时不需要拷贝。</u>）
+
+​	**目前在XV6中，除了trampoline page外，一个物理内存page只属于一个用户进程。trampoline page永远也不会被释放**。
+
+​	**COW fork，导致多个虚拟地址PTE都指向了相同的物理内存page，父进程退出时我们要更加小心，因为需要判断是否能立即释放父进程对应的物理page。如果有其他子进程由于COW fork而仍在使用和父进程相同的物理page，这时候如果内核释放这些物理page就会有问题。此时，释放物理page的依据是什么？我们需要对每一个物理page的引用进行计数，当我们释放虚拟page时，对应物理内存page的引用计数间减1，如果引用计数等于0，则释放物理内存page。**
+
+![img](https://pic1.zhimg.com/80/v2-5af6213a1086441ab7fcbfb8e136a10c_1440w.webp)
+
+---
+
+问题：我们如何发现父进程写了这部分内存地址？是与子进程一样的方法吗？
+
+回答：是的，因为子进程的地址空间来自于父进程的地址空间的拷贝。如果我们使用了特定的虚拟地址，因为地址空间是相同的，不论是父进程还是子进程，都会有相同的处理方式。
+
+问题：对于一些没有父进程的进程，比如系统启动的第一个进程，它会对自己的PTE设置为只读吗？还是设置成可读写的，然后在fork的时候在修改成只读的？
+
+回答：这取决于你的实现，在copy-on-write lab中，你可以选择自己的实现方式。当然最简单的方式就是将PTE设置成只读，当你要写这些page时，得到page fault，之后再按照上面的流程进行处理。对于你说的这种情况，也可以这么做，没有理由做特殊处理。
+
+问题：我们经常会拷贝用户进程对应的page，内存硬件有没有特定的指令来完成拷贝？从page a拷贝到page b的需求，有相应的指令吗？
+
+回答：x86有硬件指令可以用来拷贝一段内存，但RISC-V没有这样的指令。当然在一个高性能的实现中，所有这些读写操作都会流水线化，并且按照内存的带宽速度来运行。实际上，我们可能是幸运的，我们节省了负载和stores或copies。在我们这个例子中，我们只需要拷贝1个page。对于一个未修改的XV6系统，我们需要拷贝4个page（说XV6的shell通常申请4个page，所以fork子进程也是4page）。所以这里的方法明显更好，因为内存消耗更少，并且性能会更高，fork会执行更快。
+
+**问题：当发生page fault时，我们其实是在向一个只读的地址进行写操作，内核是如何分辨现在是一个copy-on-write fork的场景，而不是应用程序在向一个正常的只读地址写数据？除了COW fork，由于某些合理的原因page只能读取。是不是说默认情况下， 用户程序的PTE都是read write的，除非COW fork场景下，才会出现只读的PTE？**
+
+**回答：是的，它需要在内核中维护一个invariant，内核必须能够识别这是一个copy-on-write的场景。RISC-V硬件几乎所有的page table硬件都支持了这一点。PTE中最后2bit RSW，保留给supervisor software使用，即内核可以随意使用这2bit。可以做的其中一件事就是将第8 bit标识当作当前是一个copy-on-write page。当内核管理这些page table时，如果是copy-on-write相关的page，就可以设置对应的bit标识位。发生page fault时，就可以根据copy-on-write bit 位判断场景，然后执行相关操作。**
+
+![img](https://pic3.zhimg.com/80/v2-b4e1e2065f5300421905e43f87ea45ca_1440w.webp)
+
+问题：COW fork中，我们需要在哪存储物理page的引用计数？如果我们需要对每个物理page引用计数的话。
+
+回答：对每一页内存都需要做引用计数，即每4096字节，都需要维护一个引用计数。
+
+追问：我们可以将引用计数存在RSW对应的2bit中，并限制不超过4个引用吗？
+
+回答：可以，但是如果引用超过4次，就会是个问题。因为超过4次，你就不能再使用这个优化了。你可以自由地选择实现方式。
+
+问题：真的有必要额外增加1bit标识当前page是copy-on-write的吗？内核可以维护一些有关进程的信息，是不是可以包含这个信息。
+
+回答：你可以在管理用户地址空间时，维护一些其他的元数据信息。这样你就知道这部分虚拟内存地址如果发生了page fault，那必然是copy-on-write的场景。在后续实验中，你们也会接触到扩展XV6管理的元数据。
+
+## 8.7 demand paging
+
+​	回到前面提到的exec，在未修改的XV6中，操作系统会加载程序的text segment、data segment，并且以eager的方式加载到page table中。但根据lazy allocation和zero-fill-on-demand，为什么我们要以eager的方式将程序加载到内存？为什么不等程序实际用到这些指令的时候再加载到内存？毕竟程序的二进制文件也可能非常大。
+
+​	对于exec，我们为text和data分配好地址段，但在ptes中，我们不马上映射它们。我们只会保留其中一页PTE，对于这些PTE，我们只需要将valid bit设置为0就行。位于地址0的指令会触发我们的第一个page fault，因为我们还没有真正加载内存。如何处理这里的page fault？首先我们可以发现这些page是on-demand page，我们需要在某个地方记录这些page对应的程序文件，我们在page fault handler中需要从程序文件中读取page数据加载到内存，之后将内存page映射到page table，最后再重新执行指令。在最坏的情况下，用户程序使用了text和data的所有内容，那么我们会在应用程序的每个page都收到一个page fault。但幸运的情况下，用户程序没有使用所有的text segment或者data segment，那么我们就节省了一些物理内存，同时exec运行也更快了。
+
+​	对应demand paging，如果kalloc返回0，即内存用完了，这时候得到一个page fault。如果是需要从文件加载到内存，但此时没有可用的物理page，该怎么做？即lazy allocaiton中，如果内存耗尽了如何处理？
+
+​	如果内存耗尽了，一个选择是evict a page（撤回一个page），比如将部分page中的内容写回file，然后撤回page。这时候你就可以用刚空间出来的page，然后restarting instruction again，这个操作比较复杂，包含了整个userret函数背后的机制，以及切换回user space等等。这就是常见的操作系统行为。
+
+​	**什么样的page可以evict撤回？并且用什么策略evict？Leat Recently Used（LRU），这是最常用的策略。除了这个策略外，还有一些优化点。比如要撤回一个page，你要在dirty page和non-dirty page中做选择，前者被写过，后者只是被读过但没被写过。选择dirty page，如果后续又写该page，那就相当于对它写了两次。现实中会选择non-dirty page，因为这样就可以不用额外做其他事。你可以重复使用它，标记它是否存在于可分页的文件中，之后将相应的PTE标记成non-valid，这就完成了所有的工作。**之后你可以在另一个page table中重复使用这个page。所以通常会优先选择non-dirty page来撤回。
+
+​	如果你们看PTE，会发现第7bit（D），就是Dirty bit。当硬件向一个page写入数据，就会设置dirty bit。之后操作系统就可以发现这个page被写过。类似的，第6bit（A），Access bit，任何一个page被读或写，都会被设置。
+
+---
+
+问题：对于一个cache，我们可以认为它被修改后但还没被写回memory时是dirty的。但对于内存page，怎么判断dirty？它只存在内存，不存在于其他地方，那它什么时候变成dirty？
+
+回答：例如，如果demand page file page，后面会详细说。如果是memory map files，将文件映射到内存中，然后进行store，就会变成dirty page。
+
+追问：所以dirty，只对memory map files的场景下的page才有效？
+
+回答：是的。（这里错了，只要page被执行过store操作，就会标记为dirty）
+
+**问题：PTE的Access bit，可以帮助我们evict page，连access都没有过，可以直接evict，对吗？**
+
+**回答：是的。或如果你想实现LRU，你需要找到一个在一定时间内没有被访问过的page。那么这个page可以被用来撤回，而被访问过的page则不撤回。Access bit通常用来实现LRU策略**。
+
+**追问：那是不是要定时将Access bit恢复成0？**
+
+**回答：是的，这是一个典型的操作系统行为。如果它不这么做，操作系统会扫描整个内存。这里有一些著名的算法， 比如clock algorithm就是其中一种实现方式**。
+
+**追问：为什么需要恢复Access bit？**
+
+**回答：如果你想知道page最近是否被使用过，你就需要定时这么做，比如每100ms或1s清除Access bit。或者在下一个100ms这个page曾经被访问过，Access bit为0的page则表示在上一个100ms未被使用。进而能够统计每个内存page的使用频度，这是一个成熟的LRU实现的基础。**
+
+## 8.8 memory-mapped files
+
+> [mmap 浅析 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/353553313)
+
+ 	整体思想即，将完整或者部分文件加载到内存中，这样就可以痛殴内存地址相关的load或者store指令操作文件，而不是使用文件IO相关的read/write指令。
+
+​	为了支持这个功能，一个现代的操作系统会提供一个叫做mmap的系统调用。这个系统调用会接收一个虚拟地址，或一些 virtual address length，protection，flags，file descriptor，offset。 也许你应该把这个文件描述符映射到一个虚拟地址，从文件描述符对应的文件偏移量的位置开始，映射长度为len的内容到虚拟地址VA。同时加上一些保护，比如只读、只写等等。
+
+​	假设文件设置read write，并且内核实现mmap的方式是eager，就像大多数系统会急切地执行copy，内核会从文件offset的位置开始，将数据拷贝到内存，设置好PTE指向物理内存的位置。之后应用程序就可以使用load或者store指令，来修改内存中对应文件的内容。当完成操作之后，会有一个对应unmap的系统调用，参数是VA，len，用来表明应用程序完成了对文件的操作，在unmap时间点，需要将dirty block写回文件中。通过dirty bit为1的PTE可以快速找到ditry block。当然在任何完善的操作系统中，这些都是以lazy的形式实现的，不会立即将文件拷贝到内存，而是先记录PTE属于这个文件描述符，相应的信息通常在VMA（Virtual Memory Area）结构体中存储。例如对于这里的文件f，会有一个VMA，在VMA中我们记录文件描述符、offset偏移量等，用来表示对应内存虚拟地址的实际内容是什么。这样当我们得到一个在VMA地址范围的page fault时，内核可以从磁盘中读数据，并加载到内存中。dirty bit很重要，因为在unmap中，需要向文件回写dirty block。
+
+---
+
+问题：有没有可能多个进程将同一个文件映射到内存中，这些内存映射在二级存储上相同的文件，然后存在同步问题？
+
+回答：这问题等价于，多个进程同时通过read/write系统调用读写同一个文件会怎么样？你需要什么保证吗？这里的行为是不可预知的，write系统调用会以某种顺序出现，如果两个进程向同一个file的同一个block写数据，两个进程只有其中一个的write能生效。这里也是同理，我们不需要考虑冲突的问题。一个更加成熟的Unix操作系统支持file locking，你可以先lock file，保证数据同步。但是默认情况下直接执行write，没有任何同步保证。
+
+问题：mmap的参数中，len和flag是什么意思？
+
+回答：len是文件中需映射到内存的字节数，prot是 read write x flag，map上可以看到，表示这个区域是private的还是shared的，shared则多个进程之间共享。
+
+问题：如果其他进程直接修改了文件内容，那是不是意味着修改的内容不会体现在这里的内存中？
+
+回答：是的，但如果文件mapped shared，那么你应该同步这些变更。
+
+追问：它们应该使用相同的文件描述符吧？
+
+回答：我记不大清楚在mmap中，文件共享会发生什么。
+
+## 8.9 小结
+
++ page table如何工作
++ trap机制
++ page fault以及基于其的一些功能/机制
+
+你能在Linux中发现包含以上的内容且有更多有趣的地方。
+
+# 9. 中断Interrupts
+
