@@ -1865,3 +1865,467 @@ uint64
 
 # 9. 中断Interrupts
 
+> [top命令的常用方式_勿视人非的博客-CSDN博客_top指令](https://blog.csdn.net/u011939453/article/details/124515892) <= 课程开头简单介绍了下top指令
+>
+> [理解virt、res、shr之间的关系（linux系统篇） (baidu.com)](https://baijiahao.baidu.com/s?id=1743908545937632735&wfr=spider&for=pc)
+>
+> [中断机制_百度百科 (baidu.com)](https://baike.baidu.com/item/中断机制/2928852?fr=aladdin)
+>
+> 中断机制是现代计算机系统中的基本机制之一，它在系统中起着通信网络的作用，以协调系统对各种外部事件的响应和处理，中断是实现[多道程序设计](https://baike.baidu.com/item/多道程序设计/10804195?fromModule=lemma_inlink)的必要条件，中断是CPU 对系统发生的某个事件作出的一种反应。引起中断的事件称为中断源。中断源向CPU 提出处理的请求称为中断请求。发生中断时被打断程序的暂停点称为断点。CPU暂停现行程序而转为响应中断请求的过程称为中断响应。处理中断源的程序称为中断处理程序。CPU执行有关的中断处理程序称为中断处理。而返回断点的过程称为中断返回。中断的实现由软件和硬件综合完成，硬件部分叫做硬件装置，软件部分称为软件处理程序。
+>
+> [Linux中的硬中断与软中断 - zed99 - 博客园 (cnblogs.com)](https://www.cnblogs.com/zed99/p/16645015.html) <= 对软硬中断介绍蛮清楚的
+>
+> 1. 问：对于软中断，I/O操作是否是由内核中的I/O设备驱动程序完成？
+>
+>    答：对于I/O请求，内核会将这项工作分派给合适的内核驱动程序，这个程序会对I/O进行队列化，以可以稍后处理（通常是磁盘I/O），或如果可能可以立即执行它。通常，当对硬中断进行回应的时候，这个队列会被驱动所处理。当一个I/O请求完成的时候，下一个在队列中的I/O请求就会发送到这个设备上。
+>
+> 2. 问：软中断所经过的操作流程是比硬中断的少吗？换句话说，对于软中断就是：进程 ->内核中的设备驱动程序；对于硬中断：硬件->CPU->内核中的设备驱动程序？
+>
+>    答：**是的，软中断比硬中断少了一个硬件发送信号的步骤。产生软中断的进程一定是当前正在运行的进程，因此它们不会中断CPU。但是它们会中断调用代码的流程**。
+>
+>    如果硬件需要CPU去做一些事情，那么这个硬件会使CPU中断当前正在运行的代码。而后CPU会将当前正在运行进程的当前状态放到堆栈（stack）中，以至于之后可以返回继续运行。这种中断可以停止一个正在运行的进程；可以停止正处理另一个中断的内核代码；或者可以停止空闲进程。
+>
+> [你真的理解Linux中断机制嘛 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/440458446) <= 推荐阅读，包括linux指令操作
+>
+> Linux 将中断处理过程分成了两个阶段，也就是上半部和下半部。
+> 上半部用来快速处理中断，它在中断禁止模式下运行，主要处理跟硬件紧密相关的或时间敏感的工作。也就是我们常说的硬中断，特点是快速执行。
+> 下半部用来延迟处理上半部未完成的工作，通常以内核线程的方式运行。也就是我们常说的软中断，特点是延迟执行。
+>
+> [Linux中断_易风尘的博客-CSDN博客_linux中断](https://blog.csdn.net/g498912529/article/details/125828769)
+>
+> **RTOS:** RTOS一般以线程为调度任务，没有进程概念，但都会提供一套类似标准操作系统的 线程同步机制。此时，在设计中断程序时，可以更好实现“上半部”和“下半部”，特别是“下半部”。以RT-Thread为例，实现一个串口中断接收函数。上半部分负责将数据放入缓存，并通过信号量通知下半部分处理。下半部实现，可以创建一个处理线程，当获得上半部信号量时则调度线程进行处理数据，否则则挂起该线程，节约cpu资源。
+>
+> **Linux：** 操作系统是多个进程和多个线程执行，宏观上达到并行运行的状态，外设中断则会打断内核中任务调度和运行，及屏蔽其外设的中断响应，如果中断函数耗时过长则使得系统实时性和并发性降低。中断原则是尽可能处理少的事务，而一些设备中往往需要处理大量的耗时事务。为了提高系统的实时性和并发性，Linux内核将中断处理程序分为上半部（top half）和下半部（bottom half）。上半部分任务比较少，处理一些寄存器操作、时间敏感任务，以及“登记中断”通知内核及时处理下半部的任务。下半部分，则负责处理中断任务中的大部分工作，如一个总线通信系统中数据处理部分。
+>
+> ---
+>
+> 下面两个文章都是超级详细版本，两个文章可以说相辅相成了。
+>
+> [Linux 中断 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/94788008) <= 循序渐进，特别详细，建议阅读
+>
+> [中断 - Linux源代码导读报告 (ustc.edu.cn)](http://home.ustc.edu.cn/~boj/courses/linux_kernel/2_int.html) <= 超详细，包括硬件讲解
+
+## 9.1 硬件中断-概述
+
+> [UART_通信百科 (c114.com.cn)](https://baike.c114.com.cn/view.asp?id=8562-B10829A3)
+
+​	硬件中断，硬件想要马上得到操作系统的关注。硬件中断很常见，比如：
+
++ 网卡收到一个packets后产生一个interrupt中断
+
++ 用户按下键盘的按键，键盘产生一个interrupt中断
+
+​	应对中断，操作系统如下运作：
+
+1. 保存当前的工作
+
+2. 处理interrupt中断
+
+3. 恢复之前保存的工作
+
+​	**这里的1和3步骤，可以说system calls系统调用、page fault、interrupt中断，都是用相同机制**。
+
+但是，中断(interrupt)和系统调用(system calls)有3个小不同点：
+
+1. **异步asynchronous**
+
+   **中断处理器处理硬件中断时，异步执行，与当前在CPU运行的进程毫无关联；而处理系统调用，需要进入内核进行处理，在调用进程的背景下运行（running in the context of the calling procss）**。
+
+2. 并发性concurency
+
+   产生中断的设备和CPU是并行的，例如网卡独立处理来自网络的packets，然后某个时间点产生中断，此时CPU也是无感知地并行运行中。
+
+3. 编程设备(驱动程序)program devices
+
+   外部设备，网卡(network cards)、UART等，这些设备需要被编程，类似RISC-V有指令和寄存器的手册，每个设备都有一个编程手册，比如有什么寄存器、能执行什么操作、在读写寄存器时设备如何响应等。
+
+---
+
+​	后面会围绕两个例子讲解背后的机制：
+
++ 控制台的提示符"$"如何被展示出来
++ 指令`ls`如何将内核输出到console中
+
+## 9.2 CPU处理硬件中断-概述
+
+> [9.2 Interrupt硬件部分 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/339796375) <= 图片出处
+
+​	这里我们只讨论外部设备的中断（external interrupt），不考虑定时器中断（time interrupt）或软件中断（software interrupt）。外设中断来自主板上的设备。
+
+​	后面主要讲解，当设备产生中断时，CPU会做什么，以及如何从设备读写数据。
+
+![img](https://pic1.zhimg.com/80/v2-a795a05234581e4c3b3b61cd24944050_1440w.webp)
+
+​	**所有设备都可以连接到处理器上，处理器通过平台级中断处理器(platform level interrupt controller，PLIC)来处理设备中断**。PLIC会管理来自外部设备的中断。
+
+​	![img](https://pic1.zhimg.com/80/v2-132ffc10da778559f69dcc919c6cdad8_1440w.webp)
+
+​	**下面是教学芯片设备的PLIC示意图，有53条来自不同设备的中断线(interrupt lines)，每个设备可能都拥有自己的中断线，他们到达PLIC后，PLIC会路由这些中断(route interrupts)。PLIC是可编程的，PLIC可以中断到其中一个CPU核心，或者到第一个可处理中断的核心core**。
+
+​	在一种情况下，即没有任何core可以处理中断(none of the cores can take an interruptive at the point)，比如它们正在处理另一个中断，就会先关闭这个中断(disabled interrupts) 。
+
+​	**PLIC会保留中断，直到有一个CPU核能处理中断。PLIC需要保存一些内部数据来跟踪中断状态**。RISC-V中具体的中断流程，如下：
+
+1. PLIC会通知当前有一个待处理的中断(a interrupt pending)
+2. 其中一个CPU核会声称(claim)接收中断
+3.  这时PLIC就会把这个中断交给该CPU核
+4. CPU核处理中断
+5. CPU通知PLIC中断处理完毕
+6. PLIC不再保存这个中断信息(被处理完毕的)
+
+![img](https://pic2.zhimg.com/80/v2-929e11e9092c20b0ec071f3fad47dfa9_1440w.webp)
+
+---
+
+**问题：when each heart holds the PLIC，PLIC有没有什么机制保证公平性(ensure fairness)？**
+
+**回答：这取决于内核以什么方式对PLIC进行编程。PLIC只是分发中断，是内核对PLIC编程，告诉它按什么策略分发中断。实际上中断是有优先级的，内核可以决定什么中断更重要，这有很大的灵活性**。
+
+## 9.3 设备驱动driver
+
+​	接下去介绍和硬件中断有关的软件部分内容。**通常来说，管理设备的代码被称为驱动(driver)**。在很多操作系统中，驱动代码加起来可能比内核还大，因为每个设备，都需要一个驱动。
+
+​	所有的驱动代码都在内核中，我们今天要看的是UART设备的驱动，`uart.c`的代码。
+
+​	**大多数驱动，都有一个结构，即分为底部(bottom)和顶部(top)两个部分。**
+
++ **bottom：最下面的部分是中断处理器(interrupt handler)，当CPU接收到一个来自设备的中断，会调用设备相应的中断处理器**。正如"9.1 硬件中断-概述"所说，中断处理器并不运行在任何特定的进程上下文(any context of any specific process)中，它只是处理中断。
++ **top：通常是用户进程或者内核的其他部分调用的接口**。对于UART来说，这里有read/write接口，可以被更高层级的代码调用。驱动的upper part上部通常与用户进程交互，并进行数据的读写。
+
+​	通常驱动driver会在top和bottom之间维护一些队列，top的代码从队列读写数据，而bottom中断处理器要么放入codes，要么发送或接收。假设是接收，bottom的中断处理器同时会向队列里写数据。
+
+​	**driver维护的队列将top和bottom分开，并允许设备与CPU上的代码并行运行**。
+
+​	由于中断处理器没有运行在任何可调用读写的进程context中，所以通常有一些限制，比如页表的使用。
+
+​	
+
+![img](https://pic4.zhimg.com/80/v2-54f1d34dce65574f158797bc459e5c07_1440w.webp)
+
+## 9.4 驱动编程programming device
+
+> [9.3 设备驱动概述 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/339796706) <= 图片来源
+
+​	**通常来说，驱动编程是通过memory mapped I/O完成的**。
+
+​	正如前面在RISC-V或者SiFive看到的，这些设备出现在物理地址的特定区间内，具体区间由设备或者主板制造商决定。**操作系统需要通过普通的load/store指令对这些设备所在的物理地址区间进行编程**。**这里load/store实际就是读写设备的控制寄存器(They read and write control register of the device)**。
+
+​	比如当你在网卡的控制寄存器(control register)存储数据时，就会触发网卡发送packet。这里load/store指令不是简单地读写内存，而是侧面影响了设备（或者说操作设备）。你需要阅读设备的文档，了解具体流程。
+
+​	下图是SiFive主板中设备的内存映射或物理地址(the memory map or physical address to devices)。`0x02000000`对应CLINT；`0x0C000000`对应PLIC，平台级的中断控制器；`0x10000000`对应UART0。（QEMU模拟中，和这里说的不完全相同）
+
+![img](https://pic1.zhimg.com/80/v2-4d8d5d90771e57020ec040cddcc3f7f0_1440w.webp)
+
+​	下面是UART的文档，QEMU用这个模拟的设备来与键盘和Console进行交互。下面的表格展示芯片的控制寄存器，例如对于控制寄存器000，当你在执行load加载指令时，它会保存数据；如果你执行store指令，它会将数据写到寄存器中，并复制传输到其他地方（outside on the wire）。UART基本上是一个可以让你通过串口(cereal line)发送bits的设备，有单独的发送线sent line和单独的接收线receive line。基本上你取一个字节时，它们会在这一行(this single line)上进行复制或者序列化(multiplexed or serialized)，然后送到线路另一侧的UART chip，另一侧的UART chip能够将数据bits重新组成一个字节。
+
+​	这里还有很多其他可操作的东西，但对我们最重要的是寄存器。比如控制寄存器001，即中断允许寄存器(interrupt enabled register)，我们可以对它进行编程，使UART产生中断。
+
+​	实际上对于一个寄存器，其中每个bit都有不同的作用，对于001寄存器，即IER寄存器，用于接收线中断(line status interrupt)和传输保持寄存中断(transmit hoding registering interrupt)。
+
+![img](https://pic4.zhimg.com/80/v2-119bfc940c0cb9f7d836ab13599e818f_1440w.webp)
+
+---
+
+<u>问题：如果你把数据写到trasmit holding register，然后再次写入，那么能保证其那一个数据不会被覆盖吗？</u>
+
+<u>回答：这是我们需要注意的事情之一，我们通过load将数据写入寄存器中，之后UART chip会通过串口线将字节发送出去。当send完成，UART会生成一个中断，告知内核已经处理完当前接收的字节，可以给我下一个字节了。所以内核和设备之间需要遵守一些协议，才能确保工作流程正常。比如我们正在用的这个特殊的UART，内部有一个FIFO，它可以buffer最多16字符。但是如果阻塞16字符后，再次写入还是会造成数据覆盖</u>。
+
+## 9.5 XV6中断机制初始化
+
+> [9.4 在XV6中设置中断 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/339797175) <= 图片出处
+>
+> [波特率_百度百科 (baidu.com)](https://baike.baidu.com/item/波特率/2153185?fr=aladdin)
+>
+> 在电子通信领域，波特（Baud）即调制速率，指的是有效数据讯号调制载波的速率，即单位时间内载波调制状态变化的次数。波特率表示单位时间内传送的[码元](https://baike.baidu.com/item/码元/10525003?fromModule=lemma_inlink)符号的个数，它是对符号传输速率的一种度量，它用单位时间内[载波](https://baike.baidu.com/item/载波/3441949?fromModule=lemma_inlink)调制状态改变的次数来表示，波特率即指一个单位时间内传输符号的个数。
+
+​	比如`$ ls`，是如何工作的。
+
+1. 它将`$`放入了UART设备的寄存器中
+2. UART生成一个中断（字符被发送时，就产生一个中断）
+3. QEMU模拟的线路的另一端的UART chip连接到Console
+
+​	对于`ls`，这个是用户输入的字符：
+
+1. 当你键盘按下一个按键
+2. 由于键盘连接到了UART的receive line，UART chip接收，序列化字符
+3. 当前UART chip通过串口线发送到另一端UART芯片
+
+4. 另一端UART chip将数据bits合并成一个Byte，然后产生中断
+5. 产生的中断告知处理器这里有一个来自键盘的字符
+6. interrupt handler处理来自UART的字符
+
+---
+
+​	RISC-V有很多与中断相关的寄存器，这里介绍一些：
+
++ SIE（Supervisor Interrupt Enable）寄存器
+
+  + 1bit (E)专门针对外设中断(external interrupts)，例如UART的中断
+  + 1bit (S)专门针对软件中断(software interrupts)，软件中断可能由一个CPU核触发给另一个CPU核。
+  + 1bit (T)专门针对定时器中断(timer interrupts)
+
+  这节课只关注外设中断。
+
++ SSTATUS（Supervisor Status）寄存器
+
+  + 1bit专门用于当前core关闭或打开中断(disabled and enable interrupts on this particular core)
+
++ SIP（Supervisor Interrupt Pending）寄存器
+
+  当发生中断时，处理器查看SIP，看实际是什么中断。
+
++ SCAUSE寄存器
+
+  用于表明当前状态的原因是中断
+
++ STVEC寄存器
+
+  当trap、page fault、interrupt发生时，保存当前在CPU运行的用户程序的PC程序计数器。后面才能正常恢复程序运行。
+
+​	当然，每个CPU核有各自的SIE、SSTATUS寄存器。除了通过SIE寄存器来单独控制特定的中断，还可以通过SSTATUS寄存器的1bit来控制所有的中断。
+
+​	SCAUSE、STVEC之前讨论过了，这里不会再详细讲述。对于system calls、page fault、interrupt或其他场景，SCAUSE、STVEC的工作模式基本都是一样的。
+
+---
+
+​	接下来看看XV6是如何对其他寄存器进行编程，使得CPU处于一个能接受中断的状态。
+
+​	首先看看`start.c`的start函数。当机器启动时，调用start函数，它在mmode下运行。start中马上就关闭了页表(disable paging)，因为后续内核会设置页表。这里基本上所有异常的中断都设置在supervisor mode。然后设置SIE寄存器来接收外设中断、软件中断、定时器中断。
+
+![img](https://pic2.zhimg.com/80/v2-36feba2f8500100adca1be3cfba9bc85_1440w.webp)
+
+​	接下去看看main函数如何处理外设中断。我们的第一个外设是console，可以看到调用consoleinit进行初始化。下面调用plicinit函数初始化PLIC。再往下，调用plicinithart函数。最后，程序调用了scheduler函数。
+
+![img](https://pic1.zhimg.com/80/v2-961956d1043694c646c3ec1db476f584_1440w.webp)
+
+​	查看位于`console.c`的consoleinit函数，先初始化锁，然后调用位于`uart.c`的uartinit函数。
+
+![img](https://pic2.zhimg.com/80/v2-f267078c7bb415c4524b716793b9638d_1440w.webp)
+
+​	这个函数实际上就是，配置好UART chip，然后使其能够被正常使用。这里先关闭中断，然后设置波特率(board rate)，设置字符长度为8bit，重制UART内部的FIFO，然后再重新打开中断。
+
+​	运行完uartinit函数之后，原则上UART就可以生成中断了。虽然我们还没有具体编程PLIC，所以就算有中断也不能被CPU感知。
+
+![img](https://pic2.zhimg.com/80/v2-2f696f280bea21a8e0f0c3705a7e2399_1440w.webp)
+
+​	PLIC在物理内存的`0XC0000000`，我们写PLIC的方式，基本上就是取PLIC的数字或者地址。下面`uint32`因为PLIC寄存器是32bit的。第一行使PLIC能接受UART的中断。PLIC会路由中断，所以这里实际就是中断会从左边传到PLIC中，然后PLIC会接收这些中断。第二行，设置PLIC接收来自IO磁盘的中断（本节不介绍）。
+
+​	plicint由0号CPU运行。
+
+![img](https://pic4.zhimg.com/80/v2-a7c25537e62eea1bb521e787624d9073_1440w.webp)
+
+​	后续每个核心都在调用plicinithart函数，表明自己对来自UART、VIRTIO的中断感兴趣。然后因为我们忽略中断的优先级，下一行代码我们将优先级设置为0。
+
+​	每个CPU核都必须向PLIC表明它对接收中断感兴趣。至此，对于PLIC，我们有了生成中断的外设，PLIC可以传递中断到单个CPU核，但CPU核还没有设置好接收中断，因为我们还没有设置好SSTATUS寄存器。
+
+![img](https://pic4.zhimg.com/80/v2-8de86c2181e73d18d7b1a9ea7d25017f_1440w.webp)
+
+​	`proc.c`的scheduler函数。现在整个机器基本上就是一个处理器。scheduler函数主要是运行进程。但是在实际运行进程之前，会执行intr_on函数来使得CPU能接收中断。
+
+![img](https://pic4.zhimg.com/80/v2-864eee7c4e0297ad50846e64c2d0829b_1440w.webp)
+
+​	intr_on函数，在SSTATUS寄存器设置中断标志位。之后，如果PLIC正好有pending的中断，CPU核就能接收到中断。
+
+![img](https://pic3.zhimg.com/80/v2-e4d9f2eb238358eb89d8093456cad912_1440w.webp)
+
+---
+
+问题：什么是波特率(board rate)？
+
+回答：串口线的传输速率。
+
+问题：哪些核在intr_on之后打开了中断？
+
+回答：每个核都会这么做。
+
+## 9.6 UART驱动top部分(用户接口)
+
+> [9.5 UART驱动的top部分 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/339830755) <= 图片出处
+
++ 在Unix系统中，设备用文件表示。
+
+---
+
+​	接下来，我们讨论如何在Shell程序中输出提示符`$`到console。
+
+​	我们再看看init.c的main函数，这是系统启动后运行的第一个进程。
+
+​	首先这个进程的main函数里，通过mdnod创建了一个代表console的设备，对应文件描述符0，再用dup创建stdout和stderr。最终文件描述符0，1，2都用来表示console。
+
+![img](https://pic4.zhimg.com/80/v2-ab510a4dbf60ffa1b3d6413b8a07e69b_1440w.webp)
+
+​	接下去看看`sh.c`，Shell程序打开文件描述符2，打印提示符`$`。
+
+​	尽管console背后的是UART设备，但从应用程序角度看，shell程序就是再操作一个普通文件，只是向文件描述符2写了数据。
+
+![img](https://pic4.zhimg.com/80/v2-1ddc59e9168e6c08179079218bbba29f_1440w.webp)
+
+​	这里我们再看看fpintf的具体实现。其内部请求了write系统调用。在这个例子中，fd对应文件描述符2，c则是字符"$"。因此我们将保存"$"的内存地址，传递给文件描述符进行写入1个字符。
+
+![img](https://pic3.zhimg.com/80/v2-57c4f6fb1b03d91a3238cb184bcc0fb2_1440w.webp)
+
+​	基本上Shell输出的每个字符都会触发一个write系统调用。回顾之前所学，最后write系统调用内部会执行到`sysfile.c`的sys_write函数。包含字符"$"的地址，成为filewrite。
+
+![img](https://pic2.zhimg.com/80/v2-a33597c62cabd6e30d21fd2693c947a1_1440w.webp)
+
+​	filewrite函数中，会先判断文件描述符的类型，如果这是一个mknod生成的device，它会为这个特定的divice调用write函数，所以它就会在console调用write函数。
+
+![img](https://pic3.zhimg.com/80/v2-4a69f0681b29afddd855e8ca14e6211e_1440w.webp)
+
+​	被调用的consolewrite函数，先通过either_copyin将字符复制，然后调用uartputc函数将字符写到UART设备。这里可以把console想象成驱动，而我们看的consolewrite是驱动的top部分的代码，实际是`uart.c`的uartputc函数在打印字符。
+
+![img](https://pic3.zhimg.com/80/v2-4df7bf7d48d18ed4403a706212941bd2_1440w.webp)
+
+​	看看uartputc函数实现，在UART的top内部有一个32字符用来发送数据的buffer，同时还有一个读指针、一个写指针，用来构建一个环形的buffer。即一个是为消费者提供的读指针，一个是为生产者提供的写指针。在我们例子中，Shell是生产者，它在函数中做的第一件事就是判断环形buffer是否满了。如果读写指针相同，那么buffer是空的；如果写指针加1等于读指针，那么buffer满了。buffer满了再写数据是无意义的，因为显然UART还在忙，需要先尝试发送前面的31个字符。当buffer满了，shell就会休眠一段时间，内核先运行其他程序。当然就我们现在的情况而言，buffer必然没有满，毕竟"$"是第一个字符。驱动程序将字符放进buffer，写指针更新，之后调用uartstart函数，通知设备执行操作。
+
+![img](https://pic2.zhimg.com/80/v2-f19b098758a418400c56886312aeae4d_1440w.webp)
+
+​	uartstart首先检查当前设备是否空间，如果设备忙则休眠；否则从buffer中读取字符，放到THR（Transmission Holding Register）传输寄存器中。
+
+![img](https://pic3.zhimg.com/80/v2-c5800f34a5af77cdad5bb917a432896e_1440w.webp)
+
+​	基本上shell请求系统调用就是告诉设备这里有一个字节需要发送，一旦数据到了设备，系统调用会返回到用户程序，shell继续运行，然后请求read system call，从键盘读取输入。与此同时，UART设备发出数据，在某些时间点收到中断，因为之前设置了要处理UART设备中断。
+
+## 9.7 UART驱动bottom部分(中断处理器)
+
+​	在我们向console输出字符的时候，如果发生了中断，RISC-V会怎么处理？
+
+​	之前我们已经在SSTATUS寄存器打开了中断，所以处理器会被中断。假设键盘生成了一个中断发送给PLIC，PLIC会路由中断给一个特定CPU核。接收中断的核心如果SIE寄存器设置了E bit，会发生以下事情：
+
+1. 清除SIE寄存器相应的bit，阻止CPU核被其他中断打扰。如果后续想接收其他中断，可以再次恢复SIE寄存器相应的bit。
+2. 设置SEPC寄存器保存当前的PC程序计数器。 
+3. 保存mode，我们例子Shell是user mode
+4. 切换mode为supervisor mode
+5. 修改PC寄存器的值为STVEC的值。在XV6中，STVEC保存的是uservec或者kernelvec函数的地址，具体取决于发生中断时运行的程序在用户空间还是内核空间。在我们例子中shell在user space，所以这里包含uservec函数的地址。前面trap的课程可以知道uservec函数会丢调用usertrap函数。
+
+
+
+![img](https://pic2.zhimg.com/80/v2-cf6f4f91cc2c2842dc9c91a6636a33cd_1440w.webp)
+
+​	接下来看看`trap.c`的usertrap函数的代码片段，其调用的devintr函数，通过SCAUSE寄存器判断当前中断是否属于来自外设的中断，如果是的，再调用plic_claim函数获取中断。
+
+​	回到PLIC，我们看看这个plic_claim。基本上归结起来，就是特定的CPU比如CPU0和CPU1告诉PLIC，CPU1正在请求这个特定的中断，PLIC会进行返回，来获取实际进来的中断的IRQ。这种情况下，对于UART来说， 返回的中断号是10。
+
+​	然后下面if判断，如果是UART中断，则执行uartintr函数。uart中断函数，会让字符脱离UART。我们基本是在第一个寄存器接收到UART字符的，然后它调用consoleintr完成剩余工作。如果在读端有一个字符，那么我们会调用console中断，但现在读端没有字符，因为我们还没有向键盘输入数据。我们只是在传送一个字符，所以这里uartgetc返回-1。
+
+​	基本上代码会直接运行到uartstart函数，这个函数会将shell存储在buffer的任意字符送出。实际上在提示符“$”之后，Shell还会输出一个空格字符，write系统调用可以在UART发送提示符"$"的同时，并发的将空格字符写入到buffer中。所以UART的发送中断触发时，可以发现在buffer中还有一个空格字符，之后会将这个空格字符送出。
+
+![img](https://pic3.zhimg.com/80/v2-343de51adf96fa15186c737cb4606312_1440w.webp)
+
+![img](https://pic2.zhimg.com/80/v2-ea2bff943a57009f9264d172417661e5_1440w.webp)
+
+![img](https://pic1.zhimg.com/80/v2-5a3125d8aa016f547467e6fc0eb22924_1440w.webp)
+
+---
+
+问题：我知道UART对于键盘来说很重要，来自于键盘的字符通过UART走到CPU再到我们写的代码。但是我不太理解UART对于Shell输出字符究竟有什么作用？因为在这个场景中，并没有键盘的参与。
+
+回答：显示器和UART也是连接的。UART连接了键盘和显示器，即console。QEMU通过模拟的UART，与console进行交互。而console的作用就是将字符展示到显示器。
+
+## 9.8 中断的并发设计
+
+​	前面提到的UART设备和CPU是并行运行的。 
+
++ 设备和CPU工作是并行运行的，这种并行类型被称为生产者-消费者并行(producer consumer parallelism)。
+
++ 中断会停止当前运行的程序。用户进程或内核进程都如此，这意味着即使内核代码也不是串行运行的。两个内核指令之间，也可能被中断打断执行，这取决于中断是否打开。如果有些代码执行不允许被中断，内核就需要临时关闭中断，确保这段代码的原子性。
++ 驱动的top和bottom部分是并行运行的。比如，shell再次调用write系统调用传输字符，代码会走到UART驱动的top部分，将字符写到UART的buffer中，与此同时另一个CPU核可能会收到来自UART的中断，进而执行UART驱动的bottom部分，查看buffer。驱动的top和bottom可以并行在不同CPU核上运行，我们这里通过lock来进行管理并行，因为这里有共享的数据即buffer，我们向确保同一时间buffer只能被一个CPU核操作。
+
+---
+
+​	这里我们主要关注生产者-消费者并行(producer consumer parallelism)。
+
+​	在前面的例子中，shell调用uartputc最后往UART的buffer中写数据，这是producer的操作；而Intercept handler中断处理器通过uartintr函数作为consumer从buffer中读数据，再通过UART设备发送。
+
+![img](https://pic3.zhimg.com/80/v2-a92356157b2acd3248c20dd0354b681a_1440w.webp)
+
+​	以上就是Shell输出提示符"$"的全部内容。如你们所见，过程还挺复杂的，许多代码一起工作才将这两个字符传输到了console。
+
+---
+
+问题：这里UART的buffer对所有CPU核都是共享的吗？
+
+回答：buffer在内存中只有一份，所有CPU核都是并行地与这一份数据交互，所以我们才需要lock。
+
+问题：uartputc中的sleep，它怎么知道该让shell去sleep？这里只有个地址而已。`sleep(&uart_tx_r, &uart_tx_lock);`
+
+回答：sleep会将当前运行的进程存放于sleep数据中，它传入的参数是需要等待的信号，在这种情况下，地址基本上只有一个channel ID，那里会显示是什么sleeping了。这个例子传入的是uart_tx_r的地址，在uartstart函数中，一旦buffer中有了空间，它就会醒来，会调用与sleep对应的wakeup函数`wakeup(&uart_tx_r)`，传入相同的地址，任何在这个地址的进程都会被环境。具体实现，以后会说。 <u>这种sleep和wakeup组合使用的现象，有时称为条件同步</u>。
+
+## 9.9 UART读取键盘输入
+
+> [9.8 UART读取键盘输入 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/339831314) <= 图文摘自此博文
+
+​	UART另一侧，shell通过read读取键盘输入，而read底层实现中调用了fileread函数，当读取的文件类型是设备，就会调用设备对应的read函数。
+
+![img](https://pic4.zhimg.com/80/v2-ff7a292ff54dcb1ff7f331a26d5ede0b_1440w.webp)
+
+​	在我们的例子中，read函数就是`console.c`文件中的consoleread函数。
+
+![img](https://pic2.zhimg.com/80/v2-44bddf56bc574ed399a0c18a68bb0e51_1440w.webp)
+
+​	它和uart结构类似，顶部也有一个buffer，其可存储128字符。其他的基本一致，也有生产者与消费者并行，只不过这里shell是消费者，因为shell从buffer中读取数据，键盘作为生产者，将数据写到buffer。
+
+![img](https://pic1.zhimg.com/80/v2-5358a6201ea009b2953ca56b72d5b840_1440w.webp)
+
+​	看consoleread函数实现，可知读写指针一致时（buffer为空），进程就会休眠。如果shell打印完"$"提示符后，键盘没有后续输入，shell进程就会休眠。内核会让shell进程休眠直到键盘输入字符。
+
+![img](https://pic3.zhimg.com/80/v2-8944b5673721ee58d4b4e8952409da66_1440w.webp)
+
+​	某个时间点，假设用户通过键盘输入了“l”，这会导致“l”被发送到主板上的UART芯片，产生中断之后再被PLIC路由到某个CPU核，之后会触发devintr函数，devintr可以发现这是一个UART中断，然后通过uartgetc函数获取到相应的字符，之后再将字符传递给consoleintr函数。
+
+​	默认情况下，字符会通过consputc，输出到console上给用户查看。之后，字符被存放在buffer中。在遇到换行符的时候，唤醒之前sleep的进程，也就是Shell，再从buffer中将数据读出。
+
+​	所以这里也是通过buffer将consumer和producer之间解耦，这样它们才能按照自己的速度，独立的并行运行。如果某一个运行的过快了，那么buffer要么是满的要么是空的，consumer和producer其中一个会sleep并等待另一个追上来。
+
+## 9.10 中断机制的演变
+
+> [9.9 Interrupt的演进 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/339831441) <= 更详细
+
++ Unix初期，中断机制使得能够处理外设数据，当时硬件情况下速度够用。
++ 现在硬件速度很快，中断机制显得很慢。因为中断处理器就是保存或者恢复寄存器，且需要很多步骤次啊能真正处理到中断数据。如果一个设备在高速产生中断，处理器就很难跟上。
++ 为减轻处理器的负担，现代设备在中断机制上比以前处理更多事情。在产生中断之前，设备会先执行大量操作，以减轻CPU处理负担。
+
+​	比如，现代千兆网卡，收到大量小packets，如果每接收一个包都发起中断，那CPU会被疯狂占用以处理中断。流量大时，可能甚至需要CPU每us处理一次中断。
+
+​	可以用polling解决上诉网卡问题。除了依赖Interrupt，CPU可以一直读取外设的控制寄存器，来检查是否有数据。对于UART来说，我们可以一直读取RHR寄存器，来检查是否有数据。现在，CPU不停轮询设备，直到设备有了数据。轮询看上去有点浪费CPU周期，对于一个慢设备，轮询不合适。但是如果对于一个快设备，比起处理中断的开销，轮询更省性能。
+
+​	polling轮询机制：
+
++ 对于慢设备：浪费CPU周期
++ 对于快设备：节省中断开销
+
+​	对于高性能网卡，如果有大量小包流入，则使用轮训机制。
+
+​	一些精心设计的驱动，能够在轮询polling和中断interrupt之间动态切换。
+
+---
+
+问题：我看到uartinit只被调用了一次，是这个导致所有的CPU核都共用一个buffer吗？
+
+回答：一个buffer只针对一个UART设备，而这个buffer会被所有的CPU核共享。驱动通过lock锁确保同一时间只有一个CPU核能调用uartputc，进而使得多个CPU核串行向console打印输出。
+
+问题：用锁，是因为多个CPU核，但只有一个console，对吗？
+
+回答：驱动top和bottom部分可以并行运行，所以一个CPU核可以执行uartputc函数，另一个CPU核可执行uartintr函数。我们需要确保它们不会混在一起，锁确保它们操作buffer时是串行执行的。
+
+追问：上面用锁，是不是意味着有时候所有CPU核需要等待某个CPU核的处理？因为中断需要等待，而且没有其他需要做的了。
+
+回答：假设没有其他进程在运行这本身不太可能。这里不是死锁。如果有多个uartputc函数被调用，并且buffer是满的，那么中断时，它们就会释放锁。举个例子，我们回到uartputc，它调用sleep，而sleep将锁作为一个参数， 内部在将进程置于休眠状态之前，会释放锁。然后休眠结束回来执行时，会重新锁上。
+
+问题：当UART触发中断时，所有CPU核都能收到中断吗？
+
+回答：这取决于对PLIC如何编程。对于XV6，所有CPU核都能收到中断，但只有一个CPU核会claim对应的中断。所以如果你回到PLIC，当你得到一个中断，你会call this PLIC claim，那个特定CPU会得到IRQ，然后PLIC会记得IRQ现在正在被服务，所以不会给其他核。
+
+问题：之前看到打印的输出经常时交错的，是不是因为锁只在putc周围，但是来自多个CPU对putc交错调用。仅保证单个打印可以原子性？
+
+回答：是的，只保证单个打印原子性。
+
+问题：书上说计时器中断是在machine mode下处理的，我们在做trap实验时，它在哪里被处理了？
+
+回答：在机器启动时，有uartstart在machine mode下运行，它给timer chip编程，有timerinit函数，该函数基本是为CLINT编程，也就是本地中断器(local interruptor)，用于在时钟中断发生时产生中断。machine mode的trap handler是一个被叫做timervec的函数，当一个time interrupt发生时被调用。所以内核在user mode或supervisor mode运行并且CLINT产生了一个中断时，它就会切换到machine mode，然后调用timervec函数。流程和supervisor mode、user mode类似。如果你看一下`kernelvec.s`就能找到timervec函数实现，其重新编程来产生中断，然后给supervisor传输中断，进入supervisor mode，最后在mret。我们假设内核被一个定时器芯片中断，我们就进入了machine mode，后面又从machine mode回到supervisor mode。 
+
+追问：一开始进入machine mode有什么特殊理由吗？
+
+回答：为什么计时器芯片会进入machine mode。从我们角度上看，如果将计时器中断直接放到supervisor mode，而不用处理machine mode，那就太好了，但对于这个特殊的芯片来说是行不通的。
+
+# 10. 多处理器和锁(Multiprocessor and Locks)
