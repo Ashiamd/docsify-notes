@@ -1,4 +1,4 @@
-# MIT6.S081网课学习笔记
+# MIT6.S081网课学习笔记-01
 
 > [MIT6.S081 操作系统工程中文翻译 - 知乎 (zhihu.com)](https://www.zhihu.com/column/c_1294282919087964160) => 知乎大佬视频中文笔记，很全
 >
@@ -1863,7 +1863,7 @@ uint64
 
 你能在Linux中发现包含以上的内容且有更多有趣的地方。
 
-# 9. 中断Interrupts
+# Lecture9 中断Interrupts
 
 > [top命令的常用方式_勿视人非的博客-CSDN博客_top指令](https://blog.csdn.net/u011939453/article/details/124515892) <= 课程开头简单介绍了下top指令
 >
@@ -2350,7 +2350,7 @@ uint64
 
 回答：为什么计时器芯片会进入machine mode。从我们角度上看，如果将计时器中断直接放到supervisor mode，而不用处理machine mode，那就太好了，但对于这个特殊的芯片来说是行不通的。
 
-# 10. 多处理器和锁(Multiprocessor and Locks)
+# Lecture10 多处理器和锁(Multiprocessor and Locks)
 
 ## 10.1 为什么需要锁Lock
 
@@ -2676,7 +2676,7 @@ uint64
 
 回答：差不多吧，如果你有多个线程，但是只有一个CPU，那么你还是会想要特定内核代码能够原子执行。所以你还是需要有critical section的概念。你或许不需要锁，但是你还是需要能够对特定的代码打开或者关闭中断。**如果你查看一些操作系统的内核代码，通常它们都没有锁的acquire，因为它们假定自己都运行在单个处理器上，但它们确实有类似锁的东西，即基本上都进行开关中断的操作**。
 
-# 11. 线程切换Thread Switching
+# Lecture11 线程切换Thread Switching
 
 > [Linux多线程(线程的创建，等待，终止，分离) - 卖寂寞的小男孩 - 博客园 (cnblogs.com)](https://www.cnblogs.com/lonely-little-boy/p/16726452.html)
 
@@ -3164,4 +3164,7 @@ struct proc {
 
 回答：我不知道Linux究竟用了哪种方法。
 
-# 12. Q&A for Labs
+# Lecture12 Q&A for Labs
+
+​	教师提到自己的COW fork(copy-on-write fork)的实现，经过测试，大概减少90%的字节复制量，猜测主要是因为instruction pages的复制量减少了，因为指令页从不修改，也就没必要复制。同时COW减少了RAM的使用，节省fork时间。（当然如果程序后续修改了 copy-on-write pages，那就不得不再对这些pages进行复制。）
+
