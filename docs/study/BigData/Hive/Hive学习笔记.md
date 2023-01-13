@@ -456,3 +456,10 @@ STORED AS TEXTFILE;
 
 > [LanguageManual](https://cwiki.apache.org/confluence/display/Hive/LanguageManual)
 
+# 网络博文
+
+> [hive行存储与列存储 - 南星半夏 - 博客园 (cnblogs.com)](https://www.cnblogs.com/zgs1996/p/14142556.html)
+>
+> [HIve数据存储 - 箜篌nicole - 博客园 (cnblogs.com)](https://www.cnblogs.com/nicoleljc/p/10017231.html)
+>
+> 
