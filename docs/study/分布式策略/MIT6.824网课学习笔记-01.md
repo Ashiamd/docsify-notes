@@ -232,3 +232,403 @@
   **通过backup task，性能不会受限于最慢的几个worker，因为有更快的worker会领先它们完成task（map或reduce）。<u>这是应对straggler的普遍做法，通过replicate tasks复制任务，获取更快完成task的输出结果，处理了tail latency尾部延迟问题</u>。**
 
 # Lecture2 远程过程调用和多线程(RPC and Threads)
+
+## 2.1 选用go语言的原因
+
+​	这里主要讲为什么这个课程选用Go语言进行编程。
+
++ good support for threads/RPC：对线程和RPC的支持度高
++ gc：自带GC，无需考虑垃圾回收问题
++ type safe：类型安全
++ simple：简单易上手
++ compiled：编译型语言，运行时开销更低
+
+## 2.2 线程Thread of exeution
+
+> [goroutine官网简介](https://golang.google.cn/doc/effective_go#goroutines)
+
+​	在Go中，线程成为goroutine，也有人称其为线程的线程(a thread of thread)。每个线程都有自己的**PC程序计数器、函数调用栈Stack、一套寄存器Registers**。
+
+ 	相关的primitive原语：
+
++ start/go：启动/运行一个线程
++ exit：线程退出，一般从某个函数退出/结束执行后，会自动隐式退出
++ stop：停止一个线程，比如向一个没有读者的channel写数据，那么channel阻塞，go可能会运行时暂时停止这个线程
++ resume：恢复原本停止的线程重新执行，需要恢复程序计数器(program counter)、栈指针(stack pointer)、寄存器(register)状态，让处理器继续运行该线程。
+
+## 2.3 为什么需要多线程
+
++ express concurrency：依靠多线程达到并发效果
+  + I/O concurrency：I/O并发
+  + multi-core parallelism：多核并行，提高整体吞吐量
+  + convinience：方便，经常有需要异步执行or定时执行的任务，可以通过线程完成
+
+## 2.4 多线程的挑战
+
++ race conditions：多线程会引入竞态条件的场景
+  + avoid sharing：避免共享内存以防止竞态条件场景的产生（Go有一个竞态检测器race detector，能够辅助识别代码中的一些竞态条件场景）
+  + use locks：让一系列指令变成原子操作
+
++ coordination：同步协调问题，比如一个线程的执行依赖另一个线程的执行结果等
+  + channels：通道允许同时通信和协调
+  + condition variables：配合互斥锁使用
++ deadlock：死锁问题，比如在go中简单的死锁场景，一个写线程往channel写数据，但是永远没有读线程从channel读数据，那么写线程被永久阻塞，即死锁，go会抓住这种场景，抛出运行时错误runtime error。
+
+## 2.5 go如何应对多线程挑战
+
+ 	go常见的处理多线程问题的方式有两种：
+
++ channels：通道
+  + no-sharing场景：如果线程间不需要共享内存（变量等），一般偏向于使用channels完成线程间的通信
++ locks + condition variables：锁和条件变量配套使用
+  + shared-memory：如果线程间需要共享内存，则采用锁+条件变量的方案。比如键值对key-value服务，需要共享key-value table。
+
+## 2.6 go多线程代码示例
+
+> 逃逸分析：
+>
+> [先聊聊Go的「堆栈」，再聊聊Go的「逃逸分析」。 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/586249256) <= 简单明了，推荐阅读。还有具体的代码举例分析
+>
+> 相比于把内存分配到堆中，分配到栈中优势更明显。Go语言也是这么做的：Go编译器会尽可能将变量分配到到栈上。但是，**当编译器无法证明函数返回的变量有没有被引用时，编译器就必须在堆上分配该变量，以此避免悬挂指针（dangling pointer）的问题。另外，如果局部变量占用内存非常大，也会将其分配在堆上**。
+>
+> 编译器通过**逃逸分析**技术去选择堆或者栈，逃逸分析的基本思想如下：
+>
+> + **检查变量的生命周期是否是完全可知的，如果通过检查，则在栈上分配**
+> + **否则，就是所谓的逃逸，必须在堆上进行分配**
+>
+> Go语言虽然没有明确说明逃逸分析原则，但是有以下几点准则，是可以参考的。
+>
+> - 不同于JAVA JVM的运行时逃逸分析，Go的逃逸分析是在**编译期**完成的：编译期无法确定的参数类型**必定**放到堆中；
+> - 如果变量在函数外部存在引用，则**必定**放在堆中；
+> - 如果变量占用内存较大时，则**优先**放到堆中；
+> - 如果变量在函数外部没有引用，则**优先**放到栈中；
+>
+> [tcmalloc_百度百科 (baidu.com)](https://baike.baidu.com/item/tcmalloc/2832982?fr=aladdin)
+>
+> tcmalloc全称Thread-Caching Malloc，即线程缓存的malloc，实现了高效的多线程内存管理，用于替代系统的内存分配相关的函数（malloc、free，new，new[]等）。
+>
+> [Java逃逸分析 - JaxYoun - 博客园 (cnblogs.com) ](https://www.cnblogs.com/JaxYoun/p/16424286.html)<= 推荐阅读
+>
+> 在计算机语言编译器优化原理中，逃逸分析是指分析指针动态范围的方法，它同编译器优化原理的指针分析和外形分析相关联。当变量（或者对象）在方法中分配后，其指针有可能被返回或者被全局引用，这样就会被其他方法或者线程所引用，这种现象称作指针（或者引用）的逃逸(Escape)。通俗点讲，如果一个对象的指针被多个方法或者线程引用时，那么我们就称这个对象的指针（或对象）的逃逸（Escape）。
+>
+> 1. **方法逃逸**：在一个方法体内，定义一个局部变量，而它可能被外部方法引用，比如作为调用参数传递给方法，或作为对象直接返回。或者，可以理解成对象跳出了方法。
+>
+> 2. **线程逃逸**：这个对象被其他线程访问到，比如赋值给了实例变量，并被其他线程访问到了。对象逃出了当前线程。
+>
+> 如果一个对象不会在方法体内，或线程内发生逃逸（或者说是通过逃逸分析后，认定其未能发生逃逸），就可以做如下优化：
+>
+> 1. **栈上分配**：
+>    一般情况下，不会逃逸的对象所占空间比较大，如果能使用栈上的空间，那么大量的对象将随方法的结束而销毁，减轻了GC压力
+> 2. **同步消除**：
+>    如果你定义的类的方法上有同步锁，但在运行时，却只有一个线程在访问，此时逃逸分析后的机器码，会去掉同步锁运行。
+> 3. **标量替换**：
+>    <u>Java虚拟机中的原始数据类型（int，long等数值类型以及reference类型等）都不能再进一步分解，它们可以称为标量。相对的，如果一个数据可以继续分解，那它称为聚合量，Java中最典型的聚合量是对象</u>。如果逃逸分析证明一个对象不会被外部访问，并且这个对象是可分解的，那程序真正执行的时候将可能不创建这个对象，而改为直接创建它的若干个被这个方法使用到的成员变量来代替。拆散后的变量便可以被单独分析与优化，属性被扁平化后可以不用再通过引用指针来建立关系，可以连续紧凑的存储，对各种存储都更友好，执行期间能省去大量由于数据搬运造成性能损耗。同时还可以各自分别在栈帧或寄存器上分配空间，原本的对象就无需整体分配空间了。
+>
+> [深入理解JVM逃逸分析_wh柒八九的博客-CSDN博客](https://blog.csdn.net/qq_31960623/article/details/120178489) <= 推荐阅读，带有代码示例。
+>
+> ---
+>
+> go语言的channel：
+>
+> [Go 语言中的带有缓冲 Channel（Let‘s Go 三十一）_带缓冲的channel_甄齐才的博客-CSDN博客](https://blog.csdn.net/coco2d_x2014/article/details/127621765)
+>
+> 无缓冲信道 Channel 是无法保存任何值的，该类型信道要求 发送 goroutine 和 接受 goroutine 两者同时准备好，这样才能完成发送与接受的操作。假使 两者 goroutine 未能同时准备好，信道便会先执行 发送 和 接受 的操作， goroutine 会阻塞等待。这种对信道进行发送和接收的交互行为本身就是同步的。其中任意一个操作都无法离开另一个操作单独存在。
+>
+> 带缓冲信道在很多特性上和无缓冲信道是类似的。无缓冲信道可以看作是长度永远为 0 的带缓冲信道。因此根据这个特性，带缓冲信道在下面列举的情况下依然会发生阻塞：
+>
+> - 带缓冲信道被填满时，尝试再次发送数据时发生阻塞。
+> - 带缓冲信道为空时，尝试接收数据时发生阻塞。
+
+​	首先是一个模拟投票选举的go程序。
+
+```go
+//  vote-count-1.go
+package main
+
+import "time"
+import "math/rand"
+
+func main() {
+  rand.Seed(time.Now().UnixNano())
+
+  count := 0
+  finished := 0
+
+  for i := 0; i < 10; i ++ {
+    // 匿名函数，创建共 10 个线程
+    go func() {
+      vote := requestVote() // 一个内部sleep随机时间，最后返回true的函数，模拟投票
+      if vote {
+        count++
+      }
+      finished++
+    } () 
+  }
+  for count < 5 && finished != 10 {
+    // wait
+  }
+  if count >= 5 {
+    println("received 5+ votes!")
+  } else {
+    println("lost")
+  }
+}
+
+// ....
+```
+
+​	通过执行`go run -race vote-count-1.go`用go自带的工具检测出竞态条件场景。这里很明显新建的多个goroutine共享了变量count、finished，构成竞态条件场景。
+
+​	一种解决方法，**仅使用锁**。涉及修改的代码片段如下：
+
+```go
+//  vote-count-2.go
+package main
+
+import "sync"
+import "time"
+import "math/rand"
+
+func main() {
+  rand.Seed(time.Now().UnixNano())
+
+  count := 0
+  finished := 0
+  var mu sync.Mutex
+
+  for i := 0; i < 10; i ++ {
+    // 匿名函数，创建共 10 个线程
+    go func() {
+      vote := requestVote() // 一个内部sleep随机时间，最后返回true的函数，模拟投票
+      // 临界区(critical section)加锁
+      mu.Lock()
+      // 推迟到基本block结束后执行，这里即函数执行结束后 自动执行解锁操作。利用defer语言，一般在声明加锁后，立即defer声明推迟解锁 
+      defer mu.Unlock()
+      if vote {
+        count++
+      }
+      finished++
+    } () 
+  }
+  // 这里的循环仅仅是为了等待其他线程的结果，CPU空转，用条件变量实现则可以更好地提前放弃占用CPU
+  for {
+    mu.Lock()
+    if count >= 5 || finished == 10 {
+     	break 
+    }
+    mu.Unlock()
+  }
+  if count >= 5 {
+    println("received 5+ votes!")
+  } else {
+    println("lost")
+  }
+  mu.Unlock()
+}
+
+// ....
+```
+
+​	对于下面主线程CPU空转等待其他线程结果的逻辑，可以增加sleep等待，但是坏处是这里该休眠多久并不好把控。
+
+```go
+
+  // 这里的循环仅仅是为了等待其他线程的结果，CPU空转，用条件变量实现则可以更好地提前放弃占用CPU
+  for {
+    mu.Lock()
+    if count >= 5 || finished == 10 {
+     	break 
+    }
+    mu.Unlock()
+    time.Sleep(50 * time.Millsecond)
+
+// ....
+```
+
+​	另一种解决竞态条件的方法，**使用锁和条件变量**，代码修改如下：
+
+```go
+//  vote-count-3.go
+package main
+
+import "sync"
+import "time"
+import "math/rand"
+
+func main() {
+  rand.Seed(time.Now().UnixNano())
+
+  count := 0
+  finished := 0
+  var mu sync.Mutex
+  // 条件变量 和 指定的 lock 绑定
+  cond := sync.NewCond(&mu)
+
+  for i := 0; i < 10; i ++ {
+    // 匿名函数，创建共 10 个线程
+    go func() {
+      vote := requestVote() // 一个内部sleep随机时间，最后返回true的函数，模拟投票
+      // 临界区(critical section)加锁
+      mu.Lock()
+      // 推迟到基本block结束后执行，这里即函数执行结束后 自动执行解锁操作。利用defer语言，一般在声明加锁后，立即defer声明推迟解锁 
+      defer mu.Unlock()
+      if vote {
+        count++
+      }
+      finished++
+      // Broadcast 唤醒所有等待条件变量 c 的 goroutine，无需锁保护；Signal 只唤醒任意 1 个等待条件变量 c 的 goroutine，无需锁保护。
+      // 这里只有一个waiter，所以用Signal或者Broadcast都可以
+      cond.Broadcast()
+    } () 
+  }
+
+  mu.Lock()
+  for count < 5 && finished != 10 {
+    // 如果条件不满足，则在制定的条件变量上wait。内部原子地进入sleep状态，并释放与条件变量关联的锁。当条件变量得到满足时，这里内部重新获取到条件变量关联的锁，函数返回。
+    cond.Wait() 
+  }
+  if count >= 5 {
+    println("received 5+ votes!")
+  } else {
+    println("lost")
+  }
+  mu.Unlock()
+}
+
+// ....
+```
+
+​	当然，还可以用通道channel实现：
+
+```go
+//  vote-count-4.go
+package main
+
+import "time"
+import "math/rand"
+
+func main() {
+  rand.Seed(time.Now().UnixNano())
+	// 下面统一只有主线程更新这两个变量了
+  count := 0
+  finished := 0
+  ch := make(chan bool)
+  for i := 0; i < 10; i ++ {
+    // 匿名函数，创建共 10 个线程
+    go func() {
+      // 将 requestVote 写入 通道channel
+      ch <- requestVote() // 一个内部sleep随机时间，最后返回true的函数，模拟投票
+    } () 
+  }
+  // 这里实现并不完美，如果count >= 5了，主线程不会再监听channel，导致其他还在运行的子线程会阻塞在往channel写数据的步骤。但是这里主线程退出后子线程们也会被销毁，影响不大。但如果是在一个长期运行的大型工程中，这里就存在泄露线程leaking threads
+  for count < 5 && finished < 10 {
+    // 主线程在这里阻塞，直到从channel中读取到数据
+    v := <- ch
+    if v {
+      count += 1
+    }
+    finished += 1
+  }
+  if count >= 5 {
+    println("received 5+ votes!")
+  } else {
+    println("lost")
+  }
+}
+
+// ....
+```
+
+
+
+---
+
+问题：看起来上面匿名函数可以访问函数外定义的变量，那么作用域是如何工作的？
+
+回答：如果匿名函数使用的不是函数内声明的变量，那么会指向外部作用于的变量，这里即静态作用域。
+
+追问：上面的go执行的匿名函数启动的线程中，如果把外层for循环的i传递进匿名函数中使用，会发生什么？
+
+回答：如果直接在匿名函数中使用变量i，会在执行到匿名函数中读取i的那一行代码时，读取i的当时值，这很可能不是我们想要的。一般我们希望的是获取创建线程时，for循环中i当时对应的值。所以需要将i作为参数传入匿名函数，如下修改代码：
+
+```go
+for i := 0; i < 10; i++ {
+  go func(i int) {
+    vote := requestVote()
+    mu.Lock()
+    defer mu.Unlock()
+    if vote {
+      count++
+    }
+    finished++
+    // 如果i没有作为参数传递进来，那么读取到的是执行这一行代码时i的值（执行新线程代码时，外层for中的i的值同时也在时刻改变中
+    // 这里i作为匿名函数的参数传递进来，所以会是符合预期的0～9的值
+    count = i
+  } (i)
+}
+```
+
+**问题：看上去count和finished是主线程的本地变量，它们在主函数退出后应该会被销毁，那此时如果主线程推出后，新建的go线程还在使用这些变量，会怎么样？**
+
+**回答：这里根据go语言的逃逸分析可知，被共享的变量实际上go会在堆中进行分配，而不是在主线程的栈中，所以可以安全的在多个线程之间共享。（原本讲师回答其实不对，这里修正了下）**
+
+问题：channel代码示例中，channel是自带了buffer吗？
+
+回答：是的，通常你往channel写入数据时，<u>如果没有人从channel读取数据，那么channel写者会阻塞。这里用的不是缓存channel</u>。<u>无缓存/缓冲区的channel，需要写者和读者都同时就绪才能通信</u>。讲师表示在实验中用过带缓存/缓冲区的channel，表示不好用，用了很后悔，一般尽量不用，哈哈。
+
+问题：有无办法在不退出主线程的情况下kill其他子线程？
+
+回答：你可以往channel发送一个变量，示意子线程exit。但你必须自己去实现这个流程。
+
+## 2.7 go爬虫(Crawler)
+
+实现目标：
+
++ I/O concurrency：IO并发性
++ fetch once：保证每个url只爬一次
++ exploit parallelism：利用并发行特性
+
+这里代码不是重点，可以自己找视频或代码，这里不贴了。
+
+## 2.8 远程过程调用(RPC)
+
+> [Go RPC ](https://www.jianshu.com/p/5ade587dbc58)<= 该小节简单讲解了RPC，这里推荐这篇文章。或者可以去了解下gRPC。
+
+RPC(Remote Produce Call)远程过程调用。
+
+RPC系统的目标：
+
++ **使得RPC在编程使用方面和栈上本地过程调用无差异**。比如gRPC等实现，看上去Client和Server都像是在调用本地方法，对开发者隐藏了底层的网络通信环节流程
+
+---
+
+RPC semantics under failures (RPC失败时的语义) ：
+
++ at-least-once：至少执行一次
++ at-most-once：至多执行一次，即重复请求不再处理
++ Exactly-once：正好执行一次，很难做到
+
+# Lecture3 谷歌文件系统GFS
+
+> [GFS(Google文件系统) - 百度百科](https://baike.baidu.com/item/GFS/1813072?fr=aladdin)
+>
+> GFS是一个可扩展的[分布式文件系统](https://baike.baidu.com/item/分布式文件系统/1250388?fromModule=lemma_inlink)，用于大型的、分布式的、对大量数据进行访问的应用。它运行于廉价的普通硬件上，并提供容错功能。它可以给大量的用户提供总体性能较高的服务。
+
+本章节主要讨论点：
+
++ storage：存储
+
++ GFS：GFS的设计
+
++ consistency：一致性
+
+## 3.1 存储Storage
+
+## 3.2
+
+## 3.3
+
+0:55
+
+
+
