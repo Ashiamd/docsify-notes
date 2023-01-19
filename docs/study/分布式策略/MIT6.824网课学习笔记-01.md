@@ -622,13 +622,232 @@ RPC semantics under failures (RPC失败时的语义) ：
 
 + consistency：一致性
 
-## 3.1 存储Storage
+## 3.1 存储Storage设计难点
 
-## 3.2
+构建(fault tolerance)可容错的系统，需要可靠的storage存储实现。
 
-## 3.3
+通常应用开发保持无状态stateless，而底层存储负责永久保存数据。
 
-0:55
++ 高性能(high perference)
+  + shard：需要分片（并发读取）
+  + data across server：跨多个服务机器存储数据（单机的网卡、CPU等硬件吞吐量限制）
++ 多实例/多机器(many servers)
+  + constant faults：单机故障率低，但是足够多的机器则出现部分故障的概率高，在GFS论文上千台机器规模下，每天总会有3个机器出现失败/故障。因此需要有容错设计
++ 容错(fault tolerance)
+  + replication：通常通过复制数据保证容错性，即当前磁盘数据异常/缺失等情况，尝试从另一个磁盘获取数据
++ 复制(replication)
+  + potential inconsistencies：潜在的数据不一致问题需要考虑
 
++ 强一致性(strong consistency)：
+  + lower performance：一般需要通过一些消息机制保证一致性，这会稍微带来一些性能影响，但一般底层为了保证数据一致性而额外进行的网络通信等操作在整体性能的开销中占比并不会很高。其中可能涉及需要将通信的一些结果写入存储中，这是相对昂贵的操作。
 
+## 3.2 一致性(consistency)
 
+​	理想的一致性，即整个分布式系统对外表现时像单个机器一样运作。
+
+​	**并发性(concurrency)**和**故障/失败(failures)**是两个实现一致性时需要考虑的难点。
+
+---
+
++ 并发性问题举例：
+  W1写1，W2写2；R1和R2准备读取数据。W1和W2并发写，在不关心谁先谁后的情况下，考虑一致性，则我们希望R1和R2都读取到1或者都读取到2，R1和R2读取的值应该一致。（可通过分布式锁等机制解决）
+
++ 故障/失败问题举例：
+
+  一般为了容错性，会通过复制的方式解决。而不成熟的复制操作，会导致读者在不做修改的情况下读取到两次不同的数据。比如，我们要求所有写者写数据时，需要往S1和S2都写一份。此时W1和W2并发地分别写1和2到S1、S2，而R1和R2即使在W1和W2都完成写数操作后，再从S1或S2读数时结果可能是1也可能是2（因为没有明确的协议指出这里W1和W2的数据在S1、S2上以什么方式存储，可能1被2覆盖，反之亦然）。
+
+## 3.3 GFS-简述
+
+> [谷歌Colossus文件系统的设计经验 - 腾讯云开发者社区-腾讯云 (tencent.com)](https://cloud.tencent.com/developer/article/1971701) <= 可供拓展阅读
+
+​	GFS旨在保持高性能，且有复制、容错机制，但很难保持一致性。google确实曾使用GFS，虽然后继被新的文件系统Colossus取代。
+
+​	在论文中可以看到mapper从GFS系统(上千个磁盘)能够以超过10000MB/s的速度读取数据。论文发表时，当时单个磁盘的读取速度大概是30MB/s，一般在几十MB/s左右。
+
+​	GFS的几个主要特征：
+
++ Big：large data set，巨大的数据集
++ Fast：automatic sharding，自动分片到多个磁盘
++ Gloal：all apps see same files，所有应用程序从GFS读取数据时看到相同的文件（一致性）
+
++ Fault tolerance：automic，尽可能自动地采取一些容错恢复操作
+
+## 3.4 GFS-数据读取流程简述
+
+> [GFS文件系统剖析（中）一致性模型及读写流程介绍-社区博客-网易数帆 (163.com)](https://sq.sf.163.com/blog/article/172834757163061248)
+
+![img](https://nos.netease.com/cloud-website-bucket/201807041332473b21bf58-526d-4648-a79e-d4ee2d5aaf98.png)
+
+​	GFS通过Master管理文件系统的元数据等信息，其他Client只能往GFS写入或读取数据。当应用通过GFS Client读取数据时，大致流程如下：
+
+1. Client向Master发起读数据请求
+2. Master查询需要读取的数据对应的目录等信息，汇总文件块访问句柄、这些文件块所在的服务器节点信息给Client（大文件通常被拆分成多个块Chunk存放到不同服务器上，单个Chunk很大， 这里是64MB）
+3. Client得知需要读取的Chunk的信息后，直接和拥有这些Chunk的服务器网络通信传输Chunks
+
+## 3.5 GFS-Master简述
+
+这里大致介绍Master负责的工作：
+
++ 维护文件名到块句柄数组的映射(file name => chunk handles)
+
+  这些信息大多数存放在内存中，所以Master可以快速响应客户端Client
+
++ 维护每个块句柄(chunk handle)的版本(version)
+
++ 维护块存储服务器列表(list of chunk servers)
+
+  + 主服务器(primary)
+    + Master还需维护每一个主服务器(primary)的租赁时间(lease time)
+  + 次要服务器(secondaries)
+
+  典型配置即将chunk存储到3台服务器上
+
++ log+check point：通过日志和检查点机制维护文件系统。所有变更操作会先在log中记录，后续才响应Client。这样即使Master崩溃/故障，重启时也能通过log恢复状态。master会定期创建自己状态的检查点，落到持久性存储上，重启/恢复状态时只需重放log中最后一个check point检查点之后的所有操作，所以恢复也很快。
+
+​	这里需要思考的是，哪些数据需要放到稳定的存储中(比如磁盘)？
+
++ 比如file name => chunk hanles的映射，平时已经在内存中存储了，还有必要存在稳定的存储中吗？
+
+  需要，否则崩溃后恢复时，内存数据丢失，master无法索引某个具体的文件，相当于丢失了文件。
+
++ chunk handle 到 存放chunk的服务器列表，这一层映射关系，master需要稳定存储吗？
+
+  不需要，master重启时会要求其他存储chunk数据的服务器说明自己维护的chunk handles数据。这里master只需要内存中维护即可。同样的，主服务器(primary)、次要服务器(secondaries)、主服务器(primary)的租赁时间(lease time)也都只需要在内存中即可。
+
++ chunk handle的version版本号信息呢，master需要稳定存储吗？
+
+  需要。否则master崩溃重启时，master无法区分哪些chunk server存储的chunk最新的。比如可能有服务器存储的chunk version是14，由于网络问题，该服务器还没有拿到最新version 15的数据，master必须能够区分哪些server有最新version的chunk。
+
+---
+
+问题：Master崩溃重启后，会连接所有的chunk server，找到最大的version？
+
+回答：Master会尝试和所有chunk server通信，尽量获取最新version。当然有可能拥有最新version的chunk server由于网络等原因正好联系不上，此时能联系上的存活最久的chunk server的version会比master存储的version小。
+
+## 3.6 GFS-文件读取
+
+1. Client向Master发请求，要求读取X文件的Y偏移量的数据
+2. Master回复Client，X文件Y偏移量相关的块句柄、块服务器列表、版本号(chunk handle, list of chunk servers, version)
+
+3. Client 缓存cache块服务器列表(list of chunk servers)
+4. Client从最近的服务器请求chunk数据(reads from closest servers)
+5. 被Client访问的chunk server检查version，version正确则返回数据
+
+---
+
++ **为什么这里Client要缓存list of chunk server信息呢？**
+
+  **因为在这里的设计中，Master只有一台服务器，我们希望尽量减少Client和Server之间的通信次数，客户端缓存可以大大减少Master机器的负载**。
+
++ **为什么Client尽量访问最近的服务器来获取数据(reads from closest servers)？**
+
+  **因为这样在宛如拓扑结构的网络中可以最大限度地减少网络流量(mininize network traffic)，提高整体系统的吞吐量。**
+
++ **为什么在Client访问chunk server时，chunk server需要检查verison？**
+
+  为了尽量避免客户端读到过时数据的情况。
+
+## 3.7 GFS-文件写入
+
+> [谷歌技术"三宝"之GFS](http://t.zoukankan.com/yorkyang-p-9889525.html)
+
+​	这里主要关注文件写入中的**append操作**，因为把记录追加到文件中这个在他们的业务中很常见。**在mapreduce中，reducer将处理后的记录数据(计算结果)很快地追加(append)到file中**。
+
+![img](https://img2018.cnblogs.com/blog/1038618/201811/1038618-20181101152404626-1502756600.png)
+
+1. Client向Master发出请求，查询应该往哪里写入filename对应的文件。
+
+2. Master查询filename到chunk handle映射关系的表，找到需要修改的chunk handle后，再查询chunk handle到chunk server数组映射关系的表，以list of chunk servers(primary、secondaries、version信息)作为Client请求的响应结果
+
+   接下去有两种情况，已有primary和没有primary(假设这是系统刚启动后不久，还没有primary)
+
+   + 有primary
+
+     继续后续流程
+
+   + 无primary
+
+     + **master在chunk servers中选出一个作为primary，其余的chunk server作为secondaries**。(暂时不考虑选出的细节和步骤)
+       + master会增加version（每次有新的primary时，都需要考虑时进入了一个new epoch，所以需要维护新的version），然后向primary和secondaries发送新的version，并且会发给primary有效期限的租约lease。这里primary和secondaries需要将version存储到磁盘，否则重启后内存数据丢失，无法让master信服自己拥有最新version的数据(同理Master也是将version存储在磁盘中)。
+
+3. Client发送数据到想写入的chunk servers(primary和secondaries)，有趣的是，**这里Client只需访问最近的secondary，而这个被访问的secondary会将数据也转发到列表中的下一个chunk server**，<u>**此时数据还不会真正被chunk severs存储**</u>。（即上图中间黑色粗箭头，secondary收到数据后，马上将数据推送到其他<u>本次需要写</u>的chunk server）
+
+   **这么做提高了Client的吞吐量，避免Client本身需要消耗大量网络接口资源往primary和多个secondaries都发送数据**。
+
+4. 数据传递完毕后，Client向primary发送一个message，表明本次为append操作。
+
+   primary此时需要做几件事：
+
+   1. primary此时会检查version，如果version不匹配，那么Client的操作会被拒绝
+   2. **primary检查lease是否还有效，如果自己的lease无效了，则不再接受任何mutation operations（因为租约无效时，外部可能已经存在一个新的primary了）**
+   3. 如果version、lease都有效，那么primary会选择一个offset用于写入
+   4. primary将前面接收到的数据写入稳定存储中
+
+5. primary发送消息到secondaries，表示需要将之前接收的数据写入指定的offset
+
+6. secondaries写入数据到primary指定的offset中，并回应primary已完成数据写入
+
+7. primary回应Client，你想append追加的数据已完成写入
+
+   <u>当然，存在一些情况导致数据append失败，此时primary本身写入成功，但是后续存在某些/某个secondaries写入失败，此时会向Client返回错误error</u>。**Client遇到这种错误后，通常会retry整个流程直到数据成功append，这也就是所谓的最少一次语义(do at-least-once)**
+
+---
+
++ **需要注意的是，假设append失败，Client再次重试，此时流程中primary指定写入的offset和上一次会是一样的吗？**
+
+  不，primary会指定一个新的offset。假设primary+2台secondaries，可能上一次p和s1都写成功，仅s2失败。此时retry需要用新的offset，或许p、s1、s2就都写入成功了。这里可以看出来**副本记录是可以重复的(replicates records can be duplicated)**，这和我们常见的操作系统中标准的文件系统不一样。
+
+  好在应用程序不需要直接和这种特殊的文件系统交互，而是通过库操作，库的内部实现隐藏了这些细节，用户不会看到曾经失败的副本记录数据。如果你append数据，库会给数据绑定一个id，如果库读取到相同id的数据，会跳过前面的一个。同时库内通过checksums检测数据的变化，同时保证数据不会被篡改。
+
+---
+
+问题：比起重写每一个副本(replica)，直接记住某个副本(replica)失败了不是更好吗？
+
+回答：是的，有很多不同的实现方式。上面流程中假设遇到短暂的网络问题等，也不一定会直接判定会写入失败，可能过一会chunk server会继续写入，并且最后判定为写入成功。
+
+问题：所有的这些服务器都是可信的吗？（换言之，流程中好像没说明一些权限问题）
+
+回答：是的，这很重要，这里不像Linux文件系统，有权限和访问控制写入(permissions and access control writes)一类的东西，服务器完全可信（因为这完全是一个内部系统）。
+
+**问题：写入流程中提到需要校验version，是否存在场景就是Client要读取旧version的数据？比如Client自己存储的version就是旧版本，所以读取数据时，拥有旧version的chunk server反而能够响应数据。**
+
+**回答：假设这里有P(primary)，S1(secondary 1)，S2(secondary 2)和C(Client)，S2由于网络等问题和P、S1断开联系，此时重新选出Primary(假设还是原本的P)，version变为11，而S2断联所以还是version10的数据。一个本地cache了version10和list of chunk sevrers的Client正好直接从S2请求读取数据（因为S2最近），而S2的version和Client一致，所以直接读取到S2的数据。**
+
+问题：上面这个举例中，为什么version11这个信息不会返回到Client呢？
+
+回答：原因可能是Client设置的cache时间比较长，并且协议中没有要求更新version。
+
+**问题：上面举例中，version更新后，不会推送到S2吗？即通知S2应该记录最新的version为11**
+
+**回答：version版本递增是在master中维护的，version只会在选择新的primary的时候更新。**论文中还提到serial number序列号的概念，不过这个和version无关，这个用于表示写入顺序。
+
+问题：primary完成写入前，怎么知道要检查哪一些secondaries（是否完成了写入）？
+
+回答：master告知的。master告诉primary需要更新secondaries，这形成了new replica group for that chunk。
+
+## 3.8 GFS-一致性(Consistency)
+
+> [spanner(谷歌公司研发的数据库) - 百度百科](https://baike.baidu.com/item/spanner/6763355?fr=aladdin)
+
+​	这里一致性问题，可以简单地归结于，当你完成一个append操作后，进行read操作会读取到什么数据？
+
+​	这里假设一个场景，我们讨论一下可能产生的一致性问题，这里有一个M（maseter），P（primary），S（Secondary）：
+
++ **某时刻起，M得不到和P之间的ping-pong通信的响应，什么时候Master会指向一个新的P？**
+
+  1. M比如等待P的lease到期，否则会出现两个P
+  2. 此时可能有些Client还在和这个P交互
+
+  **假设我们此时选出新P，有两个P同时存在，这种场景被称为脑裂(split-brain)，此时会出现很多意料外的情况，比如数据写入顺序混乱等问题，严重的脑裂问题可能会导致系统最后出现两个Master**。
+
+  <u>这里M知道P的lease期限，在P的lease期限结束之前，不会选出新P，即使M无法和P通信，但其他Client可能还能正常和P通信</u>。
+
+----
+
+这里扩展一下问题，**如何达到更强的一致性(How to get stronger consistency)？**
+
+比如这里GFS有时候写入会失败，导致一部分S有数据，一部分S没数据（虽然对外不可见这种失败的数据）。我们或许可以做到要么所有S都成功写入，要么所有S都不写入。
+
+事实上Google还有很多其他的文件系统，有些具有更强的一致性，比如Spanner有更强的一致性，且支持事务，其应用场景和这里不同。我们知道这里GFS是为了运行mapreduce而设计的。
+
+# Lecture4 Primary-Backup Replication
