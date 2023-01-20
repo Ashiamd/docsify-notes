@@ -850,4 +850,228 @@ RPC semantics under failures (RPC失败时的语义) ：
 
 事实上Google还有很多其他的文件系统，有些具有更强的一致性，比如Spanner有更强的一致性，且支持事务，其应用场景和这里不同。我们知道这里GFS是为了运行mapreduce而设计的。
 
-# Lecture4 Primary-Backup Replication
+# Lecture4 主/备复制(Primary/Backup Replication)
+
+> [（VM-FT论文解读）容错虚拟机分布式系统的设计](https://blog.csdn.net/weixin_40910614/article/details/117995014) <= 推荐阅读
+
++ failures：复制失败场景和对策
++ challenge：实现难点
++ 2 appliction：2个典型应用场景的探讨
+  + 状态转移复制(state transfer replication)
+  + 复制状态机(replicated state machines)
+
++ case study
+  + VM FT：VMware fault tolerance
+
+## 4.1 失败场景(Failures)
+
+​	常见的复制失败场景分类：
+
++ fail-stop failure：基础设备或计算机组件问题，导致系统暂停工作(stop compute)，一般指计算机<u>原本工作正常</u>，由于一些突发的因素暂时工作失败了，比如网线被切断等。
++ logic bugs, configuration errors：本身复制的逻辑有问题，或者复制相关的主从配置有异常，这类failure导致的失败，不能靠系统自身自动修复。
++ malicious errors：这里我们的设计假设的内部系统中每一部分都是可信的，所以我们无法处理试图伪造协议的恶意攻击者。
++ handling stop failure：比如主集群突发地震无法正常服务，我们希望系统能自动切换到使用backup备份集群提供服务。当然如果主从集群都在一个数据中心，那么一旦出现机房被毁问题，大概率整个系统就无法提供服务了。
+
+<u>在后续课程介绍中，我们的讲解/设计，都基于一个前提假设：系统中软件工作正常、没有逻辑/配置错误、没有恶意攻击者</u>。
+
+我们只关注**处理停止失败(handling stop failures)**。
+
+## 4.2 实现难点(Challenge)
+
+> [故障转移 - 百度百科](https://baike.baidu.com/item/%E6%95%85%E9%9A%9C%E8%BD%AC%E7%A7%BB/14768924?fr=aladdin)
+>
+> 在计算机术语中，**故障转移**（英语：failover），即当活动的服务或应用意外终止时，快速启用冗余或备用的服务器、系统、硬件或者网络接替它们工作。 故障转移 (failover)与交换转移操作基本相同，只是故障转移通常是自动完成的，没有警告提醒手动完成，而交换转移需要手动进行。
+
++ 如何判断primary失败？(has primary failed?)
+
+  + **你无法直接区分发生了网络分区问题(network partition)还是实质的机器故障问题(machine failed)**
+
+    或许只是部分机器访问不到primary，但是客户端还是正常和primary交互中。你必须有一些机制保证不会让系统同时出现两个primary(假设机制中只允许正常情况下有且只有一个primary工作)。
+
+  + **(Split-brain system)脑裂场景**
+
+    假设机制不完善，可能导致两个网络分区下各自有一个primary，客户端们和不同的primary交互，最后导致整个系统内部状态产生严重的分歧（比如存储的数据、数据的版本等差异巨大）。此时如果重启整个系统，我们就不得不手动处理这些复杂的分歧状态问题（就好似手动处理git merge冲突似的）。
+
++ **如何让主备保持同步(how to keep the primary/backup in sync)**
+
+  **我们的目标是primary失败时，backup能接手primary的工作，并且从primary停止的地方继续工作。这要求backup总是能拿到primary最新写入的数据，保持最新版本**。我们不希望直接向客户端返回错误或者无法响应请求，因为从客户端角度来看，primary和backup无区别，backup就是为容错而生，理应也能正常为自己提供服务。
+
+  + 需要**保证应用中的所有变更，按照正确顺序被处理(apply changes in order)**
+  + 必须**避免/解决非决定论(avoid non-determinism)**。<u>即相同的变更在primary和backup上应该有一致的表现</u>。
+
++ **故障转移(failover)**
+
+  primary出现问题时，我们希望切换到backup提供服务。但是切换之前，我们需要保证primary已经完成了所有正在执行的工作。即我们不希望在primary仍然在响应client时突然切换backup（如果遇到网络分区等问题，会使得故障转移难上加难）。
+
+----
+
+问题：什么时候需要进行故障转移(failover)？
+
+回答：当primary失败时，我们希望切换到backup提供服务
+
+## 4.3 主备复制
+
+1. **状态转移(state transfer)**：primary正常和client交互，每次响应client之前，先生成记录checkpoint检查点，将checkpoint同步到备份backup，待backup都同步完状态后，primary再响应client。
+
+2. **复制状态机(replicated state machine，RSM)**：与状态转移类似，只是这里primary和backup之间同步的不是状态，而是操作。即primary正常和client交互，每次响应client之前，先生成操作记录operations，将operations同步到备份backup，待backup都执行完相同的操作后，primary再响应client。
+
+​	这两种方案都有被应用，共同的**要点在于，primary响应client之前，首先确保和backup同步到相同的状态，然后再响应client。这样当primary故障时，任意backup接管都能有和原primary对齐的状态**。
+
+​	**状态转移(state transfer)的缺点在于一个操作可能产生很多状态state，此时同步状态就变得昂贵且复杂。所以市面上的应用一般更乐意采用第二种方案，即复制状态机(replicated state machine，RSM)。**
+
+​	<u>前面介绍的GFS追加append流程("3.7 GFS-文件写入")，实际上也是primary将append操作通知到其他secondaries，即采用复制状态机(replicated state machine，RSM)</u>，而不是将append后的结果状态同步到其他secondaries。
+
+----
+
+问题：为什么client不需要发送数据到backup备机？
+
+回答：因为这里client发送的请求是具有**确定性的操作**，只需向primary请求就够了。主备复制机制保证primary能够将具有确定性的操作正确同步到其他backup，即系统内部自动保证了primary和backup之间的一致性，不需要client额外干预。**接下来的问题即，怎么确定一个操作是否具有确定性？在复制状态机(replicated state machine，RSM)方案中，即要求所有的操作都是具有确定性的，不允许存在非确定性的操作**。
+
+**问题：是不是存在着混合的机制，即混用状态转移(state transfer)和复制状态机(replicated state machine，RSM)？**
+
+**回答：是的。比如有的混合机制在默认情况下以复制状态机(replicated state machine，RSM)方案工作，而当集群内primary或backup故障，为此创建一个新的replica时则采用状态转移(state transfer)转移/复制现有副本的状态**。
+
+## 4.4 复制状态机RSM-复制什么级别的操作
+
+​	使用复制状态机时，我们需要考虑什么级别的操作需要被复制。有以下几种可能性：
+
++ 应用程序级别的操作(application-level operations)
+
+  比如GFS的文件append或write。如果你在应用程序级别的操作上使用复制状态机，那也意味着你的复制状态机实现内部需要密切关注应用程序的操作细节，比如GFS的append、write操作发生时，复制状态机应该如何处理这些操作。<u>一般而言你需要修改应用程序本身，以执行或作为复制状态机方法的一部分</u>。
+
++ 机器层面的操作(machine-level operaitons)，或者说processor level / coputer level
+
+  这里对应的状态state是寄存器的状态、内存的状态，操作operation则是传统的计算机指令。**这种级别下，复制状态机无感知应用程序和操作系统，只感知最底层的机器指令**。
+
+  有一种传统的进行机器级别复制的方式，比如你可以额外购买机器/处理器，这些硬件本身支持复制/备份，但是这么做很昂贵。
+
+  这里讨论的论文(VM-FM论文)**通过虚拟机(virtual machine, VM)实现**。
+
+## 4.5 通过虚拟化实现复制(VM-FT: exploit virtualization)
+
+![3](https://img-blog.csdnimg.cn/20210618165533813.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80MDkxMDYxNA==,size_16,color_FFFFFF,t_70)
+
+​	虚拟化复制对应用程序透明，且能够提供很强的一致性。早期的VMware就是以此实现的，尽管现在新版可能有所不同。缺陷就是这篇论文只支持单核，不支持多核(multi-core)。或许后来的FT支持了，但应该不是纯粹通过复制状态机实现的，或许是通过状体转移实现的，这些都只是猜测，毕竟VMware没有透露后续产品的技术细节。
+
+​	我们先简单概览一下这个系统实现。
+
+​	首先有一个虚拟机控制器(virtual machine monitor)，或者有时也被称为hypervisor，在这论文中，对应的hypervisor即VM-FT。
+
+​	当发生中断（比如定时器中断）时，作为hypervisor的VM-FT会接收到中断信号，此时它会做两件事：
+
+1. **通过日志通道将中断信号发送给备份计算机（sends it over a logging channel to a backup computer）**
+2. 将中断信号传递到实际的虚拟机，比如运行在guest space的Linux。
+
+​	同理，当client向primary发送网络数据包packet时，primary所在的硬件产生中断，而VM-FT将同样的中断通过logging channel发送给backup computer（也就是另一个VM-FT），然后将中断发送到当前VM-FT上的虚拟机(比如Linux)。另一台backup的VM-FT上运行着和priamry相同的Linux虚拟机，其也会同样收到来自backup的VM-FT的中断信号。primary虚拟机Linux之后往虚拟网卡写数据，产生中断，同样VM-FT也会将中断往backup的VM-FT发送一份。**最后就是primary上的Linux虚拟机和backup上的Linux虚拟机都往各自的虚拟网卡发送了数据，但是backup的VM-FT知道自己是backup备机，所以从虚拟网卡接收数据后什么也不会做，只有primary的VM-FT会真正往物理网卡写数据，响应client的请求**。
+
+​	论文中提到，在primary和backup两个VM-FT以外，假设还通过网络和外部一个storage存储保持通讯。外部storage通过一个flag记录primary和backup状态，记录谁是primary等信息。
+
+​	当primary和backup之间发生网络分区问题，而primary、backup仍可以与这个外部storage通信时，primary和backup互相会认为对方宕机了，都想把自己当作新的primary为外界的client提供服务。**此时，原primary和原backup都试图通过test-and-set原子操作在外部storage修改flag记录（比如由0改成1之类的），谁先完成修改修改，谁就被外部storage认定为新的primary；而后来者test-and-set操作会返回1(test-and-set会返回旧值，这里返回1而不是0，表示已经有人领先自己把0改成1了)，其得知自己是后来者，会主动放弃称为primary的机会，在论文中提到会选择终结自己(terminate itself)。**
+
+​	看上去这个方案能够避免同时出现两个primary的场景，并且把容错部分转移到了存储服务器中，这些看似都很合理，但事实并非如此。
+
+---
+
+问题：上面primary和backup的VM-FT争抢地希望通过test-and-set将flag的值从0设置成1，但这个flag是什么时候被设置成0的？
+
+回答： 首先启动一台primary时，我们希望有备份，所以启动了另一个backup。之后我们希望有一个repair计划，保证primary失败后，backup能够接替，避免之后backup也失败后就没有机器能够运行了。而在VMFT中，修复方案由人工执行。当有人接收到报警通知，就马上根据第一个VM image虚拟机镜像创建一个replica，确保它们同步。根据协议，当backup启动完成备份时，flag就被重置为0。（当1个VM-FT向VMotion请求被复制时，正在被复制的VM-FT仍可以正常地向Client提供服务，而新的replica被复制出来时，会将storage中的flag标志设置为0。）
+
+问题：primary和backup之间的logging channel中断会发生什么，又或者client访问server的通道中断了，会发生什么？
+
+回答：如果server被访问的通道都断开了，那么即使primary、backup本身工作正常，可server也不会再对client提供服务，需要等待网络恢复正常，这是一个灾难性的例子。
+
+## 4.6 差异来源(Divergence sources)
+
+​	如果前面primary执行的指令都是确定性的，那么primary和backup无疑可以保证拥有相同的状态。但是不可避免的是可能出现一些非确定性的事件，我们需要考虑如何处理。我们的**目标即，将每一条非确定性的指令(non-deterministic instruction)变成确定性指令(deterministic instruction)**。
+
++ 非确定性的指令(non-deterministic instruction)
+
+  <u>比如获取时间的指令，我们不可能保证primary和backup都在同一时间执行，返回值一般来说会不同</u>。
+
++ 网络包接收/时钟中断(input packets / timer interrupters)
+
+  比如网络包输入时导致中断，primary和backup在原本CPU执行流中插入中断处理的位置可能不同。比如primary在第1～2条指令执行的位置插入网络包的中断处理，而backup在第2～3条指令执行的位置插入中断处理，这也有可能导致后续primary和backup的状态不一致。所以我们希望这里数据包产生的中断（或者时钟中断），在primary和backup相同的CPU指令流位置插入执行中断处理，确保不会产生不一致的状态。
+
++ 多核(multi-core)
+
+  并发也是一个导致差异（primary和backup不一致）的潜在因素。而这篇论文的解决方案即不允许多核。比如，在primary上多核的两个线程竞争lock，我们需要保证backup上最后获取到lock的线程和primary的保持一致，这需要很多额外的复杂机制去实现这一点，该论文显然不想处理这个问题。这里讲师也不明确VMware在后来的产品是怎么保证多核机器的复制的，所以后续不讨论multi-core的场景。
+
+​	论文假设大多数操作指令都是确定性的，只有出现这里谈论的一些非确定性的操作发生时，才需要考虑如何处理primary和backup之间的同步问题。
+
+## 4.7 VM-FT的中断处理
+
+​	根据前面的讨论，可以知道中断是一个非确定性的差异来源，我们需要有机制保证primary和backup处理中断后仍保持状态一致。
+
+​	这里VM-FT是这样处理的，**当接受到中断时，VM-FT能知道CPU已经执行了多少指令（比如执行了100条指令），并且计算一个位置（比如100），告知backup之后在指令执行到第100条的时候，执行中断处理程序。大多数处理器（比如x86）支持在执行到第X条指令后停止，然后将控制权返还给操作系统（这里即虚拟机监视器）**。
+
+​	通过上面的流程，VM-FT能保证primary和backup按照相同的指令流顺序执行。当然，**这里backup会落后一条message（因为primary总是领先backup执行完需要在logging channel上传递的消息）**。
+
+---
+
+问题：确定性操作，就不需要通过日志通道(logging channel)同步吗？
+
+回答：是的，不需要。因为它们都有一份所有指令的复制，只有非确定性的指令才需要痛殴logging channel同步。
+
+## 4.8 VM-FT的非确定性指令(non-deterministic instruction)处理
+
+​	对于非确定性的指令，VM-FT基本上是这样处理的：
+
+​	**在启动Guest space中的Linux之前，先扫描Linux中所有的非确定性指令，确保把它们转为无效指令(invalid instruction)。当Guest space中的Linux执行这些非确定性的指令时，它将控制权通过trap交给hypervisor，此时hypervisor通过导致trap的原因能知道guest在执行非确定的指令，它会模拟这条指令的执行效果，然后记录指令模拟执行后的结果，比如记录到寄存器a0中，值为221。而backup备机上的Linux在后续某个时间点也会执行这条非确定性指令，然后通过trap进入backup的hypervisor，通常backup的hypervisor会等待，直到primary将这条指令模拟执行后的结果同步给自己(backup)，然后backup就能和primary在这条非确定性指令执行上拥有一致的结果**。
+
+---
+
+问题：扫描guest space的操作系统拥有的不确定性指令，发生在创建虚拟机时吗？
+
+回答：是的，通常认为是在启动引导虚拟机时(when it boot to the VM)。
+
+问题：如果这里有一条完全确定的指令，那么backup有可能执行比primary快吗？
+
+回答：论文中有一个完整的结论，这里只需要primary和bakcup能有大致相同的执行速度（谁快一点谁慢一点影响不大），通常让primary和backup具有相同的硬件环境来实现这一点。
+
+## 4.9 VM-FT失败场景处理
+
+​	这里举例primary故障的场景。
+
+​	比如primary本来维护一个计数器为10，client请求将其自增到11，但是primary内部自增了计数器到11，但是响应client前正好故障了。如果backup此时接手，其执行完logging channel里要求同步的指令，但是自增到11这个并没有反映到bakcup上。如果client再次请求自增计数器，其会获取到11而不是12。
+
+​	为了避免出现上诉这种场景，VM-FT指定了一套**输出规则(Output rule)**。 实际上上诉场景并不会发生。**primary在响应client之前，会通过logging channel发送消息给backup，当backup确定接受到消息且之后能执行相同的操作后，会发送ack确认消息给primary。primary收到ack后，确认backup之后能和自己拥有相同的状态（就算backup有延迟慢了一点也没事，反正backup可以通过稳定存储等手段记录这条操作，之后确保执行后未来能和primary达到相同的状态），然后才响应client**。
+
+​	在任何复制系统(replication system)，都能看到类似输出规则(output rule)的机制（比如在raft或者zookeeper论文中）。
+
+## 4.10 VM-FT性能问题
+
+​	因为VM-FT的操作都基于机器指令或中断的级别上，所以需要牺牲一定的性能。
+
+​	论文中统计在primary/backup模式下运行时，性能和平时单机差异不会太大，保持在0.94~0.98的水平。而当网络输入输出流量很高时，性能下降很明显，下降将近30%。这里导致性能下降的原因可能是，primary处理大量数据包时，需要等待backup也处理完毕。
+
+​	**正因为在指令层面(instruction level)使用复制状态机性能下降比较明显，所以现在人们更倾向于在应用层级(application level)使用复制状态机。**<u>但是在应用层级使用复制状态机，通常需要像GFS一样修改应用程序</u>。
+
+----
+
+问题：前面举例client发请求希望primary中维护的计数器自增的操作，看似确定性操作，为什么还需要通过logging channel通知bakcup？
+
+回答：因为client请求是一个网络请求，所以需要通知backup。并且这里primary会确定backup接受到相同的指令操作回复自己ack后，才响应client。
+
+问题：VM-FT系统的目标，是为了帮助提高服务器的性能吗？上诉这些机制看着并不简单且看着会有性能损耗。或者说它是为了帮助分发虚拟机本身？
+
+回答：这一套方案，仅仅是为了让运行在服务器上的应用拥有更强的容错性。虽然在机器指令或中断级别上做复制比起应用级别上性能损耗高，但是这对于应用程序透明，不要求修改应用程序代码。
+
+问题：关于输出规则(Output rule)，客户端是否可能看到相同的响应两次？
+
+回答：可能，客户端完全有可能收到两次回复。但是论文中认为这种情况是可容忍的，因为网络本身就可能产生重复的消息，而底层TCP协议可以处理这些重复消息。
+
+问题：如果primary宕机了几分钟，backup重新创建一个replica并通过test-and-set将storage的flag从0设置为1，自己成为新的primary。然后原primary又恢复了，这时候会怎么样？
+
+回答：原primary会被clean，terminate自己。
+
+问题：上面的storage除了flag以外，只需要存储其他东西吗？比如现在有多个backup的话。
+
+回答：论文这里的方案只针对一个backup，如果你有多个backup，那么你还会遇到其他的问题，并且需要更复杂的协议和机制。
+
+问题：处理大量网络数据包时，primary只会等待backup确认第一个数据包吗？
+
+回答：不是，primary每处理一个数据包，都会通过logging channel同步到backup，并且等待backup返回ack。满足了输出规则(output rule)之后，primary才会发出响应。这里它们有一些方法让这个过程尽量快。
+
+问题：关于logging channel，我看论文中提到用UDP。那如果出现故障，某个packet没有被确认，primary是不是直接认为backup失败，然后不会有任何重播？
+
+回答：不是。因为有定时器中断，定时器中断大概每10ms左右触发一次。如果有包接受失败，primary会在心跳中断处理时尝试重发几次给backup，如果等待了可能几秒了还是有问题，那么可能直接stop停止工作。
