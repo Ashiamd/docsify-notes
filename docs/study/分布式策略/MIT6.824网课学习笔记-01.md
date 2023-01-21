@@ -1075,3 +1075,325 @@ RPC semantics under failures (RPC失败时的语义) ：
 问题：关于logging channel，我看论文中提到用UDP。那如果出现故障，某个packet没有被确认，primary是不是直接认为backup失败，然后不会有任何重播？
 
 回答：不是。因为有定时器中断，定时器中断大概每10ms左右触发一次。如果有包接受失败，primary会在心跳中断处理时尝试重发几次给backup，如果等待了可能几秒了还是有问题，那么可能直接stop停止工作。
+
+# Lecture5 容错-Raft(Fault Tolerance-Raft) 
+
+> [Raft 协议原理详解，10 分钟带你掌握！ - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/488916891)	<= 图片很多，推荐阅读
+>
+> [Raft 协议 - 简书 (jianshu.com)](https://www.jianshu.com/p/c9024d05887f) <= 有动图，还不错
+
+​	这章节主要介绍Raft协议，它是分布式复制协议(distributed replication protocol)示例的核心组件之一。
+
+## 5.1 单点故障(single point of failure)
+
+​	前面介绍过的复制系统，都存在单点故障问题(single point of failure)。
+
++ mapreduce中的cordinator
++ GFS的master
++ VM-FT的test-and-set存储服务器storage
+
+​	而上诉的方案中，采用单机管理而不是采用多实例/多机器的原因，是为了避免**脑裂(split-brain)**问题。
+
+​	不过大多数情况下，单点故障是可以接受的，因为单机故障率显著比多机出现一台故障的概率低，并且重启单机以恢复工作的成本也相对较低，只需要容忍一小段时间的重启恢复工作。
+
+## 5.2 脑裂问题(split-brain)
+
+​	Raft是避免单点故障问题的一种方案，在介绍Raft之前，我们**先了解下为什么单机管理可以避免严重的脑裂问题，尽管单机管理会有单点故障问题**。
+
+​	以VM-FT的test-and-set存储服务器storage举例。假设我们复制storage服务器，使其有两个实例机器S1、S2。（即打破单机管理的场景，看看简单的多机管理下有什么问题）
+
+​	此时C1想要争取称为Primary，于是向S1和S2都发起test-and-set请求。假设因为某种原因，S2没有响应，S1响应，成功将0改成1，此时C1可能直接认为自己成为Primary。
+
+​	这里S2没有响应可以先简单分析两种可能：
+
+1. S2失败/宕机了，对所有请求方都无法提供服务
+
+   如果是这种情况，那么C1成为Primary不会有任何问题，S2就如同从来不曾存在，任何其他C同样只能访问到S1，他们都会知道自己无法成为Primary，并且整个系统只会存在C1作为Primary。
+
+2. S2和C1之间产生了网络分区(network partition)，仅C1无法访问到S2
+
+   这时候如果存在C2也向S1和S2发出请求，此时S1虽然将0改成1会失败，但是S2会成功。如果我们的协议不够严谨，这里C2会认为自己成为了Primary，导致整个系统存在两个Primary。这也就是严重的脑裂问题。
+
+​	**产生这种问题的原因在于，对于请求方，无法简单地判断上诉两种情况，因为对他们来说两种情况的表现都是一样的**。
+
+​	**为避免出现脑裂，我们需要先解决网络分区问题**。	
+
+## 5.3 大多数原则(majority rule)
+
+​	<u>诸如Raft一类的协议用于解决**单点故障**问题，同时也用于解决**网络分区**</u>问题。这类解决方案的基本思想即：**大多数原则(majority rule)**，**简单理解就是少数服从多数**。
+
+​	<u>这里的majority指的是整个系统中无论机器的状态如何，只要获取到大于一半的赞成，则认为获取到majority。比如系统中有5台机器，2台宕机了，5台的一半为2.5，但2.5不为有效值，即获取3台机器赞成，认为获取到majority；如果5台中宕机3台，那么没有人能获取到至少3台的赞成，即无法得到majority</u>。
+
+​	同样以VM-FT的test-and-set存储服务器storage举例，这次storage不是复制出2个实例，而是总共复制出3个实例，S1、S2、S3。
+
+​	此时C1同时向S1、S2、S3请求test-and-set，其中S1和S2成功将0改成1，S3因为其他问题没有响应，但是我们不关系为什么。这里按照majority rule，只要3个S中有2个给出成功响应，我们就认为C1能够成为Primary。此时就算同时有C2向S1、S2、S3发起请求，就算S3成功了，C2根据majorty rule，3台只成功1台，不能成为Primary。
+
+​	<u>为什么根据majority rule，这里就不会出现脑裂，因为能确保多个C之间的请求有**重叠部分(overlap)**，这样根据majority rule，多个C最后也能达成一致，**因为只有1个C有可能成为多数的一方，其他C只能成为少数的一方**</u>。
+
+​	在之后准备介绍的Raft，和这里描述的工作流程基本一致。
+
++ 在majority rule下，尽管发生网络分区，只会一个拥有多数的分区，不会有其他分区具有多数，只有拥有多数的分区能继续工作（比如这里3台被拆成1台、2台的分区，只有和后者成功通信的能继续工作）。
++ **而如果极端情况下所有分区都不占多数（ 比如这里3台被拆成1台、1台、1台的分区），那么整个系统都不能运行**。
+
+​	上诉3台的场景，只能容忍1台宕机，如果宕机2台，那么任何人都无法达到majorty的情况。**这里通过2f+1拓展可容忍宕机的机器数，f表示可容忍宕机的机器数量**。**2f+1，即使宕机了f台，剩下的f+1>f，仍然可以组成majority完成服务**。
+
+​	例如，当f=2时，表示系统内最多可容忍2台机器处于宕机状态，那么至少需要部署5台服务器（2x2+1=5）。
+
+---
+
+问题：这里大多数是否包括参与者服务器本身，假设是raft，服务器会考虑自身吗？
+
+回答：是的，通常我们看到的raft，candidate会直接vote自己。而leader处理工作时，也会vote记录自己。
+
+## 5.4 Raft历史发展
+
+​	在1980s～1990s，基本不存在诸如majority的协议，所以一直存在单点故障的问题。
+
+​	而在1990s出现了两种被广泛讨论协议，但是由于当时的应用没有自动化容错的需求，所以基本没有被应用。但近15年来(2000s~2020s)大量商用产品使用到这些协议：
+
++ Paxos
++ View-Stamped replication (也被称为VR)
+
+​	我们将要讨论的是Raft，大概在2014左右有相关的论文，它应用广泛，你可以用它来实现一个完全复制状态机(complete replicated state machine)。
+
+## 5.5 使用Raft构造复制状态机RSM(replicated state machine)
+
+​	这里raft就像一个library应用包。假设我们通过raft协议构造了一个由3台机器组成的K/V存储系统。
+
+系统正常工作时，大致流程如下：
+
++ Client向3台机器中作为leader的机器发查询请求
++ leader机器将接收到的请求记录到底层raft的顺序log中
++ 当前leader的raft将顺序log中尾部新增的log记录通过网络同步到其他2台机器
++ 其他两台K/V机器的raft成功追加log记录到自己的顺序log中后，回应leader一个ACK
++ leader的raft得知其他机器成功将log存储到各自的storage后，将log操作反映给自己的K/V应用
++ K/V应用实际进行K/V查询，并且将结果响应给Client
+
+系统出现异常时，发生如下事件：
+
++ Client向leader请求
++ leader向其他2台机器同步log并且获得ACK
++ leader准备响应时突然宕机，无法响应Client
++ <u>其他2台机器重新选举出其中1台作为新的leader</u>
++ Client请求超时或失败，重新发起请求，**系统内部failover故障转移**，所以这次Client请求到的是新leader
++ 新leader同样记录log并且同步log到另一台机器获取到ACK
++ 新leader响应Client
+
+​	<u>这里可以想到的是，剩下存活的两台机器的log中会有重复请求，而我们需要能够检测(detect)出这些重复请求</u>。
+
+​	上面就是用Raft实现复制状态机的一种普遍风格/做法。
+
+---
+
+问题：访问leader的client数量通常是多少？
+
+回答：我想你的疑问是系统只有1个leader的话，那能承受多少请求量。<u>实际上，具体的系统设计还会采用shard将数据分片到多个raft实例上，每个shard可以再有各自的leader，这样就可以平均请求的负载到其他机器上了</u>。
+
+问题：旧leader宕机后，client怎么知道要和新leader通信？
+
+回答：client中有系统中所有服务器的访问列表，这里举例中有3个服务器。当其中一台请求失败时，client会重新随机请求3台中的1台，直到请求成功。
+
+## 5.6 Raft概述
+
+​	这里我们重新概述一下Raft流程。首先这里我们用3台Raft机器，其中一台为leader，另外两台为follower。leader和follower都在storage维护着log，所有K/V的put/get操作都会被记录到log中。
+
++ Client请求leader，假设是get请求
++ leader将get操作记录到自己的log尾部
++ leader将新的log条目发送给其他2个follower
++ 此时follower1成功将log条目追加到自己本地的log中，回应leader一个ack
++ 此时leader和follower1共2台机器成功追加log，达到majority，于是leader可以进行commit，将操作移交给上层的kv服务。（这里即使宕机了一台，之后重新选举，包含最后操作的服务器将当选成为新的leader，比如原leader或follower1将当选，所以服务能继续正常提供）
++ follower2由于网络问题，此时才回应leader一个ack。从follower角度其并不知道leader已经commit了操作，它只知道leader向自己同步了log并且需要回应ack。
++ 由于leader进行了commit，leader的上层kv会响应Client对应get请求的查询结果。
+
+​	如果上面进行的是一个append操作，那么leader的raft记录log到本地后，leader同步log到其他follower后，如果leader进行了commit，follower也需要将log记录反馈给各自上层的k/v服务，使得append这个写操作生效。
+
+---
+
+问题：如果log从leader同步到其他follower时，leader宕机了，会怎么样？
+
+回答：会重新发生选举，而拥有最新操作log的机器成为新leader后会将追加的log条目传递给其他follower，这样就保证这些机器都拥有最新的log了。
+
+## 5.7 Raft的log用途
+
+​	log的原因/用途：
+
++ 重传(retranmission)：leader向follower同步消息时，消息可能传递失败，所以需要log记录，方便重传
++ **顺序(order)：主要原因，我们需要被同步的操作，以相同的顺序出现在所有的replica上**
++ 持久化(persistence)：持久化log数据，才能支持失败重传，重启后日志恢复等机制
++ **试探性操作(space tentative)**：比如follower接收到来自leader的log后，并不知道哪些操作被commit了，可能等待一会直到明确操作被commit了才进行后续操作。我们需要一些空间来做这些试探性操作(tentative operations)，而log很合适。
+
+​	**尽管中间有些时间点，可能有些机器的log是落后的。但是当一段时间没有新log产生时，最终这些机器的log会同步到完全相同的状态(logs identical on all servers)**。并且因为这些log是有顺序的，意味着上层的kv服务最终也会达到相同的状态。
+
+## 5.8 Raft的log格式
+
+​	在log中有很多个log entry。每个log entry被log index、leader term唯一标识。
+
+​	每个log entry含有以下信息：
+
++ command（接受到的指令、操作）
++ leader term（当前系统中leader的任期期限）
+
+​	从上面log entry的格式，可以引出两点信息：
+
++ elect leader：我们需要选举出特定任期的leader
++ ensue logs become indentical：确保最后所有机器的log能达到一致的状态
+
+----
+
+问题：没有提交(uncommit)的日志条目(log entries)会被覆盖吗？
+
+回答：是的，可能被覆盖，详情后续会谈。
+
+## 5.9 Raft选举(election)
+
+​	假设这里有3台机器，1台leader，2台follower，它们都处于term10。
+
++ 某一时刻，leader和其他2follower产生了网络分区
+
++ 2个follower重新进行选举，原因是它们错过了leader的**心跳通信(heartbeats)**，而follower维护的election timer超时了，表明需要重新选举。
+
+  当leader没有收到来自client的新消息时，leader也仍会定期发送heartbeat到其他所有followers，告知自己仍是leader。这也算一种append log，但是不会被实际记录到log中。在heartbeat中，leader会携带一些自己log状态的信息，比如当前log应该多长，最后一条log entry应该是什么样的，帮助其他followers同步到最新状态。
+
++ 假设follower1的election timer超时更早，其将term自增，从term10变成term11，并且发出选举，先自己投自己一票，然后向原leader和follower2请求选票
+
++ follower2响应follwer1，投出赞成票，原leader由于网络分区问题没有响应
+
++ follower1成为新的leader
+
++ client将请求failover故障转移到新的leader上，即follower1，后续请求发送至follower1
+
+​	**也许有人会问，如果leader在follower1成为新leader时，仍然有client请求到leader上，并且leader又重新恢复了和原follower1、原follower2的网络连接了，会不会导致系统出现两个leader，即脑裂问题？**
+
+​	**实际上不会出现脑裂(split-brain)问题**。如下分析：
+
++ 原leader接收到client的请求，尝试发log给原follwer1和原follower2
++ 原follower1（新leader）收到log后，会拒绝追加log到本地log中，并回复原leader新的term11
++ 原leader接收到term11后，对比自己的term10会意识到自己不再是leader，接下去要么直接成为follower，要么重新发起选举，但不会继续作为leader提供服务，不导致脑裂
+
++ client此时可能得到失败或拒绝服务等响应，然后重新向新leader(原follower1)发起请求
+
+## 5.10 Raft-分裂选举问题(split vote)
+
+​	在Raft中规定每个term只能投票一次，而前面的原leader网络分区后，follower1和follower2可能产生分裂选举(split vote)的问题：
+
++ 由于巧合，follower1和follower2的election timer几乎同一时刻到期，它们都将term由10改成11
++ follower1和follower2在term11都vote自己，然后向对方发起获取投票的请求
++ follower1和follower2因为都在term11投票过自己了，所以都会拒绝对方的拉票请求，这导致双方都成为不了majority，没有人成为新leader
++ 也许有个选举超时时间节点，follower1和follower又继续将term11增加到12，然后重复上诉流程。**如果此时没有人为介入操作，上面重复的term增加、vote自己、没人成为leader，超时后又进行新一轮election的过程可能一直重复下去**
+
+​	**<u>为了避免陷入上面的选举死循环，通常election超时时间是随机的(election timeout is randomized)</u>**。
+
+​	论文中提到，它们设置election timer时，选择150ms到300ms之间的随机值。每次这些follower重制自身的election timeout时，会选择150ms～300ms之间的一个随机数，只有当计时器到点时，才会发起选举eleciton。<u>这样上诉流程中总有一刻follower1或者follower2因为timer领先到点，最终成功vote自己且拉票让对方vote自己，达到majority条件，优胜成为leader</u>。
+
+## 5.11 Raft-选举超时(election timeout)
+
+​	选举超时的时间，应该设置成大概多少才合适？
+
++ **略大于心跳时间(>= few heartbeats)**
+
+  如果选举超时比心跳还短，那么系统将频繁发起选举，而选举期间系统对外呈现的是阻塞请求，不能正常响应client。因为election时很可能丢失同步的log，一直频繁地更新term，不接受旧leader的log（旧leader的term低于新term，同步log消息会被拒绝）
+
++ **加入一些随机数(random value)**
+
+  加入适当范围的随机数，能够避免无限循环下去的分裂选举(split vote)问题。random value越大，越能够减少进行split vote的次数，但random value越大，也意味着对于client来说，整个系统停止提供对外服务的时间越长（对外表现和宕机差不多，反正选举期间无法正常响应client的请求）
+
++ **尽量短(short enough that down time is short)**
+
+  因为选举期间，对外client表现上如同宕机一般，无法正常响应请求，所以我们希望eleciton timeout能够尽量短
+
+​	Raft论文进行了大量实验，以得到250ms～300ms这个在它们系统中的合理值作为eleciton timeout。
+
+## 5.12 Raft-vote需记录到稳定storage
+
+​	这里提一个选举中的细节问题。假设还是leader宕机，follower1和follower2中的follower1发起选举。follower1会先vote自己，然后发起拉票请求希望follower2投票自己。
+
+​	**这里follower1应该用一个稳定的storage记录自己的vote历史记录，有人知道为什么吗？原因是避免重复vote**。假设follower1在vote自己后宕机一小段时间后恢复，我们需要避免follower1又vote自己一次，不然follower1由于vote过自己两次，直接就可以无视其他follower的投票认为自己成为了leader。
+
+​	**所以，为了保证每个term，每个机器只会进行一次vote行为，以保证最后只会产生一个leader，每个参选者都需要用稳定的storage记录自己的vote行为**。
+
+---
+
+问题：这里需要记录vote之前当前机器自身是follower、leader或者candidate吗？
+
+回答：假设机器宕机后恢复，且仍然在选举，它可以在选举结束后根据vote的结果知道自己是leader还是follower。（注意，vote情况记录在稳定的storage中，所以宕机恢复后也能继续选举流程。大不了就是选举作废，term增加又进行新一轮选举）
+
+## 5.13 日志分歧(log diverge)
+
+​	这里讨论一下不同raft server中log出现分歧的问题。
+
+​	一个简单容易想到的场景即S1～S3都在log index 10～11有一致的log记录，而S1作为leader率先在log index12的位置写入log后宕机，之后S2、S3拿不到这个log记录。这个场景比较简单，我们暂不讨论。
+
+​	一个复杂的场景如下：
+
++ S1在log index10位置有term3的记录，log index11～12暂无记录
++ S2在log index10位置有term3的记录，log index11有term3记录，log index12有term4记录
++ S3在log index10位置有term3的记录，log index11有term3记录，log index12有term5记录
+
+​	**这里首先需要讨论的是，在raft协议下，有可能出现S2和S3在相同log index12下出现不同term记录的情况吗？**
+
+​	答案是有可能。比如可以有如下推理
+
++ S2作为leader向S1和S3同步term3的log记录，于是S1～S3都在index10有term3记录
+
++ S1某一时刻宕机了，于是没有拿到后续log index11～12的记录
++ S2发起选举，term从3改成4，并且成功成为term4的leader
++ S2接收到新的请求，记录到log中，所以log index12出现term4记录
++ S2同步term4 log到S3之前，宕机
++ S3重新发起选举，此时也许S2恢复了，S3随后当选成为term5的leader（因为S2恢复，S3获取2票达到majority条件）
++ client向S3请求，S3记录term5的log，于是有log index12出现term5记录
+
+---
+
+![img](https://pic3.zhimg.com/80/v2-473c0c978279aadd20c01654426aad8a_1440w.webp)
+
+这里进行一个复杂场景的讨论，如果原本系统中有某个server宕机，剩余server中谁会成为leader？
+
+<u>下面用（X~Z，Y）表示log index X~Z的位置有term Y的记录</u>
+
+原leader（已宕机，这里不考虑能恢复的情况），原leader仅比a多一条log记录（10，6）
+
++ a: (1~3, 1); (4~5, 4); (6~7, 5); (8~9, 6)
++ b: (1~3, 1); (4, 4);
++ c: (1~3, 1); (4~5, 4); (6~7, 5); (8~11, 6)
++ d: (1~3, 1); (4~5, 4); (6~7, 5); (8~10, 6); (11~12, 7)
++ e: (1~3, 1); (4~7, 4);
++ f:  (1~3, 1); (4~6, 2); (7~11, 3);
+
+​	这里排出b、e、f，因为a～f都不宕机的情况下，b、e、f拥有的term都很小，绝对不可能获取到majority条件的选票数。<u>因为term较大的server会拒绝其他term小的server的拉票请求</u>。
+
+​	**这里有可能作为新leader的candidate只有a、c、d**。
+
+​	**但是只有d最后会当选成leader，因为a、c、d除了投票自己后，还会向其他服务器拉票，一旦a、c发现d拥有最大的term之后，都会放弃成为leader，退让成为follower**。（因为a、c向d拉票的时候，会被d拒绝，并且d会告知a、c自己拥有更大的term8。这里是term8而不是term7，因为d会先将term改成8，之后vote自己，然后再向其他server拉票，所以a和c向自己拉票的时候会收到d的拒绝和被告知d已经达到term8了。）
+
+​	**且这里有个注意点，这里前提是原本leader宕机，而且原本leader记录其实宕机前的部分和d是对齐的。原本leader的所有log都是commited的**。
+
+​	**d当选leader后，会要求其他的server的log和自己对齐，不一致/有分歧的部分会按照d的log覆盖，保证之后系统中所有的server的log对齐。**
+
+---
+
+问题：上面a～f争抢leader的场景中，为什么d有term7记录，它原本是leader吗？
+
+回答：d至少是term7的leader，否则它不会有term7的log记录。
+
+问题：前面小节提到leader同步log给其他follower后，会进行commit，这里会不会出现leader自己先commit了，结果崩溃了，其他follower还没有commit？
+
+回答：不会。因为leader会等待确认了其他follower能commit了，再执行commit，然后才会告知上层的KV服务对应的client请求消息。
+
+**追问：这里有个问题，leader不发送其他消息的话，仅发送同步log消息给其他followers，那又怎么知道其他follower能够commit了？因为leader必须等大多数follower能够commit后才会执行自己的commit。**
+
+**回答：我们有说过可以执行一些试探性的操作，这里可以有tentative的log传输，来确认其他follower是否能够commit。（我个人猜测，log同步传输后，follower接收到log并写入storage回应ACK。之后leader准备commit之前，又发送tentative试探性消息，而大多数follower收到消息，先将tentative记录到log中表示自己随时可以commit，然后响应ACK。此时大多数follower回应leader可以commit了，尽管follower可能还没有完成commit操作，但是leader可以进行commit了。因为此时尽管followers中出现宕机，其恢复时通过log也会知道自己在commit状态中，需要把收到的log进行commit。）**
+
+问题：如果leader追加了很多log，然后崩溃了，那么后续选举出来的新leader，会把旧leader同步过来的log进行commit吗？
+
+回答：可能会，也可能不会。这里场景比较复杂，就算新leader没有做commit，即不响应client也没事。因为KV服务的client会认为服务失败（毕竟election阶段无法对外提供服务），client会重新发起请求，所以新leader会插入一条新的log entry，之后再执行log同步、commit的完整流程。
+
+问题：raft和其他课前提到的算法，有什么可以优化的点吗？比如使用批处理之类的，看起来raft很适合使用批处理，因为leader可以一次再log中放入不止一个log entry。或者说raft在性能角度有什么劣势吗？
+
+回答：首先，raft并没有采用批处理来一次插入积攒的多个log entry，也许是因为这会让协议变得更复杂。也许像你所说，在插入log entry的地方增加批处理能提高性能，但是Raft没这么做，仅此而已。可以认为Raft有很多可以提高性能的潜在手段，但是Raft没有实现它们。（因为这个提问者表示自己在实验中尝试通过批处理的形式插入段时间内积攒的log entry，并且表示暂时没遇到什么问题）。
+
+问题：看上去如果出现log丢失，可能client就无法得到响应，所以Raft是不是只适用于能够允许log丢失的场景或服务？
+
+回答：是的，<u>一般来说需要client能够支持重试机制。并且如果有重复的请求，就如前面提到的，需要Raft的上层服务维护**重复检测表(duplicate detection table)**来保证重复请求不会导致错误的业务结果</u>。
+
+# Lecture6 Lab1 Q&A
+
