@@ -1076,7 +1076,7 @@ RPC semantics under failures (RPC失败时的语义) ：
 
 回答：不是。因为有定时器中断，定时器中断大概每10ms左右触发一次。如果有包接受失败，primary会在心跳中断处理时尝试重发几次给backup，如果等待了可能几秒了还是有问题，那么可能直接stop停止工作。
 
-# Lecture5 容错-Raft(Fault Tolerance-Raft) 
+# Lecture5 容错-Raft(Fault Tolerance-Raft) -1
 
 > [Raft 协议原理详解，10 分钟带你掌握！ - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/488916891)	<= 图片很多，推荐阅读
 >
@@ -1317,7 +1317,11 @@ RPC semantics under failures (RPC失败时的语义) ：
 
 回答：假设机器宕机后恢复，且仍然在选举，它可以在选举结束后根据vote的结果知道自己是leader还是follower。（注意，vote情况记录在稳定的storage中，所以宕机恢复后也能继续选举流程。大不了就是选举作废，term增加又进行新一轮选举）
 
-## 5.13 日志分歧(log diverge)
+## 5.13 Raft-日志分歧(log diverge)
+
+> [7.2 选举约束（Election Restriction） - MIT6.824 (gitbook.io)](https://mit-public-courses-cn-translatio.gitbook.io/mit6-824/lecture-07-raft2/7.2-xuan-ju-yue-shu-election-restriction)
+>
+> 如果你去看处理RequestVote的代码和Raft论文的图2，当某个节点为候选人投票时，节点应该将候选人的任期号记录在持久化存储中。（换言之，就算当前server的term记录落后于其他server，也可以通过通信知道下一次选举term值应该是多少，比如S1的term为5，但是S2的term为7，S1下次选举时也知道要从term8开始，而不是term6）
 
 ​	这里讨论一下不同raft server中log出现分歧的问题。
 
@@ -1363,11 +1367,11 @@ RPC semantics under failures (RPC失败时的语义) ：
 
 ​	**这里有可能作为新leader的candidate只有a、c、d**。
 
-​	**但是只有d最后会当选成leader，因为a、c、d除了投票自己后，还会向其他服务器拉票，一旦a、c发现d拥有最大的term之后，都会放弃成为leader，退让成为follower**。（因为a、c向d拉票的时候，会被d拒绝，并且d会告知a、c自己拥有更大的term8。这里是term8而不是term7，因为d会先将term改成8，之后vote自己，然后再向其他server拉票，所以a和c向自己拉票的时候会收到d的拒绝和被告知d已经达到term8了。）
+​	*下面这些内容，属于我自己的猜想，和这个网课无关*
 
-​	**且这里有个注意点，这里前提是原本leader宕机，而且原本leader记录其实宕机前的部分和d是对齐的。原本leader的所有log都是commited的**。
+​	这里a、c、d都可能当选，因为最新的term记录在每个server都会有记录，所以下一次不管谁发起选举，都会从term8开始发起选举（或者说就算一开始不知道，只要和d通信过，其他server就会知道下一次选举的term应该是7之后的8，因为通信完一圈，只有d有目前最大的term值）。只要谁先获取到足够多的选票，谁就有可能成为下一个leader。
 
-​	**d当选leader后，会要求其他的server的log和自己对齐，不一致/有分歧的部分会按照d的log覆盖，保证之后系统中所有的server的log对齐。**
+​	~~**但是只有d最后会当选成leader，因为a、c、d除了投票自己后，还会向其他服务器拉票，一旦a、c发现d拥有最大的term之后，都会放弃成为leader，退让成为follower**。（因为a、c向d拉票的时候，会被d拒绝，并且d会告知a、c自己拥有更大的term8。这里是term8而不是term7，因为d会先将term改成8，之后vote自己，然后再向其他server拉票，所以a和c向自己拉票的时候会收到d的拒绝和被告知d已经达到term8了。）**且这里有个注意点，这里前提是原本leader宕机，而且原本leader记录其实宕机前的部分和d是对齐的。原本leader的所有log都是commited的**。**d当选leader后，会要求其他的server的log和自己对齐，不一致/有分歧的部分会按照d的log覆盖，保证之后系统中所有的server的log对齐。**~~
 
 ---
 
@@ -1396,4 +1400,216 @@ RPC semantics under failures (RPC失败时的语义) ：
 回答：是的，<u>一般来说需要client能够支持重试机制。并且如果有重复的请求，就如前面提到的，需要Raft的上层服务维护**重复检测表(duplicate detection table)**来保证重复请求不会导致错误的业务结果</u>。
 
 # Lecture6 Lab1 Q&A
+
+# Lecture7 容错-Raft(Fault Tolerance-Raft) -2
+
++ Log divergence
++ Log catch up
++ Persistence
++ Snapshots
++ Linearization
+
+## 7.1 Raft-leader选举规则
+
+> [7.2 选举约束（Election Restriction） - MIT6.824 (gitbook.io)](https://mit-public-courses-cn-translatio.gitbook.io/mit6-824/lecture-07-raft2/7.2-xuan-ju-yue-shu-election-restriction)
+>
+> 在Raft论文的5.4.1，Raft有一个稍微复杂的选举限制（Election Restriction）。这个限制要求，在处理别节点发来的RequestVote RPC时，需要做一些检查才能投出赞成票。这里的限制是，节点只能向满足下面条件之一的候选人投出赞成票：
+>
+> 1. 候选人最后一条Log条目的任期号**大于**本地最后一条Log条目的任期号；
+> 2. 或者，候选人最后一条Log条目的任期号**等于**本地最后一条Log条目的任期号，且候选人的Log记录长度**大于等于**本地Log记录的长度
+
+Leader election rule：
+
++ **majority：大多数原则**，即至少获取整个系统内大于全部机器数量一半的选票（包括自己，且每人只能投一次票，宕机的机器也算在系统机器总数内。如果剩余机器数压根凑不到刚好大于一半的机器数，则没有人能够成功获选）
++ **at-least-up-to-date：能当选的机器一定是具有最新term的机器**
+
+## 7.2 Raft-日志覆写同步(未优化版本)Log catch up(unoptimized)
+
++ **nextIndex**：所有raft节点都维护nextIndex乐观的变量用于<u>记录下一个需要填充log entry的log index</u>。这里说乐观，因为当leader当选时，leader会初始化nextIndex值为当前log index值+1，表示认为leader自身的log一定是最新的
++ **matchIndex**：leader为所有raft节点(包括leader自己)维护一个悲观的matchIndex用于记录leader和其他follower从0开始往后最长能匹配上的log index的位置+1，<u>表示leader和某个follower在matchIndex之前的所有log entry都是对齐的</u>。这里说悲观，因为leader当选时，leader会初始化matchIndex值为0，表示认为自身log中没有一条记录和其他follower能匹配上。随着leader和其他follower同步消息时，matchIndex会慢慢增加。**leader为每个自己的follower维护matchIndex，因为平时根据majority规则，需要保证log已经同步到足够多的followers上**。
+
+​	假设这里有S1～S3三台服务器组成Raft集群，每个Server的log记录如下，(X, Y)表示在log index X有log entry term=Y的log记录：
+
++ S1：(10, 3)
++ S2：(10, 3); (11, 3); (12, 5)
++ S3：(10, 3); (11, 3); (12, 4)
+
+​	这里可以看出来S2是term5的leader。
+
+​	这里S2通过heartbeats流程顺带发起log catch up，即想要和其他followers同步log entry的整体记录情况，按照majority原则，只需要向除了自身外的一台服务器发送消息即可，这里假设向S3发请求。
+
++ S2向S3，发送heartbeat，携带信息（**当前nextIndex指向的term，nextIndex-1的term值，nextIndex-1值**），即(空，5，12)
++ S3收到后，检查自己的log发现自己log index12为term4，回复S2一条否定消息no，表明自己还存活，但是不能同意S2要求的append操作，因为S3自己发现自己的log落后了。
++ S2看到S3的否定回应后，认为S3落后于自己，于是将自己的nextIndex从13改成12
++ S2重新发一条请求到S3，这次nextIndex是12，所以携带信息(5, 3, 11)
++ S3接收到后，检查自己log index11的位置为3，发现和S2说的一样，于是按照S2的log记录，在自己log index12的位置将term4改成term5，然后回复S2一条确定消息ok
+
++ S2收到来自S3的ok后，认为S3这次通信后log和自己对齐是最新的了
+
++ S2将自己维护的对应S3的matchIndex更新为13，表示log index13之前的log entry，作为leader的S2和作为follower的S3是对齐的
+
+​	<u>到这里为止，S2能够知道log index12的log entry term5至少在2个server上得到复制(S2和S3)，已经满足了majority原则了，所以S2能将消息传递到上层应用了。不幸的是，这不完全是对的</u>。下面会讨论为什么。
+
+​	**这里未优化的版本有个很大的问题，那就是如果Raft集群中出现log落后很多的server，leader需要进行很多次请求才能将其log与自己对齐**。
+
+## 7.3 Raft-日志擦除(Erasing log entries)
+
+> [聊聊RAFT的一个实现(4)–NOPCommand – 萌叔 (vearne.cc)](https://vearne.cc/archives/1851)
+
+​	commit after the leader has committed one entry in its own term.
+
+| log index | 1    | 2    | 3    |
+| --------- | ---- | ---- | ---- |
+| S1        | 1    | 2    | 4    |
+| S2        | 1    | 2    |      |
+| S3        | 1    | 2    |      |
+| S4        | 1    |      |      |
+| S5        | 1    | 3    |      |
+
+​	这里网课描述一个场景，大意就是5台server中，S5在log index2有term3，而某时刻S1在log index3有term4，其他server都还没有log index3的记录。
+
++ 如果S5率先完成log index1～2的提交，那么S5可能先提起log catch up，导致S1～S4的log都被强制和自己对齐。即S1～S5的log变得完全一致（这里S1多出来的log index3记录会被清除），都变成(1, 3)，因为log index1的位置S1～S5一致，所以log index2的位置都被覆盖成3即可
++ 如果S1筛选完成log index1～3的提交，那么S1～S3的服务器会被覆盖记录成(1,2,4)，而S4～S5不变，因为只有S2和S3在log index1～2和S1是对齐的。
+
+## 7.3 Raft-日志快速覆写同步(Log catch up quikly)
+
+|      | 1    | 2    | 3    | 4    | 5    |
+| ---- | ---- | ---- | ---- | ---- | ---- |
+| S1   | 4    | 5    | 5    | 5    | 5    |
+| S2   | 4    | 6    | 6    | 6    | 6    |
+
+​	如果通过前面"7.2 Log catch up(unoptimized)"流程，可知道假设S2要向S1同步历史log的记录，那么需要从log index5（nextIndex=6）开始请求，一直请求到log index1（nextIndex=2）的位置后，才能找到S2和S1对齐的第一个位置log index1，然后又以1log index为单位，一直同步到nextIndex=6为止。这显然很浪费网络资源。
+
+​	这里Log catch up quickly在论文中没有很详细的描述，但是大致流程如下：
+
++ S2假设在term7当选leader，于是nextIndex=6，如之前一样，向S1发送heartbeat时携带log同步信息，(空，6，5)，对应（当前nextIndex指向的term，nextIndex-1的term，nextIndex-1值）
++ S1收到后，对比自己logIndex5位置为term5。此时S1不再是简单返回no，还顺带回复自己的log信息（即请求中logIndex位置的term值，这个term值最早出现的logIndex位置），这里S1回复（5，2），表示S2heartbeat中说的logIndex5位置自己是term5不对齐，并且term5的值在自己log可追溯到logIndex2
++ S2收到回应后，可以直接将nextIndex改成2，并且下次heartbeat携带的信息变成（[6,6,6,6], 4, 1），表示nextIndex即往后的数据为[6,6,6,6]
++ S1收到heartnbeat后，发现logIndex1是term4是对齐的，于是按照S2说的，将logIndex2开始往后的共4个位置替换成[6,6,6,6]。
+
+## 7.4 Raft-持久化(Persistence)
+
+> [7.4 持久化（Persistence） - MIT6.824 (gitbook.io)](https://mit-public-courses-cn-translatio.gitbook.io/mit6-824/lecture-07-raft2/7.4-chi-jiu-hua-persistent)
+>
+> 持久化currentTerm的原因要更微妙一些，但是实际上还是为了实现一个任期内最多只有一个Leader，我们之前实际上介绍过这里的内容。如果（重启之后）我们不知道任期号是什么，很难确保一个任期内只有一个Leader。 
+>
+> 在这里例子中，S1关机了，S2和S3会尝试选举一个新的Leader。它们需要证据证明，正确的任期号是8，而不是6。如果仅仅是S2和S3为彼此投票，它们不知道当前的任期号，它们只能查看自己的Log，它们或许会认为下一个任期是6（因为Log里的上一个任期是5）。如果它们这么做了，那么它们会从任期6开始添加Log。但是接下来，就会有问题了，因为我们有了两个不同的任期6（另一个在S1中）。这就是<u>为什么currentTerm需要被持久化存储的原因，因为它需要用来保存已经被使用过的任期号</u>。
+
+​	我们这里主要考虑Reboot重启时发生/需要做的事情。
+
++ 策略1：一个Raft节点崩溃重启后，必须重新加入Raft集群。即对于整个Raft集群来说，重启和新加入Raft节点没有太大区别
+  + 重新加入(re-join)，重新加入Raft集群
+  + 重放日志(replay the log)，需要重新执行本地存储的log（我理解上只有未commit的需要重放，当然如果不能区分哪些commit的话，那就是所有现存log需要重放）
+
++ 策略2：快速重启(start from your persistence state)，从上一次存储的持久化状态(快照)的位置开始工作，后续可以通过log catch up的机制，赶上leader的log状态
+
+​	人们更偏向于策略2，快速重启。这就需要搞清楚，需要持久化哪些状态。
+
+---
+
+​	Raft持久化以下状态state：
+
++ vote for：投票情况，因为需要保证每轮term每个server只能投票一次
++ log：崩溃前的log记录，**因为我们需要保证(promise)已发生的(commit)不会被回退**。否则崩溃重启后，可能发生一些奇怪的事情，比如client先前的请求又重新生效一次，导致某个K/V被覆盖成旧值之类的。
++ current term：崩溃前的当前term值。因为选举(election)需要用到，用于投票和拉票流程，并且**需要保证单调递增**(monotonic increasing)
+
+---
+
+问题：什么时候，server决定进行持久化的动作呢？
+
+回答：每当上面提到的需要持久化的变量state发生变化时，都应该进行持久化，写入稳定存储(磁盘)，即使这可能是很昂贵的操作。你必须保证在回复client或者leader的请求之前，先将需要持久化的数据写入稳定存储，然后再回复。否则如果先回复，但是持久化之前崩溃了，你相当于丢失了一些无法找回的记录。
+
+## 7.5 Raft-服务恢复(Service recovery)
+
+​	类似的，服务重启恢复时有两种策略：
+
+1. 日志重放(replay log)：理论上将log中的记录全部重放一遍，能得到和之前一致的工作状态。这一般来说是很昂贵的策略，特别是工作数年的服务，从头开始执行一遍log，耗时难以估量。所以一般人们不会考虑策略1。
+2. **周期性快照(periodic snapshots)**：假设在i的位置创建了快照，那么可以裁剪log，只保留i往后的log。此时重启后可以通过snapshot快照先快速恢复到某个时刻的状态，然后后续可以再通过log catch up或其他手段，将log同步到最新状态。（一般来说周期性的快照不会落后最新版本太多，所以恢复工作要少得多）
+
+​	这里可以扩展考虑一些场景，比如Raft集群中加入新的follower时，可以让leader将自己的snapshot传递给follower，帮助follower快速同步到近期的状态，尽管可能还是有些落后最新版本，但是根据后续log catch up等机制可以帮助follower随后快速跟进到最新版本log。
+
+​	使用快照时，需要注意几点：
+
++ 需要拒绝旧版本的快照：有可能收到的snapshot比当前服务状态还老
++ 需要保持快照后的log数据：在加载快照时，如果有新log产生，需要保证加载快照后这些新产生的log能够能到保留
+
+---
+
+问题：看上去好像这破坏了抽象的原则，现在上层应用需要感知Raft的动作？
+
+回答：是的，这里需要上层应用辅助一些Raft的工作，比如告知Raft我已经拥有i之前的快照了，可以对应的删除Raft在i状态之前的log了之类的。
+
+问题：如果follower收到snapshot，这是它日志的前缀，由快照覆盖的log记录将被删除，而其余的会被保留。这种情况下，状态机是否会被覆盖？
+
+回答：前面没有什么问题，这里主要需要关注快照如何和状态机通信。在课程实验中，状态机通过apply channel获取快照，然后做后续需要做的事情（比如根据快照，修改状态机中的变量之类的）。
+
+## 7.6 使用Raft
+
+​	重新回顾一下服务使用Raft的大致流程
+
+1. 应用程序中集成Raft相关的library包
+
+2. 应用程序接收Client请求
+
+3. 应用程序调用Raft的start函数/方法
+
+4. 下层Raft进行log同步等流程
+
+5. Raft通过apply channel向上层应用反应执行完成
+
+6. 应用程序响应Client
+
++ 并且前面提过，可能作为leader的Raft所在服务器宕机，所以Client必须维护server列表来切换请求的目标server为新的leader服务器。
+
++ 同时，有时候请求会失败，或者Raft底层失败，导致重复请求，而我们需要有手段辨别重复的请求。通常可以在get、put请求上加上请求id或其他标识来区分每个请求。一般维护这些请求id的服务，被称为clerk。提供服务的应用程序通过clerk维护每个请求对应的id，以及一些集群信息。
+
+## 7.7 线性一致性/强一致性(Linearizability/strong consistency)
+
+> [线性一致性_百度百科 (baidu.com)](https://baike.baidu.com/item/线性一致性/22395305?fr=aladdin)
+>
+> **线性一致性**(Linearizability)，或称**原子一致性**或**严格一致性，**指的是程序在执行的历史中在存在可线性化点P的执行模型，这意味着一个操作将在程序的调用和返回之间的某个点P起作用。这里“起作用”的意思是被系统中并发运行的所有其他线程所感知。
+>
+> [线性一致性：什么是线性一致性？ - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/42239873)
+
+​	在论文中对整个系统提供的服务的正确性称为**线性一致性(Linearizability)**，线性一致性需要保证满足一下三个条件：
+
+1. **整体操作顺序一致(total order of operations)**
+
+   比如代码中操作1在操作2前发生，那么系统中所有服务都应该是操作1在操作2之前发生
+
+2. **实时匹配(match real-time)**
+
+3. **读操作总是返回最后一次写操作的结果(read return results of last write)**
+
+---
+
+**问题：这里说的线性一致性，是不是就是人们说的强一致性？**
+
+**回答：是的。一般直觉就是表现上像单机，而技术文献中准确定义称为线性一致性。**
+
+问题：人们为什么决定定义这个property？（指，线性一致性这个概念为啥会被定义出来）
+
+回答：比如你希望多机系统对外表现如同单机一样，线性一致性就是非常直观的定义。数据库世界中有类似的术语，叫做**可串行化(serializability)**。基本上线性一致性和可串行化的唯一区别是，**可串行化不需要实时匹配(match real-time)**。当然，人们对强一致性有不同定义，而我们这里认为线性一致性就是一种强一致性。
+
+问题：可以稍微详细一点介绍clerk吗？
+
+回答：clerk是一个RPC库，它可以帮助记录请求的RPC服务器列表。比如它认为server1是leader，于是Client发请求时，通过clerk会发送到server1，如果server1宕机了，也许clerk根据维护的server列表，会尝试将Client的请求发送到server2，猜测server2是leader。并且clerk会标记每次请求(get、put等)，生成请求id，可以帮助server服务检测重复的请求。
+
+问题：论文12页中提到follower擦除旧log，但是不能回滚状态机，是吗？
+
+回答：正如前面日志擦除所说，Raft**可以擦除未提交(uncommitted)的log**。
+
+**问题：server加载snapshot的时候，怎么保证后续还可以接收新的log**
+
+**回答：可以在加载snapshot之前，先通过COW写时复制的fork创建子进程，子进程加载snapshot，而父进程继续提供服务，例如获取新的log之类的。因为子进程和父进程共享同样的物理内存，所以后续总有办法使得加载完snapshot的子进程获取父进程这段时间内新增的log。**
+
+问题：当生成snapshot且因此压缩/删除旧log后，sever维护的log index是从0开始，还是在原本的位置继续往后？
+
+回答：从原本的位置继续往后，不会回退log index索引。
+
+# Lecture8 Lab2A_2B Q&A
+
+# Lecture9 Zookeeper
+
+
 
