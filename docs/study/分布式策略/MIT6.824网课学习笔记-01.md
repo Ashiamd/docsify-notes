@@ -1797,6 +1797,16 @@ Robert教授：实际上，我不知道它具体怎么工作，但是这是个�
 
 ## 9.6 ZNode API
 
+> [9.1 Zookeeper API - MIT6.824 (gitbook.io)](https://mit-public-courses-cn-translatio.gitbook.io/mit6-824/lecture-09-more-replication-craq/9.1-zookeeper-api) <= 可以参考这个笔记，里面更详细
+>
+> 回忆一下Zookeeper的特点：
+>
+> - Zookeeper基于（类似于）Raft框架，所以我们可以认为它是，当然它的确是容错的，它在发生网络分区的时候，也能有正确的行为。
+> - 当我们在分析各种Zookeeper的应用时，我们也需要记住Zookeeper有一些性能增强，使得读请求可以在任何副本被处理，因此，可能会返回旧数据。
+> - 另一方面，Zookeeper可以确保一次只处理一个写请求，并且所有的副本都能看到一致的写请求顺序。这样，所有副本的状态才能保证是一致的（写请求会改变状态，一致的写请求顺序可以保证状态一致）。
+> - 由一个客户端发出的所有读写请求会按照客户端发出的顺序执行。
+> - 一个特定客户端的连续请求，后来的请求总是能看到相比较于前一个请求相同或者更晚的状态（详见8.5 FIFO客户端序列）。
+
 ​	通常来说会给应用app1创建一个znode节点，然后znode下再挂在一些子节点，上面记录app1的一些属性，比如IP等。
 
 ​	ZNode有三种类型：
@@ -1815,7 +1825,7 @@ Robert教授：实际上，我不知道它具体怎么工作，但是这是个�
 + setData原语，参数为path、data、version。`setData(path, data, version)`
 + getChildren接口，参数为path、watch。`getChildren(path, watch)`，可以获取特定znode的子节点
 
-## 9.7 小结
+## 9.7 Zookeeper-小结
 
 + 较弱的一致性(weaker consistency)
 + **适合用于当作配置服务(configuration)**
@@ -1824,6 +1834,386 @@ Robert教授：实际上，我不知道它具体怎么工作，但是这是个�
 
 # Lecture10 Patterns and Hints for Concurrency in Go
 
+> 这个建议直接看[视频](https://www.bilibili.com/video/BV16f4y1z7kn/?p=10)，讲师主要围绕一些业务场景举例go代码实现和优化技巧。go虽然学过，但并不是我主要用于项目编程的语言，所以这里不打算做太多笔记。
+>
+> ----
+>
+> [【熟肉】100秒介绍LLVM_哔哩哔哩_bilibili](https://www.bilibili.com/video/BV1RF411K7F5/?spm_id_from=333.337.search-card.all.click&vd_source=ba4d176271299cb334816d3c4cbc885f)
 
+## 10.1 一些优化go代码的思路
 
- 
+1. 在能简化程序理解的前提下，同一个程序的代码实现，可以考虑将**数据状态**转变成**代码状态**(Convert data state into code state when it make programs clearer)
+
+   视频中举例的是一个正则表达式的匹配`/"([^"\\]|\\.)*"/`，可以用一个看着很复杂的swith-case程序实现（数据状态），但是通过一系列优化后，最后变成只有两个if和一个for语句，并且更容易读懂和理解。
+
+   优化前的原始代码：
+
+   ```go
+   state := 0
+   for {
+     c := readChar()
+     switch state {
+       case 0:
+       if c != '"' {
+         return false
+       }
+       state = 1
+       case 1:
+       if c == '"' {
+         return true
+       }
+       if c == '\\' {
+         state = 2
+       } else {
+         state = 1
+       }
+       case 2:
+       state = 1
+     }
+   }
+   ```
+
+   优化后的代码（正巧执行也更快，但不是这里讲解的重点，重点是易读性）：
+
+   ```go
+   func readString(readChar func() rune) bool {
+     if readChar() != '"' {
+       return false
+     }
+     
+     var c rune
+     for c != '"' {
+       c := readChar()
+       if c == '\\' {
+         readChar()
+       }
+     }
+     return true
+   }
+   ```
+
+2. 可通过启动新的goroutine来存储code state代码状态(Use additional goroutines to hold addional code state)
+
+   这让我们可以移动程序计数器，将我们不能在原本stack上完成的逻辑，转移到goroutine的栈上去完成。当然创建goroutine需要保证其能够被清除，避免内存泄漏问题。
+
+3. 可通过启动新的goroutine来完成mutex条件变量的工作，如果能简化代码的话(Convert mutexes into goroutines when it makes progrmas clearer)
+
+   这里视频通过发布订阅服务器的代码实现举例，大意就是原本的发布订阅相关的方法中，需要用mutex保护临界区map的读写，会有频繁的加锁、解锁流程。而改写代码后，通过新启动一个goroutine维护这个map，原本的线程通过channel与这个goroutine交互，不再需要加锁、解锁流程（这里其实相当于利用channel代替锁的功能，channel本身会阻塞直到读写方都准备好，其实内部也是有锁，只是不需要开发者再显示声明锁）。
+
+## 10.2 设计模式1: 发布订阅服务器(Publish/subscribe server)
+
+## 10.3 设计模式2: 工作调度器(Worker scheduler)
+
+## 10.4 设计模式3: 复制服务的客户端(Replicated service client)
+
+## 10.5 设计模式4: 协议选择器(protocol multiplexer)
+
+# Lecture11 链式复制(Chain Replication)
+
+## 11.1 Zookeeper锁
+
+​	一开始提到一种粗糙的zookeeper锁实现方式，利用zookeeper的write具有线性一致性的规则，可以靠Zookeeper提供的原语实现Lock和Unlock。
+
+​	粗糙的Lock实现中，大致逻辑即：
+
+1. 尝试创建一个临时znode节点(ephemeral)，如果存在则返回（表示获取到锁）
+2. 如果znode节点已存在exist，则阻塞wait等待(这里通过watch监听znode变更事件)，直到znode消失/被删除后，重新发起create一个znode请求（尝试获取锁）
+3. 获取锁后，解锁只需要delete之前创建的临时znode即可。
+
+​	<u>这里就算client请求Lock后突然崩溃，Zookeeper也会检查请求Lock的client是否存活，如果client崩溃，则zookeeper服务端会删除这个client的记录，取消Lock动作</u>。
+
+​	看上去这个Lock没什么问题，能保证多个client请求Lock时也只有一个能获取Lock。问题是会造成羊群效应，即1000个client请求，只有1个成功，剩下999个等待，下次lock释放后，又只有1个成功，998个失败后等待，尽管每次只有1个client能获取锁，却伴随大量的Lock请求，是个灾难。
+
+----
+
+​	一个更优的Lock实现伪代码（论文中的伪代码）如下：
+
+```pseudocode
+Lock
+1 n = create(l + "/lock-", EPHEMERAL | SEQUENTIAL)
+2 C = getChildren(l, false)
+3 if n is lowest znode in C, exit
+4 p = znode in C ordered just before n
+5 if exists(p, true) wait for watch event
+6 goto 2
+
+Unlock
+1 delete(n)
+```
+
+​	**可以看到这里没有retry重试加锁的请求操作（前面的粗糙实现中，所有未成功获取锁的客户端都将重试获取），相反的，所有的客户端排成一条线，按序获取锁。**
+
++ 1行的`SEQUENTIAL`意味着锁文件被创建时，第一个将是"lock-0"，下一个是"lock-1"，以此类推...。这里n获取到对应的序列号，比如第一个锁文件返回n=0
+
+  按照前面举例1000个client最后会创建"lock-0"～"lock-999"这1000个锁文件。
+
++ 3行，如果当前n已经是创建的znode中锁文件序号最小的，则返回，表示获取锁成功
++ 4行，表示当前n不是当前最小的锁序号，于是获取n的前一个序号，比如n=10，则p=9
+
++ 5行，这里对p序号对应的锁文件加上watch，表示前一个client通过Unlock删除锁文件后，下一个也就是当前自己这个client就会监听到事件，然后重新goto代码2行走一遍逻辑，此时n会是最小的锁序号，所以当前client获取到lock，然后返回
+
+​	这种锁也被称为**标签锁(ticket locks)**。
+
+​	需要注意的是，这里zookeeper的锁(下面简称为zlock)，和go里面的lock不一样。
+
+​	一旦zookeeper确认zlock的持有者failed了（比如通过session的心跳机制等），我们会看到一些中间状态(intermediate state)。**持有zlock的client崩溃后，zookeeper会撤销client原本持有的zlock锁**。而由于锁被撤销了，会导致临界区的访问出现一些中间状态(因为不再受锁保护了)，而log可以保证临界区访问的正确性。
+
+​	**zlock一般应用场景**：
+
++ **选举(leader election)**：从一堆client中选举一个leader。并且如果有必要，可以让leader清理中间状态(临界区的一些状态值，比如把state清0之类的)。
++ **软锁("soft" lock)**：通常执行map只需要一个mapper，可以通过软锁保证mapreduce的worker中一次只有一个mapper接受某个特定的map任务。当然，这里mapeer如果failed，锁就会被释放，然后其他mapper可以尝试获取锁，重新执行这个mapper任务。而对于mapreduce程序来说，重复执行(执行两次)是可接受的，因为函数式编程，相同输入下运行几次都应该有相同的输出结果。
+
+---
+
+**问题：前面粗糙版本的Zookeeper锁实现中，zookeeper是怎么确定client已经failed，从而释放ephemerial锁？比如通常只是出现短暂的网络分区。**
+
+回答：**因为client和zookeeper交互时会创建session，zookeeper需要和client在session中互相发送心跳，如果zookeeper一段时间没有收到client的心跳，那么它认为client掉线，并关闭session**。session关闭后，即使client想在原session上发送消息，也行不通。**而这个session期间被创建的ephermeral文件在session关闭后会被删除**。假设client因为网络分区联系不上，如果超过zookeeper容忍的心跳检测阈值，那么zookeeper会关闭session，client必须重新创建一个session。
+
+问题：在zlock中，如果持有锁的server宕机，那么zlock会被撤销。但是不是没宕机，也一样会被撤销，因为zlock有一个标记是"EPHEMERAL"。
+
+回答：是的。只有EPHEMERAL文件才会发生这种情况（锁被撤销，因为client不管什么原因导致的session被关闭后，session周期内存活的EPHEMERAL锁文件自然会被删除）。
+
+**追问：那么我们能不能通过不传递EPHEMERAL，来模拟go锁？**
+
+**回答：你可以这么做，但是一旦宕机后就没有其他cleint能够释放这个锁文件了，会导致死锁。因为能释放这个lock文件的client宕机了，并且去掉EPHEMERAL后，锁文件永久存在，其他client排队永远无法获取锁，而且也没法释放不属于自己的锁文件来解围（这时就需要人工介入删除指定的lock文件了）**。这就是为什么zlock需要EPHEMERAL，保证只在session内存活，避免死锁问题。
+
+追问：client宕机后，其他client真的不能删除这个lock文件吗？理论上只要想的话，其他client可以通过自己编写的delete来删除lock文件吧？
+
+回答：这是一个共识问题（consensus problem），你当然可以通过delete任意删除别人的lock。但是这么做的话，lock本身就没有太大意义了，因为lock本身就是为了保护临界区访问，但是你破坏了规则，任何人可以随意删除其他人的锁。
+
+问题：可以再解释一下"soft" lock软锁吗？
+
+回答：软锁意味着一个操作可以发生两次。正常情况下，一个map被mapper施行成功后，会释放zlock，一切正常。但是mapper中途失败后，由于session断开，zookeeper撤销这个zlock，其他mapper会获取锁，接替原本的mapper执行map任务，也就是说map会被执行两次。但是这里是可接受的，因为mapreduce是函数式编程，相同输入运行几次都得有相同的输出。
+
+问题：在leader选举的zlock使用举例中，这里可以暴露的中间状态(intermediate state)是指什么？
+
+回答：纯粹的leader election不会有中间状态，但是通常leader会创建配置文件，就像zookeeper那样，使用ready trick。（提问者补充表示懂了，所以leader把文件整个创建好，然后原子地进行convert并且rename。讲师表示没错）。
+
+问题：能解释一下zookeeper的ready trick指的是什么吗？
+
+回答：讲师表示事件不多，课后问再回答，并表示上次说过了。（这里ready file应该指的是watch机制讲解的时候提的用例，即client监听ready file的变更事件，然后作出一些动作）可以参考更详细的关于ready file举例的网络笔记 => [8.7 就绪文件（Ready file/znode） - MIT6.824 (gitbook.io)](https://mit-public-courses-cn-translatio.gitbook.io/mit6-824/lecture-08-zookeeper/8.7-jiu-xu-wen-jian-ready-fileznode)
+
+## 11.2 两种构造RSM(复制状态机)的方案
+
+​	这里简单提一下两种构造复制状态机(RSM, replicated state machine)的方案
+
+1. Run all options through Raft/Paxos：通过Raft/Paxos或其他共识算法，完成所有的操作
+
+   事实证明，这种通过Raft/Paxos这类共识算法运行所有操作的方式，在实际应用中并不常见。这并不完全是一种标准的方法（指用于实现复制状态机）。后续会介绍一些其他的设计来实现这一点，比如Spanner。
+
+2. **Configuration service + P/B replication(primary backup replication)**：**更常见的是通过一个配置服务器**（比如zookeeper服务），配置服务器内部可能使用Paxos、Raft、ZAB或其他共识算法框架，配置服务器扮演者coordinator或master的角色（比如GFS的master）。**这里配置服务器除了采用共识算法实现外，还可以运行主备复制(P/B replicaiton)**。
+
+   + 比如GFS虽然只有一个master，但是chunk服务器却有primary和一堆backups，它们有一个用于主备复制的协议。
+   + 而VM-FT中，配置服务器是test-and-set的storage服务器，其决定谁是primary，另一方则是backup，primary和back之间通过channel或其他形式同步log等数据，尽管略有延迟。
+
+​	相比第一个方案，第二种方案更常见和通用。
+
+​	**采用配置服务器+主备复制的特点**：
+
++ **复制服务在状态state维护的成本较低，一般需要维护的数据量很少**
++ **主备复制则主要负责大量的数据复制工作**
+
+​	而直接用共识算法实现复制状态机，往往意味着需要直接在提供服务的server之间来回进行大量的数据复制，检查点的state数据同步等工作，一般实现会更复杂。
+
+---
+
+问题：方案1比起方案2有什么好处吗？
+
+回答：你不需要同时使用它们两个，只需要选择一种。方案1中，你每运行操作，Raft就为你进行同步，所有的东西都集成在单一的组件中（包括主备同步等操作）；而在方案2中，我们拆分出2个组件，一个配置服务中可以包括Raft，而同时我们有主备方案，这分工更加清晰。
+
+问题：那方案2有什么优势吗？如果通过leader达成共识，leader永远不会失败，对吧。
+
+回答：方案2的优势，在随后准备介绍的链式复制中会看到。有一个单独的进程负责配置部分的工作，你不必担心你的主备复制方案。对比的话，GFS的master指定某几个server组成一个特定的replica group。而这里主备协议不用考虑这个问题。
+
+## 11.3 链式复制-概述
+
+> [MIT 6.824 - Chain Replication for Supporting High Throughput and Availability - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/519927237)
+
+​	<u>链式复制，就是上面提到的方案2的主备复制方案(P/B replication)</u>。
+
+​	在论文中，**链式复制(Chian replicaiton)假设系统中存在一个配置服务(Configuration service)作为master，然后链式复制本身有一些属性(properties)**：
+
+1. 读操作/查询操作(read operation / query operation)只涉及一个服务器(reads ops involve 1 server)
+
+2. 具有简单的恢复方案(simple recovery plan)
+3. 线性一致性(linearizability)
+
+​	整体来说，这是一个很成熟的设计，已经应用到诸多系统中。
+
+![img](https://pic1.zhimg.com/80/v2-4f029c98e6d963ab6233557dc83fba2c_1440w.webp)
+
+​	在链式复制系统中，首先有一个配置服务(configuration service)记录链式连接的节点信息。
+
+1. client向系统发起write请求，**write写请求总是会发送到链中的head节点服务器**
+2. head节点生成log等，通过storage稳定存储更新相关state状态，然后传递操作到下一个节点
+3. 下一个节点同样更新自己storage中的state状态，然后向下一个节点传递操作
+4. 直到最后一个tail尾节点，修改storage中的状态后，向client回应确认信息。
+
+​	如果你需要更高的可用性（容错性），你可以增加链中的节点数量。
+
+​	**这里tail尾节点就是提交点(commit point)，因为后续读取总是从tail尾节点获取**。任何client发起读请求，都会请求tail节点，而tail节点会立即响应。
+
++ **写请求总是发送到head节点**
+
+  head修改storage中的state后，向下传递操作，直到tail节点。中间的节点总是更新state，然后向下传递操作。最后由tail节点响应client。
+
++ **读请求总是发送到tail节点**
+
+  tail节点直接响应client读请求。
+
+​	可以看到的是，这里读写工作负载至少分布在两台服务器上。对于更多的读操作，只需要一台服务器支持，且能够快速回应，这使得我们有很多优化空间（后续介绍）。
+
+​	**而这里称tail尾节点为提交点(commit point)，因为写入发生在尾部的节点，只有在那里写操作可以被读者看见，这也提供了线性一致性**（因为所有写操作都需要经过head到最后tail节点才会生效，且实际应答读和写请求的只有tail节点，只要系统没有崩溃的情况下，client进行写后读操作，一定会观察到最后一次或最近一次写入的结果，但不会读到旧数据）。
+
+​	*假设写请求不需要等到tail回应，而是head直接回应，那会破坏线性一致性吗？假设head收到写请求后，同样向链表往后的节点同步操作信息，但是又马上响应Client，那么之后Client读tail节点可能获取不到刚写入的数据，很明显违背了线性一致性*。
+
+## 11.4 链式复制-崩溃(Crash)
+
+​	有趣的是，链式复制的失败场景是有限的，共3种crash场景：
+
++ 头节点故障(head fail)
++ 中间节点故障(one of the intermediate server fail)
++ 尾节点故障(tail fail)
+
+---
+
+​	这里假设有S1、S2、S3构成链式复制的3台服务器，其中S1作为head，S3作为tail。简单分析一下系统如何应对3种crash：
+
+1. 头节点故障（处理最简单）
+
+   假设client请求head时，head崩溃了。那么这里S1未向下同步的log记录可以丢弃，因为还没有真正commit。此时，配置服务器得知S1宕机后，会通知S2、S3，宣布S2称为新的head，而S1被抛弃。之后client请求失败后会重试，请求新的head，S2节点。
+
+2. 中间节点故障（处理相对复杂）
+
+   类似的，S2故障后，某一时刻配置服务器通知S1和S3需要组成新的链。并且由于S3可能还没有和S1同步到最新状态（因为有些同步log可能还在S2没有下发，或者本身S2也没有完全同步到S1的l信息），所以还需要额外进行同步流程，将S3同步到和S1一致的状态。
+
+3. 尾节点故障（处理相对简单）
+
+   S3故障后，配置服务器通知S1、S2组成新链，其中S2成为新的tail。client可以从配置服务器知道S2是新tail。其他的流程基本没变动。
+
+​	可以看出来**头节点故障(head fail)**和**尾节点故障(tail fail)**处理相对简单，而**中间节点故障(one of the intermediate server fail)**相对复杂一点。
+
+​	**重要的是，链式复制的失败处理比起Raft要明显简单得多**。简单的原因有二：
+
+1. 整个系统以简单的链表维护
+2. 配置相关的工作交给了专门的配置服务
+
+## 11.5 链式复制-新增副本(add replica)
+
+​	正如论文所述，在tail添加新replica最简单，大致流程如下：
+
+1. 假设原tail节点S2下新增S3节点，此时client依旧和原tail节点S2交互
+2. S2会持续将同步信息传递给S3，并且记录哪些log已经同步到S3
+3. 某时刻S3和S2同步完成，S3通过配置服务告知S2，自己可以成为新的tail
+4. 配置服务设置S3为新tail
+5. 后续client改成请求tail节点获取读写响应（client可以通过配置服务知道谁是head、tail）
+
+## 11.6 链式复制和Raft在主备复制的比较
+
+​	光从主备复制的角度出发，比较一下链式复制CR(Chain Replication)和Raft。
+
+CR比起Raft的优势：
+
++ CR拆分请求RPC负载到head和tail
+
+  前面说过CR的head负责接收write请求，而tail节点负责响应wrtie请求和接收并响应read请求。不必像Raft还需要通过leader完成write、read请求
+
++ head头节点仅发送update一次
+
+  不同于Raft的leader需要向其他所有followers都发送update，CR的head节点只需要向链中的下一个节点发送update。
+
++ 读操作只涉及tail节点(read ops involve only tail)
+
+  尽管Raft做了read优化，follower就算要处理read请求，还是得向其他leader、followers发送同步log，确定自己是否能够响应read（因为follower可能正好没有最新的数据）。而CR中，只需要tail负责read请求，并且tail一定能同步到最新的write数据（因为write的commit point就是tail节点）。
+
++ 简单的崩溃恢复机制(simple crash recovery)
+
+  与Raft相比，CR的崩溃处理更简单。
+
+CR比起Raft的劣势：
+
++ 一个节点故障就需要重新配置(one failure requires reconfiguration)
+
+  因为写入操作需要同步到整个链，写入操作无法确认链中每台机器是否都执行，所以一有fail，就需要重新配置，这意味着中间会有一小段时间的停机。而Raft中只需要majority满足write持久化，就可以继续工作。
+
+## 11.7 链式复制-并行读优化拓展(Extension for read parallelism)
+
+​	由于链式复制中，只需要tail响应read请求，这里可以做一些优化的工作，进一步提高read吞吐量。
+
+​	**基本思路是进行拆分(split)对象，论文中称之为volume，将对象拆分到多个链中(splits object across many chain)**。
+
+​	例如，现在有3个节点S1～S3，我们可以构造3个Chain链：
+
++ Chain1：S1、S2、S3 (tail)
++ Chain2：S2、S3、S1 (tail)
++ Chian3：S3、S1、S2 (tail)
+
+​	**这里可以通过配置服务进行一些数据分片shard操作。如果数据被均匀write到Chain1～Chain3，那么读操作可以并行地命中不同的shards，均匀分布下，读吞吐量(read throughput)会线性增加，理想情况下这里能得到3倍的吞吐量**。
+
+​	拆分(split)的好处：
+
+1. **得到扩展(scale)，read吞吐量提高(shard越多，chain越多，read吞吐量理论上越高)**
+
+2. **保持线性一致性(linearizability)**
+
+---
+
+问题：在拆分split的场景下，client怎么决定从哪个chain中读取数据？
+
+回答：论文中没有详细说明，或许client可以通过配置服务器得知read请求对应哪个shard，再找出shard对应的chain，然后告知client该请求哪个chain的tail节点。
+
+## 11.8 链式复制-小结
+
+​	前面提到构造复制状态机，有两种方式：
+
+1. 传统的只通过Raft/Paxos/ZAB等共识算法实现
+
+2. 通过配置服务(通过Raft/Paxos/ZAB等共识算法实现)+主备复制实现(这里我们使用链式复制chain replicaiton)
+
+​	可以看到这里方案2更吸引人：
+
++ 你能够获取可拓展的读性能（链式复制配合配置服务split几个chain，可以通过shard均匀读请求，提高读吞吐）
++ 由于配置服务和主备系统独立，所以如果你有更优秀的共识算法实现的同步机制(synchronization)，你更新配置服务的成本更小
+
+​	因此，人们更偏向于在实际应用中使用方案2。当然也不排除有使用方案1实现复制状态机的，比如你只需要简单的put/get等操作的话。后续会介绍的Spanner就是采用Paxos完成（方案1）。
+
+----
+
+问题：你前面提到Raft使用时，所有的read需要通过majority的同意，我不懂为什么？因为leader不是有所有的committed entries吗？
+
+回答：你问的是另一种策略实现。最原始的，如果你的read都只经过leader处理，并且保证leader总有最新数据，那么leader可以直接处理read。而另一种策略，你希望follower能处理read，那它必须通过majority来确认自己是否拥有最新的数据，否则应该等待同步到最新的数据后，才响应client的read请求，以确保线性一致性。
+
+**问题：我想知道前面"11.5 链式复制-新增副本(add replica)"增加tail时，S3什么时候能成为新的tail，有没有可能S2一直是tail，S3一直没同步完原tail(S2)的数据？**
+
+**回答：论文中有提到一些切换tail的细节，大概可以这么说，S2可以用snapshot快照之类的手段先将目前所有的同步信息都传递给S3，也许S2同步snapshot给S3时，log到100，当S3同步完时，S2又接收了101～110。此时S3可以告诉S2，剩下的101～110你同步给我后，不要当tail了。之后S3通过配置服务告知client自己是新tail，同时告知client自己还有101～110要处理，会等处理完同步信息后再响应client（所以这里会有短暂延迟/阻塞）。**
+
+问题：有没有可能，这里扩展可以采用别的数据结构，例如tree，而不是链表？
+
+回答：读取tree叶子节点，听着可能破坏线性一致性。因为client请求的叶子节点，很可能还没有同步到最新write后的数据。也许你想的方案比我的想象要复杂，树的深度或者链的深度，是由失败时间决定的。如果你通常运行3～5台服务器就满足高可用性的要求了，那你可以比如只选用4台，可能崩溃恢复和日常write会引入一些延迟（这里我没怎么懂后面回答的啥东西，感觉大意就是如果构成系统的机器数本身很少，那链表的深度和树的深度差距不会太大，换言之就是tree结构的性能基于深度可能比链表小，但是这里机器数量本身不多的话，树和链表的读写性能差别也不大）。
+
+**问题：我好奇split拆分多个链后怎么保持强一致性？这里S1、S2、S3都可以作为tail被进行读取。**
+
+**回答：你可以获取不同的分片shard或对象object以获取强一致性，这是分配给chain的。因为分片了，所以你写/读某个对象，它一定是对应具体某一个chain，所以能保证chain的强一致性。**
+
+**追问：拆分chain后，在所有的对象上，我们都有强一致性吗？**
+
+**回答：不，我认为这可能需要更多的机制。比如client读取不同shard的对象1和对象2，你需要额外的机制保证整体顺序和线性一致性。（虽然单个shard对应的chain读写能够保证线性一致性，但整体的需要额外机制。否则比如对象2的写或读在业务上依赖对象1的写或读操作，这里不同chain之间并不能严格保证执行的顺序。）**
+
+问题：当CR(Chian Replication)发生网络分区而不是崩溃，那会发生什么？比如S2可能还存活，但是和配置服务器或者其他什么的存在网络分区。
+
+回答：假设所有配置都有编号，此时如果编号不匹配，那么S3不会接受来自S2的命令。
+
+**问题：有没有可能S3崩溃后，存在Client以为S3还是tail，仍然读取S3？**
+
+**回答：所以论文中提到Client要使用代理Proxy。（即Client可以先通过Proxy访问配置服务，得知最新的tail是什么，然后再请求具体的tial。就算tail崩溃了，下次重试时，Proxy也知道该让Client请求新的tail）**
+
+**问题：重复上面全局所有对象的线性一致性的问题，是不是需要诸如分布式事务一类的机制保证？因为我们希望的是数据a和数据b两个不同shard的数据读写具有线性一致性。（毕竟涉及多个不同对象的操作，我也感觉就是需要分布式事务机制）**
+
+**回答：是的，就是需要分布式事务，这个大话题后面会说。**
+
+**问题：前面zlock提到和go锁不一样，zlock在fail的时候会被看到中间状态是什么意思？**
+
+**回答：因为fail后，zookeeper因为session断开了，会删除EPHEMERAL锁文件，这会导致临界区数据可能被处理/加工到一半就不再被保护（这些就是中间状态），因为zookeeper操作的都是被持久化的文件，所以这些中间状态是可见的。但是你可以通过leader选举后，增加清理这些中间状态的步骤（因为这里说zlock通常可以用于leader election）。而如果获取go锁的goroutine发生fail(崩溃)，表示整个go进程都崩溃了，所以当然没有办法读到中间状态。**
+
+# Lecture12 缓存一致性(Cache Consistency)-Frangipani
+
