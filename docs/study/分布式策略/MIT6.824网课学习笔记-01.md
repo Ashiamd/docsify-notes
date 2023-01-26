@@ -2164,6 +2164,16 @@ CR比起Raft的劣势：
 
 ## 11.8 链式复制-小结
 
+> [9.7 链复制的配置管理器（Configuration Manager） - MIT6.824 (gitbook.io)](https://mit-public-courses-cn-translatio.gitbook.io/mit6-824/lecture-09-more-replication-craq/9.7-lian-fu-zhi-de-pei-zhi-guan-li-qi-configuration-manager) <= 摘抄我觉得有意义的问答内容：
+>
+> 学生提问：为什么存储具体数据的时候用Chain Replication，而不是Raft？
+>
+> Robert教授：这是一个非常合理的问题。其实数据用什么存并不重要。因为就算我们这里用了Raft，我们还是需要一个组件在产生冲突的时候来做决策。比如说数据如何在我们数百个复制系统中进行划分。如果我需要一个大的系统，我需要对数据进行分片，需要有个组件来决定数据是如何分配到不同的分区。随着时间推移，这里的划分可能会变化，因为硬件可能会有增减，数据可能会变多等等。Configuration Manager会决定以A或者B开头的key在第一个分区，以C或者D开头的key在第二个分区。至于在每一个分区，我们该使用什么样的复制方法，Chain Replication，Paxos，还是Raft，不同的人有不同的选择，有些人会使用Paxos，比如说Spanner，我们之后也会介绍。在这里，不使用Paxos或者Raft，是因为Chain Replication更加的高效，因为它减轻了Leader的负担，这或许是一个非常关键的问题。某些场合可能更适合用Raft或者Paxos，因为它们不用等待一个慢的副本。而**当有一个慢的副本时，Chain Replication会有性能的问题，因为每一个写请求需要经过每一个副本，只要有一个副本变慢了，就会使得所有的写请求处理变慢**。这个可能非常严重，比如说你有1000个服务器，因为某人正在安装软件或者其他的原因，任意时间都有几个服务器响应比较慢。每个写请求都受限于当前最慢的服务器，这个影响还是挺大的。**然而对于Raft，如果有一个副本响应速度较慢，Leader只需要等待过半服务器，而不用等待所有的副本。最终，所有的副本都能追上Leader的进度。所以，Raft在抵御短暂的慢响应方面表现的更好**。一些基于Paxos的系统，也比较擅长处理副本相距较远的情况。对于Raft和Paxos，你只需要过半服务器确认，所以不用等待一个远距离数据中心的副本确认你的操作。<u>这些原因也使得人们倾向于使用类似于Raft和Paxos这样的选举系统，而不是Chain Replication。这里的选择取决于系统的负担和系统要实现的目标。不管怎样，配合一个外部的权威机构这种架构，我不确定是不是万能的，但的确是非常的通用</u>。
+>
+> **学生提问：如果Configuration Manger认为两个服务器都活着，但是两个服务器之间的网络实际中断了会怎样？**
+>
+> Robert教授：对于没有网络故障的环境，总是可以假设计算机可以通过网络互通。对于出现网络故障的环境，可能是某人踢到了网线，一些路由器被错误配置了或者任何疯狂的事情都可能发生。所以，因为错误的配置你可能陷入到这样一个情况中，Chain  Replication中的部分节点可以与Configuration Manager通信，并且Configuration Manager认为它们是活着的，但是它们彼此之间不能互相通信。**这是这种架构所不能处理的情况。如果你希望你的系统能抵御这样的故障。你的Configuration Manager需要更加小心的设计，它需要选出不仅是它能通信的服务器，同时这些服务器之间也能相互通信。在实际中，任意两个节点都有可能网络不通**。
+
 ​	前面提到构造复制状态机，有两种方式：
 
 1. 传统的只通过Raft/Paxos/ZAB等共识算法实现
@@ -2217,3 +2227,275 @@ CR比起Raft的劣势：
 
 # Lecture12 缓存一致性(Cache Consistency)-Frangipani
 
+​	这篇论文发表于1997，研究的背景是网络文件系统，整体目标是在一组用户之间共享文件，但Frangipani本身并没有被大量应用。下面列举本章节的重点：
+
++ 缓存一致性协议(cache coherence)
+
++ 分布式锁(distributed locking)
++ 分布式崩溃恢复(distributed crash recovery)
+
+## 12.1 传统的网络文件系统(Network FS)
+
+​	传统的网络文件系统，对外提供open、create等文件操作函数，服务端内部实现复杂，而client端除了函数调用和缓存以外，基本不做其他工作。
+
+## 12.2 Frangipani-简述
+
+​	**Frangipani中没有专门的file server角色，每个client本身就作为file server，因为client本身运行file server code**。
+
+​	<u>这里所有的client共享一个虚拟磁盘(virtual disk)，这个虚拟磁盘内部使用Petal实现，由数个机器构成，机器复制磁盘块(disk blocks)，内部通过Paxos共识算法保证操作按正确顺序应用等</u>。
+
+​	**虚拟磁盘对外的接口是read块(read block)或write块(write block)，看上去就像普通的磁盘**。
+
+​	在Frangipani这种设计下，复杂的设计更多在于client。你可以通过增加工作站(workstation)数量来拓展文件系统。通过增加client数量，**每个client都可以在自己的文件系统上运行，许多繁重的计算都可以在client机器上完成，根本不涉及任何文件系统服务器。而传统的网络文件系统的性能瓶颈往往出现在文件服务器**。
+
+## 12.3 Frangipani-使用场景和设计目标
+
+​	Frangipani的使用背景，一堆重度计算机使用者的研究者/学者，偶尔有需要分享的文件需要传递。因为所有参与者都是可信的，所以安全性对于这个文件系统不是很重要。
+
+​	需求的文件分享形式有2种：
+
++ user-to-user：client到client之间
++ user-to- workstation：client到文件服务器
+
+​	以此，催生出几个设计目标：
+
++ caching：缓存，不是所有数据都保留在Petal(Frangipani文件服务器部分被称为Petal)中。**client采用回写式缓存(write back-cache)取代直写式(write-through)**。即操作发生在client本地的cache中，未来某时刻被传输到Petal。
++ strong consistency：强一致性。即希望client1写file1时，其他client2或者workstation能够看到file1的变动。
+
++ perference：高性能。
+
+​	<u>对比GFS，GFS并不提供POSIX或Unix兼容性，而Frangipani可以运行Unix标准的应用程序，应用的行为方式和没有分布式系统一样（如果单一文件系统）</u>。
+
+---
+
+问题：为什么说client上运行server code可以增强scalability可拓展性？而不是向传统网络文件系统一样，server code只在file server上存在，而client只负责调用file server的接口。
+
+回答：传统的网络文件系统中，所有的计算都是针对文件系统本身，而文件系统只在文件服务器上。在Frangipani中，所有文件系统操作发生在workstation工作站上（client上运行的server code），我们可以运行多个client（工作站）来扩展工作负载。
+
+## 12.4 Frangipani-实现难点(challenge)
+
+​	假设WS1工作站1执行read f的操作，之后通过本地cache对f通过vi进行操作。这时需要考虑几个可能发生的场景如何处理：
+
+1. WS2 cat f
+
+   工作站2查看f文件，这时需要通过**缓存一致性(cache conference)**确保工作站2能看到正确的内容。
+
+2. WS1创建d/f，WS2创建d/g
+
+   需要保证WS1创建d目录下的f文件，以及WS2创建d目录下的g文件时，双方不会因为创建目录导致对方的文件被覆盖或消失等问题。这里需要**原子性(atomicity)**保证操作之间不会互相影响。
+
+3. WS1 crash during FS op
+
+   工作站1进行复杂的文件操作时发生崩溃crash。需要**崩溃恢复(crash recovery)**机制。
+
+## 12.5 Frangipani-缓存一致性(cache coherence/consistency)
+
+​	Frangipani主要通过lock锁机制实现缓存一致性。
+
+| file inode | owner |
+| ---------- | ----- |
+| f          | ws1   |
+| g          | ws1   |
+| h          | ws2   |
+
+​	锁服务器(lock server)维护一张表table，里面维护每个file对应的inode编号，以及锁的owner拥有者对应哪个工作站。这里lock server本身是一个分布式服务，可以想象成类似zookeeepr，其提供加锁/解锁接口，且服务具有容错性。
+
+| file inode | State |
+| ---------- | ----- |
+| f          | busy  |
+| g          | idle  |
+
+​	同时，工作站自身也需要维护一张table，table维护lock对应的状态，比如f文件锁对应的状态为busy，g文件锁对应的状态为idle，表示g这一时刻没有被修改。<u>这里idle状态的锁被称为**粘性锁(sticky lock)**</u>。
+
+​	<u>由于ws1占有g对应的sticky lock，之后如果再次使用文件g，不必与Petal通信或重新加载cache之类的，因为sticky lock由自己占用，说明这段时间内没有其他工作站获取锁</u>。
+
+​	通过上述的两种锁，配合rule规则，即可实现缓存一致性：
+
++ **缓存文件之前，需要先获取锁(to cache file, first acquire lock)**
+
+​	<u>在论文中描述的lock锁是排他的读写锁，后续的课程为了优化，会假设不需要锁的排他性质，多个工作站可以在只读模式下拥有文件缓存</u>。
+
+## 12.6 Frangipani-协议(protocol)
+
+​	这里场景举例，假设有WS1(工作站/client1)、LS(锁服务器)、WS2(工作站/client2)。
+
+在WS和LS之间通信，会使用4种消息：
+
++ 请求锁，requesting a lock
++ 授予锁，granting a lock
++ 撤销锁，revoking a lock
++ 释放锁，releasing a lock
+
+​	下面大致描述一下工作流程：
+
+1. WS1向LS请求锁(requesting a lock)，要求访问文件f
+2. LS查询自己维护的file inode => owner表，发现f没有被任何WS上锁
+3. LS在table中记录f对应的owner为WS1，响应WS1授予锁(granting a lock)
+4. WS1在本地table中修改f文件对应的状态为busy，写操作执行完后，将f文件的锁状态改成idle。这里lock有租约期限，WS1需要定期向LS续约。
+5. WS2想问访问f，向LS发送请求锁(requesting a lock)
+6. LS看table，发现f对应的owner为WS1，于是向WS1发送撤销锁(revoking a lock)
+7. WS1确定已经不对文件修改后，向Petal同步自己对f的修改数据
+8. WS1完成对f的修改同步后，向LS发送释放锁(releasing a lock)，同时删除自己本地对f锁的记录
+9. LS发现WS1释放锁后，重新修改table中f的owner为WS2
+10. LS向WS发送授予锁(granting a lock)
+
+​	**因为工作站访问Petal的文件需要获取锁，并且释放锁之前会将文件修改同步到Petal，所以保证了缓存一致性(cache coherence)，即后续对相同文件进行访问的工作站一定能看到最新的修改内容**。
+
+---
+
+问题：我们需要写入Petal，当释放读和写锁时，为什么我们需要在释放读锁时写入Petal？
+
+回答：让我们忽略读写，只关注排他(即这里要求不管是读还是写，都要获取排他锁)。
+
+问题：这看上去效率很低，如果两个工作站都一直操作同一个文件的话。
+
+回答：是的，如果两个工作站一直在处理相同的文件，就会导致文件在工作站的缓存和Petal之间来回跳动。不过这里应用场景中，大多数研究者都在处理私人文件，所以它们同时处理一个共享文件的概率很低。就好像git，你平时在本地操作，偶尔才会和远程进行同步。
+
+问题：如果WS1占有f锁为busy时，WS2向LS请求f的lock会发生什么？
+
+回答：WS2会等待直到WS1完成修改并释放锁。
+
+## 12.7 Frangipani-原子性(atomicity)
+
+​	Frangipani使用同样的锁机制来实现原子文件系统操作。
+
+​	假设WS1在目录d下创建f目录，那么根据论文所描述，会获取目录d的锁，然后获取文件f的inode锁，大致伪代码如下：
+
+```pseudocode
+acquire("d") // 获取目录d的锁
+create("f" ,....) // 创建文件f
+acquire("f") // 获取文件f的inode锁
+	allocate inode // 分配f文件对应的inode
+	write inode // 写inode信息
+	update directory ("f", ...) // 关联f对应的inode到d目录下
+release("f") // 释放f对应的inode锁
+```
+
+​	**这里通过锁，保证对本地Unix文件系统内部涉及的inode等操作进行保护，达到原子操作文件的目的**。
+
+​	当进行操作时，WS1将lock状态改成busy，操作完成后，如果没有后续写，则改状态为idle。此时如果LS要求撤销锁(revoking a lock)，WS1可以将文件同步到Petal，之后安全地释放锁(releasing a lock)。
+
+---
+
+问题：论文中提到目录和inode都需要锁，所以WS1在释放锁(releasing a lock)之前，需要先释放2种文件锁？
+
+回答：是的。论文中有提到实现中需要用不同种类的锁，它们对每个inode都有一个锁，包括目录的inode、文件的inode。事实上目录和文件没什么不同，只不过有特定的format格式。所以创建f，我们需要先分配和获取目录d的锁，然后分配获取到inode f的锁，所以持有两把锁。<u>一旦出现获取多把锁的场景，就可能陷入死锁。如果一个工作站以不同的顺序分配锁，你可能陷入死锁</u>。**所以Frangipani遵循规则，所有的锁都以特定的方式排序，以固定的顺序获取锁，我想锁时按照inode编号排序的**。
+
+## 12.8 Frangipani-崩溃恢复(crash recovery)
+
+​	更新Petal中的state，需要遵循**预写式日志(write-ahead logging)**协议。可以说Petal就是为预写式日志(write-ahead logging)协议设计的。
+
+​	在Petal的实现中，每台机器的磁盘由两部分组成：
+
++ **日志log(**磁盘中有一特定区域用于log)
++ 文件系统(磁盘中其余块用于文件系统)
+
+​	当更新Petal的state状态时，经过以下流程：
+
+1. 更新日志(log update)
+
+   工作站进行实际文件操作前，记录log
+
+2. 安装更新(install the update)
+
+   工作站log记录完毕后，就可以实际安装更新，即更新文件系统中的文件，进行文件写操作等
+
+​	每台Frangipani服务器都有log日志，log中的log entry拥有序列号(sequence number)。**log entry中存放更新数组(array of updates)**，用于描述文件系统操作，包含以下内容：
+
++ 需要更新的块号(block number that needs to be updated), block#
+
+  在我们的示例中，对应inode编号
+
++ **版本号(version number), version#**
+
++ 块编号对应的新字节数据(new bytes)
+
+​	例如`create f`，在数组中会有两个条目，一个描述对inode块的更新，一个描述对目录数据块的更新。
+
+​	当复制发生时(即LS向WS发送revoke撤销锁后，WS需要将文件变更同步到Petal)，经过以下流程：
+
+1. log发送到Petal
+2. 发送更新块到Petal (send the updated blocks to Petal)
+3. 释放锁(release lock)
+
+​	**实际上，文件数据(file data)写入不会通过日志，而是直接传递给Petal。通过日志的更新是元数据(meta data)更改**。<u>元数据的含义是关于file文件的信息，比如inode、目录等，这些会通过log</u>。应用级数据，实际构成文件的文件块直接写入到Petal，而不需要通过log。
+
+​	**因为文件数据没有记录到log中，这意味着如果你需要原子地写某个文件，你需要自己以某种方式保证，而大多数Unix文件都是这么设计的，在Frangipani角度不能破坏Unix原来的文件系统设计**。
+
+​	**<u>对于需要原子写文件的场景，通常人们通过先将所有数据写入一个临时文件，然后做一个原子重命名（atomic rename），使得临时文件编程最终需要的文件</u>**。同理，如果Frangipani需要原子写文件，也会采用这种方式。
+
+​	通常人们只希望文件系统的元信息能够通过log存储，而不是连带文件数据一起存储。假设你写2GB的文件，存入log之后进行同步会极大影响性能。但是表示文件系统内部结构的元信息，比如inode、目录等需要保证在Petal上也有一致的表现，所以需要记录到log中。	
+
+---
+
+问题：这里怎么保证文件操作是原子的，第一步首先要更新log？
+
+回答：论文中有提到几种方式，每个log记录都有一个校验和(checksum)，用校验和确保log的完整性。
+
+## 12.9 Frangipani-崩溃场景分析
+
+​	接下来分析一下不同崩溃场景下，Frangipani如何处理：
+
++ 写log前就崩溃(before writing log)
+
+  数据丢失
+
++ log写到Petal后崩溃(crash after writing log to Petal)
+
+  假设写log到Petal后WS1崩溃，此时WS1占有log，如果WS2想要获取同一个文件inode的lock，LS会等待WS1的lock租约过期后，**要求剩余的WS的recovery demon读取WS1的log，并应用log中记录的操作**。<u>等待demon工作完成后，LS重新分配锁，即授予WS2锁</u>。（这里术语demon，通常指一项服务or服务器or服务器进程，通常用于处理一些额外工作，而不是提供主要的服务）
+
++ 写log到Petal的过程中崩溃(crash during writing the log to Petal)
+
+  文件中包括前缀，如果写log中崩溃，那么文件的校验和检验就不会通过，recovery demon会停止在检验和不通过的记录之前。
+
+---
+
+问题：确认一下，这里写log后崩溃，不能保证用户写的文件数据，对吧？
+
+回答：是的，log系统只用于保证内部文件系统数据结构一致。
+
+## 12.10 Frangipani-日志和版本
+
+​	这里讨论下一个场景，假设有WS1～WS3，整体操作时序如下：
+
+1. WS1在log中记录`delete ('d/f')`，删除d目录下的f文件
+2. WS2在log中记录`create('d/f')`
+3. WS1崩溃
+4. WS3观察到WS1崩溃，为WS1启动一个recovery demon，执行WS1的log记录`delete('d/f')`
+
+​	原本WS2能在Petal中创建d目录下的f文件，但是WS3却有可能因为恢复执行WS1的log的缘故，将f文件删除。**这里Frangipani通过日志版本号避免了这个问题**。
+
+​	实际上，上面的操作，可以详细成如下：
+
+1. WS1在log中记录`delete ('d/f')`，删除d目录下的f文件。log的版本号假设为10
+2. WS2在log中记录`create('d/f')`，log的版本号为11（因为**锁保证了log的版本号是完全有序的**）
+3. WS1崩溃
+4. WS3观察到WS1崩溃，为WS1启动一个recovery demon，准备执行WS1的log记录`delete('d/f')`，**但是发现Petal中已应用的log对应的version版本号为11，高于log或inode的version，准备重放的log的version为10，小于等于11，所以demon会放弃重放这个log**。
+
+---
+
+**问题：version版本号总是绑定到正在编辑的inode上吗？**
+
+**回答：是的。比如文件有一个version。前面"12.8 Frangipani-崩溃恢复(crash recovery)"提到的更新列表中，每一项会记录更新的块编号、version、更新的数据**。
+
+## 12.11 Frangipani-小结
+
+​	Frangipani虽然实际应用不广泛，但是其应用到的一些思想/设计，直接学习。
+
++ 缓存一致性协议(cache coherence)
++ 分布式锁(distributed locking)
++ 分布式恢复(distributed recovery)
+
+​	后续章节即将讨论的分布式事务，也会用到这些设计思想。
+
+----
+
+问题：这里的缓存一致性，不是在两个地方有一个文件缓存，对吧？
+
+回答：是的。
+
+问题：你说每一条记录都是原子操作的，但是每条记录也有一些更新，对吧？
+
+回答：论文描述比较含糊，磁盘可以保证单个扇区(512字节)的操作是原子的，可以利用这一点实现。或者使用log的校验和，读扇区时重新计算校验和，对比存储中的校验和是否一致，如果没错，那就是完整的一个记录。
+
+# Lecture13 分布式事务(Distributed Transaction)
