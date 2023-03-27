@@ -315,6 +315,12 @@ gRPC支持四种service方法：
 
 ## 3.6 Can I use gRPC in a service mesh
 
+> Service mesh：
+>
+> [什么是 Service Mesh - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/61901608)
+>
+> [Pattern: Service Mesh (philcalcado.com)](https://philcalcado.com/2017/08/03/pattern_service_mesh.html)
+
 ​	Yes. gRPC applications can be deployed in a service mesh like any other application. gRPC also supports [xDS APIs](https://www.envoyproxy.io/docs/envoy/latest/api-docs/xds_protocol) which enables deploying gRPC applications in a service mesh without sidecar proxies. The proxyless service mesh features supported in gRPC are listed [here](https://github.com/grpc/grpc/blob/master/doc/grpc_xds_features.md).
 
 ## 3.7 gRPC如何助长移动端开发
