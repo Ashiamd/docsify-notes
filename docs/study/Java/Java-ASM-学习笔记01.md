@@ -231,7 +231,7 @@ public class HelloWorldDump implements Opcodes {
     // of the Java Virtual Machine should set the ACC_SUPER flag. In Java SE 8 and above, the Java Virtual Machine
     // considers the ACC_SUPER flag to be set in every class file, regardless of the actual value of the flag in the
     // class file and the version of the class file.
-    cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "sample/HelloWorld", null,"java/lang/Object",null);
+    cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "sample/HelloWorld", null, "java/lang/Object", null);
 
     // 构造函数
     {
@@ -448,8 +448,8 @@ method_info {
 Code_attribute {
     u2 attribute_name_index; // 属性名(常量池中的索引，这里即"Code")
     u4 attribute_length; // attribute_length 下面几个剩余的 定义 所占用的字节总长度
-    u2 max_stack; // 栈相关参数，后续介绍后再回来补充说明
-    u2 max_locals; // 栈相关参数，后续介绍后再回来补充说明
+    u2 max_stack; // the maximum stack size
+    u2 max_locals; // the maximum number of local variables
     u4 code_length; // 方法体内的代码字节长度(这不是指我们写的Java源代码长度，而是转译成字节码指令后占用的字节总长度)
     u1 code[code_length]; // 方法体内的 代码数组(字节码指令，而不是实际的java源代码)
     u2 exception_table_length; // 方法内异常处理的异常处理表长度(不包括方法throws声明的，方法声明的会用number_of_exceptions记录数量，exception_index_table内的exception_index记录对应的常量池索引，比如声明抛出RuntimeException，则为"java/lang/RuntimeException")
@@ -1047,3 +1047,763 @@ public void visitEnd() {
 - 第一点，介绍了`ClassVisitor`类的不同部分。我们去了解这个类不同的部分，是为了能够熟悉`ClassVisitor`这个类。
 - 第二点，在`ClassVisitor`类当中，定义了许多`visitXxx()`方法，这些方法的调用要遵循一定的顺序。
 - 第三点，在`ClassVisitor`类当中，定义的`visitXxx()`方法中的参数与ClassFile结构密切相关。
+
+## 2.2 ClassWriter介绍
+
+### 2.2.1 ClassWriter类
+
+#### class info
+
+​	第一个部分，就是`ClassWriter`的父类是`ClassVisitor`，因此`ClassWriter`类继承了`visit()`、`visitField()`、`visitMethod()`和`visitEnd()`等方法。
+
+```
+/**
+ * A {@link ClassVisitor} that generates a corresponding ClassFile structure, as defined in the Java
+ * Virtual Machine Specification (JVMS). It can be used alone, to generate a Java class "from
+ * scratch", or with one or more {@link ClassReader} and adapter {@link ClassVisitor} to generate a
+ * modified class from one or more existing Java classes.
+ *
+ * @see <a href="https://docs.oracle.com/javase/specs/jvms/se9/html/jvms-4.html">JVMS 4</a>
+ * @author Eric Bruneton
+ */
+public class ClassWriter extends ClassVisitor {
+}
+```
+
+#### fields
+
+​	第二个部分，就是`ClassWriter`定义的字段有哪些。(这里只列举和ClassFile对应的字段，省略其他字段)
+
+```java
+public class ClassWriter extends ClassVisitor {
+  private int version;
+  private final SymbolTable symbolTable;
+
+  private int accessFlags;
+  private int thisClass;
+  private int superClass;
+  private int interfaceCount;
+  private int[] interfaces;
+
+  private FieldWriter firstField;
+  private FieldWriter lastField;
+
+  private MethodWriter firstMethod;
+  private MethodWriter lastMethod;
+
+  private Attribute firstAttribute;
+
+  //......
+}
+```
+
+这些字段与ClassFile结构密切相关：
+
+```java
+ClassFile {
+    u4             magic; // 固定 CAFEBABE
+    u2             minor_version; // version
+    u2             major_version; // version
+    u2             constant_pool_count; // symbolTable, 常量池
+    cp_info        constant_pool[constant_pool_count-1]; // symbolTable, 
+    u2             access_flags; // accessFlags, 访问修饰符
+    u2             this_class; // thisClass, 类名在常量池中的索引
+    u2             super_class; // superClass, 父类名在常量池中的索引
+    u2             interfaces_count; // interfaceCount, 实现的接口数量
+    u2             interfaces[interfaces_count]; // interfaces, 实现的接口数组
+    u2             fields_count; // firstField, lastField
+    field_info     fields[fields_count]; // firstField, lastField
+    u2             methods_count; // firstMethod, lastMethod
+    method_info    methods[methods_count]; // firstMethod, lastMethod
+    u2             attributes_count; // firstAttribute
+    attribute_info attributes[attributes_count]; // firstAttribute
+}
+```
+
+#### constructors
+
+第三个部分，就是`ClassWriter`定义的构造方法。
+
+`ClassWriter`定义的构造方法有两个，这里只关注其中一个，也就是只接收一个`int`类型参数的构造方法。在使用`new`关键字创建`ClassWriter`对象时，**推荐使用`COMPUTE_FRAMES`参数**。
+
+> 另一个构造方法，虽然这个构造方法声称做了一些"优化", 但这些优化有时候也是负面的。
+>
+> 1. 将constant pool and bootstrap methods直接从origin class复制到new class，就算有些常量池中的字面值无用，也还是会被复制一份过去，相当于浪费内存（主要也是为了节省计算时间）。
+> 2. 未转换的方法也会从origin class直接复制到new class（主要是为了节省计算时间），同样会存在内存浪费的问题。
+>
+> ```java
+> // ClassWriter(final int flags) 相当于调用 ClassWriter(null, flags)
+> public ClassWriter(final ClassReader classReader, final int flags);
+> ```
+
+```java
+public class ClassWriter extends ClassVisitor {
+    /* A flag to automatically compute the maximum stack size and the maximum number of local variables of methods. */
+    public static final int COMPUTE_MAXS = 1;
+    /* A flag to automatically compute the stack map frames of methods from scratch. */
+    public static final int COMPUTE_FRAMES = 2;
+
+    // flags option can be used to modify the default behavior of this class.
+    // Must be zero or more of COMPUTE_MAXS and COMPUTE_FRAMES.
+    public ClassWriter(final int flags) {
+        this(null, flags);
+    }
+}
+```
+
+- `COMPUTE_MAXS`: A flag to automatically compute **the maximum stack size** and **the maximum number of local variables** of methods. If this flag is set, then the arguments of the `MethodVisitor.visitMaxs` method of the `MethodVisitor` returned by the `visitMethod` method will be ignored, and computed automatically from the signature and the bytecode of each method.
+- `COMPUTE_FRAMES`: A flag to automatically compute **the stack map frames** of methods from scratch. If this flag is set, then the calls to the `MethodVisitor.visitFrame` method are ignored, and the stack map frames are recomputed from the methods bytecode. The arguments of the `MethodVisitor.visitMaxs` method are also ignored and recomputed from the bytecode. In other words, `COMPUTE_FRAMES` implies `COMPUTE_MAXS`.
+
+小总结：
+
+- `COMPUTE_MAXS`: 计算max stack和max local信息。
+- **`COMPUTE_FRAMES`: 既计算stack map frame信息，又计算max stack和max local信息。**
+
+换句话说，`COMPUTE_FRAMES`是功能最强大的：
+
+```
+COMPUTE_FRAMES = COMPUTE_MAXS + stack map frame
+```
+
+#### methods
+
+​	第四个部分，就是`ClassWriter`提供了哪些方法。
+
+##### visitXxx()方法
+
+在`ClassWriter`这个类当中，我们仍然是只关注其中的`visit()`方法、`visitField()`方法、`visitMethod()`方法和`visitEnd()`方法。
+
+这些`visitXxx()`方法的调用，就是在为构建ClassFile提供“原材料”的过程。
+
+```java
+public class ClassWriter extends ClassVisitor {
+  public void visit(
+    final int version,
+    final int access,
+    final String name,
+    final String signature,
+    final String superName,
+    final String[] interfaces);
+  public FieldVisitor visitField( // 访问字段
+    final int access,
+    final String name,
+    final String descriptor,
+    final String signature,
+    final Object value);
+  public MethodVisitor visitMethod( // 访问方法
+    final int access,
+    final String name,
+    final String descriptor,
+    final String signature,
+    final String[] exceptions);
+  public void visitEnd();
+  // ......
+}
+```
+
+##### toByteArray()方法
+
+在`ClassWriter`类当中，提供了一个`toByteArray()`方法。这个方法的作用是将“所有的努力”（对`visitXxx()`的调用）转换成`byte[]`，而这些`byte[]`的内容就遵循ClassFile结构。
+
+在`toByteArray()`方法的代码当中，通过三个步骤来得到`byte[]`：
+
+- 第一步，计算`size`大小。这个`size`就是表示`byte[]`的最终的长度是多少。
+- 第二步，将数据填充到`byte[]`当中。
+- 第三步，将`byte[]`数据返回。
+
+```java
+public class ClassWriter extends ClassVisitor {
+  public byte[] toByteArray() {
+
+    // First step: compute the size in bytes of the ClassFile structure.
+    // The magic field uses 4 bytes, 10 mandatory fields (minor_version, major_version,
+    // constant_pool_count, access_flags, this_class, super_class, interfaces_count, fields_count,
+    // methods_count and attributes_count) use 2 bytes each, and each interface uses 2 bytes too.
+    int size = 24 + 2 * interfaceCount;
+    int fieldsCount = 0;
+    FieldWriter fieldWriter = firstField;
+    while (fieldWriter != null) {
+      ++fieldsCount;
+      size += fieldWriter.computeFieldInfoSize();
+      fieldWriter = (FieldWriter) fieldWriter.fv;
+    }
+    int methodsCount = 0;
+    MethodWriter methodWriter = firstMethod;
+    while (methodWriter != null) {
+      ++methodsCount;
+      size += methodWriter.computeMethodInfoSize();
+      methodWriter = (MethodWriter) methodWriter.mv;
+    }
+
+    // For ease of reference, we use here the same attribute order as in Section 4.7 of the JVMS.
+    int attributesCount = 0;
+
+    // ......
+
+    if (firstAttribute != null) {
+      attributesCount += firstAttribute.getAttributeCount();
+      size += firstAttribute.computeAttributesSize(symbolTable);
+    }
+    // IMPORTANT: this must be the last part of the ClassFile size computation, because the previous
+    // statements can add attribute names to the constant pool, thereby changing its size!
+    size += symbolTable.getConstantPoolLength();
+
+
+    // Second step: allocate a ByteVector of the correct size (in order to avoid any array copy in
+    // dynamic resizes) and fill it with the ClassFile content.
+    ByteVector result = new ByteVector(size);
+    result.putInt(0xCAFEBABE).putInt(version);
+    symbolTable.putConstantPool(result);
+    int mask = (version & 0xFFFF) < Opcodes.V1_5 ? Opcodes.ACC_SYNTHETIC : 0;
+    result.putShort(accessFlags & ~mask).putShort(thisClass).putShort(superClass);
+    result.putShort(interfaceCount);
+    for (int i = 0; i < interfaceCount; ++i) {
+      result.putShort(interfaces[i]);
+    }
+    result.putShort(fieldsCount);
+    fieldWriter = firstField;
+    while (fieldWriter != null) {
+      fieldWriter.putFieldInfo(result);
+      fieldWriter = (FieldWriter) fieldWriter.fv;
+    }
+    result.putShort(methodsCount);
+    boolean hasFrames = false;
+    boolean hasAsmInstructions = false;
+    methodWriter = firstMethod;
+    while (methodWriter != null) {
+      hasFrames |= methodWriter.hasFrames();
+      hasAsmInstructions |= methodWriter.hasAsmInstructions();
+      methodWriter.putMethodInfo(result);
+      methodWriter = (MethodWriter) methodWriter.mv;
+    }
+    // For ease of reference, we use here the same attribute order as in Section 4.7 of the JVMS.
+    result.putShort(attributesCount);
+
+    // ......
+
+    if (firstAttribute != null) {
+      firstAttribute.putAttributes(symbolTable, result);
+    }
+
+    // 这里的if，是因为ASM自己也定义了类似JVM要求的Opcode的一套ASM instructions，ASM中间构造时使用自己的instructions, 最后再统一转换回JVM要求的Opcode
+    // Third step: replace the ASM specific instructions, if any.
+    if (hasAsmInstructions) {
+      return replaceAsmInstructions(result.data, hasFrames);
+    } else {
+      return result.data;
+    }
+  }
+}
+```
+
+### 2.2.2 创建ClassWriter对象
+
+#### 推荐使用COMPUTE_FRAMES
+
+在创建`ClassWriter`对象的时候，要指定一个`flags`参数，它可以选择的值有三个：
+
+- 第一个，可以选取的值是`0`。ASM不会自动计算max stacks和max locals，也不会自动计算stack map frames。
+- 第二个，可以选取的值是`ClassWriter.COMPUTE_MAXS`。ASM会自动计算max stacks和max locals，但不会自动计算stack map frames。
+- 第三个，可以选取的值是`ClassWriter.COMPUTE_FRAMES`（推荐使用）。ASM会自动计算max stacks和max locals，也会自动计算stack map frames。
+
+| flags          | max stacks and max locals | stack map frames |
+| -------------- | ------------------------- | ---------------- |
+| 0              | NO                        | NO               |
+| COMPUTE_MAXS   | YES                       | NO               |
+| COMPUTE_FRAMES | YES                       | YES              |
+
+#### 为什么推荐使用COMPUTE_FRAMES
+
+​	在创建`ClassWriter`对象的时候，使用`ClassWriter.COMPUTE_FRAMES`，ASM会自动计算max stacks和max locals，也会自动计算stack map frames。
+
+​	首先，来看一下max stacks和max locals。在ClassFile结构中，每一个方法都用`method_info`来表示，而方法里定义的代码则使用`Code`属性来表示，其结构如下：
+
+```java
+Code_attribute {
+  u2 attribute_name_index;
+  u4 attribute_length;
+  u2 max_stack;     // 这里是max stacks, the maximum stack size
+  u2 max_locals;    // 这里是max locals, the maximum number of local variables
+  u4 code_length;
+  u1 code[code_length];
+  u2 exception_table_length;
+  {   u2 start_pc;
+   u2 end_pc;
+   u2 handler_pc;
+   u2 catch_type;
+  } exception_table[exception_table_length];
+  u2 attributes_count;
+  attribute_info attributes[attributes_count];
+}
+```
+
+​	如果我们在创建`ClassWriter(flags)`对象的时候，将`flags`参数设置为`ClassWriter.COMPUTE_MAXS`或`ClassWriter.COMPUTE_FRAMES`，那么ASM会自动帮助我们计算`Code`结构中`max_stack`和`max_locals`的值。
+
+​	接着，来看一下stack map frames。在`Code`结构里，可能有多个`attributes`，其中一个可能就是`StackMapTable_attribute`。**`StackMapTable_attribute`结构，就是stack map frame具体存储格式，它的主要作用是对ByteCode进行类型检查**。
+
+```java
+StackMapTable_attribute {
+  u2              attribute_name_index;
+  u4              attribute_length;
+  u2              number_of_entries;
+  stack_map_frame entries[number_of_entries];
+}
+```
+
+​	如果我们在创建`ClassWriter(flags)`对象的时候，将`flags`参数设置为`ClassWriter.COMPUTE_FRAMES`，那么ASM会自动帮助我们计算`StackMapTable_attribute`的内容。
+
+![Java ASM系列：（007）ClassWriter介绍_Java](https://s2.51cto.com/images/20210621/1624254673117990.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+- 如果将`flags`参数的取值为`0`，那么我们就必须要提供正确的max stacks、max locals和stack map frame的值；
+- 如果将`flags`参数的取值为`ClassWriter.COMPUTE_MAXS`，那么ASM会自动帮助我们计算max stacks和max locals，而我们则需要提供正确的stack map frame的值。
+
+> ​	那么，ASM为什么会提供`0`和`ClassWriter.COMPUTE_MAXS`这两个选项呢？因为ASM在计算这些值的时候，要考虑各种各样不同的情况，所以它的算法相对来说就比较复杂，因而执行速度也会相对较慢。同时，ASM也鼓励开发者去研究更好的算法；如果开发者有更好的算法，就可以不去使用`ClassWriter.COMPUTE_FRAMES`，这样就能让程序的执行效率更高效。
+
+​	要想计算max stacks、max locals和stack map frames，也不是一件容易的事情。出于方便的目的，就推荐大家使用`ClassWriter.COMPUTE_FRAMES`。在大多数情况下，`ClassWriter.COMPUTE_FRAMES`都能帮我们计算出正确的值。**在少数情况下，`ClassWriter.COMPUTE_FRAMES`也可能会出错，比如说，有些代码经过混淆（obfuscate）处理，它里面的stack map frame会变更非常复杂，使用`ClassWriter.COMPUTE_FRAMES`就会出现错误的情况**。针对这种少数的情况，我们可以在不改变原有stack map frame的情况下，使用`ClassWriter.COMPUTE_MAXS`，让ASM只帮助我们计算max stacks和max locals。
+
+### 2.2.3 如何使用ClassWriter类
+
+使用`ClassWriter`生成一个Class文件，可以大致分成三个步骤：
+
+- 第一步，创建`ClassWriter`对象。
+- 第二步，调用`ClassWriter`对象的`visitXxx()`方法。
+- 第三步，调用`ClassWriter`对象的`toByteArray()`方法。
+
+示例代码如下：
+
+```java
+import org.objectweb.asm.ClassWriter;
+
+import static org.objectweb.asm.Opcodes.*;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/11 4:45 PM
+ */
+public class HelloWorldGenerateCore {
+    public static byte[] dump() throws Exception{
+        // (1) 创建ClassWriter对象
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+      
+        // (2) 调用 visitXxx()方法, 实际除了visitEnd，其他visitXxx需要传递参数，这里主要指事为了说明调用方法的流程
+        // 可以调用 "1.5.1 ASMPrint类" 的 ASMPrint 来输出 ASM代码, 照猫画虎
+        cw.visit();
+        cw.visitField();
+        cw.visitMethod();
+        cw.visitEnd();
+
+        // (3) 调用 toByteArray()方法
+        return cw.toByteArray();
+    }
+}
+
+```
+
+## 2.3 ClassWriter代码示例
+
+![Java ASM系列：（008）ClassWriter代码示例_ASM](https://s2.51cto.com/images/20210618/1624005632705532.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+​	在当前阶段，我们只能进行Class Generation的操作。
+
+### 2.3.1 示例一：生成接口
+
+#### 预期目标
+
+​	我们的预期目标：生成`HelloWorld`接口。
+
+```java
+public interface HelloWorld {
+}
+```
+
+#### 代码实现
+
+注意点：
+
++ 访问修饰符，需要声明`ACC_PUBLIC | ACC_ABSTRACT | ACC_INTERFACE`
+
++ **interface接口，superName(父类名)需要指定为`Object`**
+
+  (试了下，如果指定superName为null，下面使用`Class.forName`会报错说`Exception in thread "main" java.lang.ClassFormatError: Invalid superclass index 0 in class file sample/HelloWorld`。这里指定null后光看`.class`文件反编译后是没有区别的，很容易踩坑，可以用`javap -v -p {sample/HelloWorld.class}` 查看区别，会发现指定superName为Object时，`.class`里面会多出`super_class`值为`java/lang/Object`)
+
+```java
+import org.objectweb.asm.ClassWriter;
+import utils.FileUtils;
+
+import static org.objectweb.asm.Opcodes.*;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/11 5:56 PM
+ */
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) {
+    String relativePath = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relativePath);
+
+    // (1) 生成 byte[] 内容 (符合ClassFile的.class二进制数据)
+    byte[] bytes = dump();
+
+    // (2) 保存 byte[] 到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() {
+    // (1) 创建 ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用 visitXxx() 方法
+    cw.visit(
+      // version
+      V17, 
+      // access
+      ACC_PUBLIC | ACC_ABSTRACT | ACC_INTERFACE, 
+      // name
+      "sample/HelloWorld", 
+      // signature
+      null, 
+      // superName (必须指定Object，否则后续Class.forName抛出异常)
+      "java/lang/Object", 
+      // interfaces
+      null);
+    cw.visitEnd();
+
+    // (3) 调用toByteArray() 方法
+    return cw.toByteArray();
+  }
+}
+
+```
+
+​	在上述代码中，我们调用了`visit()`方法、`visitEnd()`方法和`toByteArray()`方法。
+
+​	由于`sample.HelloWorld`这个接口中，并没有定义任何的字段和方法，因此，在上述代码中没有调用`visitField()`方法和`visitMethod()`方法。
+
+#### 验证结果
+
+```java
+public class HelloWorldRun {
+  public static void main(String[] args) throws ClassNotFoundException {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    System.out.println(clazz);
+  }
+}
+```
+
+#### 小结
+
+##### visit()方法
+
+​	在这里，我们重点介绍一下`visit(version, access, name, signature, superName, interfaces)`方法的各个参数：
+
+- `version`: 表示当前类的版本信息。在上述示例代码中，其取值为`Opcodes.V17`，表示使用Java 17版本。
+- `access`: 表示当前类的访问标识（access flag）信息。在上面的示例中，`access`的取值是`ACC_PUBLIC + ACC_ABSTRACT + ACC_INTERFACE`，也可以写成`ACC_PUBLIC | ACC_ABSTRACT | ACC_INTERFACE`。如果想进一步了解这些标识的含义，可以参考[Java Virtual Machine Specification](https://docs.oracle.com/javase/specs/jvms/se8/html/index.html)的"Chapter 4. The class File Format"部分。
+- `name`: 表示当前类的名字，它采用的格式是**Internal Name**的形式。
+- `signature`: 表示当前类的泛型信息。因为在这个接口当中不包含任何的泛型信息，因此它的值为`null`。
+- `superName`: 表示当前类的父类信息，它采用的格式是**Internal Name**的形式。
+- `interfaces`: 表示当前类实现了哪些接口信息。
+
+##### Internal Name
+
+​	同时，我们也要介绍一下Internal Name的概念：在`.java`文件中，我们使用Java语言来编写代码，使用类名的形式是**Fully Qualified Class Name**，例如`java.lang.String`；将`.java`文件编译之后，就会生成`.class`文件；在`.class`文件中，类名的形式会发生变化，称之为**Internal Name**，例如`java/lang/String`。因此，将**Fully Qualified Class Name**转换成**Internal Name**的方式就是，将`.`字符转换成`/`字符。
+
+|          | Java Language              | Java ClassFile     |
+| -------- | -------------------------- | ------------------ |
+| 文件格式 | `.java`                    | `.class`           |
+| 类名     | Fully Qualified Class Name | Internal Name      |
+| 类名示例 | `java.lang.String`         | `java/lang/String` |
+
+### 2.3.2 示例二：生成接口+字段+方法
+
+#### 预期目标
+
+我们的预期目标：生成`HelloWorld`接口。
+
+```java
+public interface HelloWorld extends Cloneable {
+    int LESS = -1;
+    int EQUAL = 0;
+    int GREATER = 1;
+    int compareTo(Object o);
+}
+```
+
+#### 编码实现
+
+注意点：
+
++ 虽然是接口，但是需要指定父类为Object
++ `visitField()`会返回FieldVisitor，记得再调用`visitEnd()`，（虽然我试了下，不调用也没有任何影响）
++ `visitMethod()`会返回MethodVisitor，记得再调用`visitEnd()`，（虽然我试了下，不调用也没有任何影响）
+
+```java
+import org.objectweb.asm.ClassWriter;
+import utils.FileUtils;
+
+import static org.objectweb.asm.Opcodes.*;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/11 5:56 PM
+ */
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) {
+    String relativePath = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relativePath);
+
+    // (1) 生成 byte[] 内容 (符合ClassFile的.class二进制数据)
+    byte[] bytes = dump();
+
+    // (2) 保存 byte[] 到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() {
+    // (1) 创建 ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用 visitXxx() 方法
+    cw.visit(V17, ACC_PUBLIC | ACC_ABSTRACT | ACC_INTERFACE, "sample/HelloWorld", null, "java/lang/Object", new String[]{"java/lang/Cloneable"});
+
+    // access, name, descriptor, signature, value, 返回一个 FieldVisitor 抽象类
+    cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "LESS", "I", null, -1)
+      .visitEnd();
+    cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "EQUAL", "I", null, 0)
+      .visitEnd();
+    cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "GREATER", "I", null, 1)
+      .visitEnd();
+
+    // access, name, descriptor, signature, exceptions, 返回一个 MethodVisitor 抽象类
+    cw.visitMethod(ACC_PUBLIC | ACC_ABSTRACT, "compareTo", "(Ljava/lang/Object;)I", null, null)
+      .visitEnd();
+
+    cw.visitEnd();
+
+    // (3) 调用toByteArray() 方法
+    return cw.toByteArray();
+  }
+}
+
+```
+
+​	在上述代码中，我们调用了`visit()`方法、`visitField()`方法、`visitMethod()`方法、`visitEnd()`方法和`toByteArray()`方法。
+
+#### 验证结果
+
+```java
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/11 6:17 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) throws ClassNotFoundException {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    System.out.println(clazz);
+    Field[] declaredFields = clazz.getDeclaredFields();
+    if(declaredFields.length > 0) {
+      System.out.println("fields: ");
+      for(Field field: declaredFields ) {
+        System.out.println(" " + field);
+      }
+    }
+    Method[] declaredMethods = clazz.getDeclaredMethods();
+    if(declaredMethods.length > 0) {
+      System.out.println("methods: ");
+      for(Method method: declaredMethods) {
+        System.out.println(" " + method);
+      }
+    }
+  }
+}
+```
+
+输出结果
+
+```shell
+interface sample.HelloWorld
+fields: 
+ public static final int sample.HelloWorld.LESS
+ public static final int sample.HelloWorld.EQUAL
+ public static final int sample.HelloWorld.GREATER
+methods: 
+ public abstract int sample.HelloWorld.compareTo(java.lang.Object)
+```
+
+#### 小结
+
+##### visitField()和visitMethod()方法
+
+在这里，我们重点说一下`visitField()`方法和`visitMethod()`方法的各个参数：
+
+- `visitField (access, name, descriptor, signature, value)`
+- `visitMethod(access, name, descriptor, signature, exceptions)`
+
+这两个方法的前4个参数是相同的，不同的地方只在于第5个参数。
+
+- `access`参数：表示当前字段或方法带有的访问标识（access flag）信息，例如`ACC_PUBLIC`、`ACC_STATIC`和`ACC_FINAL`等。
+- `name`参数：表示当前字段或方法的名字。
+- **`descriptor`参数：表示当前字段或方法的描述符。这些描述符，与我们平时使用的Java类型是有区别的（字段的描述符，描述字段的类型；方法的描述符，描述方法的请求参数和返回值）**。
+- `signature`参数：表示当前字段或方法是否带有泛型信息。换句话说，如果不带有泛型信息，提供一个`null`就可以了；如果带有泛型信息，就需要给它提供某一个具体的值。
+- `value`参数：是`visitField()`方法的第5个参数。这个参数的取值，与当前字段是否为常量有关系。如果当前字段是一个常量，就需要给`value`参数提供某一个具体的值；如果当前字段不是常量，那么使用`null`就可以了。
+- **`exceptions`参数：是`visitMethod()`方法的第5个参数。这个参数的取值，与当前方法头（Method Header）中是否具有`throws XxxException`相关。**
+
+我们可以使用`PrintASMCodeCore`类来查看下面的`sample.HelloWorld`类的ASM代码，从而观察`value`参数和`exceptions`参数的取值：
+
+```java
+import java.io.FileNotFoundException;
+import java.io.IOException;
+
+public class HelloWorld {
+  // 这是一个常量字段，使用static、final关键字修饰
+  public static final int constant_field = 10;
+  // 这是一个非常量字段
+  public int non_constant_field;
+
+  public void test() throws FileNotFoundException, IOException {
+    // do nothing
+  }
+}
+```
+
+对于上面的代码，
+
+- `constant_field`字段：对应于`visitField(ACC_PUBLIC | ACC_FINAL | ACC_STATIC, "constant_field", "I", null, new Integer(10))`
+- `non_constant_field`字段：对应于`visitField(ACC_PUBLIC, "non_constant_field", "I", null, null)`
+- `test()`方法：对应于`visitMethod(ACC_PUBLIC, "test", "()V", null, new String[] { "java/io/FileNotFoundException", "java/io/IOException" })`
+
+##### 描述符（descriptor）
+
+在ClassFile当中，描述符（descriptor）是对“类型”的简单化描述。
+
+- 对于字段（field）来说，描述符（descriptor）就是对**字段本身的类型**进行简单化描述。
+- 对于方法（method）来说，描述符（descriptor）就是对方法的**接收参数的类型**和**返回值的类型**进行简单化描述。
+
+| Java类型              | ClassFile描述符                                 |
+| --------------------- | ----------------------------------------------- |
+| `boolean`             | `Z`（Z表示Zero，零表示`false`，非零表示`true`） |
+| `byte`                | `B`                                             |
+| `char`                | `C`                                             |
+| `double`              | `D`                                             |
+| `float`               | `F`                                             |
+| `int`                 | `I`                                             |
+| `long`                | `J`                                             |
+| `short`               | `S`                                             |
+| `void`                | `V`                                             |
+| `non-array reference` | `L<InternalName>;`                              |
+| `array reference`     | `[`                                             |
+
+对字段描述符的举例：
+
+- `boolean flag`: `Z`
+- `byte byteValue`: `B`
+- `int intValue`: `I`
+- `float floatValue`: `F`
+- `double doubleValue`: `D`
+- `String strValue`: `Ljava/lang/String;`
+- `Object objValue`: `Ljava/lang/Object;`
+- `byte[] bytes`: `[B`
+- `String[] array`: `[Ljava/lang/String;`
+- `Object[][] twoDimArray`: `[[Ljava/lang/Object;`
+
+对方法描述符的举例：
+
+- `int add(int a, int b)`: `(II)I`
+- `void test(int a, int b)`: `(II)V`
+- `boolean compare(Object obj)`: `(Ljava/lang/Object;)Z`
+- `void main(String[] args)`: `([Ljava/lang/String;)V`
+
+### 2.3.3 示例三：生成类
+
+#### 预期目标
+
+​	我们的预期目标：生成`HelloWorld`类。
+
+```java
+public class HelloWorld {
+}
+```
+
+#### 编码实现
+
+注意点：
+
++ **使用ASM操作字节码时，需要显式添加无参构造方法**（平时写java文件，则是JVM会自动生成无参构造方法）
+
+```java
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.MethodVisitor;
+import utils.FileUtils;
+
+import static org.objectweb.asm.Opcodes.*;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/11 5:56 PM
+ */
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) {
+    String relativePath = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relativePath);
+
+    // (1) 生成 byte[] 内容 (符合ClassFile的.class二进制数据)
+    byte[] bytes = dump();
+
+    // (2) 保存 byte[] 到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() {
+    // (1) 创建 ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用 visitXxx() 方法
+    cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "sample/HelloWorld", null, "java/lang/Object", null);
+
+    // access, name, descriptor, signature, exceptions, 返回一个 MethodVisitor 抽象类
+    MethodVisitor methodVisitor = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+    methodVisitor.visitCode();
+    // 下面2行调用父类Object的构造方法，相当于java代码的 super()
+    methodVisitor.visitVarInsn(ALOAD,0);
+    methodVisitor.visitMethodInsn(INVOKESPECIAL,"java/lang/Object", "<init>", "()V", false);
+    // 在当前类的 构造方法执行return
+    methodVisitor.visitInsn(RETURN);
+    methodVisitor.visitMaxs(1,1);
+    methodVisitor.visitEnd();
+
+    cw.visitEnd();
+
+    // (3) 调用toByteArray() 方法
+    return cw.toByteArray();
+  }
+}
+```
+
+#### 验证结果
+
+```java
+public class HelloWorldRun {
+  public static void main(String[] args) throws ClassNotFoundException {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    System.out.println(clazz);
+  }
+}
+```
+
+### 2.3.4 总结
+
+本文主要对`ClassWriter`类的代码示例进行介绍，主要目的是希望大家能够对`ClassWriter`类熟悉起来。
+
+本文内容总结如下：
+
+- 第一点，我们需要注意`ClassWriter`/`ClassVisitor`中`visit()`、`visitField()`、`visitMethod()`和`visitEnd()`方法的调用顺序。
+- 第二点，我们对于`visit()`方法、`visitField()`方法和`visitMethod()`方法接收的参数进行了介绍。虽然我们并没有特别介绍`visitEnd()`方法和`toByteArray()`方法，并不表示这两个方法不重要，只是因为这两个方法不接收任何参数。
+- <u>第三点，我们介绍了Internal Name和Descriptor（描述符）这两个概念，在使用时候需要加以注意，因为它们与我们在使用Java语言编写代码时是不一样的</u>。
+- **第四点，在`.class`文件中，构造方法的名字是`<init>()`，表示instance initialization method；静态代码块的名字是`<clinit>()`，表示class initialization method**。
+
+另外，`visitField()`方法会返回一个`FieldVisitor`对象，而`visitMethod()`方法会返回一个`MethodVisitor`对象；在后续的内容当中，我们会分别介绍`FieldVisitor`类和`MethodVisitor`类。
+
+
+
