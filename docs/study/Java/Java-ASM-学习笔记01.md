@@ -1805,5 +1805,315 @@ public class HelloWorldRun {
 
 另外，`visitField()`方法会返回一个`FieldVisitor`对象，而`visitMethod()`方法会返回一个`MethodVisitor`对象；在后续的内容当中，我们会分别介绍`FieldVisitor`类和`MethodVisitor`类。
 
+## 2.4 FieldVisitor介绍
 
+在调用`ClassVistor`的`visitField()`方法时返回`FieldVisitor`实例；调用`ClassVistor`的`visitMethod()`方法时返回`MethodVisitor`实例。
 
+`ClassWriter`是抽象类`ClassVistor`的实现类，`FieldWriter`是`FieldVisitor`的实现类，`MethodWriter`是`MethodVisitor`的实现类。
+
+查看`ClassWriter`的`visitField()`方法实现时，也会发现其内部构造`FieldWriter`实例：
+
+```java
+@Override
+public final FieldVisitor visitField(
+  final int access,
+  final String name,
+  final String descriptor,
+  final String signature,
+  final Object value) {
+  FieldWriter fieldWriter =
+    new FieldWriter(symbolTable, access, name, descriptor, signature, value);
+  if (firstField == null) {
+    firstField = fieldWriter;
+  } else {
+    lastField.fv = fieldWriter;
+  }
+  return lastField = fieldWriter;
+}
+```
+
+![Java ASM系列：（003）ASM与ClassFile_ASM_04](https://s2.51cto.com/images/20210619/1624105643863231.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+### 2.4.1 FieldVisitor类
+
+​	**在学习`FieldVisitor`类的时候，可以与`ClassVisitor`类进行对比，这两个类在结构上有很大的相似性：两者都是抽象类，都定义了两个字段，都定义了两个构造方法，都定义了`visitXxx()`方法**。
+
+#### class info
+
+第一个部分，`FieldVisitor`类是一个`abstract`类。
+
+```java
+/**
+ * A visitor to visit a Java field. The methods of this class must be called in the following order:
+ * ( {@code visitAnnotation} | {@code visitTypeAnnotation} | {@code visitAttribute} )* {@code
+ * visitEnd}.
+ *
+ * @author Eric Bruneton
+ */
+public abstract class FieldVisitor {
+}
+```
+
+#### fields
+
+第二个部分，`FieldVisitor`类定义的字段有哪些。
+
+```java
+public abstract class FieldVisitor {
+  /**
+   * The ASM API version implemented by this visitor. The value of this field must be one of the
+   * {@code ASM}<i>x</i> values in {@link Opcodes}.
+   */
+  protected final int api;
+  /** The field visitor to which this visitor must delegate method calls. May be {@literal null}. */
+  protected FieldVisitor fv;
+}
+```
+
+#### constructors
+
+第三个部分，`FieldVisitor`类定义的构造方法有哪些。
+
+```java
+public abstract class FieldVisitor {
+    public FieldVisitor(final int api) {
+        this(api, null);
+    }
+
+    public FieldVisitor(final int api, final FieldVisitor fieldVisitor) {
+        this.api = api;
+        this.fv = fieldVisitor;
+    }
+}
+```
+
+#### methods
+
+第四个部分，`FieldVisitor`类定义的方法有哪些。
+
+在`FieldVisitor`类当中，一共定义了4个`visitXxx()`方法，但是，我们只需要关注其中的`visitEnd()`方法就可以了。
+
+我们为什么只关注`visitEnd()`方法呢？因为我们刚开始学习ASM，有许多东西不太熟悉，为了减少我们的学习和认知“负担”，那么对于一些非必要的方法，我们就暂时忽略它；将`visitXxx()`方法精简到一个最小的认知集合，那么就只剩下`visitEnd()`方法了。
+
+```java
+public abstract class FieldVisitor {
+  // ......
+
+  /**
+   * Visits the end of the field. This method, which is the last one to be called, is used to inform
+   * the visitor that all the annotations and attributes of the field have been visited.
+   */
+  public void visitEnd() {
+    if (fv != null) {
+      fv.visitEnd();
+    }
+  }
+}
+```
+
+另外，在`FieldVisitor`类内定义的多个`visitXxx()`方法，也需要遵循一定的调用顺序，如下所示：
+
+```pseudocode
+(
+ visitAnnotation |
+ visitTypeAnnotation |
+ visitAttribute
+)*
+visitEnd
+```
+
+由于我们只关注`visitEnd()`方法，那么，这个调用顺序就变成如下这样：
+
+```
+visitEnd
+```
+
+### 2.4.2 示例一：字段常量
+
+#### 预期目标
+
+```java
+public interface HelloWorld {
+    int intValue = 100;
+    String strValue = "ABC";
+}
+```
+
+#### 编码实现
+
+注意点：
+
++ `ClassWriter`对象调用`visitField()`会返回一个FieldVisitor对象，记得调用其`visitEnd()`方法
+
+```java
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.FieldVisitor;
+import org.objectweb.asm.MethodVisitor;
+import utils.FileUtils;
+
+import static org.objectweb.asm.Opcodes.*;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/11 5:56 PM
+ */
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) {
+    String relativePath = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relativePath);
+
+    // (1) 生成 byte[] 内容 (符合ClassFile的.class二进制数据)
+    byte[] bytes = dump();
+
+    // (2) 保存 byte[] 到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() {
+    // (1) 创建 ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用 visitXxx() 方法
+    cw.visit(V17, ACC_PUBLIC | ACC_ABSTRACT | ACC_INTERFACE, "sample/HelloWorld", null, "java/lang/Object", null);
+
+    // access, name, descriptor, signature, value (记得最后调用 visitEnd())
+    FieldVisitor fv1 = cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "intValue","I",null,100);
+    fv1.visitEnd();
+    FieldVisitor fv2 = cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "strValue","Ljava/lang/String;",null,"ABC");
+    fv2.visitEnd();
+
+    cw.visitEnd();
+
+    // (3) 调用toByteArray() 方法
+    return cw.toByteArray();
+  }
+}
+
+```
+
+验证结果
+
+```java
+import java.lang.reflect.Field;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) throws InstantiationException, IllegalAccessException, ClassNotFoundException {
+    MyClassLoader classLoader = new MyClassLoader();
+    Class<?> clazz = classLoader.loadClass("sample.HelloWorld");
+    System.out.println(clazz);
+    Field[] declaredFields = clazz.getDeclaredFields();
+    if(declaredFields.length > 0) {
+      System.out.println("fields:");
+      for(Field field : declaredFields) {
+        Object value = field.get(null);
+        System.out.println(field + ": " + value);
+      }
+    }
+  }
+}
+
+```
+
+输出结果
+
+```shell
+interface sample.HelloWorld
+fields:
+public static final int sample.HelloWorld.intValue: 100
+public static final java.lang.String sample.HelloWorld.strValue: ABC
+```
+
+### 2.4.3 示例二：visitAnnotation
+
+​	无论是`ClassVisitor`类，还是`FieldVisitor`类，又或者是`MethodVisitor`类，总会有一些`visitXxx()`方法是在课程当中不会涉及到的。但是，在日后的工作和学习当中，很可能，在某一天你突然就对一个`visitXxx()`方法产生了兴趣，那该如何学习这个`visitXxx()`方法呢？我们可以借助于`ASMPrint`类（先借住ASMPrint生成ASM代码，然后再对照学习`vistXxx()`）。
+
+#### 预期目标
+
+假如我们想生成如下`HelloWorld`类：
+
+```java
+public interface HelloWorld {
+    @MyTag(name = "tomcat", age = 10)
+    int intValue = 100;
+}
+```
+
+其中，`MyTag`定义如下：
+
+```java
+public @interface MyTag {
+  String name();
+  int age();
+}
+```
+
+#### 编码实现
+
+注意点：
+
++ 调用`FieldVistor`的`visitAnnotation()`方法返回`AnnotationVisitor`实例，最后也需记得调用其`visitEnd()`方法
+
+```java
+import org.objectweb.asm.AnnotationVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.FieldVisitor;
+import org.objectweb.asm.MethodVisitor;
+import utils.FileUtils;
+
+import static org.objectweb.asm.Opcodes.*;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/11 5:56 PM
+ */
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) {
+    String relativePath = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relativePath);
+
+    // (1) 生成 byte[] 内容 (符合ClassFile的.class二进制数据)
+    byte[] bytes = dump();
+
+    // (2) 保存 byte[] 到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() {
+    // (1) 创建 ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用 visitXxx() 方法
+    cw.visit(V17, ACC_PUBLIC | ACC_ABSTRACT | ACC_INTERFACE, "sample/HelloWorld", null, "java/lang/Object", null);
+
+    // access, name, descriptor, signature, value (记得最后调用 visitEnd())
+    FieldVisitor fv = cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "intValue","I",null,100);
+    {
+      AnnotationVisitor av = fv.visitAnnotation("Lsample/MyTag", false);
+      av.visit("name", "tomcat");
+      av.visit("age", 10);
+      av.visitEnd();
+    }
+    fv.visitEnd();
+
+    cw.visitEnd();
+
+    // (3) 调用toByteArray() 方法
+    return cw.toByteArray();
+  }
+}
+
+```
+
+### 2.4.4 总结
+
+本文主要对`FieldVisitor`类进行了介绍，内容总结如下：
+
+- 第一点，`FieldVisitor`类，从结构上来说，与`ClassVisitor`很相似；对于`FieldVisitor`类的各个不同部分进行介绍，以便从整体上来理解`FieldVisitor`类。
+- 第二点，对于`FieldVisitor`类定义的方法，我们只需要关心`FieldVisitor.visitEnd()`方法就可以了。
+- 第三点，我们可以借助于`ASMPrint`类来帮助我们学习新的`visitXxx()`方法。
+
+## 2.5 FieldWriter介绍
