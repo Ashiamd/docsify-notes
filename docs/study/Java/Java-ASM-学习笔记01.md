@@ -2056,6 +2056,7 @@ public @interface MyTag {
 注意点：
 
 + 调用`FieldVistor`的`visitAnnotation()`方法返回`AnnotationVisitor`实例，最后也需记得调用其`visitEnd()`方法
++ 可以用`javap -v -p sample/HelloWorld.class`对比一下`visitAnnotation("Lsample/MyTag", false)`和`visitAnnotation("Lsample/MyTag", true)`的区别
 
 ```java
 import org.objectweb.asm.AnnotationVisitor;
@@ -2092,7 +2093,9 @@ public class HelloWorldGenerateCore {
     // access, name, descriptor, signature, value (记得最后调用 visitEnd())
     FieldVisitor fv = cw.visitField(ACC_PUBLIC | ACC_STATIC | ACC_FINAL, "intValue","I",null,100);
     {
+      // descriptor, visible
       AnnotationVisitor av = fv.visitAnnotation("Lsample/MyTag", false);
+      // name, value
       av.visit("name", "tomcat");
       av.visit("age", 10);
       av.visitEnd();
@@ -2105,7 +2108,49 @@ public class HelloWorldGenerateCore {
     return cw.toByteArray();
   }
 }
+```
 
+`visitAnnotation("Lsample/MyTag", false)`和`visitAnnotation("Lsample/MyTag", true)`区别
+
+```java
+Classfile sample/HelloWorld.class
+  Last modified Apr 13, 2023; size 216 bytes
+  SHA-256 checksum 7f272d63ae89f50e5ab3275c9416846b7965417289fccb27f3aec8255f85e6f1
+public interface sample.HelloWorld
+  minor version: 0
+  major version: 61
+  flags: (0x0601) ACC_PUBLIC, ACC_INTERFACE, ACC_ABSTRACT
+  this_class: #2                          // sample/HelloWorld
+  super_class: #4                         // java/lang/Object
+  interfaces: 0, fields: 1, methods: 0, attributes: 0
+Constant pool:
+   #1 = Utf8               sample/HelloWorld
+   #2 = Class              #1             // sample/HelloWorld
+   #3 = Utf8               java/lang/Object
+   #4 = Class              #3             // java/lang/Object
+   #5 = Utf8               intValue
+   #6 = Utf8               I
+   #7 = Integer            100
+   #8 = Utf8               Lsample/MyTag
+   #9 = Utf8               name
+  #10 = Utf8               tomcat
+  #11 = Utf8               age
+  #12 = Integer            10
+  #13 = Utf8               ConstantValue
+  #14 = Utf8               RuntimeInvisibleAnnotations //如果是 true则这里是 RuntimeVisibleAnnotations
+{
+  public static final int intValue;
+    descriptor: I
+    flags: (0x0019) ACC_PUBLIC, ACC_STATIC, ACC_FINAL
+    ConstantValue: int 100
+    RuntimeInvisibleAnnotations: //如果是 true 则这里是 RuntimeVisibleAnnotations:
+      0: #8(#9=s#10,#11=I#12)
+        #8(
+          name="tomcat"
+          age=10
+        )
+
+}
 ```
 
 ### 2.4.4 总结
