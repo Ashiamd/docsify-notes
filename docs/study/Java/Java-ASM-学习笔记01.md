@@ -4130,6 +4130,7 @@ Label returnLabel = new Label();
 // 第1段
 mv.visitCode();
 mv.visitVarInsn(ILOAD, 1);
+// 相当于 false 则跳转
 mv.visitJumpInsn(IFEQ, elseLabel);
 mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
 mv.visitLdcInsn("value is true");
@@ -4231,4 +4232,730 @@ test(Z)V
 - 第四点，从Frame的角度来讲，由于程序代码逻辑发生了跳转，那么相应的local variables和operand stack结构也发生了“非线性”的变化。
 
 ## 2.11 Label代码示例
+
+### 2.11.1 示例一：if语句
+
+#### 预期目标
+
+```java
+public class HelloWorld {
+  public void test(int value) {
+    if (value == 0) {
+      System.out.println("value is 0");
+    }
+    else {
+      System.out.println("value is not 0");
+    }
+  }
+}
+```
+
+#### 编码实现
+
+注意点：
+
++ `mv2.visitJumpInsn(IFNE, ifValueNotZero);`这里`IFNE`没有指定value参数和0对比，因为默认就是和0值做比较（C语言中，0为false；非0为true）
++ if代码块内的代码执行完后，记得`GOTO`到return语句，类似汇编语言（如果不GOTO，就相当于继续执行后续代码，也就是执行到else代码块里的代码了）
++ else代码块内的代码执行完后，不需要再显式`GOTO`到return语句，因为后续本来就会执行到return语句
+
+> `if<cond>`: Branch if `int` comparison with zero succeeds
+>
+> The *value* must be of type `int`. It is popped from the operand stack and compared against zero. All comparisons are signed. The results of the comparisons are as follows:
+>
+> - *ifeq* succeeds if and only if *value* = 0
+> - *ifne* succeeds if and only if *value* ≠ 0
+> - *iflt* succeeds if and only if *value* < 0
+> - *ifle* succeeds if and only if *value* ≤ 0
+> - *ifgt* succeeds if and only if *value* > 0
+> - *ifge* succeeds if and only if *value* ≥ 0
+
+```java
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.MethodVisitor;
+import utils.FileUtils;
+
+import static org.objectweb.asm.Opcodes.*;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/11 5:56 PM
+ */
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) {
+    String relativePath = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relativePath);
+
+    // (1) 生成 byte[] 内容 (符合ClassFile的.class二进制数据)
+    byte[] bytes = dump();
+
+    // (2) 保存 byte[] 到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() {
+    // (1) 创建 ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用 visitXxx() 方法
+    cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "sample/HelloWorld", null, "java/lang/Object", null);
+
+    // 构造方法
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      // 方法体内代码
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      // 调用父类构造方法
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      // 方法体结束
+      mv1.visitMaxs(1, 1);
+      mv1.visitEnd();
+    }
+
+    // test方法
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "(I)V", null,null);
+      Label returnLabel = new Label();
+      Label ifValueNotZero = new Label();
+      mv2.visitCode();
+      // if (value == 0)
+      mv2.visitVarInsn(ILOAD, 1);
+      mv2.visitJumpInsn(IFNE, ifValueNotZero);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("value is 0");
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println","(Ljava/lang/String;)V", false);
+      mv2.visitJumpInsn(GOTO,returnLabel);
+      // else
+      mv2.visitLabel(ifValueNotZero);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("value is not 0");
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println","(Ljava/lang/String;)V", false);
+
+      mv2.visitLabel(returnLabel);
+      mv2.visitInsn(RETURN);
+      mv2.visitMaxs(2, 2);
+
+      mv2.visitEnd();
+    }
+
+
+    cw.visitEnd();
+
+    // (3) 调用toByteArray() 方法
+    return cw.toByteArray();
+  }
+}
+```
+
+#### 验证结果
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    Object obj = clazz.newInstance();
+
+    Method method = clazz.getDeclaredMethod("test", int.class);
+    method.invoke(obj, 0);
+    method.invoke(obj, 1);
+  }
+}
+```
+
+```shell
+$ javap -c sample.HelloWorld
+public void test(int);
+    Code:
+       0: iload_1
+       1: ifne          15
+       4: getstatic     #16                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       7: ldc           #18                 // String value is 0
+       9: invokevirtual #24                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      12: goto          23
+      15: getstatic     #16                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      18: ldc           #26                 // String value is not 0
+      20: invokevirtual #24                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      23: return
+```
+
+#### 小结
+
+通过上面的示例，我们注意三个知识点：
+
+- 第一点，如何使用`ClassWriter`类。
+- 第二点，在使用`MethodVisitor`类时，其中`visitXxx()`方法需要遵循的调用顺序。
+- 第三点，如何通过`Label`类来实现if语句。
+
+### 2.11.2 示例二：switch语句
+
+从Instruction的角度来说，实现switch语句可以使用`lookupswitch`或`tableswitch`指令。
+
+#### 预期目标
+
+```java
+public class HelloWorld {
+  public void test(int val) {
+    switch (val) {
+      case 1:
+        System.out.println("val = 1");
+        break;
+      case 2:
+        System.out.println("val = 2");
+        break;
+      case 3:
+        System.out.println("val = 3");
+        break;
+      case 4:
+        System.out.println("val = 4");
+        break;
+      default:
+        System.out.println("val is unknown");
+    }
+  }
+}
+```
+
+#### 编码实现
+
+注意点：
+
++ default后没有逻辑了，所以不需要再`GOTO`执行return语句的位置，因为后续自然会走return语句
++ `mv2.visitVarInsn(ILOAD, 1);`需要在`mv2.visitTableSwitchInsn(...)`之前，否则抛出异常
++ 这里和if不同的是，不需要再声明jump操作，switch会按照`visitTableSwitchInsn`内参数声明的顺序，映射1～4对应的case的Label。
+
+```java
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.MethodVisitor;
+import utils.FileUtils;
+
+import static org.objectweb.asm.Opcodes.*;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/11 5:56 PM
+ */
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) {
+    String relativePath = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relativePath);
+
+    // (1) 生成 byte[] 内容 (符合ClassFile的.class二进制数据)
+    byte[] bytes = dump();
+
+    // (2) 保存 byte[] 到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() {
+    // (1) 创建 ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用 visitXxx() 方法
+    cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "sample/HelloWorld", null, "java/lang/Object", null);
+
+    // 构造方法
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      // 方法体内代码
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      // 调用父类构造方法
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      // 方法体结束
+      mv1.visitMaxs(1, 1);
+      mv1.visitEnd();
+    }
+
+    // test方法
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "(I)V", null, null);
+      Label returnLabel = new Label();
+      Label case1Label = new Label();
+      Label case2Label = new Label();
+      Label case3Label = new Label();
+      Label case4Label = new Label();
+      Label defaultCaseLabel = new Label();
+
+      mv2.visitCode();
+      mv2.visitVarInsn(ILOAD, 1);
+      // 下面 visitLookupSwitchInsn 的使用等同于下面 visitTableSwitchInsn 的使用
+      // mv2.visitTableSwitchInsn(1, 4, defaultCaseLabel, case1Label, case2Label, case3Label, case4Label);
+      mv2.visitLookupSwitchInsn(defaultCaseLabel, new int[]{1, 2, 3, 4}, new Label[]{case1Label, case2Label, case3Label, case4Label});
+      // 如果写在 switch之后，则抛出异常 Exception in thread "main" java.lang.NegativeArraySizeException: -1
+      // mv2.visitVarInsn(ILOAD, 1);
+
+      // case 1:
+      mv2.visitLabel(case1Label);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("val = 1");
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      mv2.visitJumpInsn(GOTO, returnLabel);
+
+      // case 2:
+      mv2.visitLabel(case2Label);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("val = 2");
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      mv2.visitJumpInsn(GOTO, returnLabel);
+
+      // case 3:
+      mv2.visitLabel(case3Label);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("val = 3");
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      mv2.visitJumpInsn(GOTO, returnLabel);
+
+      // case 4:
+      mv2.visitLabel(case4Label);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("val = 4");
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      mv2.visitJumpInsn(GOTO, returnLabel);
+
+      // default:
+      mv2.visitLabel(defaultCaseLabel);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("val is unknown");
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      // default 后面本来就没有逻辑，直接就执行return了
+      //            mv2.visitJumpInsn(GOTO,returnLabel);
+
+      mv2.visitLabel(returnLabel);
+      mv2.visitInsn(RETURN);
+      mv2.visitMaxs(2, 2);
+
+      mv2.visitEnd();
+    }
+
+
+    cw.visitEnd();
+
+    // (3) 调用toByteArray() 方法
+    return cw.toByteArray();
+  }
+}
+
+```
+
+#### 验证结果
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    Object obj = clazz.newInstance();
+
+    Method method = clazz.getDeclaredMethod("test", int.class);
+    for (int i = 1; i < 6; i++) {
+      method.invoke(obj, i);
+    }
+  }
+}
+```
+
+```shell
+$ javap -c sample.HelloWorld
+ public void test(int);
+    Code:
+       0: iload_1
+       1: lookupswitch  { // 4
+                     1: 44
+                     2: 55
+                     3: 66
+                     4: 77
+               default: 88
+          }
+      44: getstatic     #16                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      47: ldc           #18                 // String val = 1
+      49: invokevirtual #24                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      52: goto          96
+      55: getstatic     #16                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      58: ldc           #26                 // String val = 2
+      60: invokevirtual #24                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      63: goto          96
+      66: getstatic     #16                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      69: ldc           #28                 // String val = 3
+      71: invokevirtual #24                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      74: goto          96
+      77: getstatic     #16                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      80: ldc           #30                 // String val = 4
+      82: invokevirtual #24                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      85: goto          96
+      88: getstatic     #16                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      91: ldc           #32                 // String val is unknown
+      93: invokevirtual #24                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      96: return
+```
+
+#### 小结
+
+通过上面的示例，我们注意三个知识点：
+
+- 第一点，如何使用`ClassWriter`类。
+- 第二点，在使用`MethodVisitor`类时，其中`visitXxx()`方法需要遵循的调用顺序。
+- **第三点，如何通过`Label`类来实现switch语句。在本示例当中，使用了`MethodVisitor.visitTableSwitchInsn()`方法，也可以使用`MethodVisitor.visitLookupSwitchInsn()`方法。**
+
+### 2.11.3 示例三：for语句
+
+#### 预期目标
+
+```java
+public class HelloWorld {
+  public void test() {
+    for (int i = 0; i < 10; i++) {
+      System.out.println(i);
+    }
+  }
+}
+```
+
+#### 编码实现
+
+注意点：
+
++ `mv2.visitIntInsn(BIPUSH, 10);` 直接将10放入 operand stack
++ `mv2.visitVarInsn(ISTORE, 1);` 在for之前先将operand stack的i变量放回local variables，因为后续for循环需要读取
++ `mv2.visitIincInsn(1,1);` local variables指定下标位置的int数据+1
+
+> Iinc: Increment local variable by constant
+>
+> The *index* is an unsigned byte that must be an index into the local variable array of the current frame ([§2.6](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-2.html#jvms-2.6)). The *const* is an immediate signed byte. The local variable at *index* must contain an `int`. The value *const* is first sign-extended to an `int`, and then the local variable at *index* is incremented by that amount.
+
+```java
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.MethodVisitor;
+import utils.FileUtils;
+
+import static org.objectweb.asm.Opcodes.*;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/11 5:56 PM
+ */
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) {
+    String relativePath = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relativePath);
+
+    // (1) 生成 byte[] 内容 (符合ClassFile的.class二进制数据)
+    byte[] bytes = dump();
+
+    // (2) 保存 byte[] 到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() {
+    // (1) 创建 ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用 visitXxx() 方法
+    cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "sample/HelloWorld", null, "java/lang/Object", null);
+
+    // 构造方法
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      // 方法体内代码
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      // 调用父类构造方法
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      // 方法体结束
+      mv1.visitMaxs(1, 1);
+      mv1.visitEnd();
+    }
+
+    // test方法
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "()V", null, null);
+      Label returnLabel = new Label();
+      Label forLabel = new Label();
+
+      mv2.visitCode();
+      // i = 0
+      mv2.visitInsn(ICONST_0);
+      // non-static, 0=>this, 1=>i (存回local variables是因为后续for循环要取出和10比较)
+      mv2.visitVarInsn(ISTORE, 1);
+      // for 循环
+      mv2.visitLabel(forLabel);
+      mv2.visitVarInsn(ILOAD, 1);
+      mv2.visitIntInsn(BIPUSH, 10);
+      // i >= 10 则跳出循环体，循环体外没有其他代码，所以跳转到 return的位置
+      mv2.visitJumpInsn(IF_ICMPGE, returnLabel);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitVarInsn(ILOAD,1);
+      // 注意这里 descriptor 需要改成 "(I)V" 否则报错 Exception in thread "main" java.lang.VerifyError: Bad type on operand stack
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(I)V", false);
+      // i+=1
+      mv2.visitIincInsn(1,1);
+      mv2.visitJumpInsn(GOTO, forLabel);
+
+
+      mv2.visitLabel(returnLabel);
+      mv2.visitInsn(RETURN);
+      mv2.visitMaxs(2, 2);
+      mv2.visitEnd();
+    }
+
+
+    cw.visitEnd();
+
+    // (3) 调用toByteArray() 方法
+    return cw.toByteArray();
+  }
+}
+
+```
+
+#### 验证结果
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    Object obj = clazz.newInstance();
+
+    Method method = clazz.getDeclaredMethod("test");
+    method.invoke(obj);
+  }
+}
+```
+
+```shell
+$ javap -c sample.HelloWorld
+public void test();
+    Code:
+       0: iconst_0
+       1: istore_1
+       2: iload_1
+       3: bipush        10
+       5: if_icmpge     21
+       8: getstatic     #15                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      11: iload_1
+      12: invokevirtual #21                 // Method java/io/PrintStream.println:(I)V
+      15: iinc          1, 1
+      18: goto          2
+      21: return
+```
+
+#### 小结
+
+通过上面的示例，我们注意三个知识点：
+
+- 第一点，如何使用`ClassWriter`类。
+- 第二点，在使用`MethodVisitor`类时，其中`visitXxx()`方法需要遵循的调用顺序。
+- 第三点，如何通过`Label`类来实现for语句。
+
+### 2.11.4 示例四：try-catch语句
+
+#### 预期目标
+
+```java
+public class HelloWorld {
+  public void test() {
+    try {
+      System.out.println("Before Sleep");
+      Thread.sleep(1000);
+      System.out.println("After Sleep");
+    } catch (InterruptedException e) {
+      e.printStackTrace();
+    }
+  }
+}
+```
+
+#### 编码实现
+
+注意点：
+
++ try代码块前后需要`visitLabel`标记try代码块起始、结束位置
++ `visitTryCatchBlock` 对应 `Code_attribute` 的 `exception_table`
+
+```java
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.MethodVisitor;
+import utils.FileUtils;
+
+import static org.objectweb.asm.Opcodes.*;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/11 5:56 PM
+ */
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) {
+    String relativePath = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relativePath);
+
+    // (1) 生成 byte[] 内容 (符合ClassFile的.class二进制数据)
+    byte[] bytes = dump();
+
+    // (2) 保存 byte[] 到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() {
+    // (1) 创建 ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用 visitXxx() 方法
+    cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "sample/HelloWorld", null, "java/lang/Object", null);
+
+    // 构造方法
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      // 方法体内代码
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      // 调用父类构造方法
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      // 方法体结束
+      mv1.visitMaxs(1, 1);
+      mv1.visitEnd();
+    }
+
+    // test方法
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "()V", null, null);
+      Label returnLabel = new Label();
+      Label tryStartLabel = new Label();
+      Label tryEndLabel = new Label();
+      Label catchLabel = new Label();
+
+      mv2.visitCode();
+
+      // try 代码块
+      // start, end, handler, type (指异常的类型)
+      mv2.visitTryCatchBlock(tryStartLabel, tryEndLabel, catchLabel, "java/lang/InterruptedException");
+      mv2.visitLabel(tryStartLabel);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("Before Sleep");
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      mv2.visitLdcInsn(1000L);
+      mv2.visitMethodInsn(INVOKESTATIC, "java/lang/Thread", "sleep", "(J)V", false);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("After Sleep");
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      mv2.visitLabel(tryEndLabel);
+      mv2.visitJumpInsn(GOTO, returnLabel);
+
+      // catch 代码块
+      mv2.visitLabel(catchLabel);
+      // 获取 异常对象
+      mv2.visitVarInsn(ASTORE, 1);
+      mv2.visitVarInsn(ALOAD, 1);
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/lang/InterruptedException", "printStackTrace", "()V", false);
+
+      mv2.visitLabel(returnLabel);
+      mv2.visitInsn(RETURN);
+
+      // visitTryCatchBlock也可以在这里访问
+      // mv2.visitTryCatchBlock(tryStartLabel, tryEndLabel, catchLabel, "java/lang/InterruptedException");
+      mv2.visitMaxs(2, 2);
+      mv2.visitEnd();
+    }
+
+
+    cw.visitEnd();
+
+    // (3) 调用toByteArray() 方法
+    return cw.toByteArray();
+  }
+}
+
+
+```
+
+#### 验证结果
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    Object obj = clazz.newInstance();
+
+    Method method = clazz.getDeclaredMethod("test");
+    method.invoke(obj);
+  }
+}
+```
+
+```shell
+$ javap -c sample.HelloWorld
+public void test();
+    Code:
+       0: getstatic     #17                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       3: ldc           #19                 // String Before Sleep
+       5: invokevirtual #25                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+       8: ldc2_w        #26                 // long 1000l
+      11: invokestatic  #33                 // Method java/lang/Thread.sleep:(J)V
+      14: getstatic     #17                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      17: ldc           #35                 // String After Sleep
+      19: invokevirtual #25                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      22: goto          30
+      25: astore_1
+      26: aload_1
+      27: invokevirtual #38                 // Method java/lang/InterruptedException.printStackTrace:()V
+      30: return
+    Exception table:
+       from    to  target type
+           0    22    25   Class java/lang/InterruptedException
+```
+
+#### 小结
+
+通过上面的示例，我们注意三个知识点：
+
+- 第一点，如何使用`ClassWriter`类。
+- 第二点，在使用`MethodVisitor`类时，其中`visitXxx()`方法需要遵循的调用顺序。
+- 第三点，如何通过`Label`类来实现try-catch语句。
+
+有一个问题，`visitTryCatchBlock()`方法为什么可以在后边的位置调用呢？这与`Code`属性的结构有关系：
+
+```java
+Code_attribute {
+  u2 attribute_name_index;
+  u4 attribute_length;
+  u2 max_stack;
+  u2 max_locals;
+  u4 code_length;
+  u1 code[code_length];
+  u2 exception_table_length;
+  {   u2 start_pc;
+   u2 end_pc;
+   u2 handler_pc;
+   u2 catch_type;
+  } exception_table[exception_table_length];
+  u2 attributes_count;
+  attribute_info attributes[attributes_count];
+}
+```
+
+**因为instruction的内容（对应于`visitXxxInsn()`方法的调用）存储于`Code`结构当中的`code[]`内，而try-catch的内容（对应于`visitTryCatchBlock()`方法的调用），存储在`Code`结构当中的`exception_table[]`内，所以`visitTryCatchBlock()`方法的调用时机，可以早一点，也可以晚一点，只要整体上遵循`MethodVisitor`类对就于`visitXxx()`方法调用的顺序要求就可以了**。
+
+> try-catch 和 code(方法体里其他代码逻辑)是分开字段存储的，所以彼此之间顺序不严格要求。
+
+### 2.11.5 总结
+
+本文主要对`Label`类的示例进行介绍，内容总结如下：
+
+- **第一点，`Label`类的主要作用是实现程序代码的跳转，例如，if语句、switch语句、for语句和try-catch语句**。
+- **第二点，在生成try-catch语句时，`visitTryCatchBlock()`方法的调用时机，可以早一点，也可以晚一点，只要整体上遵循`MethodVisitor`类对就于`visitXxx()`方法调用的顺序就可以了。**
+
+## 2.12 frame介绍
 
