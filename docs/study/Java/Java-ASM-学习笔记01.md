@@ -3996,6 +3996,8 @@ public class HelloWorldRun {
 
 ## 2.10 Label介绍
 
+![Java ASM系列：（006）ClassVisitor介绍_ASM](https://s2.51cto.com/images/20210618/1624028333369109.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
 在Java程序中，有三种基本控制结构：顺序、选择和循环。
 
 ```pseudocode
@@ -4959,3 +4961,2185 @@ Code_attribute {
 
 ## 2.12 frame介绍
 
+### 2.12.1 ClassFile中的StackMapTable
+
+​	在`ClassFile`结构中，有一个`StackMapTable`结构，它们关系如下。在`ClassFile`结构中，每一个方法都对应于`method_info`结构；在`method_info`结构中，方法体的代码存储在`Code`结构内；**在`Code`结构中，frame的变化存储在`StackMapTable`结构中**。
+
+![Java ASM系列：（017）frame介绍_ByteCode](https://s2.51cto.com/images/20210621/1624254673117990.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+假如有一个`HelloWorld`类，内容如下
+
+```java
+public class HelloWorld {
+  public void test(boolean flag) {
+    if (flag) {
+      System.out.println("value is true");
+    }
+    else {
+      System.out.println("value is false");
+    }
+  }
+}
+```
+
+#### 查看Instruction
+
+在`.class`文件中，方法体的内容会被编译成一条一条的instruction。我们可以通过使用`javap -c sample.HelloWorld`来查看Instruction的内容。
+
+```shell
+public void test(boolean);
+    Code:
+       0: iload_1
+       1: ifeq          15
+       4: getstatic     #7                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       7: ldc           #13                 // String value is true
+       9: invokevirtual #15                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      12: goto          23
+      15: getstatic     #7                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      18: ldc           #21                 // String value is false
+      20: invokevirtual #15                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      23: return
+```
+
+#### 查看Frame
+
+在方法当中，每一条Instruction都有对应的Frame。
+
+我们可以通过运行`HelloWorldFrameCore`来查看Frame的具体情况：
+
+```java
+test(Z)V
+[sample/HelloWorld, int] [] // non-static, local variables 下标0存储this指针，1存储boolean参数（比int占用空间小的基础类型都被转成int处理了）
+[sample/HelloWorld, int] [int] // iload_1, 将 local variables 下标1 位置的int数据加载到 operand stack顶部
+[sample/HelloWorld, int] [] // ifeq, 弹出 operand stack 栈顶元素，和0比较，如果相同则跳转
+[sample/HelloWorld, int] [java/io/PrintStream] // getstatic, 加载 System.out 这个 静态成员变量到 operand stack顶部
+[sample/HelloWorld, int] [java/io/PrintStream, java/lang/String] // ldc 从常量池获取常量字符串 到 operand stack顶部
+[sample/HelloWorld, int] [] // invokevirtual 调用 System.out 的实例方法 println，消耗 operand stack栈顶的参数和后续的对象指针
+[] [] // goto 23, .class中实际存的是偏移量，javap -c 帮忙计算好了偏移后需要跳转的位置，goto指令会清空 local variabls 和 operand stack
+[sample/HelloWorld, int] [java/io/PrintStream] // getstatic 
+[sample/HelloWorld, int] [java/io/PrintStream, java/lang/String] // ldc
+[sample/HelloWorld, int] [] // invokevirtual
+[] [] // return, 会清空 local variables 和 operand stack
+```
+
+**严格的来说，每一条Instruction都对应两个frame，一个是instruction执行之前的frame，另一个是instruction执行之后的frame**。<u>但是，当多个instruction放到一起的时候来说，第`n`个instruction执行之后的frame，就成为第`n+1`个instruction执行之前的frame，所以也可以理解成：每一条instruction对应一个frame</u>。
+
+**这些frames是要存储起来的。我们知道，每一个instruction对应一个frame，如果都要存储起来，那么在`.class`文件中就会占用非常多的空间；而`.class`文件设计的一个主要目标就是尽量占用较小的存储空间，那么就需要对这些frames进行压缩**。
+
+#### 压缩frames
+
+> [Chapter 4. The class File Format (oracle.com)](https://docs.oracle.com/javase/specs/jvms/se9/html/jvms-4.html#jvms-4.7.4) <= 4.7.4. The `StackMapTable` Attribute，具体可以看java文档
+>
+> The `StackMapTable` attribute is a variable-length attribute in the `attributes` table of a `Code` attribute ([§4.7.3](https://docs.oracle.com/javase/specs/jvms/se9/html/jvms-4.html#jvms-4.7.3)). A `StackMapTable` attribute is used during the process of verification by type checking ([§4.10.1](https://docs.oracle.com/javase/specs/jvms/se9/html/jvms-4.html#jvms-4.10.1)).
+>
+> Each stack map frame described in the `entries` table relies on the previous frame for some of its semantics. **The first stack map frame of a method is implicit, and computed from the method descriptor by the type checker ([§4.10.1.6](https://docs.oracle.com/javase/specs/jvms/se9/html/jvms-4.html#jvms-4.10.1.6))**. The `stack_map_frame` structure at `entries[0]` therefore describes the second stack map frame of the method.
+>
+> 文档中也提到了初始状态的frame可以通过方法descriptor计算出来，所以实际上`stack_map_frame` entries数组的下标0的frame其实是第二个需要被存储的frame。
+
+为了让`.class`文件占用的存储空间尽可能的小，因此要对frames进行压缩。
+
+**对frames进行压缩，从本质上来说，就是忽略掉一些不重要的frames，而只留下一些重要的frames。**
+
+那么，怎样区分哪些frames重要，哪些frames不重要呢？我们从instruction执行顺序的角度来看待这个问题。
+
+**<u>如果说，instruction是按照“一个挨一个向下顺序执行”的，那么它们对应的frames就不重要；相应的，instruction在执行过程时，它是从某个地方“跳转”过来的，那么对应的frames就重要。</u>**
+
+为什么说instruction按照“一个挨一个向下顺序执行”的frames不重要呢？因为这些instruction对应的frame可以很容易的推导出来。 相反，如果当前的instruction是从某个地方跳转过来的，就必须要记录它执行之前的frame的情况，否则就没有办法计算它执行之后的frame的情况。当然，我们这里讲的只是大体的思路，而不是具体的判断细节。
+
+**经过压缩之后的frames，就存放在`ClassFile`的`StackMapTable`结构中**。
+
+### 2.12.2 如何使用visitFrame()方法
+
+#### 预期目标
+
+```java
+public class HelloWorld {
+  public void test(boolean flag) {
+    if (flag) {
+      System.out.println("value is true");
+    }
+    else {
+      System.out.println("value is false");
+    }
+  }
+}
+```
+
+#### 编码实现
+
+> [Chapter 4. The class File Format (oracle.com)](https://docs.oracle.com/javase/specs/jvms/se9/html/jvms-4.html#jvms-4.7.4)
+>
+> The frame type `same_frame` is represented by tags in the range [0-63]. This frame type indicates that the frame has exactly the same local variables as the previous frame and that the operand stack is empty. The `offset_delta` value for the frame is the value of the tag item, `frame_type`.
+
+注意点：
+
++ `ClassWriter(ClassWriter.COMPUTE_MAXS);`，此时ASM只帮忙计算ClassFile的Code_attribute的max_stack和max_locals，但是不帮忙计算stack_map_frame，需要我们自己调用`visitFrame()`方法
++ 只需要在发生跳转的Label后面的第一个Insn之前调用`visitFrame()`，代码初始状态不需要`visitFrame()`，因为stack_map_frame中存储的是压缩后的frame信息，而代码初始状态可以通过方法签名推导出来local variables和operand stack，为减少`.class`的文件大小， 就不需要存储初始状态frame。而jump动作需要知道上一个被执行的指令的frame，所以需要记录到stack_map_frame中
++ `mv2.visitFrame(F_SAME,0, null, 0, null);`这里`F_SAME`表示和上一个指令执行后的frame状态一致（具体指local variables相同，且operand stack都为空）
+
+```java
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.MethodVisitor;
+import utils.FileUtils;
+
+import static org.objectweb.asm.Opcodes.*;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/11 5:56 PM
+ */
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) {
+    String relativePath = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relativePath);
+
+    // (1) 生成 byte[] 内容 (符合ClassFile的.class二进制数据)
+    byte[] bytes = dump();
+
+    // (2) 保存 byte[] 到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() {
+    // (1) 创建 ClassWriter对象 (注意这里改成 ClassWriter.COMPUTE_MAXS, 只会计算 max_locals 和 max_stack，但是不会帮忙计算 stack map frames)
+    // ClassWriter.COMPUTE_MAXS 则下面需要手动调用 visitFrame()
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS);
+
+    // (2) 调用 visitXxx() 方法
+    cw.visit(V17, ACC_PUBLIC | ACC_SUPER, "sample/HelloWorld", null, "java/lang/Object", null);
+
+    // 构造方法
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      // 方法体内代码
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      // 调用父类构造方法
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      // 方法体结束
+      mv1.visitMaxs(1, 1);
+      mv1.visitEnd();
+    }
+
+    // test方法
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "(Z)V", null, null);
+      Label returnLabel = new Label();
+      Label elseLabel = new Label();
+
+      mv2.visitCode();
+      mv2.visitVarInsn(ILOAD,1);
+      mv2.visitJumpInsn(IFEQ, elseLabel);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System","out","Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("value is true");
+      mv2.visitMethodInsn(INVOKEVIRTUAL,"java/io/PrintStream", "println", "(Ljava/lang/String;)V",false);
+      mv2.visitJumpInsn(GOTO, returnLabel);
+
+      mv2.visitLabel(elseLabel);
+      // 注意 visitFrame 在 visitLabel之后，下一个操作Insn之前
+      // type, numLocal, local, numStack, stack
+      mv2.visitFrame(F_SAME,0, null, 0, null);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System","out","Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("value is false");
+      mv2.visitMethodInsn(INVOKEVIRTUAL,"java/io/PrintStream", "println", "(Ljava/lang/String;)V",false);
+
+      mv2.visitLabel(returnLabel);
+      // 注意 visitFrame 在 visitLabel之后，下一个操作Insn之前
+      // type, numLocal, local, numStack, stack
+      mv2.visitFrame(F_SAME,0, null, 0, null);
+      mv2.visitInsn(RETURN);
+
+      // visitTryCatchBlock也可以在这里访问
+      // mv2.visitTryCatchBlock(tryStartLabel, tryEndLabel, catchLabel, "java/lang/InterruptedException");
+      mv2.visitMaxs(2, 2);
+      mv2.visitEnd();
+    }
+
+
+    cw.visitEnd();
+
+    // (3) 调用toByteArray() 方法
+    return cw.toByteArray();
+  }
+}
+```
+
+#### 验证结果
+
+```java
+package com.example;
+
+import java.lang.reflect.Method;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+    public static void main(String[] args) throws Exception {
+        Class<?> clazz = Class.forName("sample.HelloWorld");
+        Object obj = clazz.newInstance();
+
+        Method method = clazz.getDeclaredMethod("test", boolean.class);
+        method.invoke(obj, true);
+        method.invoke(obj, false);
+    }
+}
+```
+
+### 2.12.3 不推荐使用visitFrame()方法
+
+为什么我们不推荐调用`MethodVisitor.visitFrame()`方法呢？原因是计算frame本身就很麻烦，还容易出错。
+
+我们在创建`ClassWriter`对象的时候，使用了`ClassWriter.COMPUTE_FRAMES`参数：
+
+```java
+ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+```
+
+**在使用了`ClassWriter.COMPUTE_FRAMES`参数之后，ASM会忽略代码当中对于`MethodVisitor.visitFrame()`方法的调用，并且自动帮助我们计算stack map frame的具体内容。**
+
+### 2.12.4 总结
+
+本文主要对frame进行了介绍，内容总结如下：
+
+- 第一点，在`ClassFile`结构中，`StackMapTable`结构是如何得到的。
+- 第二点，不推荐使用`MethodVisitor.visitFrame()`方法，原因是frame的计算复杂，容易出错。我们可以在创建`ClassWriter`对象的时候，使用`ClassWriter.COMPUTE_FRAMES`参数，这样ASM就会帮助我们计算frame的值到底是多少。
+
+## 2.13 Opcodes介绍
+
+`Opcodes`是一个接口，它定义了许多字段。这些字段主要是在`ClassVisitor.visitXxx()`和`MethodVisitor.visitXxx()`方法中使用。
+
+### 2.13.1 ClassVisitor
+
+#### ASM Version
+
+字段含义：`Opcodes.ASM4`~`Opcodes.ASM9`标识了ASM的版本信息。
+
+应用场景：用于创建具体的`ClassVisitor`实例，例如`ClassVisitor(int api, ClassVisitor classVisitor)`中的`api`参数。
+
+```java
+public interface Opcodes {
+  // ASM API versions.
+  int ASM4 = 4 << 16 | 0 << 8;
+  int ASM5 = 5 << 16 | 0 << 8;
+  int ASM6 = 6 << 16 | 0 << 8;
+  int ASM7 = 7 << 16 | 0 << 8;
+  int ASM8 = 8 << 16 | 0 << 8;
+  int ASM9 = 9 << 16 | 0 << 8;
+}
+```
+
+#### Java Version
+
+字段含义：`Opcodes.V1_1`~`Opcodes.V16`标识了`.class`文件的版本信息。
+
+应用场景：用于`ClassVisitor.visit(int version, int access, ...)`的`version`参数。
+
+```java
+public interface Opcodes {
+  // Java ClassFile versions
+  // (the minor version is stored in the 16 most significant bits, and
+  //  the major version in the 16 least significant bits).
+
+  int V1_1 = 3 << 16 | 45;
+  int V1_2 = 0 << 16 | 46;
+  int V1_3 = 0 << 16 | 47;
+  int V1_4 = 0 << 16 | 48;
+  int V1_5 = 0 << 16 | 49;
+  int V1_6 = 0 << 16 | 50;
+  int V1_7 = 0 << 16 | 51;
+  int V1_8 = 0 << 16 | 52;
+  int V9 = 0 << 16 | 53;
+  int V10 = 0 << 16 | 54;
+  int V11 = 0 << 16 | 55;
+  int V12 = 0 << 16 | 56;
+  int V13 = 0 << 16 | 57;
+  int V14 = 0 << 16 | 58;
+  int V15 = 0 << 16 | 59;
+  int V16 = 0 << 16 | 60;
+  int V17 = 0 << 16 | 61;
+  int V18 = 0 << 16 | 62;
+  int V19 = 0 << 16 | 63;
+  int V20 = 0 << 16 | 64;
+}
+```
+
+#### Access Flags
+
+字段含义：`Opcodes.ACC_PUBLIC`~`Opcodes.ACC_MODULE`标识了Class、Field、Method的访问标识（Access Flag）。
+
+应用场景：
+
+- `ClassVisitor.visit(int version, int access, ...)`的`access`参数。
+- `ClassVisitor.visitField(int access, String name, ...)`的`access`参数。
+- `ClassVisitor.visitMethod(int access, String name, ...)`的`access`参数。
+
+```java
+public interface Opcodes {
+  int ACC_PUBLIC = 0x0001;       // class, field, method
+  int ACC_PRIVATE = 0x0002;      // class, field, method
+  int ACC_PROTECTED = 0x0004;    // class, field, method
+  int ACC_STATIC = 0x0008;       // field, method
+  int ACC_FINAL = 0x0010;        // class, field, method, parameter
+  int ACC_SUPER = 0x0020;        // class
+  int ACC_SYNCHRONIZED = 0x0020; // method
+  int ACC_OPEN = 0x0020;         // module
+  int ACC_TRANSITIVE = 0x0020;   // module requires
+  int ACC_VOLATILE = 0x0040;     // field
+  int ACC_BRIDGE = 0x0040;       // method
+  int ACC_STATIC_PHASE = 0x0040; // module requires
+  int ACC_VARARGS = 0x0080;      // method
+  int ACC_TRANSIENT = 0x0080;    // field
+  int ACC_NATIVE = 0x0100;       // method
+  int ACC_INTERFACE = 0x0200;    // class
+  int ACC_ABSTRACT = 0x0400;     // class, method
+  int ACC_STRICT = 0x0800;       // method
+  int ACC_SYNTHETIC = 0x1000;    // class, field, method, parameter, module *
+  int ACC_ANNOTATION = 0x2000;   // class
+  int ACC_ENUM = 0x4000;         // class(?) field inner
+  int ACC_MANDATED = 0x8000;     // field, method, parameter, module, module *
+  int ACC_MODULE = 0x8000;       // class
+}
+```
+
+### 2.13.2 MethodVisitor
+
+#### frame
+
+> [Chapter 4. The class File Format (oracle.com)](https://docs.oracle.com/javase/specs/jvms/se9/html/jvms-4.html#jvms-4.7.4)
+
+**字段含义：`Opcodes.F_NEW`~`Opcodes.F_SAME1`标识了frame的状态，`Opcodes.TOP`~`Opcodes.UNINITIALIZED_THIS`标识了frame中某一个数据项的具体类型**。
+
+应用场景：
+
+- `Opcodes.F_NEW`~`Opcodes.F_SAME1`用在`MethodVisitor.visitFrame(int type, int numLocal, Object[] local, int numStack, Object[] stack)`方法中的`type`参数。
+- `Opcodes.TOP`~`Opcodes.UNINITIALIZED_THIS`用在`MethodVisitor.visitFrame(int type, int numLocal, Object[] local, int numStack, Object[] stack)`方法中的`local`参数和`stack`参数。
+
+```java
+public interface Opcodes {
+  // ASM specific stack map frame types, used in {@link ClassVisitor#visitFrame}.
+  int F_NEW = -1;
+  int F_FULL = 0;
+  int F_APPEND = 1;
+  int F_CHOP = 2;
+  int F_SAME = 3;
+  int F_SAME1 = 4;
+
+
+  // Standard stack map frame element types, used in {@link ClassVisitor#visitFrame}.
+  Integer TOP = Frame.ITEM_TOP; // TOP 就是 long、double 由于需要2个槽位(1槽位32bit), 用于占位(占第二个槽位)
+  Integer INTEGER = Frame.ITEM_INTEGER;
+  Integer FLOAT = Frame.ITEM_FLOAT;
+  Integer DOUBLE = Frame.ITEM_DOUBLE;
+  Integer LONG = Frame.ITEM_LONG;
+  Integer NULL = Frame.ITEM_NULL;
+  Integer UNINITIALIZED_THIS = Frame.ITEM_UNINITIALIZED_THIS;
+}
+```
+
+#### opcodes
+
+字段含义：`Opcodes.NOP`~`Opcodes.IFNONNULL`表示opcode的值。
+
+应用场景：在`MethodVisitor.visitXxxInsn(opcode)`方法中的`opcode`参数中使用。
+
+```java
+public interface Opcodes {
+  int NOP = 0; // visitInsn
+  int ACONST_NULL = 1; // -
+  int ICONST_M1 = 2; // -
+  int ICONST_0 = 3; // -
+  int ICONST_1 = 4; // -
+  int ICONST_2 = 5; // -
+  int ICONST_3 = 6; // -
+  int ICONST_4 = 7; // -
+  int ICONST_5 = 8; // -
+  int LCONST_0 = 9; // -
+  int LCONST_1 = 10; // -
+  int FCONST_0 = 11; // -
+  int FCONST_1 = 12; // -
+  int FCONST_2 = 13; // -
+  int DCONST_0 = 14; // -
+  int DCONST_1 = 15; // -
+  int BIPUSH = 16; // visitIntInsn
+  int SIPUSH = 17; // -
+  int LDC = 18; // visitLdcInsn
+  int ILOAD = 21; // visitVarInsn
+  int LLOAD = 22; // -
+  int FLOAD = 23; // -
+  int DLOAD = 24; // -
+  int ALOAD = 25; // -
+  int IALOAD = 46; // visitInsn
+  int LALOAD = 47; // -
+  int FALOAD = 48; // -
+  int DALOAD = 49; // -
+  int AALOAD = 50; // -
+  int BALOAD = 51; // -
+  int CALOAD = 52; // -
+  int SALOAD = 53; // -
+  int ISTORE = 54; // visitVarInsn
+  int LSTORE = 55; // -
+  int FSTORE = 56; // -
+  int DSTORE = 57; // -
+  int ASTORE = 58; // -
+  int IASTORE = 79; // visitInsn
+  int LASTORE = 80; // -
+  int FASTORE = 81; // -
+  int DASTORE = 82; // -
+  int AASTORE = 83; // -
+  int BASTORE = 84; // -
+  int CASTORE = 85; // -
+  int SASTORE = 86; // -
+  int POP = 87; // -
+  int POP2 = 88; // -
+  int DUP = 89; // -
+  int DUP_X1 = 90; // -
+  int DUP_X2 = 91; // -
+  int DUP2 = 92; // -
+  int DUP2_X1 = 93; // -
+  int DUP2_X2 = 94; // -
+  int SWAP = 95; // -
+  int IADD = 96; // -
+  int LADD = 97; // -
+  int FADD = 98; // -
+  int DADD = 99; // -
+  int ISUB = 100; // -
+  int LSUB = 101; // -
+  int FSUB = 102; // -
+  int DSUB = 103; // -
+  int IMUL = 104; // -
+  int LMUL = 105; // -
+  int FMUL = 106; // -
+  int DMUL = 107; // -
+  int IDIV = 108; // -
+  int LDIV = 109; // -
+  int FDIV = 110; // -
+  int DDIV = 111; // -
+  int IREM = 112; // -
+  int LREM = 113; // -
+  int FREM = 114; // -
+  int DREM = 115; // -
+  int INEG = 116; // -
+  int LNEG = 117; // -
+  int FNEG = 118; // -
+  int DNEG = 119; // -
+  int ISHL = 120; // -
+  int LSHL = 121; // -
+  int ISHR = 122; // -
+  int LSHR = 123; // -
+  int IUSHR = 124; // -
+  int LUSHR = 125; // -
+  int IAND = 126; // -
+  int LAND = 127; // -
+  int IOR = 128; // -
+  int LOR = 129; // -
+  int IXOR = 130; // -
+  int LXOR = 131; // -
+  int IINC = 132; // visitIincInsn
+  int I2L = 133; // visitInsn
+  int I2F = 134; // -
+  int I2D = 135; // -
+  int L2I = 136; // -
+  int L2F = 137; // -
+  int L2D = 138; // -
+  int F2I = 139; // -
+  int F2L = 140; // -
+  int F2D = 141; // -
+  int D2I = 142; // -
+  int D2L = 143; // -
+  int D2F = 144; // -
+  int I2B = 145; // -
+  int I2C = 146; // -
+  int I2S = 147; // -
+  int LCMP = 148; // -
+  int FCMPL = 149; // -
+  int FCMPG = 150; // -
+  int DCMPL = 151; // -
+  int DCMPG = 152; // -
+  int IFEQ = 153; // visitJumpInsn
+  int IFNE = 154; // -
+  int IFLT = 155; // -
+  int IFGE = 156; // -
+  int IFGT = 157; // -
+  int IFLE = 158; // -
+  int IF_ICMPEQ = 159; // -
+  int IF_ICMPNE = 160; // -
+  int IF_ICMPLT = 161; // -
+  int IF_ICMPGE = 162; // -
+  int IF_ICMPGT = 163; // -
+  int IF_ICMPLE = 164; // -
+  int IF_ACMPEQ = 165; // -
+  int IF_ACMPNE = 166; // -
+  int GOTO = 167; // -
+  int JSR = 168; // -
+  int RET = 169; // visitVarInsn
+  int TABLESWITCH = 170; // visiTableSwitchInsn
+  int LOOKUPSWITCH = 171; // visitLookupSwitch
+  int IRETURN = 172; // visitInsn
+  int LRETURN = 173; // -
+  int FRETURN = 174; // -
+  int DRETURN = 175; // -
+  int ARETURN = 176; // -
+  int RETURN = 177; // -
+  int GETSTATIC = 178; // visitFieldInsn
+  int PUTSTATIC = 179; // -
+  int GETFIELD = 180; // -
+  int PUTFIELD = 181; // -
+  int INVOKEVIRTUAL = 182; // visitMethodInsn
+  int INVOKESPECIAL = 183; // -
+  int INVOKESTATIC = 184; // -
+  int INVOKEINTERFACE = 185; // -
+  int INVOKEDYNAMIC = 186; // visitInvokeDynamicInsn
+  int NEW = 187; // visitTypeInsn
+  int NEWARRAY = 188; // visitIntInsn
+  int ANEWARRAY = 189; // visitTypeInsn
+  int ARRAYLENGTH = 190; // visitInsn
+  int ATHROW = 191; // -
+  int CHECKCAST = 192; // visitTypeInsn
+  int INSTANCEOF = 193; // -
+  int MONITORENTER = 194; // visitInsn
+  int MONITOREXIT = 195; // -
+  int MULTIANEWARRAY = 197; // visitMultiANewArrayInsn
+  int IFNULL = 198; // visitJumpInsn
+  int IFNONNULL = 199; // -
+}
+```
+
+#### opcode: newarray
+
+字段含义：`Opcodes.T_BOOLEAN`~`Opcodes.T_LONG`表示数组的类型。
+
+应用场景：对于`MethodVisitor.visitIntInsn(opcode, operand)`方法，当`opcode`为`NEWARRAY`时，`operand`参数中使用。
+
+```java
+public interface Opcodes {
+  // Possible values for the type operand of the NEWARRAY instruction.
+  int T_BOOLEAN = 4;
+  int T_CHAR = 5;
+  int T_FLOAT = 6;
+  int T_DOUBLE = 7;
+  int T_BYTE = 8;
+  int T_SHORT = 9;
+  int T_INT = 10;
+  int T_LONG = 11;
+}
+```
+
+```java
+public class HelloWorld {
+  public void test() {
+    byte[] bytes = new byte[10];
+  }
+}
+```
+
+#### opcode: invokedynamic
+
+字段含义：`Opcodes.H_GETFIELD`~`Opcodes.H_INVOKEINTERFACE`表示MethodHandle的类型。
+
+应用场景：在创建`Handle(int tag, String owner, String name, String descriptor, boolean isInterface)`时，`tag`参数中使用；而该`Handle`实例会在`MethodVisitor.visitInvokeDynamicInsn()`方法使用到。
+
+```java
+public interface Opcodes {
+  // Possible values for the reference_kind field of CONSTANT_MethodHandle_info structures.
+  int H_GETFIELD = 1;
+  int H_GETSTATIC = 2;
+  int H_PUTFIELD = 3;
+  int H_PUTSTATIC = 4;
+  int H_INVOKEVIRTUAL = 5;
+  int H_INVOKESTATIC = 6;
+  int H_INVOKESPECIAL = 7;
+  int H_NEWINVOKESPECIAL = 8;
+  int H_INVOKEINTERFACE = 9;
+}
+```
+
+```java
+import java.util.function.BiFunction;
+
+public class HelloWorld {
+  public void test() {
+    BiFunction<Integer, Integer, Integer> func = Math::max;
+  }
+}
+```
+
+### 2.12.3 总结
+
+本文主要对`Opcodes`接口里定义的字段进行介绍，内容总结如下：
+
+- 第一点，在`Opcodes`类定义的字段，主要应用于`ClassVisitor`和`MethodVisitor`类的`visitXxx()`方法。
+- 第二点，记忆方法。由于`Opcodes`类定义的字段很多，我们可以分成不同的批次和类别来进行理解，慢慢去掌握。
+
+## 2.14 本章内容总结
+
+![Java ASM系列：（019）第二章内容总结_ByteCode](https://s2.51cto.com/images/20210618/1624005632705532.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+本章内容是围绕着Class Generation（生成新的类）来展开，在这个过程当中，我们介绍了ASM Core API当中的一些类和接口。在本文当中，我们对这些内容进行一个总结。
+
+### 2.14.1 Java ClassFile
+
+如果我们想要生成一个`.class`文件，就需要先对`.class`文件所遵循的文件格式（或者说是数据结构）有所了解。`.class`文件所遵循的数据结构是由[ Java Virtual Machine Specification](https://docs.oracle.com/javase/specs/jvms/se8/html/index.html)定义的，其结构如下：
+
+```java
+ClassFile {
+    u4             magic;
+    u2             minor_version;
+    u2             major_version;
+    u2             constant_pool_count;
+    cp_info        constant_pool[constant_pool_count-1];
+    u2             access_flags;
+    u2             this_class;
+    u2             super_class;
+    u2             interfaces_count;
+    u2             interfaces[interfaces_count];
+    u2             fields_count;
+    field_info     fields[fields_count];
+    u2             methods_count;
+    method_info    methods[methods_count];
+    u2             attributes_count;
+    attribute_info attributes[attributes_count];
+}
+```
+
+对上面的条目来进行一个简单的介绍：
+
+- `magic`：表示magic number，是一个固定值`CAFEBABE`，它是一个标识信息，用来判断当前文件是否为ClassFile。其实，不只是`.class`文件有magic number。例如，`.pdf`文件的magic number是`%PDF`，`.png`文件的magic number是`PNG`。
+- `minor_version`和`major_version`：表示当前`.class`文件的版本信息。因为Java语言不断发展，就存在不同版本之间的差异；记录`.class`文件的版本信息，是为了判断JVM的版本的`.class`文件的版本是否兼容。高版本的JVM可以执行低版本的`.class`文件，但是低版本的JVM不能执行高版本的`.class`文件。
+- `constant_pool_count`和`constant_pool`：表示“常量池”信息，它是一个“资源仓库”。在这里面，存放了当前类的类名、父类的类名、所实现的接口名字，后面的`this_class`、`super_class`和`interfaces[]`存放的是一个索引值，该索引值指向常量池。
+- `access_flags`、`this_class`、`super_class`、`interfaces_count`和`interfaces`：表示当前类的访问标识、类名、父类、实现接口的数量和具体的接口。
+- `fields_count`和`fields`：表示字段的数量和具体的字段内容。
+- `methods_count`和`methods`：表示方法的数量和具体的方法内容。
+- `attributes_count`和`attributes`：表示属性的数量和具体的属性内容。
+
+总结一下就是，magic number是为了区分不同产品（PDF、PNG、ClassFile）之间的差异，而version则是为了区分同一个产品在不同版本之间的差异。 接下来的Constant Pool、Class Info、Fields、Methods和Attributes则是实实在在的映射`.class`文件当中的内容。
+
+我们可以把这个Java ClassFile和一个Java文件的内容来做一个对照：
+
+```java
+public class HelloWorld extends Object implements Cloneable {
+    private int intValue = 10;
+    private String strValue = "ABC";
+
+    public int add(int a, int b) {
+        return a + b;
+    }
+
+    public int sub(int a, int b) {
+        return a - b;
+    }
+}
+```
+
+### 2.14.2 ASM Core API
+
+要生成一个`.class`文件，直接使用记事本或十六进制编辑器，这是“不可靠的”，所以我们借助于ASM这个类库，使用其中Core API部分来帮助我们实现。
+
+讲到任何的API，其实就是讲它的类、接口、方法等内容；谈到ASM Core API就是讲其中涉及到的类、接口和里面的方法。在ASM Core API中，有三个非常重要的类，即`ClassReader`、`ClassVisitor`和`ClassWriter`类。但是，在Class Generation过程中，不会用到`ClassReader`，所以我们就主要关注`ClassVisitor`和`ClassWriter`类。
+
+![Java ASM系列：（019）第二章内容总结_ByteCode_02](https://s2.51cto.com/images/20210618/1624028333369109.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+#### ClassVisitor和ClassWriter
+
+在`ClassVisitor`类当中，定义了许多的`visitXxx()`方法，并且这些`visitXxx()`方法要遵循一定的调用顺序。我们把这些`visitXxx()`方法进行精简，得到4个`visitXxx()`方法：
+
+```java
+public abstract class ClassVisitor {
+    public void visit(
+        final int version,
+        final int access,
+        final String name,
+        final String signature,
+        final String superName,
+        final String[] interfaces);
+    public FieldVisitor visitField( // 访问字段
+        final int access,
+        final String name,
+        final String descriptor,
+        final String signature,
+        final Object value);
+    public MethodVisitor visitMethod( // 访问方法
+        final int access,
+        final String name,
+        final String descriptor,
+        final String signature,
+        final String[] exceptions);
+    public void visitEnd();
+    // ......
+}
+```
+
+我们可以将这4个`visitXxx()`方法，与Java ClassFile进行比对，这样我们就能够理解“为什么会有这4个方法”以及“方法要接收参数的含义是什么”。
+
+但是，`ClassVisitor`类是一个抽象类，我们需要它的一个具体子类。这时候，就引出了`ClassWriter`类，它是`ClassVisitor`类的子类，继承了`visitXxx()`方法。同时，`ClassWriter`类也定义了一个`toByteArray()`方法，它可以将`visitXxx()`方法执行后的结果转换成`byte[]`。在创建`ClassWriter(flags)`对象的时候，对于`flags`参数，我们推荐使用`ClassWriter.COMPUTE_FRAMES`。
+
+使用`ClassWriter`生成一个Class文件，可以大致分成三个步骤：
+
+- 第一步，创建`ClassWriter`对象。
+- 第二步，调用`ClassWriter`对象的`visitXxx()`方法。
+- 第三步，调用`ClassWriter`对象的`toByteArray()`方法。
+
+示例代码如下：
+
+```java
+import org.objectweb.asm.ClassWriter;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class HelloWorldGenerateCore {
+    public static byte[] dump () throws Exception {
+        // (1) 创建ClassWriter对象
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+        // (2) 调用visitXxx()方法
+        cw.visit();
+        cw.visitField();
+        cw.visitMethod();
+        cw.visitEnd();       // 注意，最后要调用visitEnd()方法
+
+        // (3) 调用toByteArray()方法
+        byte[] bytes = cw.toByteArray();
+        return bytes;
+    }
+}
+```
+
+我们在介绍Class Generation示例的时候，直接使用`ClassWriter`类就可以了。但是，除了`ClassVisitor`和`ClassWriter`类，我们还需要更多的类来“丰富”这个类的“细节信息”，比如说`FieldVisitor`和`MethodVisitor`，它们分别是为了“丰富”字段和方法的具体信息。
+
+#### FieldVisitor和MethodVisitor
+
+在`ClassVisitor`类当中，`visitField()`方法会返回一个`FieldVisitor`对象，`visitMethod()`方法会返回一个`MethodVisitor`对象。其实，`FieldVisitor`对象和`MethodVisitor`对象是为了让生成的字段和方法内容更“丰富、充实”。
+
+相对来说，`FieldVisitor`类比较简单，在刚开始学的时候，我们只需要关注它的`visitEnd()`方法就可以了。
+
+相对来说，`MethodVisitor`类就比较复杂，因为在调用`ClassVisitor.visitMethod()`方法的时候，只是说明了方法的名字、方法的参数类型、方法的描述符等信息，并没有说明方法的“方法体”信息，所以我们需要使用具体的`MethodVisitor`对象来实现具体的方法体。在`MethodVisitor`类当中，也定义了许多的`visitXxx()`方法。这里要注意一下，要注意与`ClassVisitor`类里定义的`visitXxx()`方法区分。**`ClassVisitor`类里的`visitXxx()`方法是提供类层面的信息，而`MethodVisitor`类里的`visitXxx()`方法是提供某一个具体方法里的信息。**
+
+`MethodVisitor`类里的`visitXxx()`方法，也需要遵循一定的调用顺序，精简之后，如下：
+
+```java
+[
+    visitCode
+    (
+        visitFrame |
+        visitXxxInsn |
+        visitLabel |
+        visitTryCatchBlock
+    )*
+    visitMaxs
+]
+visitEnd
+```
+
+我们可以按照下面来记忆`visitXxx()`方法的调用顺序：
+
+- 第一步，调用`visitCode()`方法，调用一次
+- 第二步，调用`visitXxxInsn()`方法，可以调用多次。对这些方法的调用，就是在构建方法的“方法体”。
+- 第三步，调用`visitMaxs()`方法，调用一次
+- 第四步，调用`visitEnd()`方法，调用一次
+
+> `ClassVisitor`类里的`visitXxx()`方法需要遵循一定的调用顺序，`MethodVisitor`类里的`visitXxx()`方法也需要遵循一定的调用顺序。
+
+另外，我们也需要特别注意一些特殊的方法名字，例如，**构造方法的名字是`<init>`，而静态初始化方法的名字是`<clinit>`。**
+
+我们在使用`MethodVisitor`来编写方法体的代码逻辑时，不可避免的会遇到程序逻辑`true`和`false`判断和执行流程的跳转，而`Label`在ASM代码中就标志着跳转的位置。**借助于`Label`类，我们可以实现if语句、switch语句、for语句和try-catch语句**。添加label位置，是通过`MethodVisitor.visitLabel()`方法实现的。
+
+在Java 6之后，为了对方法的代码进行校验，于是就增加了`StackMapTable`属性。**谈到`StackMapTable`属性，其实就是我们讲到的frame，就是记录某一条instruction所对应的local variables和operand stack的状态。我们不推荐大家自己计算frame，因此不推荐使用`MethodVisitor.visitFrame()`方法。**
+
+无论是`Label`类，还是frame，它们都是`MethodVisitor`在实现“方法体”过程当中的“细节信息”，所以我们把这两者放到`MethodVisitor`一起来说明。
+
+#### 常量池去哪儿了？
+
+有细心的同学，可能会发现这样的问题：在ASM当中，常量池去哪儿了？为什么没有常量池相关的类和方法呢？
+
+其实，**在ASM源码中，与常量池对应的是`SymbolTable`类**，但我们并没有对它进行介绍。为什么没有介绍呢？
+
+- 第一个原因，在调用`ClassVisitor.visitXxx()`方法和`MethodVisitor.visitXxx()`方法的过程中，ASM会自动帮助我们去构建`SymbolTable`类里面具体的内容。
+- 第二个原因，常量池中包含十几种具体的常量类型，内容多而复杂，需要结合Java ClassFile相关的知识才能理解。
+
+我们的关注点还是在于如何使用Core API来进行Class Generation操作，ASM的内部实现会帮助我们处理好`SymbolTable`类的内容。
+
+### 2.14.3 总结
+
+本文是对第二章的整体内容进行总结，大家可以从两方面进行把握：一个是Java ClassFile的格式是什么的，另一个就是ASM Core API里的具体类和方法的作用。
+
+# 3. 转换已有的类
+
+## 3.1 ClassReader介绍
+
+### 3.1.1 ClassReader类
+
+`ClassReader`类和`ClassWriter`类，从功能角度来说，是完全相反的两个类，一个用于读取`.class`文件，另一个用于生成`.class`文件。
+
+#### class info
+
+第一个部分，`ClassReader`的父类是`Object`类。与`ClassWriter`类不同的是，`ClassReader`类并没有继承自`ClassVisitor`类。
+
+`ClassReader`类的定义如下：
+
+```java
+/**
+ * A parser to make a {@link ClassVisitor} visit a ClassFile structure, as defined in the Java
+ * Virtual Machine Specification (JVMS). This class parses the ClassFile content and calls the
+ * appropriate visit methods of a given {@link ClassVisitor} for each field, method and bytecode
+ * instruction encountered.
+ *
+ * @see <a href="https://docs.oracle.com/javase/specs/jvms/se9/html/jvms-4.html">JVMS 4</a>
+ * @author Eric Bruneton
+ * @author Eugene Kuleshov
+ */
+public class ClassReader {
+}
+```
+
+`ClassWriter`类的定义如下：
+
+```java
+/**
+ * A {@link ClassVisitor} that generates a corresponding ClassFile structure, as defined in the Java
+ * Virtual Machine Specification (JVMS). It can be used alone, to generate a Java class "from
+ * scratch", or with one or more {@link ClassReader} and adapter {@link ClassVisitor} to generate a
+ * modified class from one or more existing Java classes.
+ *
+ * @see <a href="https://docs.oracle.com/javase/specs/jvms/se9/html/jvms-4.html">JVMS 4</a>
+ * @author Eric Bruneton
+ */
+public class ClassWriter extends ClassVisitor {
+}
+```
+
+#### fields
+
+第二个部分，`ClassReader`类定义的字段有哪些。我们选取出其中的3个字段进行介绍，即`classFileBuffer`字段、`cpInfoOffsets`字段和`header`字段。
+
+```java
+public class ClassReader {
+  /**
+   * A byte array containing the JVMS ClassFile structure to be parsed. <i>The content of this array
+   * must not be modified. This field is intended for {@link Attribute} sub classes, and is normally
+   * not needed by class visitors.</i>
+   *
+   * <p>NOTE: the ClassFile structure can start at any offset within this array, i.e. it does not
+   * necessarily start at offset 0. Use {@link #getItem} and {@link #header} to get correct
+   * ClassFile element offsets within this byte array.
+   */  
+  //第1组，真实的数据部分
+  final byte[] classFileBuffer;
+
+  /**
+   * The offset in bytes, in {@link #classFileBuffer}, of each cp_info entry of the ClassFile's
+   * constant_pool array, <i>plus one</i>. In other words, the offset of constant pool entry i is
+   * given by cpInfoOffsets[i] - 1, i.e. its cp_info's tag field is given by b[cpInfoOffsets[i] -
+   * 1].
+   */
+  //第2组，数据的索引信息
+  private final int[] cpInfoOffsets;
+
+  /** The offset in bytes of the ClassFile's access_flags field. */
+  public final int header;
+}
+```
+
+为什么选择这3个字段呢？因为这3个字段能够体现出`ClassReader`类处理`.class`文件的整体思路：
+
+- **第1组，`classFileBuffer`字段：它里面包含的信息，就是从`.class`文件中读取出来的字节码数据。**
+- **第2组，`cpInfoOffsets`字段和`header`字段：它们分别标识了`classFileBuffer`中数据里包含的常量池（constant pool）和访问标识（access flag）的位置信息。**
+
+我们拿到`classFileBuffer`字段后，一个主要目的就是对它的内容进行修改，来实现一个新的功能。它处理的大体思路是这样的：
+
+```
+.class文件 --> ClassReader --> byte[] --> 经过各种转换 --> ClassWriter --> byte[] --> .class文件
+```
+
+- 第一，从一个`.class`文件（例如`HelloWorld.class`）开始，它可能存储于磁盘的某个位置；
+- 第二，使用`ClassReader`类将这个`.class`文件的内容读取出来，其实这些内容（`byte[]`）就是`ClassReader`对象中的`classFileBuffer`字段的内容；
+- 第三，为了增加某些功能，就对这些原始内容（`byte[]`）进行转换；
+- 第四，等各种转换都完成之后，再交给`ClassWriter`类处理，调用它的`toByteArray()`方法，从而得到新的内容（`byte[]`）；
+- 第五，将新生成的内容（`byte[]`）存储到一个具体的`.class`文件中，那么这个新的`.class`文件就具备了一些新的功能。
+
+#### constructors
+
+第三个部分，`ClassReader`类定义的构造方法有哪些。在`ClassReader`类当中定义了5个构造方法。但是，从本质上来说，这5个构造方法本质上是同一个构造方法的不同表现形式。其中，最常用的构造方法有两个：
+
+- 第一个是`ClassReader cr = new ClassReader("sample.HelloWorld");`
+- 第二个是`ClassReader cr = new ClassReader(bytes);`
+
+```java
+public class ClassReader {
+
+    public ClassReader(final String className) throws IOException { // 第一个构造方法（常用）
+        this(
+            readStream(ClassLoader.getSystemResourceAsStream(className.replace('.', '/') + ".class"), true)
+        );
+    }
+
+    public ClassReader(final byte[] classFile) { // 第二个构造方法（常用）
+        this(classFile, 0, classFile.length);
+    }
+
+    public ClassReader(final byte[] classFileBuffer, final int classFileOffset, final int classFileLength) {
+        this(classFileBuffer, classFileOffset, true);
+    }
+
+    ClassReader( // 这是最根本、最本质的构造方法
+        final byte[] classFileBuffer,
+        final int classFileOffset,
+        final boolean checkClassVersion) {
+        // ......
+    }
+
+    private static byte[] readStream(final InputStream inputStream, final boolean close) throws IOException {
+        if (inputStream == null) {
+            throw new IOException("Class not found");
+        }
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            byte[] data = new byte[INPUT_STREAM_DATA_CHUNK_SIZE];
+            int bytesRead;
+            while ((bytesRead = inputStream.read(data, 0, data.length)) != -1) {
+                outputStream.write(data, 0, bytesRead);
+            }
+            outputStream.flush();
+            return outputStream.toByteArray();
+        } finally {
+            if (close) {
+                inputStream.close();
+            }
+        }
+    }
+}
+```
+
+所有构造方法，本质上都执行下面的逻辑：
+
+```java
+/**
+   * Constructs a new {@link ClassReader} object. <i>This internal constructor must not be exposed
+   * as a public API</i>.
+   *
+   * @param classFileBuffer a byte array containing the JVMS ClassFile structure to be read.
+   * @param classFileOffset the offset in byteBuffer of the first byte of the ClassFile to be read.
+   * @param checkClassVersion whether to check the class version or not.
+   */
+ClassReader(
+  final byte[] classFileBuffer, final int classFileOffset, final boolean checkClassVersion) {
+  this.classFileBuffer = classFileBuffer;
+  this.b = classFileBuffer;
+  // Check the class' major_version. This field is after the magic and minor_version fields, which
+  // use 4 and 2 bytes respectively.
+  if (checkClassVersion && readShort(classFileOffset + 6) > Opcodes.V20) {
+    throw new IllegalArgumentException(
+      "Unsupported class file major version " + readShort(classFileOffset + 6));
+  }
+  // Create the constant pool arrays. The constant_pool_count field is after the magic,
+  // minor_version and major_version fields, which use 4, 2 and 2 bytes respectively.
+  int constantPoolCount = readUnsignedShort(classFileOffset + 8);
+  cpInfoOffsets = new int[constantPoolCount];
+  constantUtf8Values = new String[constantPoolCount];
+  // Compute the offset of each constant pool entry, as well as a conservative estimate of the
+  // maximum length of the constant pool strings. The first constant pool entry is after the
+  // magic, minor_version, major_version and constant_pool_count fields, which use 4, 2, 2 and 2
+  // bytes respectively.
+  int currentCpInfoIndex = 1;
+  int currentCpInfoOffset = classFileOffset + 10;
+  int currentMaxStringLength = 0;
+  boolean hasBootstrapMethods = false;
+  boolean hasConstantDynamic = false;
+  // The offset of the other entries depend on the total size of all the previous entries.
+  while (currentCpInfoIndex < constantPoolCount) {
+    cpInfoOffsets[currentCpInfoIndex++] = currentCpInfoOffset + 1;
+    int cpInfoSize;
+    switch (classFileBuffer[currentCpInfoOffset]) {
+      case Symbol.CONSTANT_FIELDREF_TAG:
+      case Symbol.CONSTANT_METHODREF_TAG:
+      case Symbol.CONSTANT_INTERFACE_METHODREF_TAG:
+      case Symbol.CONSTANT_INTEGER_TAG:
+      case Symbol.CONSTANT_FLOAT_TAG:
+      case Symbol.CONSTANT_NAME_AND_TYPE_TAG:
+        cpInfoSize = 5;
+        break;
+      case Symbol.CONSTANT_DYNAMIC_TAG:
+        cpInfoSize = 5;
+        hasBootstrapMethods = true;
+        hasConstantDynamic = true;
+        break;
+      case Symbol.CONSTANT_INVOKE_DYNAMIC_TAG:
+        cpInfoSize = 5;
+        hasBootstrapMethods = true;
+        break;
+      case Symbol.CONSTANT_LONG_TAG:
+      case Symbol.CONSTANT_DOUBLE_TAG:
+        cpInfoSize = 9;
+        currentCpInfoIndex++;
+        break;
+      case Symbol.CONSTANT_UTF8_TAG:
+        cpInfoSize = 3 + readUnsignedShort(currentCpInfoOffset + 1);
+        if (cpInfoSize > currentMaxStringLength) {
+          // The size in bytes of this CONSTANT_Utf8 structure provides a conservative estimate
+          // of the length in characters of the corresponding string, and is much cheaper to
+          // compute than this exact length.
+          currentMaxStringLength = cpInfoSize;
+        }
+        break;
+      case Symbol.CONSTANT_METHOD_HANDLE_TAG:
+        cpInfoSize = 4;
+        break;
+      case Symbol.CONSTANT_CLASS_TAG:
+      case Symbol.CONSTANT_STRING_TAG:
+      case Symbol.CONSTANT_METHOD_TYPE_TAG:
+      case Symbol.CONSTANT_PACKAGE_TAG:
+      case Symbol.CONSTANT_MODULE_TAG:
+        cpInfoSize = 3;
+        break;
+      default:
+        throw new IllegalArgumentException();
+    }
+    currentCpInfoOffset += cpInfoSize;
+  }
+  maxStringLength = currentMaxStringLength;
+  // The Classfile's access_flags field is just after the last constant pool entry.
+  header = currentCpInfoOffset;
+
+  // Allocate the cache of ConstantDynamic values, if there is at least one.
+  constantDynamicValues = hasConstantDynamic ? new ConstantDynamic[constantPoolCount] : null;
+
+  // Read the BootstrapMethods attribute, if any (only get the offset of each method).
+  bootstrapMethodOffsets =
+    hasBootstrapMethods ? readBootstrapMethodsAttribute(currentMaxStringLength) : null;
+}
+```
+
+上面的代码，要结合ClassFile的结构进行理解：
+
+```java
+ClassFile {
+    u4             magic;
+    u2             minor_version;
+    u2             major_version;
+    u2             constant_pool_count;
+    cp_info        constant_pool[constant_pool_count-1];
+    u2             access_flags;
+    u2             this_class;
+    u2             super_class;
+    u2             interfaces_count;
+    u2             interfaces[interfaces_count];
+    u2             fields_count;
+    field_info     fields[fields_count];
+    u2             methods_count;
+    method_info    methods[methods_count];
+    u2             attributes_count;
+    attribute_info attributes[attributes_count];
+}
+```
+
+#### methods
+
+第四个部分，`ClassReader`类定义的方法有哪些。
+
+##### getXxx()方法
+
+这里介绍的几个`getXxx()`方法，都是在`header`字段的基础上获得的：
+
+```java
+public class ClassReader {
+  public int getAccess() {
+    return readUnsignedShort(header);
+  }
+
+  public String getClassName() {
+    // this_class is just after the access_flags field (using 2 bytes).
+    return readClass(header + 2, new char[maxStringLength]);
+  }
+
+  public String getSuperName() {
+    // super_class is after the access_flags and this_class fields (2 bytes each).
+    return readClass(header + 4, new char[maxStringLength]);
+  }
+
+  public String[] getInterfaces() {
+    // interfaces_count is after the access_flags, this_class and super_class fields (2 bytes each).
+    int currentOffset = header + 6;
+    int interfacesCount = readUnsignedShort(currentOffset);
+    String[] interfaces = new String[interfacesCount];
+    if (interfacesCount > 0) {
+      char[] charBuffer = new char[maxStringLength];
+      for (int i = 0; i < interfacesCount; ++i) {
+        currentOffset += 2;
+        interfaces[i] = readClass(currentOffset, charBuffer);
+      }
+    }
+    return interfaces;
+  }
+}
+```
+
+同样，上面的几个`getXxx()`方法也需要参考ClassFile结构来理解：
+
+```java
+ClassFile {
+    u4             magic;
+    u2             minor_version;
+    u2             major_version;
+    u2             constant_pool_count;
+    cp_info        constant_pool[constant_pool_count-1];
+    u2             access_flags;
+    u2             this_class;
+    u2             super_class;
+    u2             interfaces_count;
+    u2             interfaces[interfaces_count];
+    u2             fields_count;
+    field_info     fields[fields_count];
+    u2             methods_count;
+    method_info    methods[methods_count];
+    u2             attributes_count;
+    attribute_info attributes[attributes_count];
+}
+```
+
+假如，有如下一个类：
+
+```java
+import java.io.Serializable;
+
+public class HelloWorld extends Exception implements Serializable, Cloneable {
+
+}
+```
+
+输出结果：
+
+```shell
+access: 33
+className: sample/HelloWorld
+superName: java/lang/Exception
+interfaces: [java/io/Serializable, java/lang/Cloneable]
+```
+
+##### accept()方法
+
+在`ClassReader`类当中，有一个`accept()`方法，这个方法接收一个`ClassVisitor`类型的参数，因此`accept()`方法是将`ClassReader`和`ClassVisitor`进行连接的“桥梁”。<u>`accept()`方法的代码逻辑就是按照一定的顺序来调用`ClassVisitor`当中的`visitXxx()`方法。</u>
+
+```java
+public class ClassReader {
+  // A flag to skip the Code attributes.
+  public static final int SKIP_CODE = 1;
+
+  // A flag to skip the SourceFile, SourceDebugExtension,
+  // LocalVariableTable, LocalVariableTypeTable,
+  // LineNumberTable and MethodParameters attributes.
+  public static final int SKIP_DEBUG = 2;
+
+  // A flag to skip the StackMap and StackMapTable attributes.
+  public static final int SKIP_FRAMES = 4;
+
+  // A flag to expand the stack map frames.
+  public static final int EXPAND_FRAMES = 8;
+
+
+  public void accept(final ClassVisitor classVisitor, final int parsingOptions) {
+    accept(classVisitor, new Attribute[0], parsingOptions);
+  }
+
+  public void accept(
+    final ClassVisitor classVisitor,
+    final Attribute[] attributePrototypes,
+    final int parsingOptions) {
+    Context context = new Context();
+    context.attributePrototypes = attributePrototypes;
+    context.parsingOptions = parsingOptions;
+    context.charBuffer = new char[maxStringLength];
+
+    // Read the access_flags, this_class, super_class, interface_count and interfaces fields.
+    char[] charBuffer = context.charBuffer;
+    int currentOffset = header;
+    int accessFlags = readUnsignedShort(currentOffset);
+    String thisClass = readClass(currentOffset + 2, charBuffer);
+    String superClass = readClass(currentOffset + 4, charBuffer);
+    String[] interfaces = new String[readUnsignedShort(currentOffset + 6)];
+    currentOffset += 8;
+    for (int i = 0; i < interfaces.length; ++i) {
+      interfaces[i] = readClass(currentOffset, charBuffer);
+      currentOffset += 2;
+    }
+
+    // ......
+
+    // Visit the class declaration. The minor_version and major_version fields start 6 bytes before
+    // the first constant pool entry, which itself starts at cpInfoOffsets[1] - 1 (by definition).
+    classVisitor.visit(readInt(cpInfoOffsets[1] - 7), accessFlags, thisClass, signature, superClass, interfaces);
+
+    // ......
+
+    // Visit the fields and methods.
+    int fieldsCount = readUnsignedShort(currentOffset);
+    currentOffset += 2;
+    while (fieldsCount-- > 0) {
+      currentOffset = readField(classVisitor, context, currentOffset);
+    }
+    int methodsCount = readUnsignedShort(currentOffset);
+    currentOffset += 2;
+    while (methodsCount-- > 0) {
+      currentOffset = readMethod(classVisitor, context, currentOffset);
+    }
+
+    // Visit the end of the class.
+    classVisitor.visitEnd();
+  }
+
+}
+```
+
+另外，我们也可以回顾一下`ClassVisitor`类中`visitXxx()`方法的调用顺序：
+
+```shell
+visit
+[visitSource][visitModule][visitNestHost][visitPermittedSubclass][visitOuterClass]
+(
+ visitAnnotation |
+ visitTypeAnnotation |
+ visitAttribute
+)*
+(
+ visitNestMember |
+ visitInnerClass |
+ visitRecordComponent |
+ visitField |
+ visitMethod
+)* 
+visitEnd
+```
+
+### 3.1.2 如何使用ClassReader类
+
+The ASM core API for **generating** and **transforming** compiled Java classes is based on the `ClassVisitor` abstract class.
+
+![Java ASM系列：（020）Cla***eader介绍_ByteCode](https://s2.51cto.com/images/20210618/1624005632705532.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+在现阶段，我们接触了`ClassVisitor`、`ClassWriter`和`ClassReader`类，因此可以介绍Class Transformation的操作。
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+
+public class HelloWorldTransformCore {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new ClassVisitor(api, cw) { /**/ };
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+代码的整体处理流程是如下这样的：
+
+```shell
+.class --> ClassReader --> ClassVisitor1 ... --> ClassVisitorN --> ClassWriter --> .class文件
+```
+
+我们可以将整体的处理流程想像成一条河流，那么
+
+- 第一步，构建`ClassReader`。生成的`ClassReader`对象，它是这条“河流”的“源头”。
+- 第二步，构建`ClassWriter`。生成的`ClassWriter`对象，它是这条“河流”的“归处”，它可以想像成是“百川东到海”中的“大海”。
+- 第三步，串连`ClassVisitor`。生成的`ClassVisitor`对象，它是这条“河流”上的重要节点，可以想像成一个“水库”；可以有多个`ClassVisitor`对象，也就是在这条“河流”上存在多个“水库”，这些“水库”可以对“河水”进行一些处理，最终会这些“水库”的水会流向“大海”；也就是说多个`ClassVisitor`对象最终会连接到`ClassWriter`对象上。
+- 第四步，结合`ClassReader`和`ClassVisitor`。在`ClassReader`类上，有一个`accept()`方法，它接收一个`ClassVisitor`类型的对象；换句话说，就是将“河流”的“源头”和后续的“水库”连接起来。
+- 第五步，生成`byte[]`。到这一步，就是所有的“河水”都流入`ClassWriter`这个“大海”当中，这个时候我们调用`ClassWriter.toByteArray()`方法，就能够得到`byte[]`内容。
+
+![Java ASM系列：（020）Cla***eader介绍_Java_02](https://s2.51cto.com/images/20210618/1624028333369109.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+### 3.1.3 parsingOptions参数
+
+在`ClassReader`类当中，`accept()`方法接收一个`int`类型的`parsingOptions`参数。
+
+```java
+/**
+   * Makes the given visitor visit the JVMS ClassFile structure passed to the constructor of this
+   * {@link ClassReader}.
+   *
+   * @param classVisitor the visitor that must visit this class.
+   * @param parsingOptions the options to use to parse this class. One or more of {@link
+   *     #SKIP_CODE}, {@link #SKIP_DEBUG}, {@link #SKIP_FRAMES} or {@link #EXPAND_FRAMES}.
+   */
+public void accept(final ClassVisitor classVisitor, final int parsingOptions)
+```
+
+`parsingOptions`参数可以选取的值有以下5个：
+
+- `0`
+- `ClassReader.SKIP_CODE`
+- `ClassReader.SKIP_DEBUG`
+- `ClassReader.SKIP_FRAMES`
+- `ClassReader.EXPAND_FRAMES`
+
+推荐使用：
+
+- 在调用`ClassReader.accept()`方法时，其中的`parsingOptions`参数，推荐使用`ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES`。
+- 在创建`ClassWriter`对象时，其中的`flags`参数，推荐使用`ClassWriter.COMPUTE_FRAMES`。
+
+示例代码如下：
+
+```java
+ClassReader cr = new ClassReader(bytes);
+int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+cr.accept(cv, parsingOptions);
+
+ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+```
+
+为什么我们推荐使用`ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES`呢？因为使用这样的一个值，可以生成最少的ASM代码，但是又能实现完整的功能。
+
+- `0`：会生成所有的ASM代码，包括调试信息、frame信息和代码信息。
+- `ClassReader.SKIP_CODE`：会忽略代码信息，例如，会忽略对于`MethodVisitor.visitXxxInsn()`方法的调用。
+- `ClassReader.SKIP_DEBUG`：会忽略调试信息，例如，会忽略对于`MethodVisitor.visitParameter()`、`MethodVisitor.visitLineNumber()`和`MethodVisitor.visitLocalVariable()`等方法的调用。
+- `ClassReader.SKIP_FRAMES`：会忽略frame信息，例如，会忽略对于`MethodVisitor.visitFrame()`方法的调用。
+- `ClassReader.EXPAND_FRAMES`：会对frame信息进行扩展，例如，会对`MethodVisitor.visitFrame()`方法的参数有影响。（即会把当前Frame状态的参数更完整地填充到`visitFrame()`中）
+
+简而言之，使用`ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES`的目的是**功能完整、代码少、复杂度低，**：
+
+- 不使用`ClassReader.SKIP_CODE`，使代码的**功能**保持完整。
+- 使用`ClassReader.SKIP_DEBUG`，减少不必要的调试信息，会使**代码量**减少。
+- 使用`ClassReader.SKIP_FRAMES`，降低代码的**复杂度**。
+- 不使用`ClassReader.EXPAND_FRAMES`，降低代码的**复杂度**。
+
+对于这些参数的使用，我们可以在`ASMPrint`类的基础上进行实验。
+
+我们使用`ClassReader.SKIP_DEBUG`的时候，就不会生成调试信息。因为这些调试信息主要是记录某一条instruction在代码当中的行数，以及变量的名字等信息；如果没有这些调试信息，也不会影响程序的正常运行，也就是说功能不受影响，因此省略这些信息，就会让ASM代码尽可能的简洁。
+
+我们使用`ClassReader.SKIP_FRAMES`的时候，就会忽略frame的信息。为什么要忽略这些frame信息呢？因为frame计算的细节会很繁琐，需要处理的情况也有很多，总的来说，就是比较麻烦。我们解决这个麻烦的方式，就是让ASM帮助我们来计算frame的情况，也就是在创建`ClassWriter`对象的时候使用`ClassWriter.COMPUTE_FRAMES`选项。
+
+**在刚开始学习ASM的时候，对于`parsingOptions`参数，我们推荐使用`ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES`的组合值。但是，以后，随着大家对ASM的知识越来越熟悉，或者随着功能需求的变化，大家可以尝试着使用其它的选项值。**
+
+### 3.1.4 总结
+
+本文主要对`ClassReader`类进行了介绍，内容总结如下：
+
+- 第一点，了解`ClassReader`类的成员都有哪些。
+- 第二点，如何使用`ClassReader`类，来进行Class Transformation的操作。
+- 第三点，在`ClassReader`类当中，对于`accept()`方法的`parsingOptions`参数，我们推荐使用`ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES`。
+
+## 3.2 ClassReader代码示例
+
+在现阶段，我们接触了`ClassVisitor`、`ClassWriter`和`ClassReader`类，因此可以介绍Class Transformation的操作。
+
+![Java ASM系列：（021）Cla***eader代码示例_Java](https://s2.51cto.com/images/20210618/1624005632705532.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+### 3.2.1 整体思路
+
+对于一个`.class`文件进行Class Transformation操作，整体思路是这样的：
+
+```
+ClassReader --> ClassVisitor(1) --> ... --> ClassVisitor(N) --> ClassWriter
+```
+
+其中，
+
+- `ClassReader`类，是ASM提供的一个类，可以直接拿来使用。
+- `ClassWriter`类，是ASM提供的一个类，可以直接拿来使用。
+- `ClassVisitor`类，是ASM提供的一个抽象类，因此需要写代码提供一个`ClassVisitor`的子类，在这个子类当中可以实现对`.class`文件进行各种处理操作。换句话说，**进行Class Transformation操作，编写`ClassVisitor`的子类是关键**。
+
+### 3.2.2 修改类的信息
+
+#### 示例一：修改类的版本
+
+预期目标：假如有一个`HelloWorld.java`文件，经过Java 17编译之后，生成的`HelloWorld.class`文件的版本就是Java 17的版本，我们的目标是将`HelloWorld.class`由Java 17版本转换成Java 8版本。
+
+```java
+public class HelloWorld {
+}
+```
+
+编码实现：
+
+注意点：
+
++ 这里api指的是ASM API 版本，而version指的是Java ClassFile 版本
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.Opcodes;
+
+/**
+ * 将Class文件编译后的版本从 java17 改成 java8
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/23 5:42 PM
+ */
+public class ClassChangeVersionVisitor extends ClassVisitor {
+  public ClassChangeVersionVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    super.visit(Opcodes.V1_8, access, name, signature, superName, interfaces);
+  }
+}
+
+```
+
+进行转换：
+
+```java
+package com.example;
+
+import core.ClassChangeVersionVisitor;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new ClassChangeVersionVisitor(api, cw);
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+
+```
+
+验证结果：
+
+```shell
+$ javap -p -v sample.HelloWorld
+
+# 前后对比 major version 值，61 是 java17，52是java8
+# 在Opcodes接口中能看到
+# int V1_8 = 0 << 16 | 52;
+# int V17 = 0 << 16 | 61;
+```
+
+#### 示例二：修改类的接口
+
+预期目标：在下面的`HelloWorld`类中，我们定义了一个`clone()`方法，但存在一个问题，也就是，如果没有实现`Cloneable`接口，`clone()`方法就会出错，我们的目标是希望通过ASM为`HelloWorld`类添加上`Cloneable`接口。
+
+```java
+public class HelloWorld {
+  @Override
+  public Object clone() throws CloneNotSupportedException {
+    return super.clone();
+  }
+}
+```
+
+编码实现：
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+
+/**
+ * 给指定类 直接暴力添加实现 Cloneable 接口 (暂不考虑 原有类已经实现了 Cloneable 的情况)
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/23 6:09 PM
+ */
+public class ClassCloneVisitor extends ClassVisitor {
+  public ClassCloneVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    // 暴力指 实现 Cloneable 接口
+    super.visit(version, access, name, signature, superName, new String[] {"java/lang/Cloneable"});
+  }
+}
+```
+
+注意：`ClassCloneVisitor`这个类写的比较简单，直接添加`java/lang/Cloneable`接口信息；在`learn-java-asm`项目代码当中，有一个`ClassAddInterfaceVisitor`类，实现更灵活。
+
+```java
+package com.example;
+
+import core.ClassChangeVersionVisitor;
+import core.ClassCloneVisitor;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new ClassCloneVisitor(api, cw);
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+验证结果：
+
+```java
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    HelloWorld obj = new HelloWorld();
+    Object anotherObj = obj.clone();
+    System.out.println(anotherObj);
+  }
+}
+```
+
+#### 小结
+
+我们看到上面的两个例子，一个是修改类的版本信息，另一个是修改类的接口信息，那么这两个示例都是基于`ClassVisitor.visit()`方法实现的：
+
+```java
+public void visit(int version, int access, String name, String signature, String superName, String[] interfaces)
+```
+
+这两个示例，就是通过修改`visit()`方法的参数实现的：
+
+- 修改类的版本信息，是通过修改`version`这个参数实现的
+- 修改类的接口信息，是通过修改`interfaces`这个参数实现的
+
+其实，在`visit()`方法当中的其它参数也可以修改：
+
+- 修改`access`参数，也就是修改了类的访问标识信息。
+- 修改`name`参数，也就是修改了类的名称。但是，<u>在大多数的情况下，不推荐修改`name`参数。因为调用类里的方法，都是先找到类，再找到相应的方法；如果将当前类的类名修改成别的名称，那么其它类当中可能就找不到原来的方法了，因为类名已经改了。但是，也有少数的情况，可以修改`name`参数，比如说对代码进行混淆（obfuscate）操作</u>。
+- 修改`superName`参数，也就是修改了当前类的父类信息。
+
+### 3.2.3 修改字段信息
+
+#### 示例三：删除字段
+
+预期目标：删除掉`HelloWorld`类里的`String strValue`字段。
+
+```java
+public class HelloWorld {
+  public int intValue;
+  public String strValue; // 删除这个字段
+}
+```
+
+编码实现：
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.FieldVisitor;
+
+/**
+ * 判断当 字段名+字段类型 和实例传入的参数一致时，则忽略(删除)该字段
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/23 6:27 PM
+ */
+public class ClassRemoveFieldVisitor extends ClassVisitor {
+    /**
+     * 预删除的字段 的 字段名
+     */
+    private final String fieldName;
+    /**
+     * 预删除的字段 的 描述符(字段类型)
+     */
+    private final String fieldDescriptor;
+
+    public ClassRemoveFieldVisitor(int api, ClassVisitor classVisitor, String fieldName, String fieldDescriptor) {
+        super(api, classVisitor);
+        this.fieldName = fieldName;
+        this.fieldDescriptor = fieldDescriptor;
+    }
+
+    @Override
+    public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
+        // 如果和 预删除的 字段一致，则忽略(删除)该字段
+        if (name.equals(fieldName) && descriptor.equals(fieldDescriptor)) {
+            return null;
+        }
+        return super.visitField(access, name, descriptor, signature, value);
+    }
+}
+```
+
+**上面代码思路的关键就是`ClassVisitor.visitField()`方法。在正常的情况下，`ClassVisitor.visitField()`方法返回一个`FieldVisitor`对象；但是，如果`ClassVisitor.visitField()`方法返回的是`null`，就么能够达到删除该字段的效果**。
+
+我们之前说过一个形象的类比，就是将`ClassReader`类比喻成河流的“源头”，而`ClassVisitor`类比喻成河流的经过的路径上的“水库”，而`ClassWriter`类则比喻成“大海”，也就是河水的最终归处。如果说，其中一个“水库”拦截了一部分水流，那么这部分水流就到不了“大海”了；这就相当于`ClassVisitor.visitField()`方法返回的是`null`，从而能够达到删除该字段的效果。
+
+或者说，换一种类比，用信件的传递作类比。将`ClassReader`类想像成信件的“发出地”，将`ClassVisitor`类想像成信件运送途中经过的“驿站”，将`ClassWriter`类想像成信件的“接收地”；如果是在某个“驿站”中将其中一封邮件丢失了，那么这封信件就抵达不了“接收地”了。
+
+```java
+package com.example;
+
+import core.ClassChangeVersionVisitor;
+import core.ClassCloneVisitor;
+import core.ClassRemoveFieldVisitor;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new ClassRemoveFieldVisitor(api, cw, "strValue", "Ljava/lang/String;");
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+验证结果：
+
+```java
+import java.lang.reflect.Field;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    System.out.println(clazz.getName());
+
+    Field[] declaredFields = clazz.getDeclaredFields();
+    for (Field f : declaredFields) {
+      System.out.println("    " + f.getName());
+    }
+  }
+}
+```
+
+#### 示例四：添加字段
+
+预期目标：为了`HelloWorld`类添加一个`Object objValue`字段。
+
+```java
+public class HelloWorld {
+    public int intValue;
+    public String strValue;
+    // 添加一个Object objValue字段
+}
+```
+
+编码实现：
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.FieldVisitor;
+
+/**
+ * 和删除字段不同的是，这里需要在 visitEnd里面再添加字段 <br/>
+ * 因为遍历现有.class时，visitField需要遍历所有字段，会调用多次，而visitEnd只会在最后调用一次 <br/>
+ * 在只调用一次的 visitEnd 中实际添加字段，保证只会添加一次字段
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/23 6:38 PM
+ */
+public class ClassAddFieldVisitor extends ClassVisitor {
+  // 预添加的 字段的 访问修饰符，字段名，字段描述符
+  private final int fieldAccess;
+  private final String fieldName;
+  private final String fieldDescriptor;
+  // 判断是否已经有该字段(避免重复添加字段)
+  private boolean isFieldPresent;
+
+  public ClassAddFieldVisitor(int api, ClassVisitor classVisitor, int fieldAccess, String fieldName, String fieldDescriptor) {
+    super(api, classVisitor);
+    this.fieldAccess = fieldAccess;
+    this.fieldName = fieldName;
+    this.fieldDescriptor = fieldDescriptor;
+  }
+
+  @Override
+  public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
+    // java类中不允许有同名字段，所以仅判断 name 就够了
+    if (name.equals(fieldName)) {
+      isFieldPresent = true;
+    }
+    return super.visitField(access, name, descriptor, signature, value);
+  }
+
+  @Override
+  public void visitEnd() {
+    // 如果java类中没有 预添加的字段，则添加
+    if (!isFieldPresent) {
+      FieldVisitor fieldVisitor = super.visitField(fieldAccess, fieldName, fieldDescriptor, null, null);
+      // 记得调用 visitEnd (因为后续的ClassVisitor也可能在 visitEnd 里写了另外的处理逻辑)
+      if(null != fieldVisitor) {
+        fieldVisitor.visitEnd();
+      }
+    }
+    super.visitEnd();
+  }
+}
+```
+
+上面的代码思路：第一步，在`visitField()`方法中，判断某个字段是否已经存在，其结果存在于`isFieldPresent`字段当中；第二步，就是在`visitEnd()`方法中，根据`isFieldPresent`字段的值，来决定是否添加新的字段。
+
+```java
+package com.example;
+
+import core.ClassAddFieldVisitor;
+import core.ClassChangeVersionVisitor;
+import core.ClassCloneVisitor;
+import core.ClassRemoveFieldVisitor;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new ClassAddFieldVisitor(api, cw, Opcodes.ACC_PUBLIC,"objValue", "Ljava/lang/Object;");
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+验证结果：
+
+```java
+import java.lang.reflect.Field;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    System.out.println(clazz.getName());
+
+    Field[] declaredFields = clazz.getDeclaredFields();
+    for (Field f : declaredFields) {
+      System.out.println("    " + f.getName());
+    }
+  }
+}
+```
+
+#### 小结
+
+对于字段的操作，都是基于`ClassVisitor.visitField()`方法来实现的：
+
+```java
+public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value);
+```
+
+那么，对于字段来说，可以进行哪些操作呢？有三种类型的操作：
+
+- 修改现有的字段。例如，修改字段的名字、修改字段的类型、修改字段的访问标识，这些需要通过修改`visitField()`方法的参数来实现。
+- **删除已有的字段。在`visitField()`方法中，返回`null`值，就能够达到删除字段的效果**。
+- 添加新的字段。在`visitField()`方法中，判断该字段是否已经存在；在`visitEnd()`方法中，如果该字段不存在，则添加新字段。
+
+**一般情况下来说，不推荐“修改已有的字段”，也不推荐“删除已有的字段”**，原因如下：
+
+- 不推荐“修改已有的字段”，因为这可能会引起字段的名字不匹配、字段的类型不匹配，从而导致程序报错。例如，假如在`HelloWorld`类里有一个`intValue`字段，而且`GoodChild`类里也使用到了`HelloWorld`类的这个`intValue`字段；如果我们将`HelloWorld`类里的`intValue`字段名字修改为`myValue`，那么`GoodChild`类就再也找不到`intValue`字段了，这个时候，程序就会出错。当然，如果我们把`GoodChild`类里对于`intValue`字段的引用修改成`myValue`，那也不会出错了。但是，我们要保证所有使用`intValue`字段的地方，都要进行修改，这样才能让程序不报错。
+- 不推荐“删除已有的字段”，因为一般来说，类里的字段都是有作用的，如果随意的删除就会造成字段缺失，也会导致程序报错。
+
+**为什么不在`ClassVisitor.visitField()`方法当中来添加字段呢？如果在`ClassVisitor.visitField()`方法，就可能添加重复的字段，这样就不是一个合法的ClassFile了**。
+
+### 3.2.4 修改方法信息
+
+#### 示例五：删除方法
+
+预期目标：删除掉`HelloWorld`类里的`add()`方法。
+
+```java
+public class HelloWorld {
+  public int add(int a, int b) { // 删除add方法
+    return a + b;
+  }
+
+  public int sub(int a, int b) {
+    return a - b;
+  }
+}
+```
+
+编码实现：
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+
+/**
+ * 若指定的 方法名 和 描述符 和现有的方法一致，则忽略(删除)该方法
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/23 7:31 PM
+ */
+public class ClassRemoveMethodVisitor extends ClassVisitor {
+  private final String methodName;
+  private final String methodDescriptor;
+
+  public ClassRemoveMethodVisitor(int api, ClassVisitor classVisitor, String methodName, String methodDescriptor) {
+    super(api, classVisitor);
+    this.methodName = methodName;
+    this.methodDescriptor = methodDescriptor;
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    if (name.equals(methodName) && descriptor.equals(methodDescriptor)) {
+      return null;
+    }
+    return super.visitMethod(access, name, descriptor, signature, exceptions);
+  }
+}
+```
+
+上面删除方法的代码思路，与删除字段的代码思路是一样的。
+
+```java
+package com.example;
+
+import core.*;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new ClassRemoveMethodVisitor(api,cw,"add", "(II)I");
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+验证结果：
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    System.out.println(clazz.getName());
+
+    Method[] declaredMethods = clazz.getDeclaredMethods();
+    for (Method m : declaredMethods) {
+      System.out.println("    " + m.getName());
+    }
+  }
+}
+```
+
+#### 示例六：添加方法
+
+预期目标：为`HelloWorld`类添加一个`mul()`方法。
+
+```java
+public class HelloWorld {
+  public int add(int a, int b) {
+    return a + b;
+  }
+
+  public int sub(int a, int b) {
+    return a - b;
+  }
+
+  // TODO: 添加一个乘法
+}
+```
+
+编码实现：
+
+注意点：
+
++ 和添加字段不同的是，添加方法，还需要填充方法体逻辑
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+
+/**
+ * 如果 指定的 类中不存在 指定的mul方法，则添加 <br/>
+ * 与添加 字段不同的是，添加方法，还需要实现方法体内的逻辑
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/23 7:39 PM
+ */
+public abstract class ClassAddMethodVisitor extends ClassVisitor {
+  private final int methodAccess;
+  private final String methodName;
+  private final String methodDescriptor;
+  private final String methodSignature;
+  private final String[] methodExceptions;
+  private boolean isMethodPresent;
+
+  protected ClassAddMethodVisitor(int api, ClassVisitor classVisitor, int methodAccess, String methodName, String methodDescriptor, String methodSignature, String[] methodExceptions) {
+    super(api, classVisitor);
+    this.methodAccess = methodAccess;
+    this.methodName = methodName;
+    this.methodDescriptor = methodDescriptor;
+    this.methodSignature = methodSignature;
+    this.methodExceptions = methodExceptions;
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    if(name.equals(methodName) && descriptor.equals(methodDescriptor)){
+      isMethodPresent = true;
+    }
+    return super.visitMethod(access, name, descriptor, signature, exceptions);
+  }
+
+  @Override
+  public void visitEnd() {
+    if(!isMethodPresent) {
+      MethodVisitor methodVisitor = super.visitMethod(methodAccess, methodName, methodDescriptor, methodSignature, methodExceptions);
+      if(null != methodVisitor) {
+        // 填充方法体逻辑
+        generateMethodBody(methodVisitor);
+      }
+    }
+    super.visitEnd();
+  }
+
+  protected abstract void generateMethodBody(MethodVisitor mv);
+}
+
+```
+
+<u>添加新的方法，和添加新的字段的思路，在前期，两者是一样的，都是先要判断该字段或该方法是否已经存在；但是，在后期，两者会有一些差异，因为方法需要有“方法体”，在上面的代码中，我们定义了一个`generateMethodBody()`方法，这个方法需要在子类当中进行实现。</u>
+
+```java
+package com.example;
+
+import core.ClassAddMethodVisitor;
+import org.objectweb.asm.*;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new ClassAddMethodVisitor(api, cw, Opcodes.ACC_PUBLIC, "mul", "(II)I", null, null) {
+      @Override
+      protected void generateMethodBody(MethodVisitor mv) {
+        mv.visitCode();
+        mv.visitVarInsn(Opcodes.ILOAD,1);
+        mv.visitVarInsn(Opcodes.ILOAD,2);
+        mv.visitInsn(Opcodes.IMUL);
+        mv.visitInsn(Opcodes.IRETURN);
+        mv.visitMaxs(2,3);
+        mv.visitEnd();
+      }
+    };
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+
+```
+
+验证结果：
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    System.out.println(clazz.getName());
+
+    Method[] declaredMethods = clazz.getDeclaredMethods();
+    for (Method m : declaredMethods) {
+      System.out.println("    " + m.getName());
+    }
+
+    Object obj = clazz.newInstance();
+    Method mul = clazz.getDeclaredMethod("mul", int.class, int.class);
+    System.out.println(mul.invoke(obj, 2, 5));
+  }
+}
+```
+
+#### 小结
+
+对于方法的操作，都是基于`ClassVisitor.visitMethod()`方法来实现的：
+
+```java
+public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions);
+```
+
+与字段操作类似，对于方法来说，可以进行的操作也有三种类型：
+
+- 修改现有的方法。
+- 删除已有的方法。
+- 添加新的方法。
+
+**我们不推荐“删除已有的方法”，因为这可能会引起方法调用失败，从而导致程序报错。**
+
+<u>另外，对于“修改现有的方法”，我们不建议修改方法的名称、方法的类型（接收参数的类型和返回值的类型），因为别的地方可能会对该方法进行调用，修改了方法名或方法的类型，就会使方法调用失败。但是，我们可以“修改现有方法”的“方法体”，也就是方法的具体实现代码。</u>
+
+### 3.2.5 总结
+
+本文主要是使用`ClassReader`类进行Class Transformation的代码示例进行介绍，内容总结如下：
+
+- 第一点，类层面的信息，例如，类名、父类、接口等，可以通过`ClassVisitor.visit()`方法进行修改。
+- 第二点，字段层面的信息，例如，添加新字段、删除已有字段等，可能通过`ClassVisitor.visitField()`方法进行修改。
+- 第三点，方法层面的信息，例如，添加新方法、删除已有方法等，可以通过`ClassVisitor.visitMethod()`方法进行修改。
+
+但是，对于方法层面来说，还有一个重要的方面没有涉及，也就是对于现有方法里面的代码进行修改，我们在后续内容中会有介绍。
+
+## 3.3 Class Transformation的原理
