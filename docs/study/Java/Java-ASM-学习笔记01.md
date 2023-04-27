@@ -8429,3 +8429,697 @@ IRETURN --- FRETURN
 
 ## 3.5 修改已有的方法（添加－进入和退出）
 
+### 3.5.1 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    System.out.println("this is a test method.");
+  }
+}
+```
+
+我们想实现的预期目标：对于`test()`方法，在“方法进入”时和“方法退出”时，添加一条打印语句。
+
+第一种情况，在“方法进入”时，预期目标如下所示：
+
+```java
+public class HelloWorld {
+  public void test() {
+    System.out.println("Method Enter...");
+    System.out.println("this is a test method.");
+  }
+}
+```
+
+第二种情况，在“方法退出”时，预期目标如下所示：
+
+```java
+public class HelloWorld {
+  public void test() {
+    System.out.println("this is a test method.");
+    System.out.println("Method Exit...");
+  }
+}
+```
+
+现在，我们有了明确的预期目标；接下来，就是将这个预期目标转换成具体的ASM代码。那么，应该怎么实现呢？从哪里着手呢？
+
+### 3.5.2 实现思路
+
+我们知道，现在的内容是Class Transformation的操作，其中涉及到三个主要的类：`ClassReader`、`ClassVisitor`和`ClassWriter`。其中，`ClassReader`负责读取Class文件，`ClassWriter`负责生成Class文件，而具体的`ClassVisitor`负责进行Transformation的操作。换句话说，我们还是应该从`ClassVisitor`类开始。
+
+第一步，回顾一下`ClassVisitor`类当中主要的`visitXxx()`方法有哪些。在`ClassVisitor`类当中，有`visit()`、`visitField()`、`visitMethod()`和`visitEnd()`方法；这些`visitXxx()`方法与`.class`文件里的不同部分之间是有对应关系的，如下图：
+
+![Java ASM系列：（024）修改已有的方法（添加－进入和退出）_ASM](https://s2.51cto.com/images/20210629/1624967397832240.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+根据我们的预期目标，现在想要修改的是“方法”的部分，那么就对应着`ClassVisitor`类的`visitMethod()`方法。<u>`ClassVisitor.visitMethod()`会返回一个`MethodVisitor`类的实例；而`MethodVisitor`类就是用来生成方法的“方法体”</u>。
+
+第二步，回顾一下`MethodVisitor`类当中定义了哪些`visitXxx()`方法。
+
+![Java ASM系列：（024）修改已有的方法（添加－进入和退出）_ASM_02](https://s2.51cto.com/images/20210629/1624967433536552.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+在`MethodVisitor`类当中，定义的`visitXxx()`方法比较多，但是我们可以将这些`visitXxx()`方法进行分组：
+
+- 第一组，`visitCode()`方法，标志着方法体（method body）的开始。
+- 第二组，`visitXxxInsn()`方法，对应方法体（method body）本身，这里包含多个方法。
+- 第三组，`visitMaxs()`方法，标志着方法体（method body）的结束。
+- 第四组，`visitEnd()`方法，是最后调用的方法。
+
+另外，我们也回顾一下，在`MethodVisitor`类中，`visitXxx()`方法的调用顺序：
+
+- 第一步，调用`visitCode()`方法，调用一次。
+- 第二步，调用`visitXxxInsn()`方法，可以调用多次。
+- 第三步，调用`visitMaxs()`方法，调用一次。
+- 第四步，调用`visitEnd()`方法，调用一次。
+
+到了这一步，我们基本上就知道了：需要修改的内容就位于`visitCode()`和`visitMaxs()`方法之间，这是一个大概的范围。
+
+第三步，精确定位。也就是说，在`MethodVisitor`类当中，要确定出要在哪一个`visitXxx()`方法里进行修改。
+
+#### 方法进入
+
+如果我们想在“方法进入”时，添加一些打印语句，那么我们有两个位置可以添加打印语句：
+
+- 第一个位置，就是在`visitCode()`方法中。
+- 第二个位置，就是在第1个`visitXxxInsn()`方法中。
+
+在这两个位置当中，我们推荐使用`visitCode()`方法。因为`visitCode()`方法总是位于方法体（method body）的前面，而第1个`visitXxxInsn()`方法是不稳定的（因为每个方法第一个执行的`visitXxxInsn`都大不相同）。
+
+```java
+public void visitCode() {
+    // 首先，处理自己的代码逻辑
+    // TODO: 添加“方法进入”时的代码
+
+    // 其次，调用父类的方法实现
+    super.visitCode();
+}
+```
+
+#### 方法退出
+
+如果我们在“方法退出”时想添加的代码，是否可以添加到`visitMaxs()`方法内呢？这样做是不行的。因为在执行`visitMaxs()`方法之前，方法体（method body）已经执行过了：在方法体（method body）当中，里面会包含return语句；如果return语句一执行，后面的任何语句都不会再执行了；**换句话说，如果在`visitMaxs()`方法内添加的打印输出语句，由于前面方法体（method body）中已经执行了return语句，后面的任何语句就执行不到了**。
+
+那么，到底是应该在哪里添加代码呢？为了回答这个问题，我们需要知道“方法退出”有哪几种情况。**方法的退出，有两种情况，一种是正常退出（执行return语句），另一种是异常退出（执行throw语句）**；接下来，就是将这两种退出情况应用到ASM的代码层面。
+
+**在`MethodVisitor`类当中，无论是执行return语句，还是执行throw语句，都是通过`visitInsn(opcode)`方法来实现的**。所以，如果我们想在“方法退出”时，添加一些语句，那么这些语句放到`visitInsn(opcode)`方法中就可以了。
+
+```java
+public void visitInsn(int opcode) {
+    // 首先，处理自己的代码逻辑
+    if (opcode == Opcodes.ATHROW || (opcode >= Opcodes.IRETURN && opcode <= Opcodes.RETURN)) {
+        // TODO: 添加“方法退出”时的代码
+    }
+
+    // 其次，调用父类的方法实现
+    super.visitInsn(opcode);
+}
+```
+
+------
+
+> 讲师有一个编程的习惯：在编写ASM代码的时候，如果写了一个类，它继承自`ClassVisitor`，那么就命名成`XxxVisitor`；如果写了一个类，它继承自`MethodVisitor`，那么就命名成`XxxAdapter`。通过类的名字，就可以区分出哪些类是继承自`ClassVisitor`，哪些类是继承自`MethodVisitor`。
+
+### 3.5.3 示例一：方法进入
+
+#### 编码实现
+
+注意点：
+
++ 如果在`<init>`构造方法的方法初始位置插入逻辑，由于还没有调用`super()`进行初始化，所以此时调用`this`的实例方法会抛出异常
++ 需要在方法体开头插入逻辑，则只需重写MethodVisitor的`visitCode()`方法
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+
+/**
+ * 目标：在方法体执行开始时打印 "Method Enter..."
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/27 3:37 PM
+ */
+public class MethodEnterCVisitor extends ClassVisitor {
+  public MethodEnterCVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    // 先调用当前 ClassVisitor 实例 成员变量cv的 visitMethod(效果就是递归，从最早一个ClassVisitor的visitMethod开始执行)
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    // 抽象方法没方法体，native方法也没方法体，所以直接走原本的 visitMethod逻辑
+    // 构造方法，this() 或 super() 必须是第一个执行的逻辑，所以也排除 <init> 构造方法
+    if(null == mv || (access & Opcodes.ACC_ABSTRACT) == Opcodes.ACC_ABSTRACT || (access & Opcodes.ACC_NATIVE) == Opcodes.ACC_NATIVE || name.equals("<init>")) {
+      return mv;
+    }
+    // 执行自定义的 MethodVisitor 内的逻辑
+    return new MethodEnterMVisitor(api, mv);
+  }
+
+  /**
+     * 实现在方法体执行开头插入自定义逻辑的 MethodVisitor
+     */
+  private static class MethodEnterMVisitor extends MethodVisitor {
+    protected MethodEnterMVisitor(int api, MethodVisitor methodVisitor) {
+      super(api, methodVisitor);
+    }
+
+    @Override
+    public void visitCode() {
+      // 执行我们自定义添加的逻辑，输出 "Method Enter..."
+      super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitLdcInsn("Method Enter...");
+      super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      // 继续递归执行 MethodVisitor成员变量mv的 visitCode() 方法
+      super.visitCode();
+    }
+  }
+}
+```
+
+在上面`MethodEnterAdapter`类的`visitCode()`方法中，主要是做两件事情：
+
+- 首先，处理自己的代码逻辑。
+- 其次，调用父类的方法实现。
+
+在处理自己的代码逻辑中，有3行代码。这3条语句的作用就是添加`System.out.println("Method Enter...");`语句：
+
+```java
+super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+super.visitLdcInsn("Method Enter...");
+super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+```
+
+注意，上面的代码中使用了`super`关键字。
+
+事实上，在`MethodVisitor`类当中，定义了一个`protected MethodVisitor mv;`字段。我们也可以使用`mv`这个字段，代码也可以这样写：
+
+```java
+mv.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+mv.visitLdcInsn("Method Enter...");
+mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+```
+
+**但是这样写，可能会遇到`mv`为`null`的情况，这样就会出现`NullPointerException`异常**。
+
+如果使用`super`，就会避免`NullPointerException`异常的情况。因为使用`super`的情况下，就是调用父类定义的方法，在本例中其实就是调用`MethodVisitor`类里定义的方法。在`MethodVisitor`类里的`visitXxx()`方法中，会先对`mv`进行是否为`null`的判断，所以就不会出现`NullPointerException`的情况。
+
+```java
+public abstract class MethodVisitor {
+  protected MethodVisitor mv;
+
+  public void visitCode() {
+    if (mv != null) {
+      mv.visitCode();
+    }
+  }
+
+  public void visitInsn(final int opcode) {
+    if (mv != null) {
+      mv.visitInsn(opcode);
+    }
+  }
+
+  public void visitIntInsn(final int opcode, final int operand) {
+    if (mv != null) {
+      mv.visitIntInsn(opcode, operand);
+    }
+  }
+
+  public void visitVarInsn(final int opcode, final int var) {
+    if (mv != null) {
+      mv.visitVarInsn(opcode, var);
+    }
+  }
+
+  public void visitFieldInsn(final int opcode, final String owner, final String name, final String descriptor) {
+    if (mv != null) {
+      mv.visitFieldInsn(opcode, owner, name, descriptor);
+    }
+  }
+
+  // ......
+
+  public void visitMaxs(final int maxStack, final int maxLocals) {
+    if (mv != null) {
+      mv.visitMaxs(maxStack, maxLocals);
+    }
+  }
+
+  public void visitEnd() {
+    if (mv != null) {
+      mv.visitEnd();
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+package com.example;
+
+import core.ClassAddMethodVisitor;
+import core.MethodEnterCVisitor;
+import org.objectweb.asm.*;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodEnterCVisitor(api, cw);
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    Method m = clazz.getDeclaredMethod("test");
+
+    Object instance = clazz.newInstance();
+    m.invoke(instance);
+  }
+}
+```
+
+#### 特殊情况：`<init>()`方法
+
+在`.class`文件中，`<init>()`方法，就表示类当中的构造方法。
+
+我们在“方法进入”时，有一个对于`<init>`的判断：
+
+```java
+if (mv != null && !"<init>".equals(name)) {
+    // ......
+}
+```
+
+为什么要对`<init>()`方法进行特殊处理呢？
+
+> Java requires that if you call this() or super() in a constructor, it must be the first statement.
+
+```java
+public class HelloWorld {
+    public HelloWorld() {
+        System.out.println("Method Enter...");
+        super(); // 报错：Call to 'super()' must be first statement in constructor body
+    }
+}
+```
+
+大家可以做个实践，就是去掉对于`<init>()`方法的判断，会发现它好像也是可以正常执行的。（可以执行，因为没有调用当前未初始化的实例的方法，所以没事）
+
+但是，如果我们换一下添加的语句，就会出错了：
+
+```java
+super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+super.visitVarInsn(Opcodes.ALOAD, 0);
+super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Object", "toString", "()Ljava/lang/String;", false);
+super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+```
+
+因为如上代码，通过`javap -p -v sample.HelloWorld ` 可以看出来，尝试在`invokespecial`初始化this指针指向的内存之前，就调用this对象的方法，所以会抛出异常。（JVM先分配内存，然后调用`super()`时会对内存进行初始化，此时`this`才是一个有效的实例的指针，否则是未完成对内存数据初始化的`uninitialized_this`）
+
+```java
+Exception in thread "main" java.lang.VerifyError: Bad type on operand stack
+Exception Details:
+  Location:
+    sample/HelloWorld.<init>()V @4: invokevirtual
+  Reason:
+    Type uninitializedThis (current frame, stack[1]) is not assignable to 'java/lang/Object'
+  Current Frame:
+    bci: @4
+    flags: { flagThisUninit }
+    locals: { uninitializedThis }
+    stack: { 'java/io/PrintStream', uninitializedThis }
+  Bytecode:
+    0000000: b200 0c2a b600 10b6 0016 2ab7 0018 b1
+```
+
+### 3.5.4 示例二：方法退出
+
+#### 编码实现
+
+注意点：
+
++ 不能通过重写MethodVisitor的`visitMaxs()`方法来完成在方法正常/异常返回时插入自定义逻辑，因为此时逻辑已经执行完return或者throw了，不会再往下执行代码
++ 由于return和throw都在`visitInsn()`方法中，所以重写该方法，可以实现在return或者throw之前执行自定义的逻辑
++ 由于构造方法执行完`super()`后，this指针指向的内存就被初始化了，所以可以不过滤`name.equals("<init>")`的情况，在构造方法返回之前，也可以执行自定义的逻辑
++ 如果重写`visitMaxs()`方法，会发现里面就算插入自定义逻辑也不会生效，`javap -p -v sample.HelloWorld`指令查看后会发现自定义逻辑被替换成`nop`
++ 通过javap指令，可以看到如果代码中throw异常，我们插入的自定义逻辑会被放在`athrow`之前。
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+
+/**
+ * 目标：在每个方法之前完，正常/异常返回之前，输出 "Method Exit..."
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/27 4:33 PM
+ */
+public class MethodExitCVisitor extends ClassVisitor {
+  public MethodExitCVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    // 方法 正常return 或 异常返回之前增加逻辑，这里 构造方法结束前加逻辑也是ok的，所以不用过滤 name.equals("<init>") 的情况
+    if(null == mv || (access & Opcodes.ACC_ABSTRACT) == Opcodes.ACC_ABSTRACT || (access & Opcodes.ACC_NATIVE) == Opcodes.ACC_NATIVE) {
+      return mv;
+    }
+    return new MethodExitMVisitor(api,mv);
+  }
+
+  /**
+     * 在每个方法 正常return 或 异常返回之前，添加 自定义逻辑 <br/>
+     * 这里不能在 visitMaxs() 里写逻辑，因为到这一步的时候，方法已经执行完 返回的逻辑了，不接受其他逻辑的执行 <br/>
+     * 因为和方法返回有关的操作，都在 visitInsn()方法里，所以只要Override该方法，插入自定义的逻辑即可
+     */
+  private static class MethodExitMVisitor extends MethodVisitor {
+    protected MethodExitMVisitor(int api, MethodVisitor methodVisitor) {
+      super(api, methodVisitor);
+    }
+
+    @Override
+    public void visitInsn(int opcode) {
+      // 正常退出方法 or 异常退出方法时，执行自定义逻辑
+      if(opcode >= Opcodes.IRETURN && opcode <= Opcodes.RETURN || opcode == Opcodes.ATHROW) {
+        super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+        super.visitLdcInsn("Method Exit...");
+        super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+			 // 下面代码是能正常运行的
+       // super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+       // super.visitVarInsn(Opcodes.ALOAD, 0);
+       // super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Object", "toString", "()Ljava/lang/String;", false);
+       // super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      }
+      // 继续递归执行 MethodVisitor 实例的成员变量mv的 visitInsn()方法
+      super.visitInsn(opcode);
+    }
+
+    @Override
+    public void visitMaxs(int maxStack, int maxLocals) {
+      // 这里会通过 javap -v -p sample.HelloWord 指令，可以发现 下面代码被替换成 nop，并没有真正按照我们的想法执行相关逻辑
+      super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitLdcInsn("no executed, Method Enter...");
+      super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      // 继续递归执行 MethodVisitor成员变量mv的 visitMaxs() 方法
+      super.visitMaxs(maxStack, maxLocals);
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+package com.example;
+
+import core.ClassAddMethodVisitor;
+import core.MethodEnterCVisitor;
+import core.MethodExitCVisitor;
+import org.objectweb.asm.*;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodExitCVisitor(api, cw);
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+
+```
+
+#### 验证结果
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    Method m = clazz.getDeclaredMethod("test");
+
+    Object instance = clazz.newInstance();
+    m.invoke(instance);
+  }
+}
+```
+
+输出结果：
+
+```shell
+this is a test method.
+Method Exit...
+```
+
+### 3.5.5 示例三：方法进入和方法退出
+
+#### 方式一：串联多个ClassVisitor
+
+第一种方式，就是将多个`ClassVisitor`类串联起来。
+
+```java
+package com.example;
+
+import core.ClassAddMethodVisitor;
+import core.MethodEnterCVisitor;
+import core.MethodExitCVisitor;
+import org.objectweb.asm.*;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv2 = new MethodExitCVisitor(api, cw);
+    ClassVisitor cv1 = new MethodEnterCVisitor(api, cv2);
+    ClassVisitor cv = new MethodEnterCVisitor(api, cv1);
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+
+```
+
+#### 方式二：实现单个ClassVisitor
+
+第二种方式，就是将所有的代码都放到一个`ClassVisitor`类里面。
+
+编码实现：
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+
+/**
+ * 目标：在方法原有的逻辑执行前输出 "Method Enter...", 方法正常/异常返回前输出 "Method Exit..."
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/27 5:28 PM
+ */
+public class MethodAroundCVisitor extends ClassVisitor {
+  public MethodAroundCVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    // 先调用当前 ClassVisitor 实例 成员变量cv的 visitMethod(效果就是递归，从最早一个ClassVisitor的visitMethod开始执行)
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    // 抽象方法没方法体，native方法也没方法体，所以直接走原本的 visitMethod逻辑
+    // 构造方法，this() 或 super() 必须是第一个执行的逻辑，所以也排除 <init> 构造方法
+    if(null == mv || (access & Opcodes.ACC_ABSTRACT) == Opcodes.ACC_ABSTRACT || (access & Opcodes.ACC_NATIVE) == Opcodes.ACC_NATIVE || name.equals("<init>")) {
+      return mv;
+    }
+    // 执行自定义的 MethodVisitor 内的逻辑
+    return new MethodAroundMVisitor(api, mv);
+  }
+
+  /**
+     * 在原有的方法执行逻辑前 和 返回前，插入自定义逻辑
+     */
+  private class MethodAroundMVisitor extends MethodVisitor {
+
+    protected MethodAroundMVisitor(int api, MethodVisitor methodVisitor) {
+      super(api, methodVisitor);
+    }
+
+    @Override
+    public void visitCode() {
+      // 执行我们自定义添加的逻辑，输出 "Method Enter..."
+      super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitLdcInsn("Method Enter...");
+      super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      // 继续递归执行 MethodVisitor成员变量mv的 visitCode() 方法
+      super.visitCode();
+    }
+
+    @Override
+    public void visitInsn(int opcode) {
+      // 正常退出方法 or 异常退出方法时，执行自定义逻辑
+      if(opcode >= Opcodes.IRETURN && opcode <= Opcodes.RETURN || opcode == Opcodes.ATHROW) {
+        super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+        super.visitLdcInsn("Method Exit...");
+        super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      }
+      // 继续递归执行 MethodVisitor 实例的成员变量mv的 visitInsn()方法
+      super.visitInsn(opcode);
+    }
+  }
+}
+```
+
+进行转换
+
+```java
+package com.example;
+
+import core.ClassAddMethodVisitor;
+import core.MethodAroundCVisitor;
+import core.MethodEnterCVisitor;
+import core.MethodExitCVisitor;
+import org.objectweb.asm.*;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodAroundCVisitor(api, cw);
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+### 3.5.6 总结
+
+本文主要是对“方法进入”和“方法退出”添加代码进行介绍，内容总结如下：
+
+- 第一点，在“方法进入”时和“方法退出”时添加代码，应该如何实现？
+  - **在“方法进入”时添加代码，是在`visitCode()`方法当中完成；**
+  - **在“方法退出”添加代码时，是在`visitInsn(opcode)`方法中，判断`opcode`为return或throw的情况下完成。**
+- 第二点，在“方法进入”时和“方法退出”时添加代码，有一些特殊的情况，需要小心处理：
+  - **接口，是否需要处理？接口当中的抽象方法没有方法体，但也可能有带有方法体的default方法。**
+  - 带有特殊修饰符的方法：
+    - **抽象方法，是否需要处理？不只是接口当中有抽象方法，抽象类里也可能有抽象方法。抽象方法，是没有方法体的。**
+    - **native方法，是否需要处理？native方法是没有方法体的。**
+  - 名字特殊的方法，例如，构造方法（`<init>()`）和静态初始化方法（`<clinit>()`），是否需要处理？
+
+*另外，在编写代码的时候，我们遵循一个“规则”：如果是`ClassVisitor`的子类，就取名为`XxxVisitor`类；如果是`MethodVisitor`的子类，就取名为`XxxAdapter`类。（这个是讲师的个人编码习惯，我这边自己敲的代码没这么搞）*
+
+**在后续的内容中，我们会介绍`AdviceAdapter`类，它能很容易帮助我们在“方法进入”时和“方法退出”时添加代码**。 那么，这就带来有一个问题，既然使用`AdviceAdapter`类实现起来很容易，那么为什么还要讲本文的实现方式呢？有两个原因。
+
+- 第一个原因，本文的介绍方式侧重于让大家理解“工作原理”，而`AdviceAdapter`则侧重于“应用”，`AdviceAdapter`的实现也是基于`visitCode()`和`visitInsn(opcode)`方法实现的，在理解上有一个步步递进的关系。
+- 第二个原因，虽然`AdviceAdapter`在“方法进入”时和“方法退出”时添加代码比较容易，大多数情况，都是能正常工作，但也有极其特殊的情况下，它会失败。这个时候，我们还是要回归到本文介绍的实现方式。
+
+## 3.6 修改已有的方法（添加－进入和退出－打印方法参数和返回值）
