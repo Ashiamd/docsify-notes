@@ -9884,3 +9884,409 @@ public class HelloWorldTransformCore {
 
 ## 3.7 修改已有的方法（添加－进入和退出－方法计时）
 
+### 3.7.1 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+import java.util.Random;
+
+public class HelloWorld {
+
+  public int add(int a, int b) throws InterruptedException {
+    int c = a + b;
+    Random rand = new Random(System.currentTimeMillis());
+    int num = rand.nextInt(300);
+    Thread.sleep(100 + num);
+    return c;
+  }
+
+  public int sub(int a, int b) throws InterruptedException {
+    int c = a - b;
+    Random rand = new Random(System.currentTimeMillis());
+    int num = rand.nextInt(400);
+    Thread.sleep(100 + num);
+    return c;
+  }
+}
+```
+
+我们想实现的预期目标：计算出方法的运行时间。这里有两种实现方式：
+
+- 计算所有方法的运行时间
+- 计算每个方法的运行时间
+
+第一种方式，计算所有方法的运行时间，将该时间记录在`timer`字段当中：
+
+```java
+import java.util.Random;
+
+public class HelloWorld {
+  public static long timer;
+
+  public int add(int a, int b) throws InterruptedException {
+    timer -= System.currentTimeMillis();
+    int c = a + b;
+    Random rand = new Random(System.currentTimeMillis());
+    int num = rand.nextInt(300);
+    Thread.sleep(100 + num);
+    timer += System.currentTimeMillis();
+    return c;
+  }
+
+  public int sub(int a, int b) throws InterruptedException {
+    timer -= System.currentTimeMillis();
+    int c = a - b;
+    Random rand = new Random(System.currentTimeMillis());
+    int num = rand.nextInt(400);
+    Thread.sleep(100 + num);
+    timer += System.currentTimeMillis();
+    return c;
+  }
+}
+```
+
+第二种方式，计算每个方法的运行时间，将每个方法的运行时间单独记录在对应的字段当中：
+
+```java
+import java.util.Random;
+
+public class HelloWorld {
+  public static long timer_add;
+  public static long timer_sub;
+
+  public int add(int a, int b) throws InterruptedException {
+    timer_add -= System.currentTimeMillis();
+    int c = a + b;
+    Random rand = new Random(System.currentTimeMillis());
+    int num = rand.nextInt(300);
+    Thread.sleep(100 + num);
+    timer_add += System.currentTimeMillis();
+    return c;
+  }
+
+  public int sub(int a, int b) throws InterruptedException {
+    timer_sub -= System.currentTimeMillis();
+    int c = a - b;
+    Random rand = new Random(System.currentTimeMillis());
+    int num = rand.nextInt(400);
+    Thread.sleep(100 + num);
+    timer_sub += System.currentTimeMillis();
+    return c;
+  }
+}
+```
+
+实现这个功能的思路：在“方法进入”的时候，减去一个时间戳；在“方法退出”的时候，加上一个时间戳，在这个过程当中就记录一个时间差。
+
+有一个问题，我们为什么要计算方法的运行时间呢？如果我们想对现有的程序进行优化，那么需要对程序的整体性能有所了解，而方法的运行时间是衡量程序性能的一个重要参考。
+
+### 3.7.2 实现一：计算所有方法的运行时间
+
+#### 编码实现
+
+注意点：
+
++ 需要先给类生成`timer`字段
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.FieldVisitor;
+import org.objectweb.asm.MethodVisitor;
+
+import static org.objectweb.asm.Opcodes.*;
+
+/**
+ * 目标：计算所有方法的执行耗时
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/29 8:42 PM
+ */
+public class MethodTimerVisitor extends ClassVisitor {
+  /**
+     * 当前类名
+     */
+  private String owner;
+  /**
+     * 当前类是否是接口
+     */
+  private boolean isInterface;
+
+  @Override
+  public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    super.visit(version, access, name, signature, superName, interfaces);
+    owner = name;
+    isInterface = (access & ACC_INTERFACE) == ACC_INTERFACE;
+  }
+
+  public MethodTimerVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (isInterface || null == mv
+        || ((access & ACC_ABSTRACT) == ACC_ABSTRACT) || ((access & ACC_NATIVE) == ACC_NATIVE)
+        || "<init>".equals(name) || "<cinit>".equals(name)) {
+      return mv;
+    }
+    return new MethodTimerMVisitor(api, mv, owner);
+  }
+
+  @Override
+  public void visitEnd() {
+    if (isInterface) {
+      super.visitEnd();
+			return;
+    }
+    // 给指定类生成timer成员变量(暂不考虑已经存在的情况), 计算方法执行耗时
+    FieldVisitor fv = super.visitField(ACC_PUBLIC | ACC_STATIC, "timer", "J", null, null);
+    if (null != fv) {
+      fv.visitEnd();
+    }
+  }
+
+  private static class MethodTimerMVisitor extends MethodVisitor {
+    /**
+         * 当前类名
+         */
+    private final String owner;
+
+    protected MethodTimerMVisitor(int api, MethodVisitor methodVisitor, String owner) {
+      super(api, methodVisitor);
+      this.owner = owner;
+    }
+
+    @Override
+    public void visitCode() {
+      super.visitFieldInsn(GETSTATIC, owner, "timer", "J");
+      super.visitMethodInsn(INVOKESTATIC, "java/lang/System", "currentTimeMillis", "()J", false);
+      super.visitInsn(LSUB);
+      super.visitFieldInsn(PUTSTATIC, owner, "timer", "J");
+      // 继续调用 mv成员变量的 visitCode()方法
+      super.visitCode();
+    }
+
+    @Override
+    public void visitInsn(int opcode) {
+      if (opcode >= IRETURN && opcode <= RETURN || opcode == ATHROW) {
+        super.visitFieldInsn(GETSTATIC, owner, "timer", "J");
+        super.visitMethodInsn(INVOKESTATIC, "java/lang/System", "currentTimeMillis", "()J", false);
+        super.visitInsn(LADD);
+        super.visitFieldInsn(PUTSTATIC, owner, "timer", "J");
+      }
+      // 继续调用 mv成员变量的 visitInsn()方法
+      super.visitInsn(opcode);
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+package com.example;
+
+import core.*;
+import org.objectweb.asm.*;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodTimerVisitor(api, cw);
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+
+```
+
+#### 验证结果
+
+```java
+import java.lang.reflect.Field;
+import java.util.Random;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    // 第一部分，先让“子弹飞一会儿”，让程序运行一段时间
+    HelloWorld instance = new HelloWorld();
+    Random rand = new Random(System.currentTimeMillis());
+    for (int i = 0; i < 10; i++) {
+      boolean flag = rand.nextBoolean();
+      int a = rand.nextInt(50);
+      int b = rand.nextInt(50);
+      if (flag) {
+        int c = instance.add(a, b);
+        String line = String.format("%d + %d = %d", a, b, c);
+        System.out.println(line);
+      }
+      else {
+        int c = instance.sub(a, b);
+        String line = String.format("%d - %d = %d", a, b, c);
+        System.out.println(line);
+      }
+    }
+
+    // 第二部分，来查看方法运行的时间
+    Class<?> clazz = HelloWorld.class;
+    Field[] declaredFields = clazz.getDeclaredFields();
+    for (Field f : declaredFields) {
+      String fieldName = f.getName();
+      f.setAccessible(true);
+      if (fieldName.startsWith("timer")) {
+        Object FieldValue = f.get(null);
+        System.out.println(fieldName + " = " + FieldValue);
+      }
+    }
+  }
+}
+```
+
+### 3.7.3 实现二：计算每个方法的运行时间 
+
+#### 编码实现
+
+注意点：
+
++ 这里针对每个方法都生成`timer_XXX`字段，所以在ClassVisitor的`visitMethod()`方法内生成字段
++ 这里MethodVisitor需要感知自己的方法名，所以需要在构造方法里要求传递方法名
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.FieldVisitor;
+import org.objectweb.asm.MethodVisitor;
+
+import static org.objectweb.asm.Opcodes.*;
+
+/**
+ * 目标：计算所有方法的执行耗时
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/29 9:08 PM
+ */
+public class MethodTimerVisitor2 extends ClassVisitor {
+  /**
+     * 当前类名
+     */
+  private String owner;
+  /**
+     * 当前类是否是接口
+     */
+  private boolean isInterface;
+
+  @Override
+  public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    super.visit(version, access, name, signature, superName, interfaces);
+    owner = name;
+    isInterface = (access & ACC_INTERFACE) == ACC_INTERFACE;
+  }
+
+  public MethodTimerVisitor2(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (isInterface || null == mv
+        || ((access & ACC_ABSTRACT) == ACC_ABSTRACT) || ((access & ACC_NATIVE) == ACC_NATIVE)
+        || "<init>".equals(name) || "<cinit>".equals(name)) {
+      return mv;
+    }
+    // 针对每个方法，都生成一个timer字段用于统计执行耗时
+    // 给指定类生成timer成员变量(暂不考虑已经存在的情况), 计算方法执行耗时
+    FieldVisitor fv = super.visitField(ACC_PUBLIC | ACC_STATIC, genFieldName(name), "J", null, null);
+    if (null != fv) {
+      fv.visitEnd();
+    }
+    return new MethodTimerMVisitor(api, mv, owner, name);
+  }
+
+  private String genFieldName(String methodName) {
+    return "timer_" + methodName;
+  }
+
+  private class MethodTimerMVisitor extends MethodVisitor {
+    /**
+         * 当前类名
+         */
+    private final String owner;
+    /**
+         * 当前方法名
+         */
+    private final String methodName;
+
+    protected MethodTimerMVisitor(int api, MethodVisitor methodVisitor, String owner,String methodName) {
+      super(api, methodVisitor);
+      this.owner = owner;
+      this.methodName = methodName;
+    }
+
+    @Override
+    public void visitCode() {
+      super.visitFieldInsn(GETSTATIC, owner, genFieldName(methodName), "J");
+      super.visitMethodInsn(INVOKESTATIC, "java/lang/System", "currentTimeMillis", "()J", false);
+      super.visitInsn(LSUB);
+      super.visitFieldInsn(PUTSTATIC, owner, genFieldName(methodName), "J");
+      // 继续调用 mv成员变量的 visitCode()方法
+      super.visitCode();
+    }
+
+    @Override
+    public void visitInsn(int opcode) {
+      if (opcode >= IRETURN && opcode <= RETURN || opcode == ATHROW) {
+        super.visitFieldInsn(GETSTATIC, owner, genFieldName(methodName), "J");
+        super.visitMethodInsn(INVOKESTATIC, "java/lang/System", "currentTimeMillis", "()J", false);
+        super.visitInsn(LADD);
+        super.visitFieldInsn(PUTSTATIC, owner, genFieldName(methodName), "J");
+      }
+      // 继续调用 mv成员变量的 visitInsn()方法
+      super.visitInsn(opcode);
+    }
+  }
+}
+
+```
+
+### 3.7.4 总结
+
+本文主要介绍了如何计算方法的运行时间，内容总结如下：
+
+- 第一点，从实现思路的角度来说，计算方法的运行时间，是在“方法进入”和“方法退出”的基础上实现的。在“方法进入”的时候，减去一个时间戳；在“方法退出”的时候，加上一个时间戳。
+- 第二点，我们提供了两种实现方式
+  - 第一种实现方式，计算类里面所有方法的总运行时间
+  - 第二种实现方式，计算类里面每个方法的单独运行时间
+
+其实，遵循同样的思路，我们也可以计算方法运行的总次数；再进一步，我们可以计算出方法多次运行后的平均执行时间。
+
+## 3.8 
+
