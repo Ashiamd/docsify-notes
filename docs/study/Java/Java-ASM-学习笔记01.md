@@ -9123,3 +9123,764 @@ public class HelloWorldRun {
 - 第二个原因，虽然`AdviceAdapter`在“方法进入”时和“方法退出”时添加代码比较容易，大多数情况，都是能正常工作，但也有极其特殊的情况下，它会失败。这个时候，我们还是要回归到本文介绍的实现方式。
 
 ## 3.6 修改已有的方法（添加－进入和退出－打印方法参数和返回值）
+
+### 3.6.1 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public int test(String name, int age, long idCard, Object obj) {
+    int hashCode = 0;
+    hashCode += name.hashCode();
+    hashCode += age;
+    hashCode += (int) (idCard % Integer.MAX_VALUE);
+    hashCode += obj.hashCode();
+    return hashCode;
+  }
+}
+```
+
+我们想实现的预期目标：打印出“方法接收的参数值”和“方法的返回值”。
+
+```java
+public class HelloWorld {
+  public int test(String name, int age, long idCard, Object obj) {
+    System.out.println(name);
+    System.out.println(age);
+    System.out.println(idCard);
+    System.out.println(obj);
+    int hashCode = 0;
+    hashCode += name.hashCode();
+    hashCode += age;
+    hashCode += (int) (idCard % Integer.MAX_VALUE);
+    hashCode += obj.hashCode();
+    System.out.println(hashCode);
+    return hashCode;
+  }
+}
+```
+
+实现这个功能的思路：在“方法进入”的时候，打印出“方法接收的参数值”；在“方法退出”的时候，打印出“方法的返回值”。
+
+### 3.6.2 实现一：针对test方法硬编码
+
+我们要实现的第一个版本是比较简单的，它是在`MethodAroundCVisitor`类基础上直接修改得到的。
+
+#### 编码实现
+
+注意点：
+
++ long占两个槽位（第二个槽位用top占位标记）
++ 这里HelloWorld方法体中的hashCode本地变量被放置到了local variables下标6的位置，所以输出返回值的时候`ILOAD 6`
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+
+/**
+ * 目标：在进入方法时输出方法的参数，退出方法前输出返回值
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/29 4:15 PM
+ */
+public class MethodAroundCVisitor extends ClassVisitor {
+  public MethodAroundCVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    // 先调用当前 ClassVisitor 实例 成员变量cv的 visitMethod(效果就是递归，从最早一个ClassVisitor的visitMethod开始执行)
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    // 抽象方法没方法体，native方法也没方法体，所以直接走原本的 visitMethod逻辑
+    // 构造方法，this() 或 super() 必须是第一个执行的逻辑，所以也排除 <init> 构造方法
+    if(null == mv || (access & Opcodes.ACC_ABSTRACT) == Opcodes.ACC_ABSTRACT || (access & Opcodes.ACC_NATIVE) == Opcodes.ACC_NATIVE || name.equals("<init>")) {
+      return mv;
+    }
+    // 执行自定义的 MethodVisitor 内的逻辑
+    return new MethodAroundMVisitor(api, mv);
+  }
+
+  /**
+     * 在原有的方法执行逻辑前 和 返回前，插入自定义逻辑
+     */
+  private class MethodAroundMVisitor extends MethodVisitor {
+
+    protected MethodAroundMVisitor(int api, MethodVisitor methodVisitor) {
+      super(api, methodVisitor);
+    }
+
+    @Override
+    public void visitCode() {
+      // 针对 HelloWorld类的test()方法硬编码 请求参数的输出逻辑 int test(String name, int age, long idCard, Object obj )
+      super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitVarInsn(Opcodes.ALOAD, 1);
+      super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitVarInsn(Opcodes.ILOAD, 2);
+      super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(I)V", false);
+      super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitVarInsn(Opcodes.LLOAD, 3);
+      super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(J)V", false);
+      super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitVarInsn(Opcodes.ALOAD, 5);
+      super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/Object;)V", false);
+      // 继续递归执行 MethodVisitor成员变量mv的 visitCode() 方法
+      super.visitCode();
+    }
+
+    @Override
+    public void visitInsn(int opcode) {
+      // 正常退出方法 or 异常退出方法时，执行自定义逻辑
+      if(opcode >= Opcodes.IRETURN && opcode <= Opcodes.RETURN || opcode == Opcodes.ATHROW) {
+        super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+        // 通过 HelloWorldFrameCore 查看 Frame 变化，结合 javap -p -v sample.HelloWorld, 可知 方法体中最后返回的hashCode，中间通过istore存储到了 local variables 下标 6位置
+        super.visitVarInsn(Opcodes.ILOAD, 6);
+        super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(I)V", false);
+      }
+      // 继续递归执行 MethodVisitor 实例的成员变量mv的 visitInsn()方法
+      super.visitInsn(opcode);
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+package com.example;
+
+import core.ClassAddMethodVisitor;
+import core.MethodAroundCVisitor;
+import core.MethodEnterCVisitor;
+import core.MethodExitCVisitor;
+import org.objectweb.asm.*;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodAroundCVisitor(api, cw);
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+```java
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    HelloWorld instance = new HelloWorld();
+    int hashCode = instance.test("Tomcat", 10, System.currentTimeMillis(), new Object());
+    int remainder = hashCode % 2;
+
+    if (remainder == 0) {
+      System.out.println("hashCode is even number.");
+    }
+    else {
+      System.out.println("hashCode is odd number.");
+    }
+  }
+}
+```
+
+#### 小结
+
+缺点：不灵活。如果方法参数的数量和类型发生改变，这种方法就会失效。
+
+那么，有没有办法来自动适应方法参数的数量和类型变化呢？答案是“有”。这个时候，就是`Type`类（`org.objectweb.asm.Type`）来发挥作用的地方。
+
+### 3.6.3 实现二：通过Type灵活适配参数
+
+#### 编码实现
+
+注意点：
+
++ 需要先判断方法是否static，来判断是否local variables下标0位置存储this指针
++ 这里通过方法的Type类获取其请求参数`Type[]`数组，然后通过`int getOpcode(final int opcode)`自动适配当前Type所需的指令，将参数数据加载到operand stack，再根据不同类型进行不同的打印逻辑
++ 这里打印方法入参时，出现频繁的`SWAP`操作，以及为了实现多个槽位的SWAP而组合的`DUP_X2`、`POP`操作，原因是正常打印数据，应该先将out对象加载到operand stack，其次才是需要打印的数据。这里为了保证能正常调用println方法，所以需要对operand stack顶部的数据进行swap。
++ 打印返回值之前，需要先`DUP`操作，因为需要保证operand stack顶部复制一份返回值用于打印（调用`println`时会消耗operand stack栈顶的参数和out对象指针）。我们需要保证自定义逻辑不破坏原有的Frame结构（local variables 和 operand stack）
+
+```java
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class MethodParameterVisitor extends ClassVisitor {
+  public MethodParameterVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null && !name.equals("<init>")) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodParameterAdapter(api, mv, access, name, descriptor);
+      }
+    }
+    return mv;
+  }
+
+  private static class MethodParameterAdapter extends MethodVisitor {
+    private final int methodAccess;
+    private final String methodName;
+    private final String methodDesc;
+
+    public MethodParameterAdapter(int api, MethodVisitor mv, int methodAccess, String methodName, String methodDesc) {
+      super(api, mv);
+      this.methodAccess = methodAccess;
+      this.methodName = methodName;
+      this.methodDesc = methodDesc;
+    }
+
+    @Override
+    public void visitCode() {
+      // 首先，处理自己的代码逻辑
+      boolean isStatic = ((methodAccess & ACC_STATIC) != 0);
+      int slotIndex = isStatic ? 0 : 1;
+
+      printMessage("Method Enter: " + methodName + methodDesc);
+
+      Type methodType = Type.getMethodType(methodDesc);
+      Type[] argumentTypes = methodType.getArgumentTypes();
+      for (Type t : argumentTypes) {
+        int sort = t.getSort();
+        int size = t.getSize();
+        String descriptor = t.getDescriptor();
+
+        int opcode = t.getOpcode(ILOAD);
+        super.visitVarInsn(opcode, slotIndex);
+
+        if (sort == Type.BOOLEAN) {
+          printBoolean();
+        }
+        else if (sort == Type.CHAR) {
+          printChar();
+        }
+        else if (sort == Type.BYTE || sort == Type.SHORT || sort == Type.INT) {
+          printInt();
+        }
+        else if (sort == Type.FLOAT) {
+          printFloat();
+        }
+        else if (sort == Type.LONG) {
+          printLong();
+        }
+        else if (sort == Type.DOUBLE) {
+          printDouble();
+        }
+        else if (sort == Type.OBJECT && "Ljava/lang/String;".equals(descriptor)) {
+          printString();
+        }
+        else if (sort == Type.OBJECT) {
+          printObject();
+        }
+        else {
+          printMessage("No Support");
+          if (size == 1) {
+            super.visitInsn(Opcodes.POP);
+          }
+          else {
+            super.visitInsn(Opcodes.POP2);
+          }
+        }
+        slotIndex += size;
+      }
+
+      // 其次，调用父类的方法实现
+      super.visitCode();
+    }
+
+    @Override
+    public void visitInsn(int opcode) {
+      // 首先，处理自己的代码逻辑
+      if ((opcode >= IRETURN && opcode <= RETURN) || opcode == ATHROW) {
+        printMessage("Method Exit:");
+        if (opcode == IRETURN) {
+          super.visitInsn(DUP);
+          Type methodType = Type.getMethodType(methodDesc);
+          Type returnType = methodType.getReturnType();
+          if (returnType == Type.BOOLEAN_TYPE) {
+            printBoolean();
+          }
+          else if (returnType == Type.CHAR_TYPE) {
+            printChar();
+          }
+          else {
+            printInt();
+          }
+        }
+        else if (opcode == FRETURN) {
+          super.visitInsn(DUP);
+          printFloat();
+        }
+        else if (opcode == LRETURN) {
+          super.visitInsn(DUP2);
+          printLong();
+        }
+        else if (opcode == DRETURN) {
+          super.visitInsn(DUP2);
+          printDouble();
+        }
+        else if (opcode == ARETURN) {
+          super.visitInsn(DUP);
+          printObject();
+        }
+        else if (opcode == RETURN) {
+          printMessage("    return void");
+        }
+        else {
+          printMessage("    abnormal return");
+        }
+      }
+
+      // 其次，调用父类的方法实现
+      super.visitInsn(opcode);
+    }
+
+    private void printBoolean() {
+      super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitInsn(SWAP);
+      super.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Z)V", false);
+    }
+
+    private void printChar() {
+      super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitInsn(SWAP);
+      super.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(C)V", false);
+    }
+
+    private void printInt() {
+      super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitInsn(SWAP);
+      super.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(I)V", false);
+    }
+
+    private void printFloat() {
+      super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitInsn(SWAP);
+      super.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(F)V", false);
+    }
+
+    private void printLong() {
+      super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitInsn(DUP_X2);
+      super.visitInsn(POP);
+      super.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(J)V", false);
+    }
+
+    private void printDouble() {
+      super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitInsn(DUP_X2);
+      super.visitInsn(POP);
+      super.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(D)V", false);
+    }
+
+    private void printString() {
+      super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitInsn(SWAP);
+      super.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+    }
+
+    private void printObject() {
+      super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitInsn(SWAP);
+      super.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/Object;)V", false);
+    }
+
+    private void printMessage(String str) {
+      super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitLdcInsn(str);
+      super.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+public class HelloWorldTransformCore {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodParameterVisitor(api, cw);
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 小结
+
+这种方式的特点就是，结合着`Type`类来使用，为方法参数的“类型”（`getSort()`）和“数量”（`getArgumentTypes()`和`getSize()`）赋予“灵魂”，让方法灵活起来。
+
+##### Frame的初始状态
+
+在JVM执行的过程中，在内存空间中，每一个运行的方法（method）都对应一个frame空间（省略 Frame Data）；在frame空间当中，有两个重要的结构，即local variables和operand stack，如下图所示。其中，local variables是一个数组结构，它通过索引来读取或设置数据；而operand stack是一个栈结构，符合“后进先出”（LIFO, Last in, First out）的规则。
+
+![Java ASM系列：（025）修改已有的方法（添加－进入和退出－打印方法参数和返回值）_ClassFile](https://s2.51cto.com/images/20210623/1624446269398923.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+在方法刚进入时，operand stack的初始状态是什么样的呢？回答：operand stack是空的，换句话说，“栈上没有任何元素”。
+
+在方法刚进入时，local variables的初始状态是什么样的？相对来说，会比较复杂一些，因此我们重点说一下。对于local variables来说，我们把握以下三点：
+
+- 第一点，local variables是通过索引（index）来确定里的元素的，它的索引（index）是从`0`开始计算的，每一个位置可以称之为slot。
+- 第二点，在local variables中，存放数据的位置：this-方法接收的参数－方法内定义的局部变量。
+  - **对于非静态方法（non-static method）来说，索引位置为`0`的位置存放的是`this`变量；**
+  - 对于静态方法（static method）来说，索引位置为`0`的位置则不需要存储`this`变量。
+- **第三点，在local variables中，`boolean`、`byte`、`char`、`short`、`int`、`float`和`reference`类型占用1个slot，而`long`和`double`类型占用2个slot。**（并且`boolean`、`byte`、`char`、`short`、`int`都会被直接当作int处理，使用`ILOAD`、`ISTORE`）
+
+##### 打印语句
+
+> [Chapter 6. The Java Virtual Machine Instruction Set (oracle.com)](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.dup_x2)
+>
+> dup_x2: Duplicate the top operand stack value and insert two or three values down
+
+一般情况下，我们想打印一个字符串，可以如下写ASM代码：
+
+```java
+private void printMessage(String str) {
+    super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+    super.visitLdcInsn(str);
+    super.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+}
+```
+
+但是，有些情况下，我们想要打印的值已经位于operand stack上了，此时可以这样：
+
+```java
+private void printString() {
+    super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+    super.visitInsn(SWAP);
+    super.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+}
+```
+
+对于`int`类型的数据，它在operand stack当中占用1个位置，我们使用`swap`指令来完成`int`与`System.out`的位置互换。
+
+```java
+private void printInt() {
+    super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+    super.visitInsn(SWAP);
+    super.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(I)V", false);
+}
+```
+
+对于`long`类型的数据，它在operand stack当中占用2个位置，我们使用`dup_x2`和`pop`指令来完成`long`与`System.out`的位置互换。
+
+```java
+private void printLong() {
+    super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+    super.visitInsn(DUP_X2);
+    super.visitInsn(POP);
+    super.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(J)V", false);
+}
+```
+
+![img](https://lsieun.github.io/assets/images/java/asm/swap-int-and-long.png)
+
+### 3.6.4 实现三：输出逻辑封装为工具类
+
+#### 编码实现
+
+首先，我们添加一个`ParameterUtils`类，在这个类定义了许多print方法，这些print方法可以打印不同类型的数据。
+
+```java
+package sample;
+
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.Arrays;
+import java.util.Date;
+
+public class ParameterUtils {
+  private static final DateFormat fm = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
+  public static void printValueOnStack(boolean value) {
+    System.out.println("    " + value);
+  }
+
+  public static void printValueOnStack(byte value) {
+    System.out.println("    " + value);
+  }
+
+  public static void printValueOnStack(char value) {
+    System.out.println("    " + value);
+  }
+
+  public static void printValueOnStack(short value) {
+    System.out.println("    " + value);
+  }
+
+  public static void printValueOnStack(int value) {
+    System.out.println("    " + value);
+  }
+
+  public static void printValueOnStack(float value) {
+    System.out.println("    " + value);
+  }
+
+  public static void printValueOnStack(long value) {
+    System.out.println("    " + value);
+  }
+
+  public static void printValueOnStack(double value) {
+    System.out.println("    " + value);
+  }
+
+  public static void printValueOnStack(Object value) {
+    if (value == null) {
+      System.out.println("    " + value);
+    }
+    else if (value instanceof String) {
+      System.out.println("    " + value);
+    }
+    else if (value instanceof Date) {
+      System.out.println("    " + fm.format(value));
+    }
+    else if (value instanceof char[]) {
+      System.out.println("    " + Arrays.toString((char[])value));
+    }
+    else {
+      System.out.println("    " + value.getClass() + ": " + value.toString());
+    }
+  }
+
+  public static void printText(String str) {
+    System.out.println(str);
+  }
+}
+```
+
+在下面的`MethodParameterVisitor2`类当中，我们将使用`ParameterUtils`类帮助我们打印信息。
+
+注意点：
+
++ 这里提取输出工具类后，原本的MethodVisitor实现类就少了很多繁琐的类型判断逻辑，并且无需编写一堆调用`println`的ASM代码。取而代之的是编写更易理解的java源代码。
++ 这里先拆分基础类型和非基础类型两大类，调用输出工具的方法，而针对Object又分类处理。
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Type;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class MethodParameterVisitor2 extends ClassVisitor {
+  public MethodParameterVisitor2(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null && !name.equals("<init>")) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodParameterAdapter2(api, mv, access, name, descriptor);
+      }
+    }
+    return mv;
+  }
+
+  private static class MethodParameterAdapter2 extends MethodVisitor {
+    private final int methodAccess;
+    private final String methodName;
+    private final String methodDesc;
+
+    public MethodParameterAdapter2(int api, MethodVisitor mv, int methodAccess, String methodName, String methodDesc) {
+      super(api, mv);
+      this.methodAccess = methodAccess;
+      this.methodName = methodName;
+      this.methodDesc = methodDesc;
+    }
+
+    @Override
+    public void visitCode() {
+      // 首先，处理自己的代码逻辑
+      boolean isStatic = ((methodAccess & ACC_STATIC) != 0);
+      int slotIndex = isStatic ? 0 : 1;
+
+      printMessage("Method Enter: " + methodName + methodDesc);
+
+      Type methodType = Type.getMethodType(methodDesc);
+      Type[] argumentTypes = methodType.getArgumentTypes();
+      for (Type t : argumentTypes) {
+        int sort = t.getSort();
+        int size = t.getSize();
+        String descriptor = t.getDescriptor();
+        int opcode = t.getOpcode(ILOAD);
+        super.visitVarInsn(opcode, slotIndex);
+        if (sort >= Type.BOOLEAN && sort <= Type.DOUBLE) {
+          String methodDesc = String.format("(%s)V", descriptor);
+          printValueOnStack(methodDesc);
+        }
+        else {
+          printValueOnStack("(Ljava/lang/Object;)V");
+        }
+
+        slotIndex += size;
+      }
+
+      // 其次，调用父类的方法实现
+      super.visitCode();
+    }
+
+    @Override
+    public void visitInsn(int opcode) {
+      // 首先，处理自己的代码逻辑
+      if ((opcode >= IRETURN && opcode <= RETURN) || opcode == ATHROW) {
+        printMessage("Method Exit: " + methodName + methodDesc);
+        if (opcode >= IRETURN && opcode <= DRETURN) {
+          Type methodType = Type.getMethodType(methodDesc);
+          Type returnType = methodType.getReturnType();
+          int size = returnType.getSize();
+          String descriptor = returnType.getDescriptor();
+
+          if (size == 1) {
+            super.visitInsn(DUP);
+          }
+          else {
+            super.visitInsn(DUP2);
+          }
+          String methodDesc = String.format("(%s)V", descriptor);
+          printValueOnStack(methodDesc);
+        }
+        else if (opcode == ARETURN) {
+          super.visitInsn(DUP);
+          printValueOnStack("(Ljava/lang/Object;)V");
+        }
+        else if (opcode == RETURN) {
+          printMessage("    return void");
+        }
+        else {
+          printMessage("    abnormal return");
+        }
+      }
+
+      // 其次，调用父类的方法实现
+      super.visitInsn(opcode);
+    }
+
+    private void printMessage(String str) {
+      super.visitLdcInsn(str);
+      super.visitMethodInsn(INVOKESTATIC, "sample/ParameterUtils", "printText", "(Ljava/lang/String;)V", false);
+    }
+
+    private void printValueOnStack(String descriptor) {
+      super.visitMethodInsn(INVOKESTATIC, "sample/ParameterUtils", "printValueOnStack", descriptor, false);
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+public class HelloWorldTransformCore {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodParameterVisitor2(api, cw);
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 小结
+
+这种方式的特点就是将“打印工作”放到一个单独的类里面。在这个单独的类里面，我们可以把内容打印出来，也可以输出到文件中，可以根据自己的需要进行修改。（在我个人看来，还有个好处就是将输出逻辑以java源代码形式维护，尽量减少了复杂的ASM代码编写，降低项目维护成本）
+
+### 3.6.5 总结
+
+本文主要介绍了如何实现打印方法的参数和返回值，我们提供了三个版本：
+
+- 第一个版本，它的特点是代码固定、不够灵活。
+- 第二个版本，它的特点是结合`Type`来使用，为方法参数的“类型”和“数量”赋予“灵魂”，让方法灵活起来。
+- 第三个版本，它的特点是将“打印工作”移交给“专业人员”来处理。
+
+本文内容总结如下：
+
+- 第一点，从实现思路的角度来说，打印方法的参数和返回值，是在“方法进入”和“方法退出”的基础上实现的。在“方法进入”的时候，先将方法的参数打印出来；在“方法退出”的时候，再将方法的返回值打印出来。
+- 第二点，我们呈现三个版本的目的，是为了让大家理解一步一步迭代的过程。如果大家日后用到类似的功能，直接参照第三个版本实现就可以了。
+
+## 3.7 修改已有的方法（添加－进入和退出－方法计时）
+
