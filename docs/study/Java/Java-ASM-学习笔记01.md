@@ -8970,8 +8970,7 @@ public class HelloWorldRun {
 
     // (3) 串联ClassVisitor
     int api = Opcodes.ASM9;
-    ClassVisitor cv2 = new MethodExitCVisitor(api, cw);
-    ClassVisitor cv1 = new MethodEnterCVisitor(api, cv2);
+    ClassVisitor cv1 = new MethodExitCVisitor(api, cw);
     ClassVisitor cv = new MethodEnterCVisitor(api, cv1);
 
     // (4) 结合ClassReader和ClassVisitor
@@ -10288,5 +10287,2095 @@ public class MethodTimerVisitor2 extends ClassVisitor {
 
 其实，遵循同样的思路，我们也可以计算方法运行的总次数；再进一步，我们可以计算出方法多次运行后的平均执行时间。
 
-## 3.8 
+## 3.8 修改已有的方法（删除－移除Instruction）
+
+### 3.8.1 如何移除Instruction
+
+在修改方法体的代码时，**如何移除一条Instruction呢**？其实，很简单，就是**让中间的某一个`MethodVisitor`对象不向后“传递该instruction”就可以了**。
+
+![Java ASM系列：（027）修改已有的方法（删除－移除Instruction）_Core API](https://s2.51cto.com/images/20210628/1624882148334418.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+但是，需要要注意一点：**无论是添加instruction，还是删除instruction，还是要替换instruction，都要保持operand stack修改前和修改后是一致的**。这句话该怎么理解呢？我们举个例子来进行说明。
+
+假如，有一条打印语句，如下：
+
+```java
+System.out.println("Hello World");
+```
+
+这条打印语句，对应着三个instruction，如下：
+
+```java
+GETSTATIC java/lang/System.out : Ljava/io/PrintStream;
+LDC "Hello World"
+INVOKEVIRTUAL java/io/PrintStream.println (Ljava/lang/String;)V
+```
+
+上面三条instruction的执行过程如下：
+
+- 第一步，执行`GETSTATIC java/lang/System.out : Ljava/io/PrintStream;`，会把一个`System.out`对象push到operand stack上。
+- 第二步，执行`LDC "Hello World"`，会将一个字符串对象push到operand stack上。
+- 第三步，执行`INVOKEVIRTUAL java/io/PrintStream.println (Ljava/lang/String;)V`，会消耗掉operand stack栈顶上的两个元素，然后打印出结果。
+
+<u>如果我们只想删除第三条`INVOKEVIRTUAL`对应的instruction，是不行的，因为它会让operand stack栈顶上多出两个元素。这三条instruction应该一起删除，才能保证operand stack在修改前和修改后是一致的</u>。
+
+### 3.8.2 示例：移除NOP
+
+> [Chapter 6. The Java Virtual Machine Instruction Set (oracle.com)](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.nop)
+>
+> nop: Do nothing.
+
+为了让示例容易一些，我们先来处理一个比较简单的情况，那就是移除`NOP`指令。那么，为什么要移除`NOP`指令呢？因为`NOP`表示no operation，它是一个单独的指令，本身也不做什么操作，我们删除它不会影响任何实质性的操作，也不会牵连其它的instruction。
+
+当然，一般情况下，由`.java`编译生成的`.class`文件中不会包含`NOP`指令。那么，我们就自己生成一个`.class`文件，让它带有`NOP`指令。
+
+#### 预期目标
+
+我们想实现的预期目标：删除代码当中的`NOP`指令。
+
+首先，我们来生成一个包含`NOP`指令的`.class`文件，如下：
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+
+    // (1) 生成byte[]内容
+    byte[] bytes = dump();
+
+    // (2) 保存byte[]到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() throws Exception {
+    // (1) 创建ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用visitXxx()方法
+    cw.visit(V1_8, ACC_PUBLIC + ACC_SUPER, "sample/HelloWorld",
+             null, "java/lang/Object", null);
+
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      mv1.visitMaxs(1, 1);
+      mv1.visitEnd();
+    }
+
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "()V", null, null);
+      mv2.visitCode();
+      mv2.visitInsn(NOP);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitInsn(NOP);
+      mv2.visitLdcInsn("Hello World");
+      mv2.visitInsn(NOP);
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      mv2.visitInsn(NOP);
+      mv2.visitInsn(RETURN);
+      mv2.visitMaxs(2, 1);
+      mv2.visitEnd();
+    }
+    cw.visitEnd();
+
+    // (3) 调用toByteArray()方法
+    return cw.toByteArray();
+  }
+}
+```
+
+查看生成后的效果：
+
+```java
+$ javap -c sample.HelloWorld
+public class sample.HelloWorld {
+  public sample.HelloWorld();
+    Code:
+       0: aload_0
+       1: invokespecial #8                  // Method java/lang/Object."<init>":()V
+       4: return
+
+  public void test();
+    Code:
+       0: nop
+       1: getstatic     #15                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       4: nop
+       5: ldc           #17                 // String Hello World
+       7: nop
+       8: invokevirtual #23                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      11: nop
+      12: return
+}
+```
+
+#### 编码实现
+
+```java
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class MethodRemoveNopVisitor extends ClassVisitor {
+  public MethodRemoveNopVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null && !"<init>".equals(name) && !"<clinit>".equals(name)) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodRemoveNopAdapter(api, mv);
+      }
+
+    }
+    return mv;
+  }
+
+  private static class MethodRemoveNopAdapter extends MethodVisitor {
+    public MethodRemoveNopAdapter(int api, MethodVisitor methodVisitor) {
+      super(api, methodVisitor);
+    }
+
+    @Override
+    public void visitInsn(int opcode) {
+      // if (opcode == NOP) {
+      //     // do nothing
+      // }
+      // else {
+      //     super.visitInsn(opcode);
+      // }
+      if (opcode != NOP) {
+        super.visitInsn(opcode);
+      }
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+public class HelloWorldTransformCore {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodRemoveNopVisitor(api, cw);
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+```shell
+$ javap -c sample.HelloWorld
+public class sample.HelloWorld {
+  public sample.HelloWorld();
+    Code:
+       0: aload_0
+       1: invokespecial #8                  // Method java/lang/Object."<init>":()V
+       4: return
+
+  public void test();
+    Code:
+       0: getstatic     #15                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       3: ldc           #17                 // String Hello World
+       5: invokevirtual #23                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+       8: return
+}
+```
+
+### 3.8.3 总结
+
+本文主要对移除Instruction进行了介绍，内容总结如下：
+
+- 第一点，移除Instruction方式，就是让中间的某一个`MethodVisitor`对象不向后“传递该instruction”就可以了。
+- 第二点，**在移除instruction的过程中，要保证operand stack在修改前和修改后是一致的**。
+
+在后面的内容当中，我们会介绍到如何删除打印语句，因为它要经历一个“模式识别”的过程，相对复杂一些，所以我们放到后面的内容再来讨论。
+
+## 3.9 修改已有的方法（删除－清空方法体）
+
+### 3.9.1 如何清空方法体
+
+在有些情况下，我们可能想清空整个方法体的内容，那该怎么做呢？其实，有两个思路。
+
+- 第一种思路，就是将instruction一条一条的移除掉，直到最后只剩下return语句。（不推荐）
+- **第二种思路，就是忽略原来的方法体，重新生成一个新的方法体。（推荐使用）**
+
+![Java ASM系列：（028）修改已有的方法（删除－清空方法体）_Core API](https://s2.51cto.com/images/20210628/1624882148334418.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+对于第二种思路，“忽略原来的方法体，重新生成一个新的方法体”，想法很好，具体如何实现呢？假设有一个中间的`MethodVisitor`来负责做这个工作，通过两个步骤来实现：
+
+- 第一步，对于它“前面”的`MethodVisitor`，它返回`null`值，就相当于原来的方法丢失了；
+- 第二步，对于它“后面”的`MethodVisitor`，它添加同名、同类型的方法，然后生成新的方法体，这就相当于又添加了一个新的方法。
+
+需要注意的一点：**清空方法体，并不是一条instruction也没有，它至少要有一条return语句。**
+
+- 如果方法返回值是`void`类型，那至少要有一个return；
+- 如果方法返回值不是`void`类型（例如，`int`、`String`），这个时候，就要考虑返回一个什么样的值比较合适了。
+
+同时，我们也要**计算local variables和operand stack的大小**：
+
+- 计算local variables的大小。在local variables中，主要是用于存储`this`变量和方法的参数，只要计算`this`和方法参数的大小就可以了。
+- 计算operand stack的大小。
+  - 如果方法有返回值，则需要先放到operand stack上去，再进行返回，那么operand stack的大小与返回值的类型密切相关；
+  - 如果方法没有返回值，清空方法体后，那么operand stack的大小为`0`。
+
+计算local variables和operand stack的大小，可以由我们自己编码来实现，也可以由ASM帮助我们实现。
+
+### 3.9.2. 示例：绕过验证机制
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void verify(String username, String password) throws IllegalArgumentException {
+    if ("tomcat".equals(username) && "123456".equals(password)) {
+      return;
+    }
+    throw new IllegalArgumentException("username or password is not correct");
+  }
+}
+```
+
+我们想实现的预期目标：清空`verify`方法的方法体，无论输入什么样的值，它都不会报错。
+
+```java
+public class HelloWorld {
+  public void verify(String username, String password) throws IllegalArgumentException {
+    return;
+  }
+}
+```
+
+#### 编码实现
+
+注意点：
+
++ 清空方法体，这里visitMethod遇到指定方法时，先给下一个MethodVisitor增加同名方法，然后当前返回null，以达到当前MethodVisitor删除方法，而下一个MethodVisitor增加同名方法（空方法体，仅保留return语句）的效果。
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Type;
+
+import static org.objectweb.asm.Opcodes.*;
+
+/**
+ * 目标：清空 HelloWorld 类的 verify 方法的方法体
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/30 9:51 AM
+ */
+public class MethodEmptyBodyVisitor extends ClassVisitor {
+  /**
+     * 当前类名
+     */
+  private String owner;
+  /**
+     * 需要被清空方法体的方法名
+     */
+  private String methodName;
+  /**
+     * 需要被清空方法体的方法的描述符
+     */
+  private String methodDescriptor;
+
+  public MethodEmptyBodyVisitor(int api, ClassVisitor classVisitor, String methodName, String methodDescriptor) {
+    super(api, classVisitor);
+    this.methodName = methodName;
+    this.methodDescriptor = methodDescriptor;
+  }
+
+  @Override
+  public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    super.visit(version, access, name, signature, superName, interfaces);
+    this.owner = name;
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    // 不需要特输处理的情况
+    if (null == mv || (access & ACC_ABSTRACT) == ACC_ABSTRACT || (access & ACC_NATIVE) == ACC_NATIVE
+        || "<init>".equals(name) || "<cinit>".equals(name)) {
+      return mv;
+    }
+    // 找到需要 清空方法体的方法
+    if (methodName.equals(name) && methodDescriptor.equals(descriptor)) {
+      // 给下一个 MethodVisitor增加同名方法
+      generateNewBody(mv, owner, access, name, descriptor);
+      // 当前MethodVisitor忽略(删除)该方法
+      return null;
+    }
+    // 其他正常方法，不做处理
+    return mv;
+  }
+
+  /**
+     * 给当前类绑定的 下一个 MethodVisitor 添加同名方法，仅保留return逻辑 <br/>
+     * 需要判断原本的返回值类型，做不同的返回处理
+     */
+  private void generateNewBody(MethodVisitor mv, String owner, int methodAccess, String methodName, String methodDesc) {
+    // (1) method argument types and return type
+    Type methodType = Type.getType(methodDescriptor);
+    Type[] argumentTypes = methodType.getArgumentTypes();
+    Type returnType = methodType.getReturnType();
+
+    // (2) compute the size of local variables and operand stack
+    boolean isStaticMethod = (methodAccess & ACC_STATIC) == ACC_STATIC;
+    // non-static 方法的local variables 下标0存放this指针
+    int localSize = isStaticMethod ? 0 : 1;
+    for(Type argType : argumentTypes) {
+      localSize += argType.getSize();
+    }
+    int stackSize = returnType.getSize();
+
+    // (3) method body
+    mv.visitCode();
+    if (returnType.getSort() == Type.VOID) {
+      mv.visitInsn(RETURN);
+    }
+    else if (returnType.getSort() >= Type.BOOLEAN && returnType.getSort() <= Type.INT) {
+      mv.visitInsn(ICONST_1);
+      mv.visitInsn(IRETURN);
+    }
+    else if (returnType.getSort() == Type.LONG) {
+      mv.visitInsn(LCONST_0);
+      mv.visitInsn(LRETURN);
+    }
+    else if (returnType.getSort() == Type.FLOAT) {
+      mv.visitInsn(FCONST_0);
+      mv.visitInsn(FRETURN);
+    }
+    else if (returnType.getSort() == Type.DOUBLE) {
+      mv.visitInsn(DCONST_0);
+      mv.visitInsn(DRETURN);
+    }
+    else {
+      mv.visitInsn(ACONST_NULL);
+      mv.visitInsn(ARETURN);
+    }
+    mv.visitMaxs(stackSize, localSize);
+    mv.visitEnd();
+  }
+}
+```
+
+#### 进行转换
+
+```java
+package com.example;
+
+import core.*;
+import org.objectweb.asm.*;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodEmptyBodyVisitor(api, cw, "verify", "(Ljava/lang/String;Ljava/lang/String;)V");
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+```java
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    HelloWorld instance = new HelloWorld();
+    instance.verify("jerry", "123");
+  }
+}
+```
+
+### 3.9.3 总结
+
+本文主要对清空方法体进行了介绍，内容总结如下：
+
+- 第一点，**清空方法体，它的思路是，忽略原来的方法体，然后重新生成新的方法体**。
+- 第二点，清空方法体过程中，要注意的事情是，方法体当中要包含return相关的语句，同时要计算local variables和operand stack的大小。
+
+## 3.10 修改已有的方法（修改－替换方法调用）
+
+### 3.10.1 如何替换Instruction
+
+有的时候，我们想替换掉某一条instruction，那应该如何实现呢？其实，实现起来也很简单，就是**先找到该instruction，然后在同样的位置替换成另一个instruction就可以了**。
+
+![Java ASM系列：（029）修改已有的方法（修改－替换方法调用）_ByteCode](https://s2.51cto.com/images/20210628/1624882148334418.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+同样，我们也要注意：**在替换instruction的过程当中，operand stack在修改前和修改后是一致的**。
+
+在方法当中，替换Instruction，有什么样的使用场景呢？比如说，第三方提供的jar包当中，可能在某一个`.class`文件当中调用了一个方法。这个方法，从某种程度上来说，你可能对它“不满意”。假如说，这个方法是一个验证逻辑的方法，你想替换成自己的验证逻辑，又或者说，它实现的功能比较简单，你想替换成功能更完善的方法，就可以把这个方法对应的Instruction替换掉。
+
+### 3.10.2 示例：替换方法调用
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+    public void test(int a, int b) {
+        int c = Math.max(a, b);
+        System.out.println(c);
+    }
+}
+```
+
+其中，`test()`方法对应的指令如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(int, int);
+    Code:
+       0: iload_1
+       1: iload_2
+       2: invokestatic  #2                  // Method java/lang/Math.max:(II)I
+       5: istore_3
+       6: getstatic     #3                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       9: iload_3
+      10: invokevirtual #4                  // Method java/io/PrintStream.println:(I)V
+      13: return
+}
+```
+
+我们想实现的预期目标有两个：
+
+- 第一个，就是将静态方法`Math.max()`方法替换掉。
+- 第二个，就是将非静态方法`PrintStream.println()`方法替换掉。
+
+#### 编码实现
+
+```java
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+
+import static org.objectweb.asm.Opcodes.ACC_ABSTRACT;
+import static org.objectweb.asm.Opcodes.ACC_NATIVE;
+
+public class MethodReplaceInvokeVisitor extends ClassVisitor {
+  private final String oldOwner;
+  private final String oldMethodName;
+  private final String oldMethodDesc;
+
+  private final int newOpcode;
+  private final String newOwner;
+  private final String newMethodName;
+  private final String newMethodDesc;
+
+  public MethodReplaceInvokeVisitor(int api, ClassVisitor classVisitor,
+                                    String oldOwner, String oldMethodName, String oldMethodDesc,
+                                    int newOpcode, String newOwner, String newMethodName, String newMethodDesc) {
+    super(api, classVisitor);
+    this.oldOwner = oldOwner;
+    this.oldMethodName = oldMethodName;
+    this.oldMethodDesc = oldMethodDesc;
+
+    this.newOpcode = newOpcode;
+    this.newOwner = newOwner;
+    this.newMethodName = newMethodName;
+    this.newMethodDesc = newMethodDesc;
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null && !"<init>".equals(name) && !"<clinit>".equals(name)) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodReplaceInvokeAdapter(api, mv);
+      }
+    }
+    return mv;
+  }
+
+  private class MethodReplaceInvokeAdapter extends MethodVisitor {
+    public MethodReplaceInvokeAdapter(int api, MethodVisitor methodVisitor) {
+      super(api, methodVisitor);
+    }
+
+    @Override
+    public void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
+      if (oldOwner.equals(owner) && oldMethodName.equals(name) && oldMethodDesc.equals(descriptor)) {
+        // 注意，最后一个参数是false，会不会太武断呢？
+        super.visitMethodInsn(newOpcode, newOwner, newMethodName, newMethodDesc, false);
+      }
+      else {
+        super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
+      }
+    }
+  }
+}
+```
+
+在`MethodReplaceInvokeAdapter`类当中，`visitMethodInsn()`方法有这么一行代码：
+
+```java
+// 注意，最后一个参数是false，会不会太武断呢？
+super.visitMethodInsn(newOpcode, newOwner, newMethodName, newMethodDesc, false);
+```
+
+在`visitMethodInsn()`方法中，最后一个参数是`boolean isInterface`，它可以取值为`true`，也可以取值为`false`。如果它的值为`true`，表示调用的方法是一个接口里的方法；如果它的值为`false`，则表示调用的方法是类里面的方法。换句话说，这个`boolean isInterface`参数，本来可以有两个可选值，即`true`或`false`；但是，我们直接提供一个固定值`false`，完成没有考虑`true`的情况，这么做是不是太过武断了呢？
+
+之所以要这么做，是因为一般情况下，替换后的方法是“自己写的某一个方法”，那么对于“这个方法”，我们有很大的“自主权”，可以把它放到一个接口里，也可以放在一个类里，可以把它写成一个non-static方法，也可以写成一个static方法。这样，我们完全可以把“这个方法”写成一个在类里的static方法。
+
+#### 进行转换
+
+##### 替换static方法
+
+在替换static方法的时候，要保证一点：**替换方法前，和替换方法后，要保持“方法接收的参数”和“方法的返回类型”是一致的**。
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+public class HelloWorldTransformCore {
+    public static void main(String[] args) {
+        String relative_path = "sample/HelloWorld.class";
+        String filepath = FileUtils.getFilePath(relative_path);
+        byte[] bytes1 = FileUtils.readBytes(filepath);
+
+        //（1）构建ClassReader
+        ClassReader cr = new ClassReader(bytes1);
+
+        //（2）构建ClassWriter
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+        //（3）串连ClassVisitor
+        int api = Opcodes.ASM9;
+        ClassVisitor cv = new MethodReplaceInvokeVisitor(api, cw,
+                "java/lang/Math", "max", "(II)I",
+                Opcodes.INVOKESTATIC, "java/lang/Math", "min", "(II)I");
+
+        //（4）结合ClassReader和ClassVisitor
+        int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+        cr.accept(cv, parsingOptions);
+
+        //（5）生成byte[]
+        byte[] bytes2 = cw.toByteArray();
+
+        FileUtils.writeBytes(filepath, bytes2);
+    }
+}
+```
+
+##### 替换non-static方法
+
+对于non-static方法来说，它有一个隐藏的`this`变量。我们在替换non-static方法的时候，要把`this`变量给“消耗”掉。
+
+```java
+public class ParameterUtils {
+  public static void output(PrintStream printStream, int val) {
+    printStream.println("ParameterUtils: " + val);
+  }
+}
+```
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+public class HelloWorldTransformCore {
+    public static void main(String[] args) {
+        String relative_path = "sample/HelloWorld.class";
+        String filepath = FileUtils.getFilePath(relative_path);
+        byte[] bytes1 = FileUtils.readBytes(filepath);
+
+        //（1）构建ClassReader
+        ClassReader cr = new ClassReader(bytes1);
+
+        //（2）构建ClassWriter
+        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+        //（3）串连ClassVisitor
+        int api = Opcodes.ASM9;
+        ClassVisitor cv = new MethodReplaceInvokeVisitor(api, cw,
+                "java/io/PrintStream", "println", "(I)V",
+                Opcodes.INVOKESTATIC, "sample/ParameterUtils", "output", "(Ljava/io/PrintStream;I)V");
+
+        //（4）结合ClassReader和ClassVisitor
+        int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+        cr.accept(cv, parsingOptions);
+
+        //（5）生成byte[]
+        byte[] bytes2 = cw.toByteArray();
+
+        FileUtils.writeBytes(filepath, bytes2);
+    }
+}
+```
+
+#### 验证结果
+
+```java
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    HelloWorld instance = new HelloWorld();
+    instance.test(10, 20);
+  }
+}
+```
+
+### 3.10.3 总结
+
+本文主要对替换Instruction进行了介绍，内容总结如下：
+
+- 第一点，替换Instruction，实现思路是，先找到该instruction，然后在同样的位置替换成另一个instruction就可以了。
+- 第二点，替换Instruction，要注意的地方是，保持operand stack在修改前和修改后是一致的。对于static方法和non-static方法，我们需要考虑是否要处理`this`变量。
+
+其实，按照相同的思路，我们也可以将“对于字段的调用”替换成“对于方法的调用”。
+
+## 3.11 查找已有的方法（查找－方法调用）
+
+### 3.11.1 查找Instruction
+
+#### 如何查找Instruction
+
+在方法当中，查找某一个特定的Instruction，那么应该怎么做呢？简单来说，就是**通过`MethodVisitor`类当中定义的`visitXxxInsn()`方法来查找**。
+
+让我们回顾一下`MethodVisitor`类当中定义了哪些`visitXxx()`方法。
+
+![Java ASM系列：（030）查找已有的方法（查找－方法调用）_ClassFile](https://s2.51cto.com/images/20210629/1624967433536552.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+在`MethodVisitor`类当中，定义的主要`visitXxx()`方法可以分成四组：
+
+- 第一组，`visitCode()`方法，标志着方法体（method body）的开始。
+- 第二组，`visitXxxInsn()`方法，对应方法体（method body）本身，这里包含多个方法。
+- 第三组，`visitMaxs()`方法，标志着方法体（method body）的结束。
+- 第四组，`visitEnd()`方法，是最后调用的方法。
+
+在方法当中，任何一条Instruction，放在ASM代码中，它都是通过调用`MethodVisitor.visitXxxInsn()`方法的形式来呈现的。换句话说，想去找某一条特定的Instruction，分成两个步骤：
+
+- 第一步，找到该Instruction对应的`visitXxxInsn()`方法。
+- 第二步，对该`visitXxxInsn()`方法接收的`opcode`和其它参数进行判断。
+
+**简而言之，查找Instruction的过程，就是对`visitXxxInsn()`方法接收的参数进行检查的过程。** 举一个形象的例子，平时我们坐地铁，随身物品要过安检，其实就是对书包（方法）里的物品（参数）进行检查，如下图：
+
+![Java ASM系列：（030）查找已有的方法（查找－方法调用）_Java_02](https://s2.51cto.com/images/20210701/1625137506187777.jpg?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+#### Class Analysis
+
+**查找Instruction的过程，** 并不属于Class Transformation（因为没有生成新的类），而**是属于Class Analysis。** 在下图当中，Class Analysis包括find potential bugs、detect unused code和reverse engineer code等操作。但是，这些分析操作（analysis）是比较困难的，它需要编程经验的积累和对问题模式的识别，需要编码处理各种不同情况，所以不太容易实现。
+
+![Java ASM系列：（030）查找已有的方法（查找－方法调用）_ASM_03](https://s2.51cto.com/images/20210618/1624005632705532.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+但是，Class Analysis，并不是只包含复杂的分析操作，也包含一些简单的分析操作。例如，当前方法里调用了哪些其它的方法、当前的方法被哪些别的方法所调用。对于方法的调用，就对应着`MethodVisitor.visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface)`方法。
+
+另外，要注意一点：**在Class Transformation当中，需要用到`ClassReader`、`ClassVisitor`和`ClassWriter`类；但是，在Class Analysis中，我们只需要用到`ClassReader`和`ClassVisitor`类，而不需要用到`ClassWriter`类**。
+
+![Java ASM系列：（030）查找已有的方法（查找－方法调用）_Java_04](https://s2.51cto.com/images/20210618/1624028333369109.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+### 3.11.2 示例一：调用了哪些方法
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test(int a, int b) {
+    int c = Math.addExact(a, b);
+    String line = String.format("%d + %d = %d", a, b, c);
+    System.out.println(line);
+  }
+}
+```
+
+我们想要实现的预期目标：打印出`test()`方法当中调用了哪些方法。
+
+在编写ASM代码之前，可以使用`javap`命令查看`test()`方法所包含的Instruction内容：
+
+```java
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(int, int);
+    Code:
+       0: iload_1
+       1: iload_2
+       2: invokestatic  #2                  // Method java/lang/Math.addExact:(II)I
+       5: istore_3
+       6: ldc           #3                  // String %d + %d = %d
+       8: iconst_3
+       9: anewarray     #4                  // class java/lang/Object
+      12: dup
+      13: iconst_0
+      14: iload_1
+      15: invokestatic  #5                  // Method java/lang/Integer.valueOf:(I)Ljava/lang/Integer;
+      18: aastore
+      19: dup
+      20: iconst_1
+      21: iload_2
+      22: invokestatic  #5                  // Method java/lang/Integer.valueOf:(I)Ljava/lang/Integer;
+      25: aastore
+      26: dup
+      27: iconst_2
+      28: iload_3
+      29: invokestatic  #5                  // Method java/lang/Integer.valueOf:(I)Ljava/lang/Integer;
+      32: aastore
+      33: invokestatic  #6                  // Method java/lang/String.format:(Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/String;
+      36: astore        4
+      38: getstatic     #7                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      41: aload         4
+      43: invokevirtual #8                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      46: return
+}
+```
+
+#### 编码实现
+
+注意点：
+
++ 这里做的是code analysis，所以只需要ClassReader和ClassVisitor，不需要ClassWriter
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.util.Printer;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * 目标，打印指定的方法在方法体中 调用到的方法
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/30 2:13 PM
+ */
+public class MethodFindInvokeVisitor extends ClassVisitor {
+
+  private final String methodName;
+  private final String methodDescriptor;
+
+  public MethodFindInvokeVisitor(int api, ClassVisitor classVisitor, String methodName, String methodDescriptor) {
+    super(api, classVisitor);
+    this.methodName = methodName;
+    this.methodDescriptor = methodDescriptor;
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    return name.equals(methodName) && descriptor.equals(methodDescriptor) ? new MethodFindInvokeMVisitor(api, mv) : mv;
+  }
+
+  private static class MethodFindInvokeMVisitor extends MethodVisitor {
+    /**
+         * 方法的方法体内调用过的方法(已去重)
+         */
+    private List<String> methodCallList = new ArrayList<>();
+
+    protected MethodFindInvokeMVisitor(int api, MethodVisitor methodVisitor) {
+      super(api, methodVisitor);
+    }
+
+    @Override
+    public void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
+      String info = String.format("%s %s.%s%s", Printer.OPCODES[opcode], owner, name, descriptor);
+      if (!methodCallList.contains(info)) {
+        methodCallList.add(info);
+      }
+      super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
+    }
+
+    @Override
+    public void visitEnd() {
+      // 输出指定方法的方法体中 调用过的方法
+      for(String methodCall : methodCallList) {
+        System.out.println(methodCall);
+      }
+      super.visitEnd();
+    }
+  }
+}
+
+```
+
+#### 进行分析
+
+```java
+package com.example;
+
+import core.*;
+import org.objectweb.asm.*;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    //        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor (这里是进行 Code Analysis，不需要ClassWriter)
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodFindInvokeVisitor(api, null, "test", "(II)V");
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    //        byte[] bytes2 = cw.toByteArray();
+
+    //        FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+输出结果：
+
+```shell
+INVOKESTATIC java/lang/Math.addExact(II)I
+INVOKESTATIC java/lang/Integer.valueOf(I)Ljava/lang/Integer;
+INVOKESTATIC java/lang/String.format(Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/String;
+INVOKEVIRTUAL java/io/PrintStream.println(Ljava/lang/String;)V
+```
+
+### 3.11.3 示例二：被哪些方法所调用
+
+在IDEA当中，有一个Find Usages功能：在类名、字段名、或方法名上，右键之后，选择Find Usages，就可以查看该项内容在哪些地方被使用了。
+
+![Java ASM系列：（030）查找已有的方法（查找－方法调用）_ByteCode_05](https://s2.51cto.com/images/20210701/1625137638539075.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+查找结果如下：
+
+![Java ASM系列：（030）查找已有的方法（查找－方法调用）_ClassFile_06](https://s2.51cto.com/images/20210701/1625137667714870.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+这样一个功能，如果我们自己来实现，那该怎么编写ASM代码呢？
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public int add(int a, int b) {
+    int c = a + b;
+    test(a, b, c);
+    return c;
+  }
+
+  public int sub(int a, int b) {
+    int c = a - b;
+    test(a, b, c);
+    return c;
+  }
+
+  public int mul(int a, int b) {
+    return a * b;
+  }
+
+  public int div(int a, int b) {
+    return a / b;
+  }
+
+  public void test(int a, int b, int c) {
+    String line = String.format("a = %d, b = %d, c = %d", a, b, c);
+    System.out.println(line);
+  }
+}
+```
+
+我们想要实现的预期目标：找出是哪些方法对`test()`方法进行了调用。
+
+#### 编码实现
+
+```java
+package core;
+
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.objectweb.asm.Opcodes.ACC_ABSTRACT;
+import static org.objectweb.asm.Opcodes.ACC_NATIVE;
+
+/**
+ * 目标：输出 调用过 指定的A方法的 B、C、D等调用方的方法
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/30 2:31 PM
+ */
+public class MethodFindRefVisitor extends ClassVisitor {
+  /**
+     * 被调用方-类名(需要知道方法的归属)
+     */
+  private final String targetClassName;
+  /**
+     * 被调用方-方法名
+     */
+  private final String targetMethodName;
+  /**
+     * 被调用方-方法描述符
+     */
+  private final String targetMethodDescriptor;
+  /**
+     * 当前类-类名
+     */
+  private String currentClassName;
+  /**
+     * 方法调用记录集合(去重)
+     */
+  private List<String> methodCallList = new ArrayList<>();
+
+  public MethodFindRefVisitor(int api, ClassVisitor classVisitor, String targetClassName, String targetMethodName, String targetMethodDescriptor) {
+    super(api, classVisitor);
+    this.targetClassName = targetClassName;
+    this.targetMethodName = targetMethodName;
+    this.targetMethodDescriptor = targetMethodDescriptor;
+  }
+
+  @Override
+  public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    super.visit(version, access, name, signature, superName, interfaces);
+    this.currentClassName = name;
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    return (access & ACC_ABSTRACT) == ACC_ABSTRACT || (access & ACC_NATIVE) == ACC_NATIVE ? mv : new MethodFindRefMVisitor(api, mv, currentClassName, name, descriptor);
+  }
+
+  @Override
+  public void visitEnd() {
+    // 输出 所有调用过 目标方法 的记录
+    for (String methodCall : methodCallList) {
+      System.out.println(methodCall);
+    }
+    super.visitEnd();
+  }
+
+  private class MethodFindRefMVisitor extends MethodVisitor {
+    /**
+         * 调用方-类名
+         */
+    private final String currentClassName;
+    /**
+         * 调用方-方法名
+         */
+    private final String currentMethodName;
+    /**
+         * 调用方-方法描述符
+         */
+    private final String currentMethodDescriptor;
+
+    protected MethodFindRefMVisitor(int api, MethodVisitor methodVisitor, String currentClassName, String currentMethodName, String currentMethodDescriptor) {
+      super(api, methodVisitor);
+      this.currentClassName = currentClassName;
+      this.currentMethodName = currentMethodName;
+      this.currentMethodDescriptor = currentMethodDescriptor;
+    }
+
+    @Override
+    public void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
+      // 指定的方法被调用，则记录当前方法信息
+      if (owner.equals(targetClassName) && name.equals(targetMethodName) && descriptor.equals(targetMethodDescriptor)) {
+        String info = String.format("%s.%s%s", currentClassName, currentMethodName, currentMethodDescriptor);
+        if (!methodCallList.contains(info)) {
+          methodCallList.add(info);
+        }
+      }
+      super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
+    }
+
+  }
+}
+```
+
+#### 进行分析
+
+```java
+package com.example;
+
+import core.*;
+import org.objectweb.asm.*;
+import utils.FileUtils;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/4/7 10:34 PM
+ */
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassVisitor
+    //        ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3) 串联ClassVisitor  (这里是进行 Code Analysis，不需要ClassWriter)
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodFindRefVisitor(api, null, "sample/HelloWorld", "test", "(III)V");
+
+    // (4) 结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    // (5) 生成byte[]
+    //        byte[] bytes2 = cw.toByteArray();
+
+    //        FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+输出结果：
+
+```shell
+sample/HelloWorld.add(II)I
+sample/HelloWorld.sub(II)I
+```
+
+### 3.11.4 总结
+
+本文主要对查找Instruction进行了介绍，内容总结如下：
+
+- 第一点，**查找Instruction的过程，就是对`MethodVisitor`类的`visitXxxInsn()`方法及参数进行判断的过程**。
+- 第二点，**查找Instruction，并不属于Class Transformation，而属于Class Analysis。Class Analysis，只需要用到`ClassReader`和`ClassVisitor`类，而不需要用到`ClassWriter`类**。
+- 第三点，在两个代码示例中，都是围绕着“方法调用”展开，而“方法调用”就对应着`MethodVisitor.visitMethodInsn()`方法。
+
+## 3.12 修改已有的方法（优化－删除－复杂的变换）
+
+### 3.12.1 复杂的变换
+
+#### stateless transformations
+
+The stateless transformation does not depend on **the instructions that have been visited before the current one**.
+
+举几个关于stateless transformation的例子：
+
+- 添加指令：在方法进入和方法退出时，打印方法的参数和返回值、计算方法的运行时间。
+- 删除指令：移除NOP、清空方法体。
+- 修改指令：替换调用的方法。
+
+这种stateless transformation实现起来比较容易，所以也被称为simple transformations。
+
+#### stateful transformations
+
+The **stateful transformation** require memorizing **some state** about **the instructions that have been visited before the current one**. This requires storing state inside the method adapter.
+
+举几个关于stateful transformation的例子：
+
+- 删除指令：移除`ICONST_0 IADD`。例如，`int d = c + 0;`与`int d = c;`两者效果是一样的，所以`+ 0`的部分可以删除掉。
+- 删除指令：移除`ALOAD_0 ALOAD_0 GETFIELD PUTFIELD`。例如，`this.val = this.val;`，将字段的值赋值给字段本身，无实质意义。
+- 删除指令：移除`GETSTATIC LDC INVOKEVIRTUAL`。例如，`System.out.println("Hello World");`，删除打印信息。
+
+这种stateful transformation实现起来比较困难，所以也被称为complex transformations。
+
+那么，为什么stateless transformation实现起来比较容易，而stateful transformation会实现起来比较困难呢？做个类比，stateless transformation就类似于“一人吃饱，全家不饿”，不用考虑太多，所以实现起来就比较简单；而stateful transformation类似于“成家之后，要考虑一家人的生活状态”，考虑的事情就多一点，所以实现起来就比较困难。难归难，但是我们还是应该想办法进行实现。
+
+那么，stateful transformation到底该如何开始着手实现呢？在stateful transformation过程中，一般都是涉及到对多个指令（Instruction）同时判断，这多个指令是一个“组合”，不能轻易拆散。我们通过三个步骤来进行实现：
+
+- **第一步，就是将问题本身转换成Instruction指令，然后对多个指令组合的“特征”或遵循的“模式”进行总结。**
+- 第二步，就是使用这个总结出来的“特征”或“模式”对指令进行识别。在识别的过程当中，每一条Instruction的加入，都会引起原有状态（state）的变化，这就对应着`stateful`的部分；
+- 第三步，识别成功之后，要对Class文件进行转换，这就对应着`transformation`的部分。谈到transformation，无非就是对Instruction的内容进行增加、删除和修改等操作。
+
+到这里，就有一个新的问题产生：如何去记录第二步当中的状态（state）变化呢？我们的回答就是，借助于state machine(有限状态机)。
+
+#### state machine
+
+首先，我们回答一个问题：什么是state machine？
+
+A state machine is a behavior model. It consists of **a finite number of states** and is therefore also called finite-state machine (FSM). Based on the **current state** and **a given input** the machine performs **state transitions** and produces outputs.
+
+对于state machine，我想到了这句话：“吾生也有涯，而知也无涯。以有涯随无涯，殆已”。这句话的意思是讲，人们的生命是有限的，而知识却是无限的。以有限的生命去追求无限的知识，势必体乏神伤。我觉得，state machine的聪明之处，就是将“无限”的操作步骤给限定在“有限”的状态里来思考。
+
+接下来，就是给出一个具体的state machine。也就是说，下面的`MethodPatternAdapter`类，就是一个原始的state machine，我们从三个层面来把握它：
+
+- 第一个层面，class info。`MethodPatternAdapter`类，继承自`MethodVisitor`类，本身也是一个抽象类。
+- 第二个层面，fields。`MethodPatternAdapter`类，定义了两个字段，其中`SEEN_NOTHING`字段，是一个常量值，表示一个“初始状态”，而`state`字段则是用于记录不断变化的状态。
+- 第三个层面，methods。<u>`MethodPatternAdapter`类定义`visitXxxInsn()`方法，都会去调用一个自定义的`visitInsn()`方法。`visitInsn()`方法，是一个抽象方法，它的作用就是让所有的其它状态（state）都回归“初始状态”</u>。
+
+那么，应该怎么使用`MethodPatternAdapter`类呢？我们就是写一个`MethodPatternAdapter`类的子类，这个子类就是一个更“先进”的state machine，它做以下三件事情：
+
+- 第一件事情，从字段层面，根据处理的问题，来定义更多的状态；也就是，类似于`SEEN_NOTHING`的字段。这里就是**对a finite number of states进行定义**。
+- 第二件事情，从方法层面，处理好`visitXxxInsn()`的调用，对于`state`字段状态的影响。也就是，输入新的指令（Instruction），都会对`state`字段产生影响。这里就是**构建状态（state）变化的机制**。
+- 第三件事情，从方法层面，实现`visitInsn()`方法，根据`state`字段的值，如何回归到“初始状态”。这里就是添加一个“恢复出厂设置”的功能，**让状态（state）归零**，回归到一个初始状态。**让状态（state）归零**，是**构建状态（state）变化的机制**一个比较特殊的环节。结合生活来说，生活中有不顺的地方，就从新开始，从零开始。
+
+```java
+import org.objectweb.asm.Handle;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.MethodVisitor;
+
+public abstract class MethodPatternAdapter extends MethodVisitor {
+  protected final static int SEEN_NOTHING = 0;
+  protected int state;
+
+  public MethodPatternAdapter(int api, MethodVisitor methodVisitor) {
+    super(api, methodVisitor);
+  }
+
+  @Override
+  public void visitInsn(int opcode) {
+    visitInsn();
+    super.visitInsn(opcode);
+  }
+
+  @Override
+  public void visitIntInsn(int opcode, int operand) {
+    visitInsn();
+    super.visitIntInsn(opcode, operand);
+  }
+
+  @Override
+  public void visitVarInsn(int opcode, int var) {
+    visitInsn();
+    super.visitVarInsn(opcode, var);
+  }
+
+  @Override
+  public void visitTypeInsn(int opcode, String type) {
+    visitInsn();
+    super.visitTypeInsn(opcode, type);
+  }
+
+  @Override
+  public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
+    visitInsn();
+    super.visitFieldInsn(opcode, owner, name, descriptor);
+  }
+
+  @Override
+  public void visitMethodInsn(int opcode, String owner, String name, String descriptor) {
+    visitInsn();
+    super.visitMethodInsn(opcode, owner, name, descriptor);
+  }
+
+  @Override
+  public void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
+    visitInsn();
+    super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
+  }
+
+  @Override
+  public void visitInvokeDynamicInsn(String name, String descriptor, Handle bootstrapMethodHandle, Object... bootstrapMethodArguments) {
+    visitInsn();
+    super.visitInvokeDynamicInsn(name, descriptor, bootstrapMethodHandle, bootstrapMethodArguments);
+  }
+
+  @Override
+  public void visitJumpInsn(int opcode, Label label) {
+    visitInsn();
+    super.visitJumpInsn(opcode, label);
+  }
+
+  @Override
+  public void visitLdcInsn(Object value) {
+    visitInsn();
+    super.visitLdcInsn(value);
+  }
+
+  @Override
+  public void visitIincInsn(int var, int increment) {
+    visitInsn();
+    super.visitIincInsn(var, increment);
+  }
+
+  @Override
+  public void visitTableSwitchInsn(int min, int max, Label dflt, Label... labels) {
+    visitInsn();
+    super.visitTableSwitchInsn(min, max, dflt, labels);
+  }
+
+  @Override
+  public void visitLookupSwitchInsn(Label dflt, int[] keys, Label[] labels) {
+    visitInsn();
+    super.visitLookupSwitchInsn(dflt, keys, labels);
+  }
+
+  @Override
+  public void visitMultiANewArrayInsn(String descriptor, int numDimensions) {
+    visitInsn();
+    super.visitMultiANewArrayInsn(descriptor, numDimensions);
+  }
+
+  @Override
+  public void visitTryCatchBlock(Label start, Label end, Label handler, String type) {
+    visitInsn();
+    super.visitTryCatchBlock(start, end, handler, type);
+  }
+
+  @Override
+  public void visitLabel(Label label) {
+    visitInsn();
+    super.visitLabel(label);
+  }
+
+  @Override
+  public void visitFrame(int type, int numLocal, Object[] local, int numStack, Object[] stack) {
+    visitInsn();
+    super.visitFrame(type, numLocal, local, numStack, stack);
+  }
+
+  @Override
+  public void visitMaxs(int maxStack, int maxLocals) {
+    visitInsn();
+    super.visitMaxs(maxStack, maxLocals);
+  }
+
+  protected abstract void visitInsn();
+}
+```
+
+### 3.12.2 示例一：加零
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+    public void test(int a, int b) {
+        int c = a + b;
+        int d = c + 0;
+        System.out.println(d);
+    }
+}
+```
+
+我们想要实现的预期目标：将`int d = c + 0;`转换成`int d = c;`。
+
+> 从javap来看，`iconst_0`和接下去的`iadd`是多余的，即多余的加0操作，也就是我们想要删除的指令
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(int, int);
+    Code:
+       0: iload_1
+       1: iload_2
+       2: iadd
+       3: istore_3
+       4: iload_3
+       5: iconst_0
+       6: iadd
+       7: istore        4
+       9: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      12: iload         4
+      14: invokevirtual #3                  // Method java/io/PrintStream.println:(I)V
+      17: return
+}
+```
+
+#### 编码实现
+
+注意点：
+
++ 这里除了父类`MethodPatternAdapter`已经定义了的`SEEN_NOTHING`用于表示初始状态，只额外在`MethodRemoveAddZeroAdapter`类中添加了一个状态`SEEN_ICONST_0`。因为需要判断的指令只有两个（`iconst_0`和`iadd`），遇到`iconst_0`时转换到`SEEN_ICONST_0`状态，接下去如果遇到`iadd`则表示匹配到了，可以直接再转换到初始状态（即使再多定义一个状态，比如`SEEN_ICONST_0_IADD`，下一步也还是要回归初始状态，所以没必要多定义一个状态）。
+
+```java
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class MethodRemoveAddZeroVisitor extends ClassVisitor {
+  public MethodRemoveAddZeroVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = cv.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null && !"<init>".equals(name) && !"<clinit>".equals(name)) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodRemoveAddZeroAdapter(api, mv);
+      }
+    }
+    return mv;
+  }
+
+  private class MethodRemoveAddZeroAdapter extends MethodPatternAdapter {
+    private static final int SEEN_ICONST_0 = 1;
+
+    public MethodRemoveAddZeroAdapter(int api, MethodVisitor methodVisitor) {
+      super(api, methodVisitor);
+    }
+
+    @Override
+    public void visitInsn(int opcode) {
+      // 第一，对于感兴趣的状态进行处理
+      switch (state) {
+        case SEEN_NOTHING:
+          if (opcode == ICONST_0) {
+            state = SEEN_ICONST_0;
+            return;
+          }
+          break;
+        case SEEN_ICONST_0:
+          if (opcode == IADD) {
+            state = SEEN_NOTHING;
+            return;
+          }
+          // 这里是考虑到有出现多次iconst_0的情况，放弃记录前面的iconst_0，即直接向后传递该指令使其生效
+          else if (opcode == ICONST_0) {
+            mv.visitInsn(ICONST_0);
+            return;
+          }
+          break;
+      }
+
+      // 第二，对于不感兴趣的状态，交给父类进行处理
+      super.visitInsn(opcode);
+    }
+
+    @Override
+    protected void visitInsn() {
+      // 当 iconst_0 下一个指令不是 iadd时，匹配失败，重新回归到初始状态(这里覆盖父类MethodPatternAdapter的方法，即每次调用visitXxxInsn()方法时都会尝试判断是否需要回归到初始状态)
+      // 回归到初始状态时，需要将指令向后传递
+      if (state == SEEN_ICONST_0) {
+        mv.visitInsn(ICONST_0);
+      }
+      state = SEEN_NOTHING;
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+public class HelloWorldTransformCore {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodRemoveAddZeroVisitor(api, cw);
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+```shell
+$ javap -c sample.HelloWorld
+public class sample.HelloWorld {
+...
+  public void test(int, int);
+    Code:
+       0: iload_1
+       1: iload_2
+       2: iadd
+       3: istore_3
+       4: iload_3
+       5: istore        4
+       7: getstatic     #16                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      10: iload         4
+      12: invokevirtual #22                 // Method java/io/PrintStream.println:(I)V
+      15: return
+}
+```
+
+### 3.12.3 示例二：字段赋值
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+    public int val;
+
+    public void test(int a, int b) {
+        int c = a + b;
+        this.val = this.val;
+        System.out.println(c);
+    }
+}
+```
+
+我们想要实现的预期目标：删除掉`this.val = this.val;`语句。
+
+> 这里希望删除的，对应指令`aload_0` => `aload_0` => `getfield` => `putfield`
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+  public int val;
+
+...
+
+  public void test(int, int);
+    Code:
+       0: iload_1
+       1: iload_2
+       2: iadd
+       3: istore_3
+       4: aload_0
+       5: aload_0
+       6: getfield      #2                  // Field val:I
+       9: putfield      #2                  // Field val:I
+      12: getstatic     #3                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      15: iload_3
+      16: invokevirtual #4                  // Method java/io/PrintStream.println:(I)V
+      19: return
+}
+```
+
+#### 编码实现
+
+![Java ASM系列：（031）修改已有的方法（优化－删除－复杂的变换）_ByteCode](https://s2.51cto.com/images/20210702/1625221942271769.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+```java
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class MethodRemoveGetFieldPutFieldVisitor extends ClassVisitor {
+  public MethodRemoveGetFieldPutFieldVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = cv.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null && !"<init>".equals(name) && !"<clinit>".equals(name)) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodRemoveGetFieldPutFieldAdapter(api, mv);
+      }
+    }
+    return mv;
+  }
+
+  private class MethodRemoveGetFieldPutFieldAdapter extends MethodPatternAdapter {
+    private final static int SEEN_ALOAD_0 = 1;
+    private final static int SEEN_ALOAD_0_ALOAD_0 = 2;
+    private final static int SEEN_ALOAD_0_ALOAD_0_GETFIELD = 3;
+
+    private String fieldOwner;
+    private String fieldName;
+    private String fieldDesc;
+
+    public MethodRemoveGetFieldPutFieldAdapter(int api, MethodVisitor methodVisitor) {
+      super(api, methodVisitor);
+    }
+
+    @Override
+    public void visitVarInsn(int opcode, int var) {
+      // 第一，对于感兴趣的状态进行处理
+      switch (state) {
+        case SEEN_NOTHING:
+          if (opcode == ALOAD && var == 0) {
+            state = SEEN_ALOAD_0;
+            return;
+          }
+          break;
+        case SEEN_ALOAD_0:
+          if (opcode == ALOAD && var == 0) {
+            state = SEEN_ALOAD_0_ALOAD_0;
+            return;
+          }
+          break;
+          // 考虑重复 aload_0 的场景，放弃匹配最早出现的aload_0，即直接向后传递该指令
+        case SEEN_ALOAD_0_ALOAD_0:
+          if (opcode == ALOAD && var == 0) {
+            mv.visitVarInsn(opcode, var);
+            return;
+          }
+          break;
+      }
+
+      // 第二，对于不感兴趣的状态，交给父类进行处理
+      super.visitVarInsn(opcode, var);
+    }
+
+    @Override
+    public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
+      // 第一，对于感兴趣的状态进行处理
+      switch (state) {
+        case SEEN_ALOAD_0_ALOAD_0:
+          if (opcode == GETFIELD) {
+            // 这里需要记录本次 getfield 的字段，后续如果紧接着 putfield ，需要操作同一个字段，才算匹配规则
+            state = SEEN_ALOAD_0_ALOAD_0_GETFIELD;
+            fieldOwner = owner;
+            fieldName = name;
+            fieldDesc = descriptor;
+            return;
+          }
+          break;
+        case SEEN_ALOAD_0_ALOAD_0_GETFIELD:
+          if (opcode == PUTFIELD && name.equals(fieldName)) {
+            state = SEEN_NOTHING;
+            return;
+          }
+          break;
+      }
+
+      // 第二，对于不感兴趣的状态，交给父类进行处理
+      super.visitFieldInsn(opcode, owner, name, descriptor);
+    }
+		
+    // 不匹配 or 匹配到中间失败，则状态重制到初始状态，然后将之前暂时劫持滞留的操作向后传递
+    @Override
+    protected void visitInsn() {
+      switch (state) {
+        case SEEN_ALOAD_0:
+          mv.visitVarInsn(ALOAD, 0);
+          break;
+        case SEEN_ALOAD_0_ALOAD_0:
+          mv.visitVarInsn(ALOAD, 0);
+          mv.visitVarInsn(ALOAD, 0);
+          break;
+        case SEEN_ALOAD_0_ALOAD_0_GETFIELD:
+          mv.visitVarInsn(ALOAD, 0);
+          mv.visitVarInsn(ALOAD, 0);
+          mv.visitFieldInsn(GETFIELD, fieldOwner, fieldName, fieldDesc);
+          break;
+      }
+      state = SEEN_NOTHING;
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+public class HelloWorldTransformCore {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodRemoveGetFieldPutFieldVisitor(api, cw);
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+```java
+$ javap -c sample.HelloWorld
+public class sample.HelloWorld {
+  public int val;
+
+  public sample.HelloWorld();
+    Code:
+       0: aload_0
+       1: invokespecial #10                 // Method java/lang/Object."<init>":()V
+       4: return
+
+  public void test(int, int);
+    Code:
+       0: iload_1
+       1: iload_2
+       2: iadd
+       3: istore_3
+       4: getstatic     #18                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       7: iload_3
+       8: invokevirtual #24                 // Method java/io/PrintStream.println:(I)V
+      11: return
+}
+```
+
+### 3.12.4 示例三：删除打印语句
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+    public void test(int a, int b) {
+        System.out.println("Before a + b");
+        int c = a + b;
+        System.out.println("After a + b");
+        System.out.println(c);
+    }
+}
+```
+
+我们想要实现的预期目标：删除掉打印字符串的语句。
+
+> 即消除下面的`getstatic`=>`ldc`=>`invokevirtual`
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(int, int);
+    Code:
+       0: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       3: ldc           #3                  // String Before a + b
+       5: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+       8: iload_1
+       9: iload_2
+      10: iadd
+      11: istore_3
+      12: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      15: ldc           #5                  // String After a + b
+      17: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      20: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      23: iload_3
+      24: invokevirtual #6                  // Method java/io/PrintStream.println:(I)V
+      27: return
+}
+```
+
+#### 编码实现
+
+```java
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class MethodRemovePrintVisitor extends ClassVisitor {
+  public MethodRemovePrintVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = cv.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null && !"<init>".equals(name) && !"<clinit>".equals(name)) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodRemovePrintAdaptor(api, mv);
+      }
+    }
+    return mv;
+  }
+
+  private class MethodRemovePrintAdaptor extends MethodPatternAdapter {
+    private static final int SEEN_GETSTATIC = 1;
+    private static final int SEEN_GETSTATIC_LDC = 2;
+
+    private String message;
+
+    public MethodRemovePrintAdaptor(int api, MethodVisitor methodVisitor) {
+      super(api, methodVisitor);
+    }
+
+    @Override
+    public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
+      // 第一，对于感兴趣的状态进行处理
+      boolean flag = (opcode == GETSTATIC && owner.equals("java/lang/System") && name.equals("out") 
+                      && descriptor.equals("Ljava/io/PrintStream;"));
+      switch (state) {
+        case SEEN_NOTHING:
+          if (flag) {
+            state = SEEN_GETSTATIC;
+            return;
+          }
+          break;
+        case SEEN_GETSTATIC:
+          if (flag) {
+            mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+            return;
+          }
+      }
+
+      // 第二，对于不感兴趣的状态，交给父类进行处理
+      super.visitFieldInsn(opcode, owner, name, descriptor);
+    }
+
+    @Override
+    public void visitLdcInsn(Object value) {
+      // 第一，对于感兴趣的状态进行处理
+      switch (state) {
+        case SEEN_GETSTATIC:
+          if (value instanceof String) {
+            state = SEEN_GETSTATIC_LDC;
+            message = (String) value;
+            return;
+          }
+          break;
+      }
+
+      // 第二，对于不感兴趣的状态，交给父类进行处理
+      super.visitLdcInsn(value);
+    }
+
+    @Override
+    public void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
+      // 第一，对于感兴趣的状态进行处理
+      switch (state) {
+        case SEEN_GETSTATIC_LDC:
+          if (opcode == INVOKEVIRTUAL && owner.equals("java/io/PrintStream") &&
+              name.equals("println") && descriptor.equals("(Ljava/lang/String;)V")) {
+            state = SEEN_NOTHING;
+            return;
+          }
+          break;
+      }
+
+      // 第二，对于不感兴趣的状态，交给父类进行处理
+      super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
+    }
+
+    @Override
+    protected void visitInsn() {
+      switch (state) {
+        case SEEN_GETSTATIC:
+          mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+          break;
+        case SEEN_GETSTATIC_LDC:
+          mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+          mv.visitLdcInsn(message);
+          break;
+      }
+
+      state = SEEN_NOTHING;
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+public class HelloWorldTransformCore {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodRemovePrintVisitor(api, cw);
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+```shell
+$ javap -c sample.HelloWorld
+public class sample.HelloWorld {
+...
+  public void test(int, int);
+    Code:
+       0: iload_1
+       1: iload_2
+       2: iadd
+       3: istore_3
+       4: getstatic     #16                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       7: iload_3
+       8: invokevirtual #22                 // Method java/io/PrintStream.println:(I)V
+      11: return
+}
+```
+
+### 3.12.5 总结
+
+本文对stateful transformations进行介绍，内容总结如下：
+
+- **第一点，stateful transformations可以实现复杂的操作，它是借助于state machine来进行实现的**。
+- 第二点，对于`MethodPatternAdapter`类来说，它是一个原始的state machine，本身是一个抽象类；我们写一个具体的子类，作为更“先进”的state machine，在子类当中主要做三件事情：
+  - 第一件事情，从字段层面，根据处理的问题，来定义更多的状态。
+  - 第二件事情，从方法层面，处理好`visitXxxInsn()`的调用，对于`state`字段状态的影响。
+  - 第三件事情，从方法层面，实现`visitInsn()`方法，根据`state`字段的值，如何回归到“初始状态”。
+
+## 3.13 本章内容总结
+
+在本章当中，从Core API的角度来说（第二个层次），我们介绍了`asm.jar`当中的`ClassReader`和`Type`两个类；同时，从应用的角度来说（第一个层次），我们也介绍了Class Transformation的原理和示例。
+
+![Java ASM系列：（032）第三章内容总结_Core API](https://s2.51cto.com/images/20210619/1624105643863231.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+### 3.13.1 Class Transformation的原理
+
+在Class Transformation的过程中，主要使用到了`ClassReader`、`ClassVisitor`和`ClassWriter`三个类；其中`ClassReader`类负责“读”Class，`ClassWriter`负责“写”Class，而`ClassVisitor`则负责进行“转换”（Transformation）。
+
+![Java ASM系列：（032）第三章内容总结_ByteCode_02](https://s2.51cto.com/images/20210628/1624882119265917.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+在Java ASM当中，Class Transformation的本质就是利用了“中间人攻击”的方式来实现对已有的Class文件进行修改或转换。
+
+![Java ASM系列：（032）第三章内容总结_ClassFile_03](https://s2.51cto.com/images/20210628/1624882180784922.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+详细的来说，我们自己定义的`ClassVisitor`类就是一个“中间人”，那么这个“中间人”可以做什么呢？可以做三种类型的事情：
+
+- 对“原有的信息”进行篡改，就可以实现“修改”的效果。对应到ASM代码层面，就是对`ClassVisitor.visitXxx()`和`MethodVisitor.visitXxx()`的参数值进行修改。
+- 对“原有的信息”进行扔掉，就可以实现“删除”的效果。对应到ASM代码层面，将原本的`FieldVisitor`和`MethodVisitor`对象实例替换成`null`值，或者对原本的一些`ClassVisitor.visitXxx()`和`MethodVisitor.visitXxx()`方法不去调用了。
+- 伪造一条“新的信息”，就可以实现“添加”的效果。对应到ASM代码层面，就是在原来的基础上，添加一些对于`ClassVisitor.visitXxx()`和`MethodVisitor.visitXxx()`方法的调用。
+
+### 3.13.2 ASM能够做哪些转换操作
+
+#### 类层面的修改
+
+在类层面所做的修改，主要是通过`ClassVisitor`类来完成。我们将类层面可以修改的信息，分成以下三个方面：
+
+- 类自身信息：修改当前类、父类、接口的信息，通过`ClassVisitor.visit()`方法实现。
+- 字段：添加一个新的字段、删除已有的字段，通过`ClassVisitor.visitField()`方法实现。
+- 方法：添加一个新的方法、删除已有的方法，通过`ClassVisitor.visitMethod()`方法实现。
+
+```java
+public class HelloWorld extends Object implements Cloneable {
+  public int intValue;
+  public String strValue;
+
+  public int add(int a, int b) {
+    return a + b;
+  }
+
+  public int sub(int a, int b) {
+    return a - b;
+  }
+
+  @Override
+  public Object clone() throws CloneNotSupportedException {
+    return super.clone();
+  }
+}
+```
+
+为了让大家更明确的知道需要修改哪一个`visitXxx()`方法的参数，我们做了如下总结：
+
+- `ClassVisitor.visit(int version, int access, String name, String signature, String superName, String[] interfaces)`
+  - `version`: 修改当前Class版本的信息
+  - `access`: 修改当前类的访问标识（access flag）信息。
+  - `name`: 修改当前类的名字。
+  - `signature`: 修改当前类的泛型信息。
+  - `superName`: 修改父类。
+  - `interfaces`: 修改接口信息。
+- `ClassVisitor.visitField(int access, String name, String descriptor, String signature, Object value)`
+  - `access`: 修改当前字段的访问标识（access flag）信息。
+  - `name`: 修改当前字段的名字。
+  - `descriptor`: 修改当前字段的描述符。
+  - `signature`: 修改当前字段的泛型信息。
+  - `value`: 修改当前字段的常量值。
+- `ClassVisitor.visitMethod(int access, String name, String descriptor, String signature, String[] exceptions)`
+  - `access`: 修改当前方法的访问标识（access flag）信息。
+  - `name`: 修改当前方法的名字。
+  - `descriptor`: 修改当前方法的描述符。
+  - `signature`: 修改当前方法的泛型信息。
+  - `exceptions`: 修改当前方法可以抛出的异常信息。
+
+再有，**如何删除一个字段或者方法呢？**其实很简单，我们只要让中间的某一个`ClassVisitor`在遇到该字段或方法时，不向后传递就可以了。在具体的代码实现上，我们只要让`visitField()`或`visitMethod()`方法返回一个`null`值就可以了。
+
+![Java ASM系列：（032）第三章内容总结_Core API_04](https://s2.51cto.com/images/20210628/1624882148334418.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+最后，**如何添加一个字段或方法呢？**我们只要让中间的某一个`ClassVisitor`向后多传递一个字段和方法就可以了。<u>在具体的代码实现上，我们是在`visitEnd()`方法完成对字段或方法的添加，而不是在`visitField()`或`visitMethod()`当中添加。因为我们要避免“一个类里有重复的字段和方法出现”，在`visitField()`或`visitMethod()`方法中，我们要判断该字段或方法是否已经存在；如果该字段或方法不存在，那我们就在`visitEnd()`方法进行添加；如果该字段或方法存在，那么我们就不需要在`visitEnd()`方法中添加了</u>。
+
+#### 方法体层面的修改
+
+在方法体层面所做的修改，主要是通过`MethodVisitor`类来完成。
+
+在方法体层面的修改，更准确的地说，就是对方法体内包含的Instruction进行修改。就像数据库的操作“增删改查”一样，我们也可以对Instruction进行添加、删除、修改和查找。
+
+为了让大家更直观的理解，我们假设有如下代码：
+
+```java
+public class HelloWorld {
+    public int test(String name, int age) {
+        int hashCode = name.hashCode();
+        hashCode = hashCode + age * 31;
+        return hashCode;
+    }
+}
+```
+
+其中，`test()`方法的方法体包含的Instruction内容如下：
+
+```shell
+  public test(Ljava/lang/String;I)I
+    ALOAD 1
+    INVOKEVIRTUAL java/lang/String.hashCode ()I
+    ISTORE 3
+    ILOAD 3
+    ILOAD 2
+    BIPUSH 31
+    IMUL
+    IADD
+    ISTORE 3
+    ILOAD 3
+    IRETURN
+    MAXSTACK = 3
+    MAXLOCALS = 4
+```
+
+有的时候，我们想实现某个功能，但是感觉无从下手。这个时候，我们需要解决两个问题。第一个问题，就是要明确需要修改什么？第二个问题，就是“定位”方法，也就是要使用哪个方法进行修改。我们可以结合这两个问题，和下面的示例应用来理解。
+
+- 添加
+  - 在“方法进入”时和“方法退出”时，
+    - 打印方法参数和返回值
+    - 方法计时
+- 删除
+  - 移除`NOP`
+  - 移除打印语句、加零、字段赋值
+  - 清空方法体
+- 修改
+  - 替换方法调用（静态方法和非静态方法）
+- 查找
+  - 当前方法调用了哪些方法
+  - 当前方法被哪些方法所调用
+
+由于`MethodVisitor`类里定义了很多的`visitXxxInsn()`方法，我们就不详细介绍了。但是，大家可以的看一下[asm4-guide.pdf](https://asm.ow2.io/asm4-guide.pdf)的一段描述：
+
+Methods can be transformed, i.e. by using a method adapter that forwards the method calls it receives with some modifications:
+
+- changing arguments can be used to change individual instructions,
+- not forwarding a received call removes an instruction,
+- and inserting calls between the received ones adds new instructions.
+
+需要要注意一点：**无论是添加instruction，还是删除instruction，还是要替换instruction，都要保持operand stack修改前和修改后是一致的**。
+
+### 3.13.3 总结
+
+本文内容总结如下：
+
+- 第一点，希望大家可以理解Class Transformation的原理。
+- 第二点，在Class Transformation中，ASM究竟能够帮助我们修改哪些信息。
+
+# 4. 工具类和常用类
+
+## 4.1 asm-util和asm-commons
 
