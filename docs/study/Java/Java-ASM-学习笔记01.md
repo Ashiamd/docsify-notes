@@ -351,7 +351,7 @@ ClassFile {
 
 ​	那么，字节码的类库和ClassFile之间是什么样的关系呢？我们可以用下图来表示
 
-![Java ASM系列：（003）ASM与ClassFile_Core API_02](https://s2.51cto.com/images/20210619/1624105555567528.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+![Java ASM系列：（003）ASM与ClassFile_Core API_02](https://s2.51cto.com/images/20210619/1624105555567528.png)
 
 ​	不考虑中间层，我们可以说，不同的字节码类库是在同一个ClassFile结构上发展起来的（`.class`文件都必须遵循JVM定义的ClassFile的规范）。
 
@@ -618,7 +618,7 @@ public class HelloWorld {
 
 第一个部分，`ClassVisitor`是一个抽象类。 由于`ClassVisitor类`是一个`abstract`类，所以不能直接使用`new`关键字创建`ClassVisitor`对象。
 
-```
+```java
 public abstract class ClassVisitor {
 }
 ```
@@ -627,14 +627,14 @@ public abstract class ClassVisitor {
 
 第一个比较常见的`ClassVisitor`子类是`ClassWriter`类，属于Core API：
 
-```
+```java
 public class ClassWriter extends ClassVisitor {
 }
 ```
 
 第二个比较常见的`ClassVisitor`子类是`ClassNode`类，属于Tree API：
 
-```
+```java
 public class ClassNode extends ClassVisitor {
 }
 ```
@@ -12378,4 +12378,1181 @@ Methods can be transformed, i.e. by using a method adapter that forwards the met
 # 4. 工具类和常用类
 
 ## 4.1 asm-util和asm-commons
+
+### 4.1.1 asm-util
+
+在`asm-util.jar`当中，主要介绍`CheckClassAdapter`和`TraceClassVisitor`类。在`TraceClassVisitor`类当中，会涉及到`Printer`、`ASMifier`和`Textifier`类。
+
+![Java ASM系列：（033）asm-util和asm-commons_ASM](https://s2.51cto.com/images/20210703/1625323958764266.png)
+
+- 其中，`CheckClassAdapter`类，主要负责检查（Check）生成的`.class`文件内容是否正确。（但是能力有限，不能全指望靠其发现生成的字节码的问题）
+- 其中，`TraceClassVisitor`类，主要负责将`.class`文件的内容打印成文字输出。根据输出的文字信息，可以探索或追踪（Trace）`.class`文件的内部信息。
+  - `Printer`负责将`.class`文件的内容转成文字（`ASMifiler`转成ASM代码文字，`Textifier`转成JVM指令文字）
+  - `PrinterWriter`负责输出文字
+
+> "1.5.1 ASMPrint类"讲解到的`ASMPrint`类就使用到了`TraceClassVisitor`
+
+### 4.1.2 asm-commons
+
+在`asm-commons.jar`当中，包括的类比较多，我们就不一一介绍每个类的作用了。但是，我们可以这些类可以分成两组，一组是`ClassVisitor`的子类，另一组是`MethodVisitor`的子类。
+
+- 其中，`ClassVisitor`的子类有`ClassRemapper`、`StaticInitMerger`和`SerialVersionUIDAdder`类；
+- 其中，`MethodVisitor`的子类有`LocalVariablesSorter`、`GeneratorAdapter`、`AdviceAdapter`、`AnalyzerAdapter`和`InstructionAdapter`类。
+
+![Java ASM系列：（033）asm-util和asm-commons_ByteCode_02](https://s2.51cto.com/images/20210703/1625323993793949.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+### 4.1.3 util和commons的区别
+
+那么，**asm-util.jar**与**asm-commons.jar**有什么区别呢？在`asm-util.jar`里，它提供的是通用性的功能，没有特别明确的应用场景；而在`asm-commons.jar`里，它提供的功能，都是为解决某一种特定场景中出现的问题而提出的解决思路。
+
+- the `org.objectweb.asm.util` package, in the `asm-util.jar` archive, provides various tools based on the core API that can be used during the development and debuging of ASM applications.
+  - 在`CheckClassAdapter`类的代码实现中，它会依赖于`org.objectweb.asm.tree`和`org.objectweb.asm.tree.analysis`的内容。因此，`asm-util.jar`除了依赖Core API之外，也依赖于Tree API的内容。
+- the `org.objectweb.asm.commons` package provides several useful pre-defined class transformers, mostly based on the core API. It is contained in the `asm-commons.jar` archive.
+
+在[learn-java-asm](https://gitee.com/lsieun/learn-java-asm)当中，各个Jar包之间的依赖关系如下：
+
+![img](https://lsieun.github.io/assets/images/java/asm/learn-java-asm-depdendencies.png)
+
+由上图，我们可以看到：`asm-util.jar`和`asm-commons.jar`两者都对`asm.jar`、`asm-tree.jar`、`asm-analysis.jar`有依赖。
+
+![img](https://lsieun.github.io/assets/images/java/asm/relation-of-asm-jars.png)
+
+### 4.1.4 编程习惯
+
+> 在编写ASM代码的过程中，讲师经常遵循一个命名的习惯：如果添加一个新的类，它继承自`ClassVisitor`，那么就命名成`XxxVisitor`；如果添加一个新的类，它继承自`MethodVisitor`，那么就命名成`XxxAdapter`。通过类的名字，我们就可以区分出哪些类是继承自`ClassVisitor`，哪些类是继承自`MethodVisitor`。
+>
+> 其实，将`MethodVisitor`类的子类命名成`XxxAdapter`就是参考了`GeneratorAdapter`、`AdviceAdapter`、`AnalyzerAdapter`和`InstructionAdapter`类的名字。但是，`CheckClassAdapter`类是个例外，它是继承自`ClassVisitor`类。
+
+## 4.2 CheckClassAdapter介绍
+
+The `CheckClassAdapter` class checks that its **methods are called** in the **appropriate order**, and with **valid arguments**, before delegating to the next visitor.
+
+即CheckClassAdapter主要检查方法调用时的JVM指令是否正确顺序，以及参数是否合法有效，整体主要做方法层面指令的校验。
+
+> 详细的说明，可以直接看CheckClassAdapter类上面的注释，下面截取部分：
+>
+> A ClassVisitor that checks that its methods are properly used. More precisely this class adapter checks each method call individually, based only on its arguments, but does not check the sequence of method calls. For example, the invalid sequence visitField(ACC_PUBLIC, "i", "I", null) visitField(ACC_PUBLIC, "i", "D", null) will not be detected by this class adapter.
+>
+> CheckClassAdapter can be also used to verify bytecode transformations in order to make sure that the transformed bytecode is sane. For example:
+>
+> ...
+
+### 4.2.1 CheckClassAdapter使用方式
+
+到目前为止，我们主要介绍了Class Generation和Class Transformation操作。我们可以借助于`CheckClassAdapter`类来检查生成的字节码内容是否正确，主要有两种使用方式：
+
+- 在生成类或转换类的**过程中**进行检查
+- 在生成类或转换类的**结束后**进行检查
+
+#### 方式一：生成/转换类"过程中"检查
+
+第一种使用方式，是在生成类（Class Generation）或转换类（Class Transformation）的**过程中**进行检查：
+
+```java
+// 第一步，应用于Class Generation
+// 串联ClassVisitor：cv --- cca --- cw
+ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+CheckClassAdapter cca = new CheckClassAdapter(cw);
+ClassVisitor cv = new MyClassVisitor(cca);
+
+// 第二步，应用于Class Transformation
+byte[] bytes = ... // 这里是class file bytes
+ClassReader cr = new ClassReader(bytes);
+cr.accept(cv, 0);
+```
+
+示例如下：
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.FieldVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.util.CheckClassAdapter;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class CheckClassAdapterExample01Generate {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+
+    // (1) 生成byte[]内容
+    byte[] bytes = dump();
+
+    // (2) 保存byte[]到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() throws Exception {
+    // (1) 创建ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+    ClassVisitor cv = new CheckClassAdapter(cw);
+
+    // (2) 调用visitXxx()方法
+    cv.visit(V1_8, ACC_PUBLIC + ACC_SUPER, "sample/HelloWorld",
+             null, "java/lang/Object", null);
+
+    {
+      FieldVisitor fv = cv.visitField(ACC_PRIVATE, "intValue", "I", null, null);
+      fv.visitEnd();
+    }
+
+    {
+      MethodVisitor mv1 = cv.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      mv1.visitMaxs(1, 1);
+      mv1.visitEnd();
+    }
+
+    {
+      MethodVisitor mv2 = cv.visitMethod(ACC_PUBLIC, "test", "()V", null, null);
+      mv2.visitCode();
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("Hello World");
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      mv2.visitInsn(RETURN);
+      mv2.visitMaxs(2, 1);
+      mv2.visitEnd();
+    }
+    cv.visitEnd();
+
+    // (3) 调用toByteArray()方法
+    return cw.toByteArray();
+  }
+}
+```
+
+#### 方式二：生成/转换类"结束后"检查
+
+第二种使用方式，是在生成类（Class Generation）或转换类（Class Transformation）的**结束后**进行检查：
+
+```java
+byte[] bytes = ... // 这里是class file bytes
+PrintWriter printWriter = new PrintWriter(System.out);
+CheckClassAdapter.verify(new ClassReader(bytes), false, printWriter);
+```
+
+示例如下：
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.FieldVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.util.CheckClassAdapter;
+
+import java.io.PrintWriter;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class CheckClassAdapterExample02Generate {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+
+    // (1) 生成byte[]内容
+    byte[] bytes = dump();
+
+    // (2) 保存byte[]到文件
+    FileUtils.writeBytes(filepath, bytes);
+
+    // (3) 检查
+    PrintWriter printWriter = new PrintWriter(System.out);
+    CheckClassAdapter.verify(new ClassReader(bytes), false, printWriter);
+  }
+
+  public static byte[] dump() throws Exception {
+    // (1) 创建ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用visitXxx()方法
+    cw.visit(V1_8, ACC_PUBLIC + ACC_SUPER, "sample/HelloWorld",
+             null, "java/lang/Object", null);
+
+    {
+      FieldVisitor fv = cw.visitField(ACC_PRIVATE, "intValue", "I", null, null);
+      fv.visitEnd();
+    }
+
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      mv1.visitMaxs(1, 1);
+      mv1.visitEnd();
+    }
+
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "()V", null, null);
+      mv2.visitCode();
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("Hello World");
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      mv2.visitInsn(RETURN);
+      mv2.visitMaxs(2, 1);
+      mv2.visitEnd();
+    }
+
+    cw.visitEnd();
+
+    // (3) 调用toByteArray()方法
+    return cw.toByteArray();
+  }
+}
+```
+
+### 4.2.2 检测案例
+
+> 下面以 方式二：生成/转换类"结束后"检查 来举例，因为其提示文案更近人意
+
+#### 检测：方法调用顺序
+
+> 方式一：生成/转换类"过程中"检查 ，检测不出来
+
+如果将`mv2.visitLdcInsn()`和`mv2.visitFieldInsn()`顺序调换：
+
+```java
+mv2.visitLdcInsn("Hello World");
+mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+```
+
+会出现如下错误：
+
+```shell
+Method owner: expected Ljava/io/PrintStream;, but found Ljava/lang/String;
+```
+
+#### 检测：方法参数不对
+
+如果将方法的描述符（`(Ljava/lang/String;)V`）修改成`(I)V`：
+
+```java
+mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+mv2.visitLdcInsn("Hello World");
+mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(I)V", false);
+```
+
+会出现如下错误：
+
+```shell
+Argument 1: expected I, but found Ljava/lang/String;
+```
+
+#### 检测：没有return语句
+
+如果注释掉`mv2.visitInsn(RETURN);`语句，会出现如下错误：
+
+```shell
+org.objectweb.asm.tree.analysis.AnalyzerException: Execution can fall off the end of the code
+```
+
+#### 检测：不调用visitMaxs()方法
+
+如果注释掉`mv2.visitMaxs(2, 1);`语句，会出现如下错误：
+
+```shell
+org.objectweb.asm.tree.analysis.AnalyzerException: Error at instruction 0: Insufficient maximum stack size.
+```
+
+#### 检测不出：重复类成员
+
+如果出现重复的字段或者重复的方法，`CheckClassAdapter`类是检测不出来的（方式一和方式二都检测不出来）：
+
+```java
+{
+  FieldVisitor fv = cw.visitField(ACC_PRIVATE, "intValue", "I", null, null);
+  fv.visitEnd();
+}
+
+{
+  FieldVisitor fv = cw.visitField(ACC_PRIVATE, "intValue", "I", null, null);
+  fv.visitEnd();
+}
+```
+
+## 4.3 TraceClassVisitor介绍
+
+`TraceClassVisitor` class extends the `ClassVisitor` class, and builds **a textual representation of the visited class**.
+
+### 4.3.1 TraceClassVisitor类
+
+#### class info
+
+第一个部分，`TraceClassVisitor`类继承自`ClassVisitor`类，而且有`final`修饰，因此不会存在子类。
+
+```java
+public final class TraceClassVisitor extends ClassVisitor {
+}
+```
+
+#### fields
+
+第二个部分，`TraceClassVisitor`类定义的字段有哪些。`TraceClassVisitor`类有两个重要的字段，一个是`PrintWriter printWriter`用于打印；另一个是`Printer p`将class转换成文字信息。
+
+```java
+public final class TraceClassVisitor extends ClassVisitor {
+  /** The print writer to be used to print the class. May be {@literal null}. */
+  private final PrintWriter printWriter; // 真正打印输出的类
+  /** The printer to convert the visited class into text. */
+  public final Printer p; // 信息采集器
+}
+```
+
+#### constructors
+
+第三个部分，`TraceClassVisitor`类定义的构造方法有哪些。
+
+```java
+public final class TraceClassVisitor extends ClassVisitor {
+  public TraceClassVisitor(final PrintWriter printWriter) {
+    this(null, printWriter);
+  }
+
+  public TraceClassVisitor(final ClassVisitor classVisitor, final PrintWriter printWriter) {
+    this(classVisitor, new Textifier(), printWriter);
+  }
+
+  public TraceClassVisitor(final ClassVisitor classVisitor, final Printer printer, final PrintWriter printWriter) {
+    super(Opcodes.ASM10_EXPERIMENTAL, classVisitor);
+    this.printWriter = printWriter;
+    this.p = printer;
+  }
+}
+```
+
+#### methods
+
+第四个部分，`TraceClassVisitor`类定义的方法有哪些。对于`TraceClassVisitor`类的`visit()`、`visitField()`、`visitMethod()`和`visitEnd()`方法，会分别调用`Printer.visit()`、`Printer.visitField()`、`Printer.visitMethod()`和`Printer.visitClassEnd()`方法。
+
+> TraceClassVisitor的`visitEnd()`里才是真正输出逻辑。正如前面所说，平时记得调用`visitEnd()`，毕竟你不知道后面串联的ClassVisitor是否在`visitEnd()`也有处理逻辑。
+
+```java
+public final class TraceClassVisitor extends ClassVisitor {
+  @Override
+  public void visit(final int version, final int access, final String name, final String signature,
+                    final String superName, final String[] interfaces) {
+    p.visit(version, access, name, signature, superName, interfaces);
+    super.visit(version, access, name, signature, superName, interfaces);
+  }
+
+  @Override
+  public FieldVisitor visitField(final int access, final String name, final String descriptor,
+                                 final String signature, final Object value) {
+    Printer fieldPrinter = p.visitField(access, name, descriptor, signature, value);
+    return new TraceFieldVisitor(super.visitField(access, name, descriptor, signature, value), fieldPrinter);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(final int access, final String name, final String descriptor,
+                                   final String signature, final String[] exceptions) {
+    Printer methodPrinter = p.visitMethod(access, name, descriptor, signature, exceptions);
+    return new TraceMethodVisitor(super.visitMethod(access, name, descriptor, signature, exceptions), methodPrinter);
+  }
+
+  @Override
+  public void visitEnd() {
+    p.visitClassEnd();
+    if (printWriter != null) {
+      p.print(printWriter); // Printer和PrintWriter进行结合
+      printWriter.flush();
+    }
+    super.visitEnd();
+  }
+}
+```
+
+### 4.3.2 如何使用TraceClassVisitor类
+
+使用`TraceClassVisitor`类，很重点的一点就是选择`Printer`类的具体实现，可以选择`ASMifier`类，也可以选择`Textifier`类（默认）：
+
+```java
+boolean flag = true or false;
+Printer printer = flag ? new ASMifier() : new Textifier();
+PrintWriter printWriter = new PrintWriter(System.out, true);
+TraceClassVisitor traceClassVisitor = new TraceClassVisitor(null, printer, printWriter);
+```
+
+#### 生成新的类
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.FieldVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.util.TraceClassVisitor;
+
+import java.io.PrintWriter;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class TraceClassVisitorExample01Generate {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+
+    // (1) 生成byte[]内容
+    byte[] bytes = dump();
+
+    // (2) 保存byte[]到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() throws Exception {
+    // (1) 创建ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+    PrintWriter printWriter = new PrintWriter(System.out);
+    TraceClassVisitor cv = new TraceClassVisitor(cw, printWriter);
+
+    // (2) 调用visitXxx()方法
+    cv.visit(V1_8, ACC_PUBLIC + ACC_SUPER, "sample/HelloWorld", null, "java/lang/Object", null);
+
+    {
+      FieldVisitor fv1 = cv.visitField(ACC_PRIVATE, "intValue", "I", null, null);
+      fv1.visitEnd();
+    }
+
+    {
+      FieldVisitor fv2 = cv.visitField(ACC_PRIVATE, "strValue", "Ljava/lang/String;", null, null);
+      fv2.visitEnd();
+    }
+
+    {
+      MethodVisitor mv1 = cv.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      mv1.visitMaxs(0, 0);
+      mv1.visitEnd();
+    }
+
+    {
+      MethodVisitor mv2 = cv.visitMethod(ACC_PUBLIC, "test", "()V", null, null);
+      mv2.visitCode();
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("Hello World");
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      mv2.visitInsn(RETURN);
+      mv2.visitMaxs(2, 1);
+      mv2.visitEnd();
+    }
+
+    cv.visitEnd();
+
+    // (3) 调用toByteArray()方法
+    return cw.toByteArray();
+  }
+}
+```
+
+#### 修改已有的类
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.util.TraceClassVisitor;
+
+import java.io.PrintWriter;
+
+public class TraceClassVisitorExample02Transform {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    PrintWriter printWriter = new PrintWriter(System.out);
+    TraceClassVisitor tcv = new TraceClassVisitor(cw, printWriter);
+    ClassVisitor cv = new MethodTimerVisitor(api, tcv);
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 打印ASM代码
+
+```java
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.util.ASMifier;
+import org.objectweb.asm.util.Printer;
+import org.objectweb.asm.util.Textifier;
+import org.objectweb.asm.util.TraceClassVisitor;
+
+import java.io.IOException;
+import java.io.PrintWriter;
+
+/**
+ * 这里的代码是参考自{@link org.objectweb.asm.util.Printer#main}
+ */
+public class ASMPrint {
+  public static void main(String[] args) throws IOException {
+    // (1) 设置参数
+    String className = "sample.HelloWorld";
+    int parsingOptions = ClassReader.SKIP_FRAMES | ClassReader.SKIP_DEBUG;
+    boolean asmCode = true;
+
+    // (2) 打印结果
+    Printer printer = asmCode ? new ASMifier() : new Textifier();
+    PrintWriter printWriter = new PrintWriter(System.out, true);
+    TraceClassVisitor traceClassVisitor = new TraceClassVisitor(null, printer, printWriter);
+    new ClassReader(className).accept(traceClassVisitor, parsingOptions);
+  }
+}
+```
+
+### 4.3.3 如何使用TraceMethodVisitor类
+
+有的时候，我们想打印出某一个具体方法包含的指令。在实现这个功能的时候，使用Tree API比较容易一些，因为`MethodNode`类（Tree API）就代表一个单独的方法。那么，结合`MethodNode`和`TraceMethodVisitor`类，我们就可以打印出该方法包含的指令。
+
+```java
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.InsnList;
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.util.Textifier;
+import org.objectweb.asm.util.TraceMethodVisitor;
+
+import java.io.PrintWriter;
+import java.util.List;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes);
+
+    //（2）生成ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassNode();
+
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    //（3）找到某个具体的方法
+    List<MethodNode> methods = cn.methods;
+    MethodNode mn = methods.get(1);
+
+    //（4）打印输出
+    Textifier printer = new Textifier();
+    TraceMethodVisitor tmv = new TraceMethodVisitor(printer);
+
+    InsnList instructions = mn.instructions;
+    for (AbstractInsnNode node : instructions) {
+      node.accept(tmv);
+    }
+    List<Object> list = printer.text;
+    printList(list);
+  }
+
+  private static void printList(List<?> list) {
+    PrintWriter writer = new PrintWriter(System.out);
+    printList(writer, list);
+    writer.flush();
+  }
+
+  // 下面这段代码来自org.objectweb.asm.util.Printer.printList()方法
+  private static void printList(final PrintWriter printWriter, final List<?> list) {
+    for (Object o : list) {
+      if (o instanceof List) {
+        printList(printWriter, (List<?>) o);
+      }
+      else {
+        printWriter.print(o);
+      }
+    }
+  }
+}
+```
+
+### 4.3.4 总结
+
+本文对`TraceClassVisitor`类进行了介绍，内容总结如下：
+
+- 第一点，从整体上来说，`TraceClassVisitor`类的作用是什么。它能够将class文件的内容转换成文字输出。
+- 第二点，从结构上来说，`TraceClassVisitor`类的各个部分包含哪些信息。
+- 第三点，从使用上来说，`TraceClassVisitor`类的输出结果依赖于`Printer`类的具体实现，可以选择`ASMifier`类输出ASM代码，也可以选择`Textifier`类输出Instruction信息。
+
+## 4.4 Printer/ASMifier/Textifier介绍
+
+### 4.4.1 Printer类
+
+#### class info
+
+第一个部分，`Printer`类是一个`abstract`类，它有两个子类：`ASMifier`类和`Textifier`类。
+
+```java
+/**
+ * An abstract converter from visit events to text.
+ *
+ * @author Eric Bruneton
+ */
+public abstract class Printer {
+}
+```
+
+#### fields
+
+第二个部分，`Printer`类定义的字段有哪些。
+
+```java
+public abstract class Printer {
+  protected final int api;
+
+  // The builder used to build strings in the various visit methods.
+  protected final StringBuilder stringBuilder;
+
+  // The text to be printed.
+  public final List<Object> text;
+}
+```
+
+#### constructors
+
+第三个部分，`Printer`类定义的构造方法有哪些。
+
+```java
+public abstract class Printer {
+  protected Printer(final int api) {
+    this.api = api;
+    this.stringBuilder = new StringBuilder();
+    this.text = new ArrayList<>();
+  }
+}
+```
+
+#### methods
+
+第四个部分，`Printer`类定义的方法有哪些。
+
+##### visitXxx方法
+
+`Printer`类定义的`visitXxx`方法是与`ClassVisitor`和`MethodVisitor`类里定义的方法有很大的相似性。
+
+> 这里不是`visitEnd()`，取而代之的是`visitClassEnd()`和`visitMethodEnd()`
+
+```java
+public abstract class Printer {
+  // Classes，这部分方法可与ClassVisitor内定义的方法进行对比
+  public abstract void visit(int version, int access, String name, String signature, String superName, String[] interfaces);
+  public abstract Printer visitField(int access, String name, String descriptor, String signature, Object value);
+  public abstract Printer visitMethod(int access, String name, String descriptor, String signature, String[] exceptions);
+  public abstract void visitClassEnd();
+  // ......
+
+
+  // Methods，这部分方法可与MethodVisitor内定义的方法进行对比
+  public abstract void visitCode();
+  public abstract void visitInsn(int opcode);
+  public abstract void visitIntInsn(int opcode, int operand);
+  public abstract void visitVarInsn(int opcode, int var);
+  public abstract void visitTypeInsn(int opcode, String type);
+  public abstract void visitFieldInsn(int opcode, String owner, String name, String descriptor);
+  public void visitMethodInsn(final int opcode, final String owner, final String name, final String descriptor, final boolean isInterface);
+  public abstract void visitJumpInsn(int opcode, Label label);
+  // ......
+  public abstract void visitMaxs(int maxStack, int maxLocals);
+  public abstract void visitMethodEnd();
+}
+```
+
+##### print方法
+
+下面这个`print(PrintWriter)`方法会在`TraceClassVisitor.visitEnd()`方法中调用。
+
+- `print(PrintWriter)`方法的作用：打印出`text`字段的值，将采集的内容进行输出。
+- `print(PrintWriter)`方法的调用时机：在`TraceClassVisitor.visitEnd()`方法中。
+
+```java
+public abstract class Printer {
+  public void print(final PrintWriter printWriter) {
+    printList(printWriter, text);
+  }
+
+  static void printList(final PrintWriter printWriter, final List<?> list) {
+    for (Object o : list) {
+      if (o instanceof List) {
+        printList(printWriter, (List<?>) o);
+      } else {
+        printWriter.print(o.toString());
+      }
+    }
+  }
+}
+```
+
+### 4.4.2 ASMifier类和Textifier类
+
+对于`ASMifier`类和`Textifier`类来说，它们的父类是`Printer`类。
+
+```java
+public class ASMifier extends Printer {
+}
+```
+
+```java
+public class Textifier extends Printer {
+}
+```
+
+在这里，我们不对`ASMifier`类和`Textifier`类的成员信息进行展开，因为它们的内容非常多。但是，这么多的内容都是为了一个共同的目的：通过对`visitXxx()`方法的调用，将class的内容转换成文字的表示形式。
+
+除了`ASMifier`和`Textifier`这两个类，如果有什么好的想法，我们也可以写一个自定义的`Printer`类进行使用。
+
+### 4.4.3 如何使用
+
+对于`ASMifier`和`Textifier`这两个类来说，它们的使用方法是非常相似的。换句话说，知道了如何使用`ASMifier`类，也就知道了如何使用`Textifier`类；反过来说，知道了如何使用`Textifier`类，也就知道了如何使用`ASMifier`类。
+
+#### 从命令行使用
+
+Linux分隔符是“:”
+
+```shell
+$ java -classpath asm.jar:asm-util.jar org.objectweb.asm.util.ASMifier java.lang.Runnable
+```
+
+Windows分隔符是“;”
+
+```shell
+$ java -classpath asm.jar;asm-util.jar org.objectweb.asm.util.ASMifier java.lang.Runnable
+```
+
+Cygwin分隔符是“\;”
+
+```shell
+$ java -classpath asm.jar\;asm-util.jar org.objectweb.asm.util.ASMifier java.lang.Runnable
+```
+
+#### 从代码中使用
+
+无论是`ASMifier`类里的`main()`方法，还是`Textifier`类里的`main()`方法，它们本质上都是调用了`Printer`类里的`main()`方法。在`Printer`类里的`main()`方法里，代码的功能也是通过`TraceClassVisitor`类来实现的。
+
+在Java ASM 9.0版本当中，使用`-debug`选项：
+
+```java
+import org.objectweb.asm.util.ASMifier;
+
+import java.io.IOException;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws IOException {
+    String[] array = new String[] {
+      "-debug",
+      "sample.HelloWorld"
+    };
+    ASMifier.main(array);
+  }
+}
+```
+
+在Java ASM 9.1或9.2及之后版本当中，使用`-nodebug`选项：（这一点，要感谢[4ra1n](https://4ra1n.love/)同学指出错误并纠正）
+
+```java
+import org.objectweb.asm.util.ASMifier;
+
+import java.io.IOException;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws IOException {
+    String[] array = new String[] {
+      "-nodebug",
+      "sample.HelloWorld"
+    };
+    ASMifier.main(array);
+  }
+}
+```
+
+在[Versions](https://asm.ow2.io/versions.html)当中，提到：
+
+```shell
+6 February 2021: ASM 9.1 (tag ASM_9_1)
+
+－ Replace -debug flag in Printer with -nodebug (-debug continues to work)
+```
+
+但是，在 Java ASM 9.1和9.2版本中，我测试了一下`-debug`选项，它是不能用的。
+
+### 4.4.4 总结
+
+本文对`Printer`、`ASMifier`和`Textifier`这三个类进行介绍，内容总结如下：
+
+- 第一点，了解这三个类的主要目的是为了方便理解`TraceClassVisitor`类的工作原理。
+- 第二点，如何从命令行使用`ASMifier`类和`Textifier`类。
+
+## 4.5 AdviceAdapter介绍
+
+对于 `AdviceAdapter` 类来说，能够很容易的实现在“方法进入”和“方法退出”时添加代码。
+
+`AdviceAdapter` 类的特点：引入了 `onMethodEnter()` 方法和 `onMethodExit()` 方法。
+
+### 4.5.1 AdviceAdapter类
+
+#### class info
+
+第一个部分，`AdviceAdapter` 类是一个抽象的（`abstract`）、特殊的 `MethodVisitor` 类。
+
+具体来说，`AdviceAdapter` 类继承自 `GeneratorAdapter` 类，而 `GeneratorAdapter` 类继承自 `LocalVariablesSorter` 类， `LocalVariablesSorter` 类继承自 `MethodVisitor` 类。
+
+- org.objectweb.asm.MethodVisitor
+  - org.objectweb.asm.commons.LocalVariablesSorter
+    - org.objectweb.asm.commons.GeneratorAdapter
+      - org.objectweb.asm.commons.AdviceAdapter
+
+由于 `AdviceAdapter` 类是抽象类（`abstract`），如果我们想使用这个类，那么就需要实现一个具体的子类。
+
+```java
+/**
+ * A {@link MethodVisitor} to insert before, after and around advices in methods and constructors.
+ * For constructors, the code keeps track of the elements on the stack in order to detect when the
+ * super class constructor is called (note that there can be multiple such calls in different
+ * branches). {@code onMethodEnter} is called after each super class constructor call, because the
+ * object cannot be used before it is properly initialized.
+ *
+ * @author Eugene Kuleshov
+ * @author Eric Bruneton
+ */
+public abstract class AdviceAdapter extends GeneratorAdapter implements Opcodes {
+}
+```
+
+#### fields
+
+第二个部分，`AdviceAdapter` 类定义的字段有哪些。其中， `isConstructor` 字段是判断当前方法是不是构造方法。如果当前方法是构造方法，在“方法进入”时添加代码，需要特殊处理。
+
+```java
+public abstract class AdviceAdapter extends GeneratorAdapter implements Opcodes {
+  /** The access flags of the visited method. */
+  protected int methodAccess;
+  /** The descriptor of the visited method. */
+  protected String methodDesc;
+
+  /** Whether the visited method is a constructor. */
+  private final boolean isConstructor;
+}
+```
+
+#### constructors
+
+第三个部分，`AdviceAdapter` 类定义的构造方法有哪些。 需要注意的是，`AdviceAdapter` 的构造方法是用 `protected` 修饰，因此这个构造方法只能在子类当中访问。 换句话说，在外界不能用 `new` 关键字来创建对象。
+
+```java
+public abstract class AdviceAdapter extends GeneratorAdapter implements Opcodes {
+    protected AdviceAdapter(final int api, final MethodVisitor methodVisitor,
+                            final int access, final String name, final String descriptor) {
+        super(api, methodVisitor, access, name, descriptor);
+        methodAccess = access;
+        methodDesc = descriptor;
+        isConstructor = "<init>".equals(name);
+    }
+}
+```
+
+#### methods
+
+第四个部分，`AdviceAdapter` 类定义的方法有哪些。
+
+在 `AdviceAdapter` 类的方法中，定义了两个重要的方法：`onMethodEnter()` 方法和 `onMethodExit()` 方法。
+
+```java
+public abstract class AdviceAdapter extends GeneratorAdapter implements Opcodes {
+    // Generates the "before" advice for the visited method.
+    // The default implementation of this method does nothing.
+    // Subclasses can use or change all the local variables, but should not change state of the stack.
+    // This method is called at the beginning of the method or
+    // after super class constructor has been called (in constructors).
+    protected void onMethodEnter() {}
+
+    // Generates the "after" advice for the visited method.
+    // The default implementation of this method does nothing.
+    // Subclasses can use or change all the local variables, but should not change state of the stack.
+    // This method is called at the end of the method, just before return and athrow instructions.
+    // The top element on the stack contains the return value or the exception instance.
+    protected void onMethodExit(final int opcode) {}
+}
+```
+
+对于 `onMethodEnter()` 和 `onMethodExit()` 这两个方法，我们从三个角度来把握它们：
+
+- 第一个角度，应用场景。
+  - `onMethodEnter()` 方法：在“方法进入”的时候，添加一些代码逻辑。
+  - `onMethodExit()` 方法：在“方法退出”的时候，添加一些代码逻辑。
+- 第二个角度，注意事项。
+  - 第一点，对于 `onMethodEnter()` 和 `onMethodExit()` 这两个方法，都要注意 Subclasses can use or change all the local variables, but should not change state of the stack。也就是说，要保持operand stack在修改前和修改后是一致的。
+  - 第二点，对于 `onMethodExit()` 方法，要注意 The top element on the stack contains the return value or the exception instance。也就是说，“方法退出”的时候，operand stack 上有返回值或异常对象，不要忘记处理，不要弄丢了它们。
+- 第三个角度，工作原理。
+  - 对于 `onMethodEnter()` 方法，它是借助于 `visitCode()` 方法来实现的。**使用 `onMethodEnter()` 方法的优势在于，它能够处理 `<init>()` 的复杂情况，而直接使用 `visitCode()` 方法则可能导致 `<init>()` 方法出现错误。**（直接使用`visitCode()`的话，还需要自己考虑怎么保证原本的构造方法中`super()`或`this()`怎么仍然在第一条执行，否则会报错）
+  - 对于 `onMethodExit()` 方法，它是借助于 `visitInsn(int opcode)` 方法来实现的。
+
+### 4.5.2 示例: 打印方法参数和返回值
+
+#### 预期目标
+
+假如有一个 `HelloWorld` 类，代码如下：
+
+```java
+public class HelloWorld {
+  private String name;
+  private int age;
+
+  public HelloWorld(String name, int age) {
+    this.name = name;
+    this.age = age;
+  }
+
+  public void test(long idCard, Object obj) {
+    int hashCode = 0;
+    hashCode += name.hashCode();
+    hashCode += age;
+    hashCode += (int) (idCard % Integer.MAX_VALUE);
+    hashCode += obj.hashCode();
+    hashCode = Math.abs(hashCode);
+    System.out.println("Hash Code is " + hashCode);
+    if (hashCode % 2 == 1) {
+      throw new RuntimeException("illegal");
+    }
+  }
+}
+```
+
+我们想实现的预期目标：打印出构造方法（`<init>()`）和 `test()` 的参数和返回值。
+
+#### 编码实现
+
+```java
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.Arrays;
+import java.util.Date;
+
+public class ParameterUtils {
+  private static final DateFormat fm = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
+  public static void printValueOnStack(Object value) {
+    if (value == null) {
+      System.out.println("    " + value);
+    }
+    else if (value instanceof String) {
+      System.out.println("    " + value);
+    }
+    else if (value instanceof Date) {
+      System.out.println("    " + fm.format(value));
+    }
+    else if (value instanceof char[]) {
+      System.out.println("    " + Arrays.toString((char[])value));
+    }
+    else {
+      System.out.println("    " + value.getClass() + ": " + value.toString());
+    }
+  }
+
+  public static void printText(String str) {
+    System.out.println(str);
+  }
+}
+```
+
+```java
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Type;
+import org.objectweb.asm.commons.AdviceAdapter;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class ClassPrintParameterVisitor extends ClassVisitor {
+  public ClassPrintParameterVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodPrintParameterAdapter(api, mv, access, name, descriptor);
+      }
+    }
+    return mv;
+  }
+
+  public static class MethodPrintParameterAdapter extends AdviceAdapter {
+    public MethodPrintParameterAdapter(int api, MethodVisitor mv, int access, String name, String descriptor) {
+      super(api, mv, access, name, descriptor);
+    }
+
+    @Override
+    protected void onMethodEnter() {
+      printMessage("Method Enter: " + getName() + methodDesc);
+
+      Type[] argumentTypes = getArgumentTypes();
+      for (int i = 0; i < argumentTypes.length; i++) {
+        Type t = argumentTypes[i];
+        loadArg(i);
+        box(t);
+        printValueOnStack("(Ljava/lang/Object;)V");
+      }
+    }
+
+    @Override
+    protected void onMethodExit(int opcode) {
+      printMessage("Method Exit: " + getName() + methodDesc);
+
+      if (opcode == ATHROW) {
+        super.visitLdcInsn("abnormal return");
+      }
+      else if (opcode == RETURN) {
+        super.visitLdcInsn("return void");
+      }
+      else if (opcode == ARETURN) {
+        dup();
+      }
+      else {
+        if (opcode == LRETURN || opcode == DRETURN) {
+          dup2();
+        }
+        else {
+          dup();
+        }
+        box(getReturnType());
+      }
+      printValueOnStack("(Ljava/lang/Object;)V");
+    }
+
+    private void printMessage(String str) {
+      super.visitLdcInsn(str);
+      super.visitMethodInsn(INVOKESTATIC, "sample/ParameterUtils", "printText", "(Ljava/lang/String;)V", false);
+    }
+
+    private void printValueOnStack(String descriptor) {
+      super.visitMethodInsn(INVOKESTATIC, "sample/ParameterUtils", "printValueOnStack", descriptor, false);
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+
+public class HelloWorldTransformCore {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new ClassPrintParameterVisitor(api, cw);
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+```java
+import java.util.Date;
+
+public class HelloWorldRun {
+  public static void main(String[] args) {
+    HelloWorld instance = new HelloWorld("tomcat", 10);
+    instance.test(441622197605122816L, new Date());
+  }
+}
+```
+
+### 4.5.3 AdviceAdapter VS. MethodVisitor
+
+`AdviceAdapter` 类的特点：引入了 `onMethodEnter()` 方法和 `onMethodExit()` 方法。
+
+```
+                 ┌─── onMethodEnter()
+AdviceAdapter ───┤
+                 └─── onMethodExit()
+```
+
+同时，回顾一下 `MethodVisitor` 类里的四个主要方法：
+
+```
+                 ┌─── visitCode()
+                 │
+                 ├─── visitXxxInsn()
+MethodVisitor ───┤
+                 ├─── visitMaxs()
+                 │
+                 └─── visitEnd()
+```
+
+将 `AdviceAdapter` 类和 `MethodVisitor` 类进行一下对比：
+
+- `AdviceAdapter.onMethodEnter()` 方法对应着 `MethodVisitor.visitCode()` 方法
+- `AdviceAdapter.onMethodExit()` 方法对应着 `MethodVisitor.visitInsn(opcode)` 方法当中 opcode 为 `return` 或 `athrow` 的情况
+
+![img](https://lsieun.github.io/assets/images/java/asm/advice-adapter-vs-method-visitor.png)
+
+### 4.5.4 总结
+
+本文对 `AdviceAdapter` 类进行介绍，内容总结如下：
+
+- 第一点，在`AdviceAdapter`类当中，有两个关键的方法，即`onMethodEnter()`和`onMethodExit()`方法。我们可以从三个角度来把握这两个方法：
+  - **从使用场景的角度来说，`AdviceAdapter` 类能够很容易的在“方法进入”时和“方法退出”时添加一些代码**。
+  - **从注意事项的角度来说， Subclasses can use or change all the local variables, but should not change state of the stack.（即子类可以在方法执行时修改Frame的local variables，但是需要保证逻辑执行后，原本Frame的operand stack还是保持原样）**
+  - **从工作原理的角度来说，`onMethodEnter()` 方法是借助于 `visitCode()` 方法来实现的；`onMethodExit()` 方法是借助于 `visitInsn(int opcode)` 方法来实现的。**
+- 第二点，特殊的情况的处理。
+  - <u>有些时候，使用 `AdviceAdapter` 类的 `onMethodEnter()` 和 `onMethodExit()` 方法是不能正常工作的。比如说，一些代码经过混淆（obfuscate）之后，ByteCode的内容就会变得复杂，就会出现处理不了的情况。这个时候，我们还是应该回归到 `visitCode()` 和 `visitInsn(opcode)` 方法来解决问题</u>。
+
+## 4.6 GeneratorAdapter介绍
 
