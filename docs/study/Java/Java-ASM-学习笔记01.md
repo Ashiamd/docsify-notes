@@ -13556,3 +13556,2315 @@ MethodVisitor ───┤
 
 ## 4.6 GeneratorAdapter介绍
 
+对于`GeneratorAdapter`类来说，它非常重要的一个特点：将一些`visitXxxInsn()`方法封装成一些常用的方法。
+
+### 4.6.1 GeneratorAdapter类
+
+#### class info
+
+第一个部分，`GeneratorAdapter`类继承自`LocalVariablesSorter`类。
+
+- org.objectweb.asm.MethodVisitor
+  - org.objectweb.asm.commons.LocalVariablesSorter
+    - org.objectweb.asm.commons.GeneratorAdapter
+      - org.objectweb.asm.commons.AdviceAdapter
+
+```java
+public class GeneratorAdapter extends LocalVariablesSorter {
+}
+```
+
+#### fields
+
+第二个部分，`GeneratorAdapter`类定义的字段有哪些。
+
+```java
+public class GeneratorAdapter extends LocalVariablesSorter {
+  /** The access flags of the visited method. */
+  private final int access;
+  /** The name of the visited method. */
+  private final String name;
+  /** The return type of the visited method. */
+  private final Type returnType;
+  /** The argument types of the visited method. */
+  private final Type[] argumentTypes;
+}
+```
+
+#### constructors
+
+第三个部分，`GeneratorAdapter`类定义的构造方法有哪些。
+
+```java
+public class GeneratorAdapter extends LocalVariablesSorter {
+  public GeneratorAdapter(final MethodVisitor methodVisitor,
+                          final int access, final String name, final String descriptor) {
+    this(Opcodes.ASM9, methodVisitor, access, name, descriptor);
+  }
+
+  protected GeneratorAdapter(final int api, final MethodVisitor methodVisitor,
+                             final int access, final String name, final String descriptor) {
+    super(api, access, descriptor, methodVisitor);
+    this.access = access;
+    this.name = name;
+    this.returnType = Type.getReturnType(descriptor);
+    this.argumentTypes = Type.getArgumentTypes(descriptor);
+  }
+}
+```
+
+#### methods
+
+第四个部分，`GeneratorAdapter`类定义的方法有哪些。
+
+```java
+public class GeneratorAdapter extends LocalVariablesSorter {
+  public int getAccess() {
+    return access;
+  }
+
+  public String getName() {
+    return name;
+  }
+
+  public Type getReturnType() {
+    return returnType;
+  }
+
+  public Type[] getArgumentTypes() {
+    return argumentTypes.clone();
+  }
+}
+```
+
+### 4.6.2 特殊方法举例
+
+`GeneratorAdapter`类的特点是将一些`visitXxxInsn()`方法封装成一些常用的方法。在这里，我们给大家举几个有代表性的例子，更多的方法可以参考`GeneratorAdapter`类的源码。
+
+#### loadThis
+
+在`GeneratorAdapter`类当中，`loadThis()`方法的本质是`mv.visitVarInsn(Opcodes.ALOAD, 0)`；但是，要注意static方法并不需要`this`变量。
+
+```java
+public class GeneratorAdapter extends LocalVariablesSorter {
+  /** Generates the instruction to load 'this' on the stack. */
+  public void loadThis() {
+    if ((access & Opcodes.ACC_STATIC) != 0) { // 注意，静态方法没有this
+      throw new IllegalStateException("no 'this' pointer within static method");
+    }
+    mv.visitVarInsn(Opcodes.ALOAD, 0);
+  }
+}
+```
+
+#### arg
+
+在`GeneratorAdapter`类当中，定义了一些与方法参数相关的方法。
+
+```java
+public class GeneratorAdapter extends LocalVariablesSorter {
+  private int getArgIndex(final int arg) {
+    int index = (access & Opcodes.ACC_STATIC) == 0 ? 1 : 0;
+    for (int i = 0; i < arg; i++) {
+      index += argumentTypes[i].getSize();
+    }
+    return index;
+  }
+
+  private void loadInsn(final Type type, final int index) {
+    mv.visitVarInsn(type.getOpcode(Opcodes.ILOAD), index);
+  }
+
+  private void storeInsn(final Type type, final int index) {
+    mv.visitVarInsn(type.getOpcode(Opcodes.ISTORE), index);
+  }
+
+  public void loadArg(final int arg) {
+    loadInsn(argumentTypes[arg], getArgIndex(arg));
+  }
+
+  public void loadArgs(final int arg, final int count) {
+    int index = getArgIndex(arg);
+    for (int i = 0; i < count; ++i) {
+      Type argumentType = argumentTypes[arg + i];
+      loadInsn(argumentType, index);
+      index += argumentType.getSize();
+    }
+  }
+
+  public void loadArgs() {
+    loadArgs(0, argumentTypes.length);
+  }
+
+  public void loadArgArray() {
+    push(argumentTypes.length);
+    newArray(OBJECT_TYPE);
+    for (int i = 0; i < argumentTypes.length; i++) {
+      dup();
+      push(i);
+      loadArg(i);
+      box(argumentTypes[i]);
+      arrayStore(OBJECT_TYPE);
+    }
+  }
+
+  public void storeArg(final int arg) {
+    storeInsn(argumentTypes[arg], getArgIndex(arg));
+  }
+}
+```
+
+#### boxing and unboxing
+
+在`GeneratorAdapter`类当中，定义了一些与boxing和unboxing相关的操作。
+
+```java
+public class GeneratorAdapter extends LocalVariablesSorter {
+  public void box(final Type type) {
+    if (type.getSort() == Type.OBJECT || type.getSort() == Type.ARRAY) {
+      return;
+    }
+    if (type == Type.VOID_TYPE) {
+      push((String) null);
+    } else {
+      Type boxedType = getBoxedType(type);
+      newInstance(boxedType);
+      if (type.getSize() == 2) {
+        dupX2();
+        dupX2();
+        pop();
+      } else {
+        dupX1();
+        swap();
+      }
+      invokeConstructor(boxedType, new Method("<init>", Type.VOID_TYPE, new Type[] {type}));
+    }
+  }
+
+  public void unbox(final Type type) {
+    Type boxedType = NUMBER_TYPE;
+    Method unboxMethod;
+    switch (type.getSort()) {
+      case Type.VOID:
+        return;
+      case Type.CHAR:
+        boxedType = CHARACTER_TYPE;
+        unboxMethod = CHAR_VALUE;
+        break;
+      case Type.BOOLEAN:
+        boxedType = BOOLEAN_TYPE;
+        unboxMethod = BOOLEAN_VALUE;
+        break;
+      case Type.DOUBLE:
+        unboxMethod = DOUBLE_VALUE;
+        break;
+      case Type.FLOAT:
+        unboxMethod = FLOAT_VALUE;
+        break;
+      case Type.LONG:
+        unboxMethod = LONG_VALUE;
+        break;
+      case Type.INT:
+      case Type.SHORT:
+      case Type.BYTE:
+        unboxMethod = INT_VALUE;
+        break;
+      default:
+        unboxMethod = null;
+        break;
+    }
+    if (unboxMethod == null) {
+      checkCast(type);
+    } else {
+      checkCast(boxedType);
+      invokeVirtual(boxedType, unboxMethod);
+    }
+  }
+
+  public void valueOf(final Type type) {
+    if (type.getSort() == Type.OBJECT || type.getSort() == Type.ARRAY) {
+      return;
+    }
+    if (type == Type.VOID_TYPE) {
+      push((String) null);
+    } else {
+      Type boxedType = getBoxedType(type);
+      invokeStatic(boxedType, new Method("valueOf", boxedType, new Type[] {type}));
+    }
+  }
+
+  private static Type getBoxedType(final Type type) {
+    switch (type.getSort()) {
+      case Type.BYTE:
+        return BYTE_TYPE;
+      case Type.BOOLEAN:
+        return BOOLEAN_TYPE;
+      case Type.SHORT:
+        return SHORT_TYPE;
+      case Type.CHAR:
+        return CHARACTER_TYPE;
+      case Type.INT:
+        return INTEGER_TYPE;
+      case Type.FLOAT:
+        return FLOAT_TYPE;
+      case Type.LONG:
+        return LONG_TYPE;
+      case Type.DOUBLE:
+        return DOUBLE_TYPE;
+      default:
+        return type;
+    }
+  }
+}
+```
+
+### 4.6.3 示例：生成类
+
+#### 预期目标
+
+我们想实现的预期目标：生成一个`HelloWorld`类，代码如下所示。
+
+```java
+public class HelloWorld {
+  public static void main(String[] args) {
+    System.out.println("Hello World!");
+  }
+}
+```
+
+#### 编码实现
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Type;
+import org.objectweb.asm.commons.GeneratorAdapter;
+import org.objectweb.asm.commons.Method;
+import org.objectweb.asm.util.TraceClassVisitor;
+
+import java.io.PrintStream;
+import java.io.PrintWriter;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class GeneratorAdapterExample01 {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+
+    // (1) 生成byte[]内容
+    byte[] bytes = dump();
+
+    // (2) 保存byte[]到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() throws Exception {
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+    PrintWriter printWriter = new PrintWriter(System.out);
+    TraceClassVisitor cv = new TraceClassVisitor(cw, printWriter);
+
+    cv.visit(V1_8, ACC_PUBLIC + ACC_SUPER, "sample/HelloWorld", null, "java/lang/Object", null);
+
+    {
+      Method m1 = Method.getMethod("void <init> ()");
+      GeneratorAdapter mg = new GeneratorAdapter(ACC_PUBLIC, m1, null, null, cv);
+      mg.loadThis();
+      mg.invokeConstructor(Type.getType(Object.class), m1);
+      mg.returnValue();
+      mg.endMethod();
+    }
+
+    {
+      Method m2 = Method.getMethod("void main (String[])");
+      GeneratorAdapter mg = new GeneratorAdapter(ACC_PUBLIC + ACC_STATIC, m2, null, null, cv);
+      mg.getStatic(Type.getType(System.class), "out", Type.getType(PrintStream.class));
+      mg.push("Hello World!");
+      mg.invokeVirtual(Type.getType(PrintStream.class), Method.getMethod("void println (String)"));
+      mg.returnValue();
+      mg.endMethod();
+    }
+
+    cv.visitEnd();
+
+    return cw.toByteArray();
+  }
+}
+```
+
+### 4.6.4 总结
+
+本文对`GeneratorAdapter`类进行介绍，内容总结如下：
+
+- **第一点，`GeneratorAdapter`类的特点是将一些`visitXxxInsn()`方法封装成一些常用的方法**。
+- <u>第二点，`GeneratorAdapter`类定义的新方法，并不是十分必要的；如果熟悉`MethodVisitor.visitXxxInsn()`方法，可以完全不考虑使用`GeneratorAdapter`类。</u>
+
+## 4.7 LocalVariablesSorter介绍
+
+对于`LocalVariablesSorter`类来说，它的特点是“可以引入新的局部变量，并且能够对局部变量重新排序”。
+
+### 4.7.1 LocalVariablesSorter类
+
+#### class info
+
+第一个部分，`LocalVariablesSorter`类继承自`MethodVisitor`类。
+
+- org.objectweb.asm.MethodVisitor
+  - org.objectweb.asm.commons.LocalVariablesSorter
+    - org.objectweb.asm.commons.GeneratorAdapter
+      - org.objectweb.asm.commons.AdviceAdapter
+
+```java
+/**
+ * A {@link MethodVisitor} that renumbers local variables in their order of appearance. This adapter
+ * allows one to easily add new local variables to a method. It may be used by inheriting from this
+ * class, but the preferred way of using it is via delegation: the next visitor in the chain can
+ * indeed add new locals when needed by calling {@link #newLocal} on this adapter (this requires a
+ * reference back to this {@link LocalVariablesSorter}).
+ *
+ * @author Chris Nokleberg
+ * @author Eugene Kuleshov
+ * @author Eric Bruneton
+ */
+public class LocalVariablesSorter extends MethodVisitor {
+}
+```
+
+#### fields
+
+第二个部分，`LocalVariablesSorter`类定义的字段有哪些。在理解`LocalVariablesSorter`类时，一个要记住的核心点：**处理好”新变量“与”旧变量“的位置关系**。换句话说，要给”新变量“在local variables当中找一个位置存储，”旧变量“也要在local variables当中找一个位置存储，它们的位置不能发生冲突。对于local variables当中某一个具体的位置，要么存储的是”新变量“，要么存储的是”旧变量“，不可能在同一个位置既存储”新变量“，又存储”旧变量“。
+
+- `remappedVariableIndices`字段，是一个`int[]`数组，其中所有元素的初始值为0。
+  - `remappedVariableIndices`字段的作用：**只关心“旧变量”，它记录“旧变量”的新位置**。
+  - `remappedVariableIndices`字段使用的算法，有点奇怪和特别。
+- `remappedLocalTypes`字段，将“旧变量”和“新变量”整合到一起之后，记录它们的类型信息。
+- `firstLocal`字段，记录“方法体”中“第一个变量”在local variables当中的索引值，由于带有`final`标识，所以赋值之后，就不再发生变化了。(即记录除了non-static方法才有的this指针，方法的入参外，方法体中出现的需要存在local variables的变量)
+- `nextLocal`字段，记录local variables中可以未分配变量的位置，无论是“新变量”，还是“旧变量”，它们都是由`nextLocal`字段来分配位置；分配变量之后，`nextLocal`字段值会发生变化，重新指向local variables中未分配变量的位置。
+
+```java
+public class LocalVariablesSorter extends MethodVisitor {
+  // The mapping from old to new local variable indices.
+  // A local variable at index i of size 1 is remapped to 'mapping[2*i]',
+  // while a local variable at index i of size 2 is remapped to 'mapping[2*i+1]'.
+  private int[] remappedVariableIndices = new int[40];
+
+  // The local variable types after remapping.
+  private Object[] remappedLocalTypes = new Object[20];
+	/** The index of the first local variable, after formal parameters. */
+  protected final int firstLocal;
+  /** The index of the next local variable to be created by {@link #newLocal}. */
+  protected int nextLocal;
+}
+```
+
+#### constructors
+
+第三个部分，`LocalVariablesSorter`类定义的构造方法有哪些。
+
+```java
+public class LocalVariablesSorter extends MethodVisitor {
+  public LocalVariablesSorter(final int access, final String descriptor, final MethodVisitor methodVisitor) {
+    this(Opcodes.ASM9, access, descriptor, methodVisitor);
+  }
+
+  protected LocalVariablesSorter(final int api, final int access, final String descriptor,
+                                 final MethodVisitor methodVisitor) {
+    super(api, methodVisitor);
+    nextLocal = (Opcodes.ACC_STATIC & access) == 0 ? 1 : 0;
+    for (Type argumentType : Type.getArgumentTypes(descriptor)) {
+      nextLocal += argumentType.getSize();
+    }
+    firstLocal = nextLocal;
+  }
+}
+```
+
+#### methods
+
+第四个部分，`LocalVariablesSorter`类定义的方法有哪些。`LocalVariablesSorter`类要处理好“新变量”与“旧变量”之间的关系。
+
+##### newLocal method
+
+`newLocal()`方法就是为“新变量”来分配位置。
+
+```java
+/**
+   * Constructs a new local variable of the given type.
+   *
+   * @param type the type of the local variable to be created.
+   * @return the identifier of the newly created local variable.
+   */
+public class LocalVariablesSorter extends MethodVisitor {
+  public int newLocal(final Type type) {
+    Object localType;
+    switch (type.getSort()) {
+      case Type.BOOLEAN:
+      case Type.CHAR:
+      case Type.BYTE:
+      case Type.SHORT:
+      case Type.INT:
+        localType = Opcodes.INTEGER;
+        break;
+      case Type.FLOAT:
+        localType = Opcodes.FLOAT;
+        break;
+      case Type.LONG:
+        localType = Opcodes.LONG;
+        break;
+      case Type.DOUBLE:
+        localType = Opcodes.DOUBLE;
+        break;
+      case Type.ARRAY:
+        localType = type.getDescriptor();
+        break;
+      case Type.OBJECT:
+        localType = type.getInternalName();
+        break;
+      default:
+        throw new AssertionError();
+    }
+    int local = newLocalMapping(type);
+    setLocalType(local, type);
+    setFrameLocal(local, localType);
+    return local;
+  }
+
+  protected int newLocalMapping(final Type type) {
+    int local = nextLocal;
+    nextLocal += type.getSize();
+    return local;
+  }
+
+  protected void setLocalType(final int local, final Type type) {
+    // The default implementation does nothing.
+  }
+
+  private void setFrameLocal(final int local, final Object type) {
+    int numLocals = remappedLocalTypes.length;
+    if (local >= numLocals) { // 这里是处理分配空间不足的情况
+      Object[] newRemappedLocalTypes = new Object[Math.max(2 * numLocals, local + 1)];
+      System.arraycopy(remappedLocalTypes, 0, newRemappedLocalTypes, 0, numLocals);
+      remappedLocalTypes = newRemappedLocalTypes;
+    }
+    remappedLocalTypes[local] = type; // 真正的处理逻辑只有这一句代码
+  }
+}
+```
+
+##### local variables method
+
+`visitVarInsn()`和`visitIincInsn()`方法就是为“旧变量”来重新分配位置，这两个方法都会去调用`remap(var, type)`方法。
+
+> 这里只涉及两个方法，因为对于local variables的操作可以归类3种：
+>
+> 1. 将变量从operand stack存到local variables
+> 2. 将变量从local variables加载到operand stack
+> 3. local variables的某个索引位置的变量自增某个值
+
+```java
+public class LocalVariablesSorter extends MethodVisitor {
+  @Override
+  public void visitVarInsn(final int opcode, final int var) {
+    Type varType;
+    switch (opcode) {
+      case Opcodes.LLOAD:
+      case Opcodes.LSTORE:
+        varType = Type.LONG_TYPE;
+        break;
+      case Opcodes.DLOAD:
+      case Opcodes.DSTORE:
+        varType = Type.DOUBLE_TYPE;
+        break;
+      case Opcodes.FLOAD:
+      case Opcodes.FSTORE:
+        varType = Type.FLOAT_TYPE;
+        break;
+      case Opcodes.ILOAD:
+      case Opcodes.ISTORE:
+        varType = Type.INT_TYPE;
+        break;
+      case Opcodes.ALOAD:
+      case Opcodes.ASTORE:
+      case Opcodes.RET:
+        varType = OBJECT_TYPE;
+        break;
+      default:
+        throw new IllegalArgumentException("Invalid opcode " + opcode);
+    }
+    super.visitVarInsn(opcode, remap(var, varType));
+  }
+
+  @Override
+  public void visitIincInsn(final int var, final int increment) {
+    super.visitIincInsn(remap(var, Type.INT_TYPE), increment);
+  }
+
+  private int remap(final int var, final Type type) {
+    // 第一部分，处理方法的输入参数
+    if (var + type.getSize() <= firstLocal) {
+      return var;
+    }
+
+    // 第二部分，处理方法体内定义的局部变量
+    int key = 2 * var + type.getSize() - 1;
+    int size = remappedVariableIndices.length;
+    if (key >= size) { // 这段代码，主要是处理分配空间不足的情况。我们可以假设分配的空间一直是足够的，那么可以忽略此段代码
+      int[] newRemappedVariableIndices = new int[Math.max(2 * size, key + 1)];
+      System.arraycopy(remappedVariableIndices, 0, newRemappedVariableIndices, 0, size);
+      remappedVariableIndices = newRemappedVariableIndices;
+    }
+    int value = remappedVariableIndices[key];
+    if (value == 0) { // 如果是0，则表示还没有记录下来
+      value = newLocalMapping(type);
+      setLocalType(value, type);
+      remappedVariableIndices[key] = value + 1;
+    } else { // 如果不是0，则表示有具体的值
+      value--;
+    }
+    return value;
+  }
+
+  protected int newLocalMapping(final Type type) {
+    int local = nextLocal;
+    nextLocal += type.getSize();
+    return local;
+  }
+}
+```
+
+### 4.7.2 工作原理
+
+对于`LocalVariablesSorter`类的工作原理，主要依赖于三个字段：`firstLocal`、`nextLocal`和`remappedVariableIndices`字段。
+
+```java
+public class LocalVariablesSorter extends MethodVisitor {
+  // The mapping from old to new local variable indices.
+  // A local variable at index i of size 1 is remapped to 'mapping[2*i]',
+  // while a local variable at index i of size 2 is remapped to 'mapping[2*i+1]'.
+  private int[] remappedVariableIndices = new int[40];
+
+  protected final int firstLocal;
+  protected int nextLocal;
+}
+```
+
+首先，我们来看一下`firstLocal`和`nextLocal`初始化，它发生在`LocalVariablesSorter`类的构造方法中。其中，`firstLocal`是一个`final`类型的字段，一次赋值之后就不能变化了；而`nextLocal`字段的取值可以继续变化。
+
+```java
+public class LocalVariablesSorter extends MethodVisitor {
+  protected LocalVariablesSorter(final int api, final int access, final String descriptor,
+                                 final MethodVisitor methodVisitor) {
+    super(api, methodVisitor);
+    nextLocal = (Opcodes.ACC_STATIC & access) == 0 ? 1 : 0; // 首先，判断是不是静态方法
+    for (Type argumentType : Type.getArgumentTypes(descriptor)) { // 接着，循环方法接收的参数
+      nextLocal += argumentType.getSize();
+    }
+    firstLocal = nextLocal; // 最后，为firstLocal字段赋值。
+  }
+}
+```
+
+对于上面的代码，主要是对两方面内容进行判断：
+
+- 第一方面，是否需要处理`this`变量。
+- 第二方面，对方法接收的参数进行处理。
+
+在执行完`LocalVariablesSorter`类的构造方法后，`firstLocal`和`nextLocal`的值是一样的，其值表示下一个方法体中的变量在local variables当中的位置。接下来，就是该考虑第三方面的事情了：
+
+- 第三方面，方法体内定义的变量。对于这些变量，又分成两种情况：
+  - 第一种情况，程序代码中原来定义的变量。
+  - 第二种情况，程序代码中新定义的变量。
+
+**对于`LocalVariablesSorter`类来说，它要处理的一个关键性的工作，就是处理好“旧变量”和“新变量”之间的关系**。其实，不管是“新变量”，还是“旧变量”，它都是通过`newLocalMapping(type)`方法来找到自己的位置。**`newLocalMapping(type)`方法的逻辑就是“先到先得”**。有一个形象的例子，可以帮助我们理解`newLocalMapping(type)`方法的作用。高考之后，过一段时间，大学就会开学，新生就会来报到；不管新学生来自于什么地方，第一个来到学校的学生就分配`001`的编号，第二个来到学校的学生就分配`002`的编号，依此类推。
+
+我们先来说明第二种情况，也就是在程序代码中添加新的变量。
+
+#### 添加新变量
+
+如果要添加新的变量，那么需要调用`newLocal(type)`方法。
+
+- 在`newLocal(type)`方法中，它会进一步调用`newLocalMapping(type)`方法；
+- 在`newLocalMapping(type)`方法中，首先会记录`nextLocal`的值到`local`局部变量中，接着会更新`nextLocal`的值（即加上`type.getSize()`的值），最后返回`local`的值。那么，`local`的值就是新变量在local variables当中存储的位置。
+
+```java
+public class LocalVariablesSorter extends MethodVisitor {
+  public int newLocal(final Type type) {
+    int local = newLocalMapping(type);
+    return local;
+  }
+
+  protected int newLocalMapping(final Type type) {
+    int local = nextLocal;
+    nextLocal += type.getSize();
+    return local;
+  }
+}
+```
+
+#### 处理旧变量
+
+如果要处理“旧变量”，那么需要调用`visitVarInsn(opcode, var)`或`visitIincInsn(var, increment)`方法。在这两个方法中，会进一步调用`remap(var, type)`方法。其中，`remap(var, type)`方法的主要作用，就是实现“旧变量”的原位置向新位置的映射。
+
+```java
+public class LocalVariablesSorter extends MethodVisitor {
+  @Override
+  public void visitVarInsn(final int opcode, final int var) {
+    Type varType;
+    switch (opcode) {
+      case Opcodes.LLOAD:
+      case Opcodes.LSTORE:
+        varType = Type.LONG_TYPE;
+        break;
+      case Opcodes.DLOAD:
+      case Opcodes.DSTORE:
+        varType = Type.DOUBLE_TYPE;
+        break;
+      case Opcodes.FLOAD:
+      case Opcodes.FSTORE:
+        varType = Type.FLOAT_TYPE;
+        break;
+      case Opcodes.ILOAD:
+      case Opcodes.ISTORE:
+        varType = Type.INT_TYPE;
+        break;
+      case Opcodes.ALOAD:
+      case Opcodes.ASTORE:
+      case Opcodes.RET:
+        varType = OBJECT_TYPE;
+        break;
+      default:
+        throw new IllegalArgumentException("Invalid opcode " + opcode);
+    }
+    super.visitVarInsn(opcode, remap(var, varType));
+  }
+
+  @Override
+  public void visitIincInsn(final int var, final int increment) {
+    super.visitIincInsn(remap(var, Type.INT_TYPE), increment);
+  }
+
+  private int remap(final int var, final Type type) {
+    // 第一部分，处理方法的输入参数
+    if (var + type.getSize() <= firstLocal) {
+      return var;
+    }
+
+    // 第二部分，处理方法体内定义的局部变量
+    int key = 2 * var + type.getSize() - 1;
+    int value = remappedVariableIndices[key];
+    if (value == 0) { // 如果是0，则表示还没有记录下来
+      value = newLocalMapping(type);
+      remappedVariableIndices[key] = value + 1;
+    } else { // 如果不是0，则表示有具体的值
+      value--;
+    }
+    return value;
+  }
+
+  protected int newLocalMapping(final Type type) {
+    int local = nextLocal;
+    nextLocal += type.getSize();
+    return local;
+  }
+}
+```
+
+在`remap(var, type)`方法中，有两部分主要逻辑：
+
+- 第一部分，是处理方法的输入参数。方法接收的参数，它们在local variables当中的索引位置是不会变化的，所以处理起来也比较简单，直接返回`var`的值。
+- 第二部分，是处理方法体内定义的局部变量。在这个部分，就是`remappedVariableIndices`字段发挥作用的地方，也会涉及到`nextLocal`字段。
+
+在`remap(var, type)`方法中，我们重点关注第二部分，代码处理的步骤是：
+
+- 第一步，计算出`remappedVariableIndices`字段的一个索引值`key`，即`int key = 2 * var + type.getSize() - 1`。假设有一个变量的索引是`i`，如果该变量的大小是1，那么它在`remappedVariableIndices`字段中的索引位置是`2*i`；如果该变量（`long`或`double`类型）的大小是2，那么它在`remappedVariableIndices`字段中的索引位置是`2*i+1`。（因为long和double需要占用2个slot，第二个slot用top标记占用）
+- 第二步，根据`key`值，取出`remappedVariableIndices`字段当中的`value`值。大家注意，`int[] remappedVariableIndices = new int[40]`，也就是说，`remappedVariableIndices`字段是一个数组，所有元素的默认值是0。
+  - 如果`value`的值是`0`，说明还没有记录“旧变量”的新位置；那么，就通过`value = newLocalMapping(type)`计算出新的位置，将`value + 1`赋值给`remappedVariableIndices`字段中`key`位置。
+  - 如果`value`的值不是`0`，说明已经记录“旧变量”的新位置；这个时候，要进行`value--`操作。
+- 第三步，返回`value`的值。那么，这个`value`值就是“旧变量”的新位置。
+
+在上面的代码当中，我们可以看到`remap`方法里有`value + 1`和`value--`的代码：
+
+![img](https://lsieun.github.io/assets/images/java/asm/local-variable-sorter-remap-plus-one-minus-one.png)
+
+<u>为什么进行这样的处理呢？我们来思考这样的问题：当创建一个新的`int[]`时，其中的每一个元素的默认值都是`0`；在local variable当中，0是一个有效的索引值； 那么，如果从`int[]`数组当中取出一个元素，它的值是`0`，那它是代表元素的“默认值”，还是local variable当中的一个有效的索引值`0`呢？ 为了进行区分，它加一个`offset`值，而在代码中这个`offset`的值是`1`，我觉得，将`offset`取值成`100`也能得到一个正确的结果</u>。
+
+### 4.7.3 示例
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+import java.util.Random;
+
+public class HelloWorld {
+  public void test(int a, int b) throws Exception {
+    int c = a + b;
+    int d = c * 10;
+    Random rand = new Random();
+    int value = rand.nextInt(d);
+    Thread.sleep(value);
+  }
+}
+```
+
+我们想实现的预期目标：添加一个新的局部变量`t`，然后使用变量`t`计算方法的运行时间。
+
+```java
+import java.util.Random;
+
+public class HelloWorld {
+  public void test(int a, int b) throws Exception {
+    long t = System.currentTimeMillis();
+
+    int c = a + b;
+    int d = c * 10;
+    Random rand = new Random();
+    int value = rand.nextInt(d);
+    Thread.sleep(value);
+
+    t = System.currentTimeMillis() - t;
+    System.out.println("test method execute: " + t);
+  }
+}
+```
+
+#### 编码实现
+
+注意点：
+
++ `slotIndex`用来记录新增的本地变量在local variables中的下标索引值
+
+下面的`MethodTimerAdapter3`类继承自`LocalVariablesSorter`类。
+
+```java
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Type;
+import org.objectweb.asm.commons.LocalVariablesSorter;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class MethodTimerVisitor3 extends ClassVisitor {
+  public MethodTimerVisitor3(int api, ClassVisitor cv) {
+    super(api, cv);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+
+    if (mv != null && !"<init>".equals(name) && !"<clinit>".equals(name)) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodTimerAdapter3(api, access, name, descriptor, mv);
+      }
+    }
+    return mv;
+  }
+
+  private static class MethodTimerAdapter3 extends LocalVariablesSorter {
+    private final String methodName;
+    private final String methodDesc;
+    private int slotIndex;
+
+    public MethodTimerAdapter3(int api, int access, String name, String descriptor, MethodVisitor methodVisitor) {
+      super(api, access, descriptor, methodVisitor);
+      this.methodName = name;
+      this.methodDesc = descriptor;
+    }
+
+    @Override
+    public void visitCode() {
+      // 首先，实现自己的逻辑
+      slotIndex = newLocal(Type.LONG_TYPE);
+      mv.visitMethodInsn(INVOKESTATIC, "java/lang/System", "currentTimeMillis", "()J", false);
+      mv.visitVarInsn(LSTORE, slotIndex);
+
+      // 其次，调用父类的实现
+      super.visitCode();
+    }
+
+    @Override
+    public void visitInsn(int opcode) {
+      // 首先，实现自己的逻辑
+      if ((opcode >= IRETURN && opcode <= RETURN) || opcode == ATHROW) {
+        mv.visitMethodInsn(INVOKESTATIC, "java/lang/System", "currentTimeMillis", "()J", false);
+        mv.visitVarInsn(LLOAD, slotIndex);
+        mv.visitInsn(LSUB);
+        mv.visitVarInsn(LSTORE, slotIndex);
+        mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+        mv.visitTypeInsn(NEW, "java/lang/StringBuilder");
+        mv.visitInsn(DUP);
+        mv.visitMethodInsn(INVOKESPECIAL, "java/lang/StringBuilder", "<init>", "()V", false);
+        mv.visitLdcInsn(methodName + methodDesc + " method execute: ");
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
+        mv.visitVarInsn(LLOAD, slotIndex);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(J)Ljava/lang/StringBuilder;", false);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "toString", "()Ljava/lang/String;", false);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      }
+
+      // 其次，调用父类的实现
+      super.visitInsn(opcode);
+    }
+  }
+}
+```
+
+**需要注意的是，我们使用的是`mv.visitVarInsn(opcode, var)`方法，而不是使用`super.visitVarInsn(opcode, var)`方法。为什么要使用`mv`，而不使用`super`呢？因为使用`super.visitVarInsn(opcode, var)`方法，实质上是调用了`LocalVariablesSorter.visitVarInsn(opcode, var)`，它会进一步调用`remap(var, type)`方法，这就可能导致新添加的变量在local variables中的位置发生“位置偏移”。**
+
+下面的`MethodTimerAdapter4`类继承自`AdviceAdapter`类。
+
+```java
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Type;
+import org.objectweb.asm.commons.AdviceAdapter;
+
+import static org.objectweb.asm.Opcodes.ACC_ABSTRACT;
+import static org.objectweb.asm.Opcodes.ACC_NATIVE;
+
+public class MethodTimerVisitor4 extends ClassVisitor {
+  public MethodTimerVisitor4(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodTimerAdapter4(api, mv, access, name, descriptor);
+      }
+    }
+    return mv;
+  }
+
+  private static class MethodTimerAdapter4 extends AdviceAdapter {
+    private int slotIndex;
+
+    public MethodTimerAdapter4(int api, MethodVisitor mv, int access, String name, String descriptor) {
+      super(api, mv, access, name, descriptor);
+    }
+
+    @Override
+    protected void onMethodEnter() {
+      slotIndex = newLocal(Type.LONG_TYPE);
+      mv.visitMethodInsn(INVOKESTATIC, "java/lang/System", "currentTimeMillis", "()J", false);
+      mv.visitVarInsn(LSTORE, slotIndex);
+    }
+
+    @Override
+    protected void onMethodExit(int opcode) {
+      if ((opcode >= IRETURN && opcode <= RETURN) || opcode == ATHROW) {
+        mv.visitMethodInsn(INVOKESTATIC, "java/lang/System", "currentTimeMillis", "()J", false);
+        mv.visitVarInsn(LLOAD, slotIndex);
+        mv.visitInsn(LSUB);
+        mv.visitVarInsn(LSTORE, slotIndex);
+        mv.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+        mv.visitTypeInsn(NEW, "java/lang/StringBuilder");
+        mv.visitInsn(DUP);
+        mv.visitMethodInsn(INVOKESPECIAL, "java/lang/StringBuilder", "<init>", "()V", false);
+        mv.visitLdcInsn(getName() + methodDesc + " method execute: ");
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
+        mv.visitVarInsn(LLOAD, slotIndex);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(J)Ljava/lang/StringBuilder;", false);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "toString", "()Ljava/lang/String;", false);
+        mv.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      }
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+
+public class HelloWorldTransformCore {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodTimerVisitor4(api, cw);
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+```java
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    HelloWorld instance = new HelloWorld();
+    instance.test(10, 20);
+  }
+}
+```
+
+### 4.7.4 总结
+
+本文对`LocalVariablesSorter`类进行介绍，内容总结如下：
+
+- 第一点，了解`LocalVariablesSorter`类的各个部分，都有哪些信息。
+- 第二点，理解`LocalVariablesSorter`类的工作原理。
+- 第三点，如何使用`LocalVariablesSorter`类添加新的变量。
+
+## 4.8 AnalyzerAdapter介绍
+
+对于`AnalyzerAdapter`类来说，它的特点是“可以模拟frame的变化”，或者说“可以模拟local variables和operand stack的变化”。
+
+The `AnalyzerAdapter` is a `MethodVisitor` that keeps track of stack map frame changes between `visitFrame(int, int, Object[], int, Object[])` calls. **This `AnalyzerAdapter` adapter must be used with the `ClassReader.EXPAND_FRAMES` option**.
+
+This method adapter computes the **stack map frames** before each instruction, based on the frames visited in `visitFrame`. Indeed, `visitFrame` is only called before some specific instructions in a method, in order to save space, and because “the other frames can be easily and quickly inferred from these ones”. This is what this adapter does.
+
+![Java ASM系列：（040）AnalyzerAdapter介绍_ByteCode](https://s2.51cto.com/images/20210623/1624446269398923.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+### 4.8.1 AnalyzerAdapter类
+
+#### class info
+
+第一个部分，`AnalyzerAdapter`类的父类是`MethodVisitor`类。
+
+```java
+public class AnalyzerAdapter extends MethodVisitor {
+}
+```
+
+#### fields
+
+第二个部分，`AnalyzerAdapter`类定义的字段有哪些。
+
+我们将以下列出的字段分成3个组：
+
+- 第1组，包括`locals`、`stack`、`maxLocals`和`maxStack`字段，它们是与local variables和operand stack直接相关的字段。
+- <u>第2组，包括`labels`和`uninitializedTypes`字段，它们记录的是未初始化的对象类型，是属于一些特殊情况</u>。
+- 第3组，是`owner`字段，表示当前类的名字。
+
+```java
+public class AnalyzerAdapter extends MethodVisitor {
+  // 第1组字段：local variables和operand stack
+  public List<Object> locals;
+  public List<Object> stack;
+  private int maxLocals;
+  private int maxStack;
+
+  // 第2组字段：uninitialized类型
+  private List<Label> labels;
+  public Map<Object, Object> uninitializedTypes;
+
+  // 第3组字段：类的名字
+  private String owner;
+}
+```
+
+#### constructors
+
+第三个部分，`AnalyzerAdapter`类定义的构造方法有哪些。
+
+有一个问题：`AnalyzerAdapter`类的构造方法，到底是想实现一个什么样的代码逻辑呢？回答：它想<u>构建方法刚进入时的Frame状态</u>。在方法刚进入时，Frame的初始状态是什么样的呢？其中，operand stack上没有任何元素，而local variables则需要考虑存储`this`和方法的参数信息。在`AnalyzerAdapter`类的构造方法中，主要就是围绕着`locals`字段来展开，它需要将`this`和方法参数添加进入。
+
+```java
+public class AnalyzerAdapter extends MethodVisitor {
+  public AnalyzerAdapter(String owner, int access, String name, String descriptor, MethodVisitor methodVisitor) {
+    this(Opcodes.ASM9, owner, access, name, descriptor, methodVisitor);
+  }
+
+  protected AnalyzerAdapter(int api, String owner, int access, String name, String descriptor, MethodVisitor methodVisitor) {
+    super(api, methodVisitor);
+    this.owner = owner;
+    locals = new ArrayList<>();
+    stack = new ArrayList<>();
+    uninitializedTypes = new HashMap<>();
+
+    // 首先，判断是不是static方法、是不是构造方法，来更新local variables的初始状态
+    if ((access & Opcodes.ACC_STATIC) == 0) {
+      if ("<init>".equals(name)) {
+        locals.add(Opcodes.UNINITIALIZED_THIS);
+      } else {
+        locals.add(owner);
+      }
+    }
+
+    // 其次，根据方法接收的参数，来更新local variables的初始状态
+    for (Type argumentType : Type.getArgumentTypes(descriptor)) {
+      switch (argumentType.getSort()) {
+        case Type.BOOLEAN:
+        case Type.CHAR:
+        case Type.BYTE:
+        case Type.SHORT:
+        case Type.INT:
+          locals.add(Opcodes.INTEGER);
+          break;
+        case Type.FLOAT:
+          locals.add(Opcodes.FLOAT);
+          break;
+        case Type.LONG:
+          locals.add(Opcodes.LONG);
+          locals.add(Opcodes.TOP);
+          break;
+        case Type.DOUBLE:
+          locals.add(Opcodes.DOUBLE);
+          locals.add(Opcodes.TOP);
+          break;
+        case Type.ARRAY:
+          locals.add(argumentType.getDescriptor());
+          break;
+        case Type.OBJECT:
+          locals.add(argumentType.getInternalName());
+          break;
+        default:
+          throw new AssertionError();
+      }
+    }
+    maxLocals = locals.size();
+  }
+}
+```
+
+#### methods
+
+第四个部分，`AnalyzerAdapter`类定义的方法有哪些。
+
+##### execute方法
+
+在`AnalyzerAdapter`类当中，多数的`visitXxxInsn()`方法都会去调用`execute()`方法；而`execute()`方法是模拟每一条instruction对于local variables和operand stack的影响。
+
+```java
+public class AnalyzerAdapter extends MethodVisitor {
+  private void execute(final int opcode, final int intArg, final String stringArg) {
+    // ......
+  }
+}
+```
+
+##### return和throw
+
+当遇到`return`或`throw`时，会将`locals`字段和`stack`字段设置为`null`。如果遇到`return`之后，就代表了“正常结束”，方法的代码执行结束了；如果遇到`throw`之后，就代表了“出现异常”，方法处理不了某种情况而退出。
+
+```java
+public class AnalyzerAdapter extends MethodVisitor {
+  // 这里对应return语句
+  public void visitInsn(final int opcode) {
+    super.visitInsn(opcode);
+    execute(opcode, 0, null);
+    if ((opcode >= Opcodes.IRETURN && opcode <= Opcodes.RETURN) || opcode == Opcodes.ATHROW) {
+      this.locals = null;
+      this.stack = null;
+    }
+  }
+}
+```
+
+##### jump
+
+当遇到`goto`、`switch`（`tableswitch`和`lookupswitch`）时，也会将`locals`字段和`stack`字段设置为`null`。遇到jump相关的指令，意味着代码的逻辑要进行“跳转”，从一个地方跳转到另一个地方执行。
+
+```java
+public class AnalyzerAdapter extends MethodVisitor {
+  // 这里对应goto语句
+  public void visitJumpInsn(final int opcode, final Label label) {
+    super.visitJumpInsn(opcode, label);
+    execute(opcode, 0, null);
+    if (opcode == Opcodes.GOTO) {
+      this.locals = null;
+      this.stack = null;
+    }
+  }
+
+  // 这里对应switch语句
+  public void visitTableSwitchInsn(int min, int max, Label dflt, Label... labels) {
+    super.visitTableSwitchInsn(min, max, dflt, labels);
+    execute(Opcodes.TABLESWITCH, 0, null);
+    this.locals = null;
+    this.stack = null;
+  }
+
+  // 这里对应switch语句
+  public void visitLookupSwitchInsn(Label dflt, int[] keys, Label[] labels) {
+    super.visitLookupSwitchInsn(dflt, keys, labels);
+    execute(Opcodes.LOOKUPSWITCH, 0, null);
+    this.locals = null;
+    this.stack = null;
+  }
+}
+```
+
+##### visitFrame方法
+
+当遇到jump相关的指令后，程序的代码会发生跳转。那么，跳转到新位置之后，就需要给local variables和operand stack重新设置一个新的状态；而`visitFrame()`方法，是将local variables和operand stack设置成某一个状态。跳转之后的代码，就是在这个新状态的基础上发生变化。
+
+```java
+public class AnalyzerAdapter extends MethodVisitor {
+  public void visitFrame(int type, int numLocal, Object[] local, int numStack, Object[] stack) {
+    if (type != Opcodes.F_NEW) { // Uncompressed frame.
+      throw new IllegalArgumentException("AnalyzerAdapter only accepts expanded frames (see ClassReader.EXPAND_FRAMES)");
+    }
+
+    super.visitFrame(type, numLocal, local, numStack, stack);
+
+    // 先清空
+    if (this.locals != null) {
+      this.locals.clear();
+      this.stack.clear();
+    } else {
+      this.locals = new ArrayList<>();
+      this.stack = new ArrayList<>();
+    }
+
+    // 再重新设置
+    visitFrameTypes(numLocal, local, this.locals);
+    visitFrameTypes(numStack, stack, this.stack);
+    maxLocals = Math.max(maxLocals, this.locals.size());
+    maxStack = Math.max(maxStack, this.stack.size());
+  }
+
+  private static void visitFrameTypes(int numTypes, Object[] frameTypes, List<Object> result) {
+    for (int i = 0; i < numTypes; ++i) {
+      Object frameType = frameTypes[i];
+      result.add(frameType);
+      if (frameType == Opcodes.LONG || frameType == Opcodes.DOUBLE) {
+        result.add(Opcodes.TOP);
+      }
+    }
+  }
+}
+```
+
+##### new和invokespecial
+
+在执行程序代码的时候，有些特殊的情况需要处理：
+
+- 当遇到`new`时，会创建`Label`对象来表示“未初始化的对象”，并将label存储到`uninitializedTypes`字段内；
+- 当遇到`invokespecial`时，会把“未初始化的对象”从`uninitializedTypes`字段内取出来，转换成“经过初始化之后的对象”，然后同步到`locals`字段和`stack`字段内。
+
+```java
+public class AnalyzerAdapter extends MethodVisitor {
+  // 对应于new
+  public void visitTypeInsn(final int opcode, final String type) {
+    if (opcode == Opcodes.NEW) {
+      if (labels == null) {
+        Label label = new Label();
+        labels = new ArrayList<>(3);
+        labels.add(label);
+        if (mv != null) {
+          mv.visitLabel(label);
+        }
+      }
+      for (Label label : labels) {
+        uninitializedTypes.put(label, type);
+      }
+    }
+    super.visitTypeInsn(opcode, type);
+    execute(opcode, 0, type);
+  }
+
+  // 对应于invokespecial
+  public void visitMethodInsn(int opcodeAndSource, String owner, String name, String descriptor, boolean isInterface) {
+    super.visitMethodInsn(opcodeAndSource, owner, name, descriptor, isInterface);
+    int opcode = opcodeAndSource & ~Opcodes.SOURCE_MASK;
+
+    if (this.locals == null) {
+      labels = null;
+      return;
+    }
+    pop(descriptor);
+    if (opcode != Opcodes.INVOKESTATIC) {
+      Object value = pop();
+      if (opcode == Opcodes.INVOKESPECIAL && name.equals("<init>")) {
+        Object initializedValue;
+        if (value == Opcodes.UNINITIALIZED_THIS) {
+          initializedValue = this.owner;
+        } else {
+          initializedValue = uninitializedTypes.get(value);
+        }
+        for (int i = 0; i < locals.size(); ++i) {
+          if (locals.get(i) == value) {
+            locals.set(i, initializedValue);
+          }
+        }
+        for (int i = 0; i < stack.size(); ++i) {
+          if (stack.get(i) == value) {
+            stack.set(i, initializedValue);
+          }
+        }
+      }
+    }
+    pushDescriptor(descriptor);
+    labels = null;
+  }
+}
+```
+
+### 4.8.2 工作原理
+
+在上面的内容，我们分别介绍了`AnalyzerAdapter`类的各个部分的信息，那么在这里，我们的目标是按照一个抽象的逻辑顺序来将各个部分组织到一起。那么，这个抽象的逻辑是什么呢？就是local variables和operand stack的状态变化，从初始状态，到中间状态，再到结束状态。
+
+一个类能够为外界提供什么样的“信息”，只要看它的`public`成员就可以了。如果我们仔细观察一下`AnalyzerAdapter`类，就会发现：除了从`MethodVisitor`类继承的`visitXxxInsn()`方法，`AnalyzerAdapter`类自己只定义了三个`public`类型的字段，即`locals`、`stack`和`uninitializedTypes`。如果我们想了解和使用`AnalyzerAdapter`类，只要把握住这三个字段就可以了。
+
+`AnalyzerAdapter`类的主要作用就是记录stack map frame的变化情况；在frame当中，有两个重要的结构，即local variables和operand stack。结合刚才的三个字段，其中`locals`和`stack`分别表示local variables和operand stack；而`uninitializedTypes`则是记录一种特殊的状态，这个状态就是“对象已经通过new创建了，但是还没有调用它的构造方法”，这个状态只是一个“临时”的状态，等后续调用它的构造方法之后，它就是一个真正意义上的对象了。举一个例子，一个人拿到了大学录取通知书，可以笼统的叫作”大学生“，但是还不是真正意义上的”大学生“，是一种”临时“的过渡状态，等到去大学报到之后，才成为真正意义上的大学生。
+
+```java
+public class AnalyzerAdapter extends MethodVisitor {
+    // 第1组字段：local variables和operand stack
+    public List<Object> locals;
+    public List<Object> stack;
+
+    // 第2组字段：uninitialized类型
+    private List<Label> labels;
+    public Map<Object, Object> uninitializedTypes;
+}
+```
+
+我们在研究local variables和operand stack的变化时，遵循下面的思路就可以了：
+
+- 首先，初始状态。也就是说，最开始的时候，local variables和operand stack是如何布局的。
+- 其次，中间状态。local variables和operand stack会随着Instruction的执行而发生变化。按照Instruction执行的顺序，我们这里又分成两种情况：
+  - 第一种情况，Instruction按照顺序一条一条的向下执行。在这第一种情况里，还有一种特殊情况，就是new对象时，出现的特殊状态下的对象，也就是“已经分配内存空间，但还没有调用构造方法的对象”。
+  - 第二种情况，遇到jump相关的Instruction，程序代码逻辑要发生跳转。
+- 最后，结束状态。方法退出，可以是正常退出（return），也可以异常退出（throw）。
+
+这三种状态，可以与“生命体”作一个类比。在这个世界上，大多数的生命体，都会经历出生、成长、衰老和死亡的变化。
+
+------
+
+**在Java语言当中，流程控制语句有三种，分别是顺序（sequential structure）、选择（selective structure）和循环（cycle structure）。但是，如果进入到ByteCode层面或Instruction层面，那么选择（selective structure）和循环（cycle structure）本质上是一样的，都是跳转（Jump）**。
+
+#### 初始状态
+
+首先，就是local variables和operand stack的初始状态，它是通过`AnalyzerAdapter`类的构造方法来为`locals`和`stack`字段赋值。
+
+```java
+public class AnalyzerAdapter extends MethodVisitor {
+  protected AnalyzerAdapter(int api, String owner, int access, String name, String descriptor, MethodVisitor methodVisitor) {
+    super(api, methodVisitor);
+    this.owner = owner;
+    locals = new ArrayList<>();
+    stack = new ArrayList<>();
+    uninitializedTypes = new HashMap<>();
+
+    // 首先，判断是不是static方法、是不是构造方法，来更新local variables的初始状态
+    if ((access & Opcodes.ACC_STATIC) == 0) {
+      if ("<init>".equals(name)) {
+        locals.add(Opcodes.UNINITIALIZED_THIS);
+      } else {
+        locals.add(owner);
+      }
+    }
+
+    // 其次，根据方法接收的参数，来更新local variables的初始状态
+    for (Type argumentType : Type.getArgumentTypes(descriptor)) {
+      switch (argumentType.getSort()) {
+        case Type.BOOLEAN:
+        case Type.CHAR:
+        case Type.BYTE:
+        case Type.SHORT:
+        case Type.INT:
+          locals.add(Opcodes.INTEGER);
+          break;
+        case Type.FLOAT:
+          locals.add(Opcodes.FLOAT);
+          break;
+        case Type.LONG:
+          locals.add(Opcodes.LONG);
+          locals.add(Opcodes.TOP);
+          break;
+        case Type.DOUBLE:
+          locals.add(Opcodes.DOUBLE);
+          locals.add(Opcodes.TOP);
+          break;
+        case Type.ARRAY:
+          locals.add(argumentType.getDescriptor());
+          break;
+        case Type.OBJECT:
+          locals.add(argumentType.getInternalName());
+          break;
+        default:
+          throw new AssertionError();
+      }
+    }
+    maxLocals = locals.size();
+  }
+}
+```
+
+在上面的构造方法中，operand stack的初始状态是空的；而local variables的初始状态需要考虑两方面的内容：
+
+- 第一方面，当前方法是不是static方法、当前方法是不是`<init>()`方法。
+- 第二方面，方法接收的参数。
+
+#### 中间状态
+
+##### 顺序执行
+
+接着，就是instruction的执行会使得local variables和operand stack状态发生变化。在这个过程中，`visitXxxInsn()`方法大多是通过调用`execute(opcode, intArg, stringArg)`方法来完成。
+
+```java
+public class AnalyzerAdapter extends MethodVisitor {
+  private void execute(final int opcode, final int intArg, final String stringArg) {
+    // ......
+  }
+}
+```
+
+##### 发生跳转
+
+当遇到jump相关的指令时，程序代码会从一个地方跳转到另一个地方。
+
+**当程序跳转完成之后，需要通过`visitFrame()`方法为`locals`和`stack`字段赋一个新的初始值**。再往下执行，可能就进入到“顺序执行”的过程了。
+
+##### 特殊情况：new对象
+
+对于“未初始化的对象类型”，我们来举个例子，比如说`new String()`会创建一个`String`类型的对象，但是对应到ByteCode层面是3条instruction：
+
+```shell
+NEW java/lang/String
+DUP
+INVOKESPECIAL java/lang/String.<init> ()V
+```
+
+- 第1条instruction，是`NEW java/lang/String`，会为即将创建的对象分配内存空间，确切的说是在堆（heap）上分配内存空间，同时将一个`reference`放到operand stack上，这个`reference`就指向这块内存空间。由于这块内存空间还没有进行初始化，所以这个`reference`对应的内容并不能确切的叫作“对象”，只能叫作“未初始化的对象”，也就是“uninitialized object”。
+- 第2条instruction，是`DUP`，会将operand stack上的原有的`reference`复制一份，这时候operand stack上就有两个`reference`，这两个`reference`都指向那块未初始化的内存空间，这两个`reference`的内容都对应于同一个“uninitialized object”。
+- 第3条instruction，是`INVOKESPECIAL java/lang/String.<init> ()V`，会将那块内存空间进行初始化，同时会“消耗”掉operand stack最上面的`reference`，那么就只剩下一个`reference`了。由于那块内存空间进行了初始化操作，那么剩下的`reference`对应的内容就是一个“经过初始化的对象”，就是一个平常所说的“对象”了。
+
+#### 结束状态
+
+**从JVM内存空间的角度来说，每一个方法都有对应的frame内存空间：当方法开始的时候，就会创建相应的frame内存空间；当方法结束的时候，就会清空相应的frame内存空间。换句话说，当方法结束的时候，frame内存空间的local variables和operand stack也就被清空了。所以，从JVM内存空间的角度来说，结束状态，就是local variables和operand stack所占用的内存空间都“消失了”。**
+
+从Java代码的角度来说，方法的退出，就对应于`visitInsn(opcode)`方法中`return`和`throw`的情况。
+
+对于local variables和operand stack的结束状态，它又重要，又不重要：
+
+- 它不重要，是因为它的内存空间被回收了或“消失了”，不需要我们花费太多的时间去思考它，这是从“自身所包含内容的多与少”的角度来考虑。
+- 它重要，是因为它在“初始状态－中间状态－结束状态”这个环节当中是必不可少的一部分，这是从“整体性”的角度上来考虑。
+
+### 4.8.3 示例：打印方法的Frame
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+import java.util.Random;
+
+public class HelloWorld {
+  public HelloWorld() {
+    super();
+  }
+
+  public boolean getFlag() {
+    Random rand = new Random();
+    return rand.nextBoolean();
+  }
+
+  public void test(boolean flag) {
+    if (flag) {
+      System.out.println("value is true");
+    }
+    else {
+      System.out.println("value is false");
+    }
+  }
+
+  public static void main(String[] args) {
+    HelloWorld instance = new HelloWorld();
+    boolean flag = instance.getFlag();
+    instance.test(flag);
+  }
+}
+```
+
+我们想实现的预期目标：打印出`HelloWorld`类当中各个方法的frame变化情况。
+
+#### 编码实现
+
+```java
+import org.objectweb.asm.*;
+import org.objectweb.asm.commons.AnalyzerAdapter;
+
+import java.util.Arrays;
+import java.util.List;
+
+public class MethodStackMapFrameVisitor extends ClassVisitor {
+  private String owner;
+
+  public MethodStackMapFrameVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    super.visit(version, access, name, signature, superName, interfaces);
+    this.owner = name;
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    return new MethodStackMapFrameAdapter(api, owner, access, name, descriptor, mv);
+  }
+
+  private static class MethodStackMapFrameAdapter extends AnalyzerAdapter {
+    private final String methodName;
+    private final String methodDesc;
+
+    public MethodStackMapFrameAdapter(int api, String owner, int access, String name, String descriptor, MethodVisitor methodVisitor) {
+      super(api, owner, access, name, descriptor, methodVisitor);
+      this.methodName = name;
+      this.methodDesc = descriptor;
+    }
+
+    @Override
+    public void visitCode() {
+      super.visitCode();
+      System.out.println();
+      System.out.println(methodName + methodDesc);
+      printStackMapFrame();
+    }
+
+    @Override
+    public void visitInsn(int opcode) {
+      super.visitInsn(opcode);
+      printStackMapFrame();
+    }
+
+    @Override
+    public void visitIntInsn(int opcode, int operand) {
+      super.visitIntInsn(opcode, operand);
+      printStackMapFrame();
+    }
+
+    @Override
+    public void visitVarInsn(int opcode, int var) {
+      super.visitVarInsn(opcode, var);
+      printStackMapFrame();
+    }
+
+    @Override
+    public void visitTypeInsn(int opcode, String type) {
+      super.visitTypeInsn(opcode, type);
+      printStackMapFrame();
+    }
+
+    @Override
+    public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
+      super.visitFieldInsn(opcode, owner, name, descriptor);
+      printStackMapFrame();
+    }
+
+    @Override
+    public void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
+      super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
+      printStackMapFrame();
+    }
+
+    @Override
+    public void visitInvokeDynamicInsn(String name, String descriptor, Handle bootstrapMethodHandle, Object... bootstrapMethodArguments) {
+      super.visitInvokeDynamicInsn(name, descriptor, bootstrapMethodHandle, bootstrapMethodArguments);
+      printStackMapFrame();
+    }
+
+    @Override
+    public void visitJumpInsn(int opcode, Label label) {
+      super.visitJumpInsn(opcode, label);
+      printStackMapFrame();
+    }
+
+    @Override
+    public void visitLdcInsn(Object value) {
+      super.visitLdcInsn(value);
+      printStackMapFrame();
+    }
+
+    @Override
+    public void visitIincInsn(int var, int increment) {
+      super.visitIincInsn(var, increment);
+      printStackMapFrame();
+    }
+
+    @Override
+    public void visitTableSwitchInsn(int min, int max, Label dflt, Label... labels) {
+      super.visitTableSwitchInsn(min, max, dflt, labels);
+      printStackMapFrame();
+    }
+
+    @Override
+    public void visitLookupSwitchInsn(Label dflt, int[] keys, Label[] labels) {
+      super.visitLookupSwitchInsn(dflt, keys, labels);
+      printStackMapFrame();
+    }
+
+    @Override
+    public void visitMultiANewArrayInsn(String descriptor, int numDimensions) {
+      super.visitMultiANewArrayInsn(descriptor, numDimensions);
+      printStackMapFrame();
+    }
+
+    @Override
+    public void visitTryCatchBlock(Label start, Label end, Label handler, String type) {
+      super.visitTryCatchBlock(start, end, handler, type);
+      printStackMapFrame();
+    }
+
+    private void printStackMapFrame() {
+      String locals_str = locals == null ? "[]" : list2Str(locals);
+      String stack_str = stack == null ? "[]" : list2Str(stack);
+      String line = String.format("%s %s", locals_str, stack_str);
+      System.out.println(line);
+    }
+
+    private String list2Str(List<Object> list) {
+      if (list == null || list.size() == 0) return "[]";
+      int size = list.size();
+      String[] array = new String[size];
+      for (int i = 0; i < size; i++) {
+        Object item = list.get(i);
+        array[i] = item2Str(item);
+      }
+      return Arrays.toString(array);
+    }
+
+    private String item2Str(Object obj) {
+      if (obj == Opcodes.TOP) {
+        return "top";
+      }
+      else if (obj == Opcodes.INTEGER) {
+        return "int";
+      }
+      else if (obj == Opcodes.FLOAT) {
+        return "float";
+      }
+      else if (obj == Opcodes.DOUBLE) {
+        return "double";
+      }
+      else if (obj == Opcodes.LONG) {
+        return "long";
+      }
+      else if (obj == Opcodes.NULL) {
+        return "null";
+      }
+      else if (obj == Opcodes.UNINITIALIZED_THIS) {
+        return "uninitialized_this";
+      }
+      else if (obj instanceof Label) {
+        Object value = uninitializedTypes.get(obj);
+        if (value == null) {
+          return obj.toString();
+        }
+        else {
+          return "uninitialized_" + value;
+        }
+      }
+      else {
+        return obj.toString();
+      }
+    }
+  }
+}
+```
+
+#### 验证结果
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+
+public class HelloWorldFrameCore {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodStackMapFrameVisitor(api, cw);
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.EXPAND_FRAMES; // 注意，这里使用了EXPAND_FRAMES
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+### 4.8.4 总结
+
+本文对`AnalyzerAdapter`类进行介绍，内容总结如下：
+
+- 第一点，了解`AnalyzerAdapter`类的各个不同部分。
+- 第二点，理解`AnalyzerAdapter`类的代码原理，它是围绕着local variables和operand stack如何变化来展开的。
+- 第三点，需要注意的一点是，在使用`AnalyzerAdapter`类时，要记得用`ClassReader.EXPAND_FRAMES`选项。
+
+`AnalyzerAdapter`类，更多的是具有“学习特性”，而不是“实用特性”。所谓的“学习特性”，具体来说，就是`AnalyzerAdapter`类让我们能够去学习local variables和operand stack随着instruction的向下执行而发生变化。所谓的“实用特性”，就是像`AdviceAdapter`类那样，它有明确的使用场景，能够在“方法进入”的时候和“方法退出”的时候来添加一些代码逻辑。
+
+## 4.9 InstructionAdapter介绍
+
+对于`InstructionAdapter`类来说，它的特点是“添加了许多与opcode同名的方法”，更接近“原汁原味”的JVM Instruction Set。
+
+### 4.9.1 为什么有InstructionAdapter类
+
+`InstructionAdapter`类继承自`MethodVisitor`类，它提供了更详细的API用于generate和transform。
+
+在JVM Specification中，一共定义了200多个opcode，在ASM的`MethodVisitor`类当中定义了15个`visitXxxInsn()`方法。这说明一个问题，也就是在`MethodVisitor`类的每个`visitXxxInsn()`方法都会对应JVM Specification当中多个opcode。
+
+那么，`InstructionAdapter`类起到一个什么样的作用呢？`InstructionAdapter`类继承了`MethodVisitor`类，也就继承了那些`visitXxxInsn()`方法，同时它也添加了80多个新的方法，这些新的方法与opcode更加接近。
+
+从功能上来说，`InstructionAdapter`类和`MethodVisitor`类是一样的，两者没有差异。对于`InstructionAdapter`类来说，它可能更适合于熟悉opcode的人来使用。但是，如果我们已经熟悉`MethodVisitor`类里的`visitXxxInsn()`方法，那就完全可以不去使用`InstructionAdapter`类。
+
+### 4.9.2 InstructionAdapter类
+
+#### class info
+
+第一个部分，`InstructionAdapter`类的父类是`MethodVisitor`类。
+
+```java
+/**
+ * A {@link MethodVisitor} providing a more detailed API to generate and transform instructions.
+ *
+ * @author Eric Bruneton
+ */
+public class InstructionAdapter extends MethodVisitor {
+}
+```
+
+#### fields
+
+第二个部分，`InstructionAdapter`类定义的字段有哪些。我们可以看到，`InstructionAdapter`类定义了一个`OBJECT_TYPE`静态字段。
+
+```java
+public class InstructionAdapter extends MethodVisitor {
+    public static final Type OBJECT_TYPE = Type.getType("Ljava/lang/Object;");
+}
+```
+
+#### constructors
+
+第三个部分，`InstructionAdapter`类定义的构造方法有哪些。
+
+```java
+public class InstructionAdapter extends MethodVisitor {
+  public InstructionAdapter(final MethodVisitor methodVisitor) {
+    this(Opcodes.ASM9, methodVisitor);
+    if (getClass() != InstructionAdapter.class) {
+      throw new IllegalStateException();
+    }
+  }
+
+  protected InstructionAdapter(final int api, final MethodVisitor methodVisitor) {
+    super(api, methodVisitor);
+  }
+}
+```
+
+#### methods
+
+> [The Java® Virtual Machine Specification (oracle.com)](https://docs.oracle.com/javase/specs/jvms/se11/html/index.html)
+
+第四个部分，`InstructionAdapter`类定义的方法有哪些。除了从`MethodVisitor`类继承的`visitXxxInsn()`方法，<u>`InstructionAdapter`类还定义了许多与opcode相关的新方法，这些新方法本质上就是调用`visitXxxInsn()`方法来实现的</u>。
+
+```java
+public class InstructionAdapter extends MethodVisitor {
+  public void nop() {
+    mv.visitInsn(Opcodes.NOP);
+  }
+
+  public void aconst(final Object value) {
+    if (value == null) {
+      mv.visitInsn(Opcodes.ACONST_NULL);
+    } else {
+      mv.visitLdcInsn(value);
+    }
+  }
+
+  // ......
+}
+```
+
+### 4.9.3 示例
+
+#### 预期目标
+
+我们想实现的预期目标：生成如下的`HelloWorld`类。
+
+```java
+public class HelloWorld {
+  public void test() {
+    System.out.println("Hello World");
+  }
+}
+```
+
+#### 编码实现
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Type;
+import org.objectweb.asm.commons.InstructionAdapter;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class InstructionAdapterExample01 {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+
+    // (1) 生成byte[]内容
+    byte[] bytes = dump();
+
+    // (2) 保存byte[]到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() throws Exception {
+    // (1) 创建ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用visitXxx()方法
+    cw.visit(V1_8, ACC_PUBLIC + ACC_SUPER, "sample/HelloWorld",
+             null, "java/lang/Object", null);
+
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      InstructionAdapter ia = new InstructionAdapter(mv1);
+      ia.visitCode();
+      ia.load(0, InstructionAdapter.OBJECT_TYPE);
+      ia.invokespecial("java/lang/Object", "<init>", "()V", false);
+      ia.areturn(Type.VOID_TYPE);
+      ia.visitMaxs(1, 1);
+      ia.visitEnd();
+    }
+
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "()V", null, null);
+      InstructionAdapter ia = new InstructionAdapter(mv2);
+      ia.visitCode();
+      ia.getstatic("java/lang/System", "out", "Ljava/io/PrintStream;");
+      ia.aconst("Hello World");
+      ia.invokevirtual("java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      ia.areturn(Type.VOID_TYPE);
+      ia.visitMaxs(2, 1);
+      ia.visitEnd();
+    }
+
+    cw.visitEnd();
+
+    // (3) 调用toByteArray()方法
+    return cw.toByteArray();
+  }
+}
+```
+
+### 4.9.3 总结
+
+本文对`InstructionAdapter`类进行了介绍，内容总结如下：
+
+- 第一点，`InstructionAdapter`类的特点就是引入了一些与opcode有关的新方法，这些新方法本质上还是调用`MethodVisitor.visitXxxInsn()`来实现的。
+- 第二点，如果已经熟悉`MethodVisitor`类的使用，可以完全不考虑使用`InstructionAdapter`类。
+
+## 4.10 ClassRemapper介绍
+
+`ClassRemapper`类的特点是，可以实现从“一个类”向“另一个类”的映射。借助于这个类，我们可以将class文件进行简单的混淆处理（obfuscate）：
+
+![Java ASM系列：（042）Cla***emapper介绍_Core API](https://s2.51cto.com/images/20210707/1625603371740043.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+### 4.10.1 ClassRemapper类
+
+#### class info
+
+第一个部分，`ClassRemapper`类继承自`ClassVisitor`类。
+
+```java
+/**
+ * A {@link ClassVisitor} that remaps types with a {@link Remapper}.
+ *
+ * <p><i>This visitor has several limitations</i>. A non-exhaustive list is the following:
+ *
+ * <ul>
+ *   <li>it cannot remap type names in dynamically computed strings (remapping of type names in
+ *       static values is supported).
+ *   <li>it cannot remap values derived from type names at compile time, such as
+ *       <ul>
+ *         <li>type name hashcodes used by some Java compilers to implement the string switch
+ *             statement.
+ *         <li>some compound strings used by some Java compilers to implement lambda
+ *             deserialization.
+ *       </ul>
+ * </ul>
+ *
+ * @author Eugene Kuleshov
+ */
+public class ClassRemapper extends ClassVisitor {
+}
+```
+
+#### fields
+
+第二个部分，`ClassRemapper`类定义的字段有哪些。在`ClassRemapper`类当中，定义了两个字段：`remapper`字段和`className`字段。
+
+- `remapper`字段是实现从“一个类”向“另一个类”映射的关键部分；它的类型是`Remapper`类。
+- `className`字段则表示当前类的名字。
+
+```java
+public class ClassRemapper extends ClassVisitor {
+  /** The remapper used to remap the types in the visited class. */
+  protected final Remapper remapper;
+  /** The internal name of the visited class. */
+  protected String className;
+}
+```
+
+`Remapper`类是一个抽象类，它有一个具体的子类`SimpleRemapper`类；这个`SimpleRemapper`类从本质上来说是一个`Map`，在实现上比较简单。
+
+```java
+public abstract class Remapper {
+}
+
+public class SimpleRemapper extends Remapper {
+  private final Map<String, String> mapping;
+  // 这个方法上有很详细的注释，可以自己到源码上看，上面说明了该按照什么规则填写该 映射关系 Map
+  public SimpleRemapper(final Map<String, String> mapping) {
+    this.mapping = mapping;
+  }
+
+  public SimpleRemapper(final String oldName, final String newName) {
+    this.mapping = Collections.singletonMap(oldName, newName);
+  }    
+}
+```
+
+#### constructors
+
+第三个部分，`ClassRemapper`类定义的构造方法有哪些。
+
+```java
+public class ClassRemapper extends ClassVisitor {
+  public ClassRemapper(final ClassVisitor classVisitor, final Remapper remapper) {
+    this(Opcodes.ASM9, classVisitor, remapper);
+  }
+
+  protected ClassRemapper(final int api, final ClassVisitor classVisitor, final Remapper remapper) {
+    super(api, classVisitor);
+    this.remapper = remapper;
+  }
+}
+```
+
+#### methods
+
+第四个部分，`ClassRemapper`类定义的方法有哪些。
+
+*可以看到在原本的visitXxx()方法调用中，都增加了映射替换的逻辑。*
+
+```java
+public class ClassRemapper extends ClassVisitor {
+  public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    this.className = name;
+    super.visit(
+      version,
+      access,
+      remapper.mapType(name),
+      remapper.mapSignature(signature, false),
+      remapper.mapType(superName),
+      interfaces == null ? null : remapper.mapTypes(interfaces));
+  }
+
+  public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
+    FieldVisitor fieldVisitor =
+      super.visitField(
+      access,
+      remapper.mapFieldName(className, name, descriptor),
+      remapper.mapDesc(descriptor),
+      remapper.mapSignature(signature, true),
+      (value == null) ? null : remapper.mapValue(value));
+    return fieldVisitor == null ? null : createFieldRemapper(fieldVisitor);
+  }
+
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    String remappedDescriptor = remapper.mapMethodDesc(descriptor);
+    MethodVisitor methodVisitor =
+      super.visitMethod(
+      access,
+      remapper.mapMethodName(className, name, descriptor),
+      remappedDescriptor,
+      remapper.mapSignature(signature, false),
+      exceptions == null ? null : remapper.mapTypes(exceptions));
+    return methodVisitor == null ? null : createMethodRemapper(methodVisitor);
+  }
+}
+```
+
+### 4.10.2 示例
+
+#### 示例一：修改类名
+
++ 预期目标
+
+修改前：
+
+```java
+public class HelloWorld {
+  public void test() {
+    System.out.println("Hello World");
+  }
+}
+```
+
+修改后：
+
+```java
+public class GoodChild {
+  public void test() {
+    System.out.println("Hello World");
+  }
+}
+```
+
+---
+
++ 编码实现
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.commons.ClassRemapper;
+import org.objectweb.asm.commons.Remapper;
+import org.objectweb.asm.commons.SimpleRemapper;
+
+public class ClassRemapperExample01 {
+  public static void main(String[] args) {
+    String origin_name = "sample/HelloWorld";
+    String target_name = "sample/GoodChild";
+    String origin_filepath = getFilePath(origin_name);
+    byte[] bytes1 = FileUtils.readBytes(origin_filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    Remapper remapper = new SimpleRemapper(origin_name, target_name);
+    ClassVisitor cv = new ClassRemapper(cw, remapper);
+
+    //（4）两者进行结合
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）重新生成Class
+    byte[] bytes2 = cw.toByteArray();
+
+    String target_filepath = getFilePath(target_name);
+    FileUtils.writeBytes(target_filepath, bytes2);
+  }
+
+  public static String getFilePath(String internalName) {
+    String relative_path = String.format("%s.class", internalName);
+    return FileUtils.getFilePath(relative_path);
+  }
+}
+```
+
+---
+
++ 验证结果
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.GoodChild");
+    Method m = clazz.getDeclaredMethod("test");
+
+    Object instance = clazz.newInstance();
+    m.invoke(instance);
+  }
+}
+```
+
+#### 示例二：修改字段名和方法名
+
++ 预期目标
+
+修改前：
+
+```java
+public class HelloWorld {
+  private int intValue;
+
+  public HelloWorld() {
+    this.intValue = 100;
+  }
+
+  public void test() {
+    System.out.println("field value: " + intValue);
+  }
+}
+```
+
+修改后：
+
+```java
+public class GoodChild {
+  private int a;
+
+  public GoodChild() {
+    this.a = 100;
+  }
+
+  public void b() {
+    System.out.println("field value: " + this.a);
+  }
+}
+```
+
+---
+
++ 编码实现
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.commons.ClassRemapper;
+import org.objectweb.asm.commons.Remapper;
+import org.objectweb.asm.commons.SimpleRemapper;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class ClassRemapperExample02 {
+  public static void main(String[] args) {
+    String origin_name = "sample/HelloWorld";
+    String target_name = "sample/GoodChild";
+    String origin_filepath = getFilePath(origin_name);
+    byte[] bytes1 = FileUtils.readBytes(origin_filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    Map<String, String> mapping = new HashMap<>();
+    mapping.put(origin_name, target_name);
+    mapping.put(origin_name + ".intValue", "a");
+    mapping.put(origin_name + ".test()V", "b");
+    Remapper mapper = new SimpleRemapper(mapping);
+    ClassVisitor cv = new ClassRemapper(cw, mapper);
+
+    //（4）两者进行结合
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）重新生成Class
+    byte[] bytes2 = cw.toByteArray();
+
+    String target_filepath = getFilePath(target_name);
+    FileUtils.writeBytes(target_filepath, bytes2);
+  }
+
+  public static String getFilePath(String internalName) {
+    String relative_path = String.format("%s.class", internalName);
+    return FileUtils.getFilePath(relative_path);
+  }
+}
+```
+
+---
+
++ 验证结果
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.GoodChild");
+    Method m = clazz.getDeclaredMethod("b");
+
+    Object instance = clazz.newInstance();
+    m.invoke(instance);
+  }
+}
+```
+
+#### 示例三：修改两个类
+
++ 预期目标
+
+修改前：
+
+```java
+public class GoodChild {
+  public void study() {
+    System.out.println("Start where you are. Use what you have. Do what you can. – Arthur Ashe");
+  }
+}
+```
+
+修改后：
+
+```java
+public class BBB {
+  public void b() {
+    System.out.println("Start where you are. Use what you have. Do what you can. – Arthur Ashe");
+  }
+}
+```
+
+修改前：
+
+```java
+public class HelloWorld {
+  public void test() {
+    GoodChild child = new GoodChild();
+    child.study();
+  }
+}
+```
+
+修改后：
+
+```java
+public class AAA {
+  public void a() {
+    BBB var1 = new BBB();
+    var1.b();
+  }
+}
+```
+
+---
+
++ 编码实现
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.commons.ClassRemapper;
+import org.objectweb.asm.commons.Remapper;
+import org.objectweb.asm.commons.SimpleRemapper;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class ClassRemapperExample03 {
+  public static void main(String[] args) {
+    Map<String, String> mapping = new HashMap<>();
+    mapping.put("sample/HelloWorld", "sample/AAA");
+    mapping.put("sample/GoodChild", "sample/BBB");
+    mapping.put("sample/HelloWorld.test()V", "a");
+    mapping.put("sample/GoodChild.study()V", "b");
+    obfuscate("sample/HelloWorld", "sample/AAA", mapping);
+    obfuscate("sample/GoodChild", "sample/BBB", mapping);
+  }
+
+  public static void obfuscate(String origin_name, String target_name, Map<String, String> mapping) {
+    String origin_filepath = getFilePath(origin_name);
+    byte[] bytes1 = FileUtils.readBytes(origin_filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    Remapper mapper = new SimpleRemapper(mapping);
+    ClassVisitor cv = new ClassRemapper(cw, mapper);
+
+    //（4）两者进行结合
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）重新生成Class
+    byte[] bytes2 = cw.toByteArray();
+
+    String target_filepath = getFilePath(target_name);
+    FileUtils.writeBytes(target_filepath, bytes2);
+  }
+
+  public static String getFilePath(String internalName) {
+    String relative_path = String.format("%s.class", internalName);
+    return FileUtils.getFilePath(relative_path);
+  }
+}
+```
+
+---
+
++ 验证结果
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.AAA");
+    Method m = clazz.getDeclaredMethod("a");
+
+    Object instance = clazz.newInstance();
+    m.invoke(instance);
+  }
+}
+```
+
+### 4.10.3 总结
+
+本文对`ClassRemapper`类进行介绍，内容总结如下：
+
+- 第一点，`ClassRemapper`类的特点是，可以实现从“一个类”向“另一个类”的映射。
+- 第二点，了解`ClassRemapper`类各个部分的信息。使用`ClassRemapper`类时，关键的地方就是创建一个`Remapper`对象。`Remapper`类，是一个抽象类，它有一个具体实现`SimpleRemapper`类，它记录的是从“一个类”向“另一个类”的映射关系。其实，我们也可以提供一个自己的`Remapper`类的子类，来完成一些特殊的转换规则。
+- 第三点，<u>从功能（强弱）的角度来说，`ClassRemapper`类可以实现对class文件进行简单的混淆处理。但是，`ClassRemapper`类进行混淆处理的程度是比较低的，远不及一些专业的代码混淆工具（obfuscator）</u>。
+
+## 4.11 StaticInitMerger介绍
