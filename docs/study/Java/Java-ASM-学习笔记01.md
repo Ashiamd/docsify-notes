@@ -10029,7 +10029,7 @@ public class MethodTimerVisitor extends ClassVisitor {
     MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
     if (isInterface || null == mv
         || ((access & ACC_ABSTRACT) == ACC_ABSTRACT) || ((access & ACC_NATIVE) == ACC_NATIVE)
-        || "<init>".equals(name) || "<cinit>".equals(name)) {
+        || "<init>".equals(name) || "<clinit>".equals(name)) {
       return mv;
     }
     return new MethodTimerMVisitor(api, mv, owner);
@@ -10218,7 +10218,7 @@ public class MethodTimerVisitor2 extends ClassVisitor {
     MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
     if (isInterface || null == mv
         || ((access & ACC_ABSTRACT) == ACC_ABSTRACT) || ((access & ACC_NATIVE) == ACC_NATIVE)
-        || "<init>".equals(name) || "<cinit>".equals(name)) {
+        || "<init>".equals(name) || "<clinit>".equals(name)) {
       return mv;
     }
     // 针对每个方法，都生成一个timer字段用于统计执行耗时
@@ -10637,7 +10637,7 @@ public class MethodEmptyBodyVisitor extends ClassVisitor {
     MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
     // 不需要特输处理的情况
     if (null == mv || (access & ACC_ABSTRACT) == ACC_ABSTRACT || (access & ACC_NATIVE) == ACC_NATIVE
-        || "<init>".equals(name) || "<cinit>".equals(name)) {
+        || "<init>".equals(name) || "<clinit>".equals(name)) {
       return mv;
     }
     // 找到需要 清空方法体的方法
@@ -15868,3 +15868,731 @@ public class HelloWorldRun {
 - 第三点，<u>从功能（强弱）的角度来说，`ClassRemapper`类可以实现对class文件进行简单的混淆处理。但是，`ClassRemapper`类进行混淆处理的程度是比较低的，远不及一些专业的代码混淆工具（obfuscator）</u>。
 
 ## 4.11 StaticInitMerger介绍
+
+`StaticInitMerger`类的特点是，可以实现将多个`<clinit>()`方法合并到一起。
+
+### 4.11.1 如何合并两个类文件
+
+**首先，什么是合并两个类文件？** 假如有两个类，一个是`sample.HelloWorld`类，另一个是`sample.GoodChild`类，我们想将`sample.GoodChild`类里面定义的字段（fields）和方法（methods）全部放到`sample.HelloWorld`类里面，这样就是将两个类合并成一个新的`sample.HelloWorld`类。
+
+**其次，合并两个类文件，有哪些应用场景呢？** 假如`sample/HelloWorld.class`是来自于第三方的软件产品，但是，我们可能会发现它的功能有些不足，所以想对这个类进行扩展。
+
+- 第一种情况，如果扩展的功能比较简单，那么可以直接使用`ClassVisitor`和`MethodVisitor`类可以进行Class Transformation操作。
+- 第二种情况，如果扩展的功能比较复杂，例如，需要添加的方法比较多、方法实现的代码逻辑比较复杂，那么使用`ClassVisitor`和`MethodVisitor`类直接修改就会变得比较麻烦。这个时候，如果我们把想添加的功能，使用Java语言编写代码，放到一个全新的`sample.GoodChild`类，将其编译成`sample/GoodChild.class`文件；再接下来，只要我们将`sample/GoodChild.class`定义的字段（fields）和方法（methods）全部迁移到`sample/HelloWorld.class`就可以了。
+
+**再者，合并两个类文件，需要注意哪些地方呢？** 因为主要迁移的内容有接口（interface）、字段（fields）和方法（methods），那么就应该避免出现“重复”的接口、字段和方法。
+
+- 第一点，在编写Java代码时，在编写`sample.GoodChild`类时，应该避免定义重复的字段和方法。
+- 第二点，在合并两个类时，对于重复的接口信息进行处理。
+- 第三点，在合并两个类时，对于重复的`<init>()`方法进行处理。对于`sample/GoodChild.class`里面的`<init>()`方法直接忽略就好了，只保留`sample/HelloWorld.class`定义的`<init>()`方法。
+- 第四点，在合并两个类之后，对于重复的`<clinit>()`方法进行处理。对于`sample/HelloWorld.class`定义的`<clinit>()`方法和`sample/GoodChild.class`里面定义的`<clinit>()`方法，则需要合并到一起。**`StaticInitMerger`类的作用，就是将多个`<clinit>()`方法进行合并。**
+
+**最后，合并两个类文件，需要经历哪些步骤呢？** 在这里，我们列出了四个步骤：
+
+- 第一步，读取两个类文件。
+- 第二步，将`sample.GoodChild`类重命名为`sample.HelloWorld`。在代码实现上，会用到`ClassRemapper`类。
+- 第三步，合并两个类。在这个过程中，要对重复的接口（interface）和`<init>()`方法。在代码实现上，会用到`ClassNode`类（Tree API）。
+- 第四步，处理重复的`<clinit>()`方法。在代码实现上，会用到`StaticInitMerger`类。
+
+![Java ASM系列：（043）StaticInitMerger介绍_ASM](https://s2.51cto.com/images/20210707/1625660086263737.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+### 4.11.2 StaticInitMerger类
+
+#### class info
+
+第一个部分，`StaticInitMerger`类继承自`ClassVisitor`类。
+
+```java
+/**
+ * A {@link ClassVisitor} that merges &lt;clinit&gt; methods into a single one. All the existing
+ * &lt;clinit&gt; methods are renamed, and a new one is created, which calls all the renamed
+ * methods.
+ *
+ * @author Eric Bruneton
+ */
+public class StaticInitMerger extends ClassVisitor {
+}
+```
+
+#### fields
+
+第二个部分，`StaticInitMerger`类定义的字段有哪些。
+
+在`StaticInitMerger`类里面，定义了4个字段：
+
+- `owner`字段，表示当前类的名字。
+- `renamedClinitMethodPrefix`字段和`numClinitMethods`字段一起来确定方法的新名字。
+- `mergedClinitVisitor`字段，负责生成新的`<clinit>()`方法。
+
+```java
+public class StaticInitMerger extends ClassVisitor {
+  // 当前类的名字
+  private String owner;
+
+  // 新方法的名字
+  private final String renamedClinitMethodPrefix;
+  private int numClinitMethods;
+
+  // 生成新方法的MethodVisitor
+  private MethodVisitor mergedClinitVisitor;
+}
+```
+
+#### constructors
+
+第三个部分，`StaticInitMerger`类定义的构造方法有哪些。
+
+```java
+public class StaticInitMerger extends ClassVisitor {
+  public StaticInitMerger(final String prefix, final ClassVisitor classVisitor) {
+    this(Opcodes.ASM9, prefix, classVisitor);
+  }
+
+  protected StaticInitMerger(final int api, final String prefix, final ClassVisitor classVisitor) {
+    super(api, classVisitor);
+    this.renamedClinitMethodPrefix = prefix;
+  }
+}
+```
+
+#### methods
+
+第四个部分，`StaticInitMerger`类定义的方法有哪些。
+
+在`StaticInitMerger`类里面，定义了3个`visitXxx()`方法：
+
+- `visit()`方法，负责将当前类的名字记录到`owner`字段
+- `visitMethod()`方法，负责将原来的`<clinit>()`方法进行重新命名成`renamedClinitMethodPrefix + numClinitMethods`，并在新的`<clinit>()`方法中对`renamedClinitMethodPrefix + numClinitMethods`方法进行调用。
+- `visitEnd()`方法，为新的`<clinit>()`方法添加`return`语句。
+
+```java
+public class StaticInitMerger extends ClassVisitor {
+  public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    super.visit(version, access, name, signature, superName, interfaces);
+    this.owner = name;
+  }
+
+  // 注意这里 MethodVisitor没有按照规范在方法开始时调用visitCode()，在方法结束时调用visitEnd()
+  // 这里简言之就是 把原本的 <clinit> 重命名，然后重新生成一个 <clinit>方法调用 原本被重命名的<clinit>方法
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor methodVisitor;
+    if ("<clinit>".equals(name)) {
+      int newAccess = Opcodes.ACC_PRIVATE + Opcodes.ACC_STATIC;
+      String newName = renamedClinitMethodPrefix + numClinitMethods++;
+      methodVisitor = super.visitMethod(newAccess, newName, descriptor, signature, exceptions);
+
+      if (mergedClinitVisitor == null) {
+        mergedClinitVisitor = super.visitMethod(newAccess, name, descriptor, null, null);
+      }
+      mergedClinitVisitor.visitMethodInsn(Opcodes.INVOKESTATIC, owner, newName, descriptor, false);
+    } else {
+      methodVisitor = super.visitMethod(access, name, descriptor, signature, exceptions);
+    }
+    return methodVisitor;
+  }
+
+  public void visitEnd() {
+    if (mergedClinitVisitor != null) {
+      mergedClinitVisitor.visitInsn(Opcodes.RETURN);
+      mergedClinitVisitor.visitMaxs(0, 0);
+    }
+    super.visitEnd();
+  }
+}
+```
+
+### 4.11.3 示例：合并两个类文件
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  static {
+    System.out.println("This is static initialization method");
+  }
+
+  private String name;
+  private int age;
+
+  public HelloWorld() {
+    this("tomcat", 10);
+  }
+
+  public HelloWorld(String name, int age) {
+    this.name = name;
+    this.age = age;
+  }
+
+  public void test() {
+    System.out.println("This is test method.");
+  }
+
+  @Override
+  public String toString() {
+    return String.format("HelloWorld { name='%s', age=%d }", name, age);
+  }
+}
+```
+
+假如有一个`GoodChild`类，代码如下：
+
+```java
+import java.io.Serializable;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
+public class GoodChild implements Serializable {
+  private static final DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
+  public void printDate() {
+    Date now = new Date();
+    String str = df.format(now);
+    System.out.println(str);
+  }
+}
+```
+
+我们想实现的预期目标：将`HelloWorld`类和`GoodChild`类合并成一个新的`HelloWorld`类。
+
+#### 编码实现
+
+下面的`ClassMergeVisitor`类的作用是负责将两个类合并到一起。我们需要注意以下三点：
+
+- 第一点，`ClassNode`、`FieldNode`和`MethodNode`都是属于ASM的Tree API部分。
+- 第二点，将两个类进行合并的代码逻辑，放在了`visitEnd()`方法内。为什么要把代码逻辑放在`visitEnd()`方法内呢？因为参照`ClassVisitor`类里的`visitXxx()`方法调用的顺序，`visitField()`方法和`visitMethod()`方法正好位于`visitEnd()`方法的前面。
+- 第三点，在`visitEnd()`方法的代码逻辑中，忽略掉了`<init>()`方法，这样就避免新生成的类当中包含重复的`<init>()`方法。
+
+```java
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldNode;
+import org.objectweb.asm.tree.MethodNode;
+
+import java.util.List;
+
+public class ClassMergeVisitor extends ClassVisitor {
+  private final ClassNode anotherClass;
+
+  public ClassMergeVisitor(int api, ClassVisitor classVisitor, ClassNode anotherClass) {
+    super(api, classVisitor);
+    this.anotherClass = anotherClass;
+  }
+
+  @Override
+  public void visitEnd() {
+    List<FieldNode> fields = anotherClass.fields;
+    for (FieldNode fn : fields) {
+      fn.accept(this);
+    }
+
+    List<MethodNode> methods = anotherClass.methods;
+    for (MethodNode mn : methods) {
+      String methodName = mn.name;
+      if ("<init>".equals(methodName)) {
+        continue;
+      }
+      mn.accept(this);
+    }
+    super.visitEnd();
+  }
+}
+```
+
+下面的`ClassAddInterfaceVisitor`类是负责为类添加“接口信息”。
+
+```java
+import org.objectweb.asm.ClassVisitor;
+
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+
+public class ClassAddInterfaceVisitor extends ClassVisitor {
+  private final String[] newInterfaces;
+
+  public ClassAddInterfaceVisitor(int api, ClassVisitor cv, String[] newInterfaces) {
+    super(api, cv);
+    this.newInterfaces = newInterfaces;
+  }
+
+  @Override
+  public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    Set<String> set = new HashSet<>(); // 注意，这里使用Set是为了避免出现重复接口
+    if (interfaces != null) {
+      set.addAll(Arrays.asList(interfaces));
+    }
+    if (newInterfaces != null) {
+      set.addAll(Arrays.asList(newInterfaces));
+    }
+    super.visit(version, access, name, signature, superName, set.toArray(new String[0]));
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.commons.ClassRemapper;
+import org.objectweb.asm.commons.Remapper;
+import org.objectweb.asm.commons.SimpleRemapper;
+import org.objectweb.asm.commons.StaticInitMerger;
+import org.objectweb.asm.tree.ClassNode;
+
+import java.util.List;
+
+public class StaticInitMergerExample01 {
+  private static final int API_VERSION = Opcodes.ASM9;
+
+  public static void main(String[] args) {
+    // 第一步，读取两个类文件
+    String first_class = "sample/HelloWorld";
+    String second_class = "sample/GoodChild";
+
+    String first_class_filepath = getFilePath(first_class);
+    byte[] bytes1 = FileUtils.readBytes(first_class_filepath);
+
+    String second_class_filepath = getFilePath(second_class);
+    byte[] bytes2 = FileUtils.readBytes(second_class_filepath);
+
+    // 第二步，将sample/GoodChild类重命名为sample/HelloWorld
+    byte[] bytes3 = renameClass(second_class, first_class, bytes2);
+
+    // 第三步，合并两个类
+    byte[] bytes4 = mergeClass(bytes1, bytes3);
+
+    // 第四步，处理重复的class initialization method
+    byte[] bytes5 = removeDuplicateStaticInitMethod(bytes4);
+    FileUtils.writeBytes(first_class_filepath, bytes5);
+  }
+
+  public static String getFilePath(String internalName) {
+    String relative_path = String.format("%s.class", internalName);
+    return FileUtils.getFilePath(relative_path);
+  }
+
+  public static byte[] renameClass(String origin_name, String target_name, byte[] bytes) {
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    Remapper remapper = new SimpleRemapper(origin_name, target_name);
+    ClassVisitor cv = new ClassRemapper(cw, remapper);
+
+    //（4）两者进行结合
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）重新生成Class
+    return cw.toByteArray();
+  }
+
+  public static byte[] mergeClass(byte[] bytes1, byte[] bytes2) {
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    ClassNode cn = getClassNode(bytes2);
+    List<String> interface_list = cn.interfaces;
+    int size = interface_list.size();
+    String[] interfaces = new String[size];
+    for (int i = 0; i < size; i++) {
+      String item = interface_list.get(i);
+      interfaces[i] = item;
+    }
+    ClassMergeVisitor cmv = new ClassMergeVisitor(API_VERSION, cw, cn);
+    ClassAddInterfaceVisitor cv = new ClassAddInterfaceVisitor(API_VERSION, cmv, interfaces);
+
+    //（4）两者进行结合
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）重新生成Class
+    return cw.toByteArray();
+  }
+
+  public static ClassNode getClassNode(byte[] bytes) {
+    ClassReader cr = new ClassReader(bytes);
+    ClassNode cn = new ClassNode();
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+    return cn;
+  }
+
+  public static byte[] removeDuplicateStaticInitMethod(byte[] bytes) {
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    ClassVisitor cv = new StaticInitMerger("class_init$", cw);
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    return cw.toByteArray();
+  }
+}
+```
+
+#### 验证结果
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    Object instance = clazz.newInstance();
+    System.out.println(instance);
+    invokeMethod(clazz, "test", instance);
+    invokeMethod(clazz, "printDate", instance);
+  }
+
+  public static void invokeMethod(Class<?> clazz, String methodName, Object instance) throws Exception {
+    Method m = clazz.getDeclaredMethod(methodName);
+    m.invoke(instance);
+  }
+}
+```
+
+### 4.11.4 总结
+
+本文对`StaticInitMerger`类进行了介绍，内容总结如下：
+
+- 第一点，**`StaticInitMerger`类的特点是可以将多个`<clinit>()`方法合并**。
+- 第二点，了解`StaticInitMerger`类各个部分的信息，以便理解`StaticInitMerger`类的工作原理。
+- 第三点，将两个类文件合并，有什么样的应用场景、需要注意哪些内容、经过哪些步骤，以及如何编码进行实现。
+
+## 4.12 SerialVersionUIDAdder介绍
+
+`SerialVersionUIDAdder`类的特点是可以为Class文件添加一个`serialVersionUID`字段。
+
+### 4.12.1 SerialVersionUIDAdder类
+
+当`SerialVersionUIDAdder`类计算`serialVersionUID`值的时候，它有一套自己的算法，对于算法本身就不进行介绍了。那么，`serialVersionUID`字段有什么作用呢？
+
+Simply put, we use the `serialVersionUID` attribute to **remember versions of a `Serializable` class** to verify that **a loaded class and the serialized object are compatible**.
+
+#### class info
+
+第一个部分，`SerialVersionUIDAdder`类的父类是`ClassVisitor`类。
+
+```java
+public class SerialVersionUIDAdder extends ClassVisitor {
+}
+```
+
+#### fields
+
+第二个部分，`SerialVersionUIDAdder`类定义的字段有哪些。
+
+`SerialVersionUIDAdder`类的字段分成三组：
+
+- 第一组，`computeSvuid`和`hasSvuid`字段，用于判断是否需要添加`serialVersionUID`信息。
+- 第二组，`access`、`name`和`interfaces`字段，用于记录当前类的访问标识、类的名字和实现的接口。
+- 第三组，`svuidFields`、`svuidMethods`、`svuidConstructors`和`hasStaticInitializer`字段，用于记录字段、构造方法、普通方法、是否有`<clinit>()`方法。
+
+第二组和第三组部分的字段都是用于计算`serialVersionUID`值的，而第一组字段是则先判断是否有必要去计算`serialVersionUID`值。
+
+```java
+public class SerialVersionUIDAdder extends ClassVisitor {
+  // 第一组，用于判断是否需要添加serialVersionUID信息
+  private boolean computeSvuid;
+  private boolean hasSvuid;
+
+  // 第二组，用于记录当前类的访问标识、类的名字和实现的接口
+  private int access;
+  private String name;
+  private String[] interfaces;
+
+  // 第三组，用于记录字段、构造方法、普通方法
+  private Collection<Item> svuidFields;
+  private boolean hasStaticInitializer;
+  private Collection<Item> svuidConstructors;
+  private Collection<Item> svuidMethods;
+}
+```
+
+其中，`svuidFields`、`svuidMethods`和`svuidConstructors`字段都涉及到`Item`类。`Item`类的定义如下：
+
+```java
+private static final class Item implements Comparable<Item> {
+  final String name;
+  final int access;
+  final String descriptor;
+
+  Item(final String name, final int access, final String descriptor) {
+    this.name = name;
+    this.access = access;
+    this.descriptor = descriptor;
+  }
+}
+```
+
+#### constructors
+
+第三个部分，`SerialVersionUIDAdder`类定义的构造方法有哪些。
+
+```java
+public class SerialVersionUIDAdder extends ClassVisitor {
+  public SerialVersionUIDAdder(final ClassVisitor classVisitor) {
+    this(Opcodes.ASM9, classVisitor);
+  }
+
+  protected SerialVersionUIDAdder(final int api, final ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+}
+```
+
+#### methods
+
+第四个部分，`SerialVersionUIDAdder`类定义的方法有哪些。
+
+```java
+public class SerialVersionUIDAdder extends ClassVisitor {
+  @Override
+  public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    // Get the class name, access flags, and interfaces information (step 1, 2 and 3) for SVUID computation.
+    // 对于枚举类型，不计算serialVersionUID
+    computeSvuid = (access & Opcodes.ACC_ENUM) == 0;
+
+    if (computeSvuid) {
+      // 记录第二组字段的信息
+      this.name = name;
+      this.access = access;
+      this.interfaces = interfaces.clone();
+      this.svuidFields = new ArrayList<>();
+      this.svuidConstructors = new ArrayList<>();
+      this.svuidMethods = new ArrayList<>();
+    }
+
+    super.visit(version, access, name, signature, superName, interfaces);
+  }
+
+  @Override
+  public FieldVisitor visitField(int access, String name, String desc, String signature, Object value) {
+    // Get the class field information for step 4 of the algorithm. Also determine if the class already has a SVUID.
+    if (computeSvuid) {
+      if ("serialVersionUID".equals(name)) {
+        // Since the class already has SVUID, we won't be computing it.
+        computeSvuid = false;
+        hasSvuid = true;
+      }
+      // Collect the non private fields. Only the ACC_PUBLIC, ACC_PRIVATE, ACC_PROTECTED,
+      // ACC_STATIC, ACC_FINAL, ACC_VOLATILE, and ACC_TRANSIENT flags are used when computing
+      // serialVersionUID values.
+      if ((access & Opcodes.ACC_PRIVATE) == 0
+          || (access & (Opcodes.ACC_STATIC | Opcodes.ACC_TRANSIENT)) == 0) {
+        int mods = access
+          & (Opcodes.ACC_PUBLIC
+             | Opcodes.ACC_PRIVATE
+             | Opcodes.ACC_PROTECTED
+             | Opcodes.ACC_STATIC
+             | Opcodes.ACC_FINAL
+             | Opcodes.ACC_VOLATILE
+             | Opcodes.ACC_TRANSIENT);
+        svuidFields.add(new Item(name, mods, desc));
+      }
+    }
+
+    return super.visitField(access, name, desc, signature, value);
+  }
+
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    // Get constructor and method information (step 5 and 7). Also determine if there is a class initializer (step 6).
+    if (computeSvuid) {
+      // 这里是对静态初始方法进行判断
+      if (CLINIT.equals(name)) {
+        hasStaticInitializer = true;
+      }
+      // Collect the non private constructors and methods. Only the ACC_PUBLIC, ACC_PRIVATE,
+      // ACC_PROTECTED, ACC_STATIC, ACC_FINAL, ACC_SYNCHRONIZED, ACC_NATIVE, ACC_ABSTRACT and
+      // ACC_STRICT flags are used.
+      int mods = access
+        & (Opcodes.ACC_PUBLIC
+           | Opcodes.ACC_PRIVATE
+           | Opcodes.ACC_PROTECTED
+           | Opcodes.ACC_STATIC
+           | Opcodes.ACC_FINAL
+           | Opcodes.ACC_SYNCHRONIZED
+           | Opcodes.ACC_NATIVE
+           | Opcodes.ACC_ABSTRACT
+           | Opcodes.ACC_STRICT);
+
+      if ((access & Opcodes.ACC_PRIVATE) == 0) {
+        if ("<init>".equals(name)) {
+          // 这里是对构造方法进行判断
+          svuidConstructors.add(new Item(name, mods, descriptor));
+        } else if (!CLINIT.equals(name)) {
+          // 这里是对普通方法进行判断
+          svuidMethods.add(new Item(name, mods, descriptor));
+        }
+      }
+    }
+
+    return super.visitMethod(access, name, descriptor, signature, exceptions);
+  }
+
+  @Override
+  public void visitEnd() {
+    // Add the SVUID field to the class if it doesn't have one.
+    if (computeSvuid && !hasSvuid) {
+      try {
+        addSVUID(computeSVUID());
+      } catch (IOException e) {
+        throw new IllegalStateException("Error while computing SVUID for " + name, e);
+      }
+    }
+
+    super.visitEnd();
+  }
+
+  protected void addSVUID(final long svuid) {
+    FieldVisitor fieldVisitor =
+      super.visitField(Opcodes.ACC_FINAL + Opcodes.ACC_STATIC, "serialVersionUID", "J", null, svuid);
+    if (fieldVisitor != null) {
+      fieldVisitor.visitEnd();
+    }
+  }
+
+  protected long computeSVUID() throws IOException {
+    // ...
+  }
+}
+```
+
+### 4.12.2 示例
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+import java.io.Serializable;
+
+public class HelloWorld implements Serializable {
+  public String name;
+  public int age;
+
+  public HelloWorld(String name, int age) {
+    this.name = name;
+    this.age = age;
+  }
+
+  @Override
+  public String toString() {
+    return String.format("HelloWorld { name='%s', age=%d }", name, age);
+  }
+}
+```
+
+我们想实现的预期目标：为`HelloWorld`类添加`serialVersionUID`字段。
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.commons.SerialVersionUIDAdder;
+
+public class SerialVersionUIDAdderExample01 {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new SerialVersionUIDAdder(cw);
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+```java
+import lsieun.utils.FileUtils;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+
+public class HelloWorldRun {
+  private static final String FILE_DATA = "obj.data";
+
+  public static void main(String[] args) throws Exception {
+    HelloWorld obj = new HelloWorld("Tomcat", 10);
+    writeObject(obj);
+    readObject();
+  }
+
+  public static void readObject() throws Exception {
+    String filepath = FileUtils.getFilePath(FILE_DATA);
+    byte[] bytes = FileUtils.readBytes(filepath);
+    ByteArrayInputStream bai = new ByteArrayInputStream(bytes);
+    ObjectInputStream in = new ObjectInputStream(bai);
+    Object obj = in.readObject();
+    System.out.println(obj);
+  }
+
+  public static void writeObject(Object obj) throws Exception {
+    ByteArrayOutputStream bao = new ByteArrayOutputStream();
+    ObjectOutputStream out = new ObjectOutputStream(bao);
+    out.writeObject(obj);
+    out.flush();
+    out.close();
+    byte[] bytes = bao.toByteArray();
+
+    String filepath = FileUtils.getFilePath(FILE_DATA);
+    FileUtils.writeBytes(filepath, bytes);
+  }
+}
+```
+
+### 4.12.3 总结
+
+本文对`SerialVersionUIDAdder`类进行介绍，内容总结如下：
+
+- 第一点，`SerialVersionUIDAdder`类的特点是可以为Class文件添加一个`serialVersionUID`字段。
+- 第二点，了解`SerialVersionUIDAdder`类的各个部分的信息，以便理解它的工作原理。
+- 第三点，如何使用`SerialVersionUIDAdder`类添加`serialVersionUID`字段。
