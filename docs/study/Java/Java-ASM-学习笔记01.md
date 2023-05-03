@@ -8,6 +8,8 @@
 >
 > ASM官网：[ASM (ow2.io)](https://asm.ow2.io/)
 > ASM中文手册：[ASM4 使用手册(中文版) (yuque.com)](https://www.yuque.com/mikaelzero/asm)
+>
+> Java语言规范和JVM规范-官方文档：[Java SE Specifications (oracle.com)](https://docs.oracle.com/javase/specs/index.html)
 
 # 1. ASM基础
 
