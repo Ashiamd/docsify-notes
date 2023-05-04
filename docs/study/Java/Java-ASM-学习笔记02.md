@@ -235,4 +235,780 @@ For the majority of **typed instructions**, the instruction type is represented 
 - 第三点，opcode占用1个byte大小，目前定义了205个；为了方便记忆，JVM文档为opcode提供了名字（即mnemonic symbol），大多数的名字中带有类型信息。
 - 第四点，学习opcode是一个长期积累的过程，不能一蹴而就。所以，推荐大家依据感兴趣的内容，进行有选择性的学习。
 
-## 1.3 
+## 1.3 ASM的MethodVisitor类
+
+使用ASM，可以生成一个`.class`文件当中各个部分的内容。
+
+```java
+public class HelloWorld {
+  public void test(String name, int age) {
+    String line = String.format("name = '%s', age = %d", name, age);
+    System.out.println(line);
+  }
+}
+```
+
+在这里，我们只关心方法的部分：
+
+- 对于方法头的部分，我们可以使用`ClassVisitor.visitMethod(int access, String name, String descriptor, String signature, String[] exceptions)`方法来提供。
+  - 其中的`access`参数提供访问标识信息，例如`public`
+  - 其中的`name`参数提供方法的名字，例如`test`
+  - 其中的`descriptor`参数提供方法的参数类型和返回值的类型
+- 对于方法体的部分，我们可能通过使用`MethodVisitor`类来实现。
+  - 如何得到一个`MethodVisitor`对象呢？`ClassVisitor.visitMethod()`的返回值是一个`MethodVisitor`类型的实例。
+  - 方法体的instructions是如何添加的呢？通过调用`MethodVisitor.visitXxxInsn()`方法来提供的
+
+对于`MethodVisitor`类来说，我们从两个方面来把握（回顾`MethodVisitor`类，可以参考[此处](https://lsieun.github.io/java-asm-01/method-visitor-intro.html)）：
+
+- 第一方面，就是`MethodVisitor`类的`visitXxx()`方法的调用顺序。
+- 第二方面，就是`MethodVisitor`类的`visitXxxInsn()`方法具体有哪些。
+
+注意：`visitXxx()`方法表示`MethodVisitor`类当中所有以`visit`开头的方法，包含的方法比较多；而`visitXxxInsn()`方法是`visitXxx()`方法当中的一小部分，包含的方法比较较少。
+
+### 1.3.1 方法的调用顺序
+
+`MethodVisitor`类的`visitXxx()`方法要遵循一定的调用顺序：
+
+```pseudocode
+[
+    visitCode
+    (
+        visitFrame |
+        visitXxxInsn |
+        visitLabel |
+        visitTryCatchBlock
+    )*
+    visitMaxs
+]
+visitEnd
+```
+
+这些方法的调用顺序，可以记忆如下：
+
+- 第一步，调用`visitCode()`方法，调用一次。
+- 第二步，调用`visitXxxInsn()`方法，可以调用多次。对这些方法的调用，就是在构建方法的“方法体”。
+- 第三步，调用`visitMaxs()`方法，调用一次。
+- 第四步，调用`visitEnd()`方法，调用一次。
+
+### 1.3.2 visitXxxInsn()方法
+
+粗略的来说，`MethodVisitor`类有15个`visitXxxInsn()`方法。但严格的来说，有13个`visitXxxInsn()`方法，再加上`visitLabel()`和`visitTryCatchBlock()`这2个方法。
+
+那么，这15个`visitXxxInsn()`方法，可以用来生成将近200个左右的opcode，也就是用来生成方法体的内容。
+
+```java
+public abstract class MethodVisitor {
+    // (1)
+    public void visitInsn(int opcode);
+    // (2)
+    public void visitIntInsn(int opcode, int operand);
+    // (3)
+    public void visitVarInsn(int opcode, int var);
+    // (4)
+    public void visitTypeInsn(int opcode, String type);
+    // (5)
+    public void visitFieldInsn(int opcode, String owner, String name, String descriptor);
+    // (6)
+    public void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface);
+    // (7)
+    public void visitInvokeDynamicInsn(String name, String descriptor, Handle bootstrapMethodHandle, Object... bootstrapMethodArguments);
+    // (8)
+    public void visitJumpInsn(int opcode, Label label);
+    // (9) 这里并不是严格的visitXxxInsn()方法
+    public void visitLabel(Label label);
+    // (10)
+    public void visitLdcInsn(Object value);
+    // (11)
+    public void visitIincInsn(int var, int increment);
+    // (12)
+    public void visitTableSwitchInsn(int min, int max, Label dflt, Label... labels);
+    // (13)
+    public void visitLookupSwitchInsn(Label dflt, int[] keys, Label[] labels);
+    // (14)
+    public void visitMultiANewArrayInsn(String descriptor, int numDimensions);
+    // (15) 这里也并不是严格的visitXxxInsn()方法
+    public void visitTryCatchBlock(Label start, Label end, Label handler, String type);
+}
+```
+
+### 1.3.3 总结
+
+本文主要是对ASM中`MethodVisitor`类进行回顾，内容总结如下：
+
+- 第一点，`MethodVisitor`类的`visitXxx()`方法要遵循一定的调用顺序。
+- 第二点，`MethodVisitor`类有15个`visitXxxInsn()`方法，用来生成将近200个左右的opcode。
+
+## 1.4 JVM Architecture
+
+### 1.4.1 JVM的组成部分
+
+从JVM组成的角度来说，它由Class Loader SubSystem、Runtime Data Areas和Execution Engine三个部分组成：
+
+- **类加载子系统（Class Loader SubSystem）**，负责加载具体的`.class`文件。
+- **运行时数据区（Runtime Data Areas）**，主要负责为执行引擎（Execution Engine）提供“空间维度”的支持，为类（Class）、对象实例（object instance）、局部变量（local variable）提供存储空间。
+- **执行引擎（Execution Engine）**，主要负责方法体里的instruction内容，它是JVM的核心部分。
+
+![Java ASM系列：（048）JVM Architecture_Java](https://s2.51cto.com/images/20210811/1628667916643758.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+在JVM当中，数据类型分成primitive type和reference type两种，那么ClassLoader负责加载哪些类型呢？
+
+- <u>对于primitive type是JVM内置的类型，不需要ClassLoader加载</u>。
+- 对于reference type来说，它又分成类（class types）、接口（interface types）和数组（array types）三种子类型。
+  - **ClassLoader只负责加载类（class types）和接口（interface types）**。
+  - <u>JVM内部会帮助我们创建数组（array types）</u>。
+
+### 1.4.2 JVM Execution Engine
+
+At the core of any Java Virtual Machine implementation is its **execution engine**.
+
+#### JVM文档：指令集
+
+在[The Java Virtual Machine Specification](https://docs.oracle.com/javase/specs/jvms/se8/html/index.html)中，它没有明确的提到Execution Engine的内容：打开JVM文档的每一章内容，搜索“execution engine”，会发现没有相关内容。
+
+那么，这是不是意味着JVM文档与Execution Engine两者之间没有关系呢？其实，两者之间是有关系的。
+
+可能是JVM文档描述的比较含蓄，它执行引擎（Execution Engine）的描述是通过指令集（Instruction Set）来体现的。
+
+In the Java Virtual Machine specification, **the behavior of the execution engine** is defined in terms of **an instruction set**.
+
+#### 执行引擎：三种解读
+
+The term “**execution engine**” can also be used in any of three senses: **an abstract specification**, **a concrete implementation**, or **a runtime instance**.
+
+- **The abstract specification** defines the behavior of an execution engine in terms of the instruction set.
+- **Concrete implementations**, which may use a variety of techniques, are either software, hardware, or a combination of both.
+- **A runtime instance** of an execution engine is a thread.
+
+<u>**Each thread of a running Java application is a distinct instance of the virtual machine’s execution engine**. From the beginning of its lifetime to the end, a thread is either executing bytecodes or native methods. A thread may execute bytecodes directly, by interpreting or executing natively in silicon, or indirectly, by just-in-time compiling and executing the resulting native code</u>.
+
+A Java Virtual Machine implementation may use other threads invisible to the running application, such as a thread that performs garbage collection. Such threads need not be “instances” of the implementation’s execution engine. **All threads that belong to the running application, however, are execution engines in action.**
+
+### 1.4.3 Runtime Data Areas: JVM Stack
+
+在现实生活当中，我们生活在一个三维的空间，在这个空间维度里，可以确定一个事物的具体位置；同时，也有一个时间维度，随着时间的流逝，这个事物的状态也会发生变化。**简单来说，对于一个具体事物，空间维度上就是看它占据一个什么位置，时间维度上就看它如何发生变化。** 接下来，我们把“空间维度”和“时间维度”的视角带入到JVM当中。
+
+在JVM当中，是怎么体现“空间维度”视角和“时间维度”两个视角的呢？
+
+- 时间维度。上面谈到执行引擎（Execution Engine），一条一条的执行instruction的内容，会引起相应事物的状态发生变化，这就是“时间维度”的视角。
+- 空间维度。接下来要讲的JVM Stack和Stack Frame，它们都是运行时数据区（Runtime Data Areas）具体的内存空间分配，用于存储相应的数据，这就是“空间维度”视角。
+
+![Java ASM系列：（048）JVM Architecture_Java](https://s2.51cto.com/images/20210811/1628667916643758.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+#### thread对应于JVM Stack
+
+上面提到，线程（thread）是执行引擎（Execution Engine）的运行实例，那么线程（thread）就是一个“时间维度”的视角。JVM Stack是运行时数据区（Runtime Data Areas）的一部分，是“空间维度”的视角。两者之间是什么样的关系呢？
+
+**Each Java Virtual Machine thread has a private Java Virtual Machine stack, created at the same time as the thread.**
+
+那么，对于线程（thread）来说，它就同时具有“时间维度”（Execution Engine）和“空间维度”(JVM Stack)。
+
+A Java Virtual Machine stack stores frames.
+
+#### method对应于Stack Frame
+
+接着，我们如何看待方法（method）呢？或者说方法（method）是什么呢？方法（method），是一组instruction内容的有序集合；而instruction的执行，就对应着时间的流逝，所以方法（method）也可以理解成一个“时间片段”。
+
+那么，线程（thread）和方法（method）是什么关系呢？线程（thread），从本质上来说，就是不同方法（method）之间的调用。所以，线程（thread）是更大的“时间片段”，而方法（method）是较小的“时间片段”。
+
+上面描述，体现方法（method）是在“时间维度”的考量，在“空间维度”上有哪些体现呢？在“空间维度”上，就体现为Stack Frame。
+
+- **A new frame is created each time a method is invoked.**
+- **A frame is destroyed when its method invocation completes, whether that completion is normal or abrupt (it throws an uncaught exception).**
+
+接下来，介绍current frame、current method和current class三个概念。
+
+Only one frame, the frame for the executing method, is active at any point in a given thread of control. This frame is referred to as the **current frame**, and its method is known as the **current method**. The class in which the current method is defined is the **current class**.
+
+一个方法会调用另外一个方法，另一个方法也有执行结束的时候。那么，current frame是如何变换的呢？
+
+- A frame ceases to be current if its method invokes another method or if its method completes.
+- When a method is invoked, a new frame is created and becomes current when control transfers to the new method.
+- On method return, the current frame passes back the result of its method invocation, if any, to the previous frame.
+- The current frame is then discarded as the previous frame becomes the current one.
+
+> [Chapter 2. The Structure of the Java Virtual Machine (oracle.com)](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-2.html#jvms-2.6) => 2.6. Frames 有介绍上面这段话
+>
+> Note that a frame created by a thread is local to that thread and cannot be referenced by any other thread.
+
+### 1.4.4 Runtime Data Areas: Stack Frame
+
+当一个具体的`.class`加载到JVM当中之后，方法的执行会对应于JVM当中一个Stack Frame内存空间。
+
+#### Stack Frame的内部结构
+
+对于Stack Frame内存空间，主要分成三个子区域：
+
+- 第一个子区域，operand stack，是一个栈结构，遵循后进先出（LIFO）的原则；它的大小是由`Code`属性中的`max_stack`来决定的。
+- 第二个子区域，local variables，是一个数组结构，通过索引值来获取和设置里面的数据，其索引值是从`0`开始；它的大小是由`Code`属性中的`max_locals`来决定的。
+- 第三个子区域，Frame Data，它用来存储与当前方法相关的数据。例如，一个指向runtime constant pool的引用、出现异常时的处理逻辑（exception table）。
+
+在Frame Data当中，我们也列出了其中两个重要数据信息：
+
+- 第一个数据，`instructions`，它表示指令集合，是由`Code`属性中的`code[]`解析之后的结果。（准确的来说，这里是不对的，instructions可能是位于Method Area当中。我们为了看起来方便，把它放到了这里。）
+- 第二个数据，`ref`，它是一个指向runtime constant pool的引用。这个runtime constant pool是由具体`.class`文件中的constant pool解析之后的结果。
+
+![Java ASM系列：（048）JVM Architecture_ASM_03](https://s2.51cto.com/images/20210811/1628668011678650.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+```java
+Code_attribute {
+    u2 attribute_name_index;
+    u4 attribute_length;
+    u2 max_stack;
+    u2 max_locals;
+    u4 code_length;
+    u1 code[code_length];
+    u2 exception_table_length;
+    {   u2 start_pc;
+        u2 end_pc;
+        u2 handler_pc;
+        u2 catch_type;
+    } exception_table[exception_table_length];
+    u2 attributes_count;
+    attribute_info attributes[attributes_count];
+}
+```
+
+#### Stack Frame内的数据类型
+
+在这里，我们要区分开两个概念：**存储时的类型** 和 **运行时的类型**。
+
+将一个具体`.class`文件加载进JVM当中，存放数据的地方有两个主要区域：堆（Heap Area）和栈（Stack Area）。
+
+- 在堆（Heap Area）上，存放的就是Actual type，就是“存储时的类型”。例如，`byte`类型就是占用1个byte，`int`类型就是占用4个byte。
+- 在栈（Stack Area）上，更确切的说，就是Stack Frame当中的operand stack和local variables区域，存放的就是Computational type。这个时候，类型就发生了变化，`boolean`、`byte`、`char`、`short`都会被转换成`int`类型来进行计算。
+
+在方法执行的时候，或者说方法里的instruction在执行的时候，需要将相关的数据加载到Stack Frame里；更进一步的说，就是将数据加载到operand stack和local variables两个子区域当中。
+
+![Java ASM系列：（048）JVM Architecture_Java_04](https://s2.51cto.com/images/20210811/1628668049730555.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+当数据加载到operand stack和local variables当中时，需要注意三点：
+
+- **第一点，`boolean`, `byte`, `short`, `char`, or `int`，这几种类型，在local variable和operand stack当中，都是作为`int`类型进行处理。**
+- **第二点，`int`、`float`和`reference`类型，在local variable和operand stack当中占用1个位置**
+- **第三点，`long`和`double`类型，在local variable和operand stack当中占用2个位置**
+
+<u>举个例子，在一个类当中，有一个`byte`类型的字段。将该类加载进JVM当中，然后创建该类的对象实例，那么该对象实例是存储在堆（Heap Area）上的，其中的字段就是`byte`类型。当程序运行过程中，会使用到该对象的字段，这个时候就要将`byte`类型的值转换成`int`类型进行计算；计算完成之后，需要将值存储到该对象的字段当中，这个时候就会将`int`类型再转换成`byte`类型进行存储</u>。
+
+另外，对于Category为`1`的类型，在operand stack和local variables当中占用1个slot的位置；对于对于Category为`2`的类型，在operand stack和local variables当中占用2个slot的位置。
+
+下表的内容是来自于[Java Virtual Machine Specification](https://docs.oracle.com/javase/specs/jvms/se8/html/index.html)的[Table 2.11.1-B. Actual and Computational types in the Java Virtual Machine](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-2.html#jvms-2.11.1-320)部分。
+
+| Actual type | Computational type | Category |
+| ----------- | ------------------ | -------- |
+| boolean     | int                | 1        |
+| byte        | int                | 1        |
+| char        | int                | 1        |
+| short       | int                | 1        |
+| int         | int                | 1        |
+| float       | float              | 1        |
+| reference   | reference          | 1        |
+| long        | long               | 2        |
+| double      | double             | 2        |
+
+在[2.11.1. Types and the Java Virtual Machine](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-2.html#jvms-2.11.1)谈到：most operations on values of **actual types** `boolean`, `byte`, `char`, and `short` are correctly performed by instructions operating on values of **computational type** `int`.
+
+对于local variable是这样描述的：（内容来自于[2.6.1. Local Variables](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-2.html#jvms-2.6.1)）
+
+- A single local variable can hold a value of type `boolean`, `byte`, `char`, `short`, `int`, `float`, `reference`, or `returnAddress`.
+- A pair of local variables can hold a value of type `long` or `double`.
+
+对于operand stack是这样描述的：（内容来自于[2.6.2. Operand Stacks](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-2.html#jvms-2.6.2)）
+
+- Each entry on the operand stack can hold a value of any Java Virtual Machine type, including a value of type `long` or type `double`.
+- At any point in time, an operand stack has an associated depth, where a value of type `long` or `double` contributes two units to the depth and a value of any other type contributes one unit.
+
+### 1.4.5 总结
+
+本文内容总结如下：
+
+- 第一点，**Execution Engine是JVM的核心；JVM文档中的Instruction Set就是对Execution Engine的行为描述；线程就是Execution Engine的运行实例**。
+- 第二点，**线程所对应的内存空间是JVM Stack，方法所对应的内存空间是Stack Frame**。
+- 第三点，在Stack Frame当中，分成local variable、operand stack和frame data三个子区域；在local variable和operand stack中，要注意数据的计算类型和占用的空间大小。
+
+## 1.5 JVM Execution Model
+
+### 1.5.1 Execution Model
+
+#### 什么是Execution Model
+
+在[asm4-guide.pdf](https://asm.ow2.io/asm4-guide.pdf)文档的`3.1.1. Execution Model`部分提到了Execution Model。
+
+那么，Execution Model是什么呢？其实，**Execution Model就是指Stack Frame简化之后的模型**。如何“简化”呢？也就是，我们不需要去考虑Stack Frame的技术实现细节，把它想像一个理想的模型就可以了。
+
+针对Execution Model或Stack Frame，我们可以理解成它由local variable和operand stack两个部分组成，或者说理解成它由local variable、operand stack和frame data三个部分组成。换句话说，local variable和operand stack是两个必不可少的部分，而frame data是一个相对来说不那么重要的部分。在一般的描述当中，都是将Stack Frame描述成local variable和operand stack两个部分；但是，如果我们为了知识的完整性，就可以考虑添加上frame data这个部分。
+
+![Java ASM系列：（049）JVM Execution Model_Opcode](https://s2.51cto.com/images/20210819/1629358156974803.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+另外，方法的执行与Stack Frame之间有一个非常紧密的关系：
+
+- 一个方法的调用开始，就对应着Stack Frame的内存空间的分配。
+- 一个方法的执行结束，无论正常结束（return），还是异常退出（throw exception），都表示着相应的Stack Frame内存空间被销毁。
+
+接下来，我们就通过两个方面来把握Stack Frame的状态：
+
+- 第一个方面，方法刚进入的时候，任何的instruction都没有执行，那么Stack Frame是一个什么样的状态呢？
+- 第二个方面，在方法开始执行后，这个时候instruction开始执行，每一条instruction的执行，会对Stack Frame的状态产生什么样的影响呢？
+
+#### 方法的初始状态
+
+在方法进入的时候，会生成相应的Stack Frame内存空间。那么，Stack Frame的初始状态是什么样的呢？（点击[这里](https://lsieun.github.io/java-asm-01/method-initial-frame.html)查看之前内容）
+
+在Stack Frame当中，operand stack是空的，而local variables则需要考虑三方面的因素：
+
+- 当前方法是否为static方法。
+  - 如果当前方法是non-static方法，则需要在local variables索引为`0`的位置存在一个`this`变量，后续的内容从`1`开始存放。
+  - 如果当前方法是static方法，则不需要存储`this`，因此后续的内容从`0`开始存放。
+- 当前方法是否接收参数。方法接收的参数，会按照参数的声明顺序放到local variables当中。
+- 方法参数是否包含`long`或`double`类型。如果方法的参数是`long`或`double`类型，那么它在local variables当中占用两个位置。
+- 问题：能否在文档中找到依据呢？
+- 回答：能。
+
+The Java Virtual Machine uses **local variables** to pass parameters on **method invocation**. On **class method invocation**, any parameters are passed in consecutive local variables starting from local variable `0`. On **instance method invocation**, local variable `0` is always used to pass a reference to the object on which the instance method is being invoked (`this` in the Java programming language). Any parameters are subsequently passed in consecutive local variables starting from local variable `1`.（内容来自于[2.6.1. Local Variables](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-2.html#jvms-2.6.1)）
+
+**The operand stack is empty** when the frame that contains it is created.（内容来自于[2.6.2. Operand Stacks](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-2.html#jvms-2.6.2)）
+
+#### 方法的后续变化
+
+方法的后续变化，就是在方法初始状态的基础上，随着instruction的执行而对local variable和operand stack的状态产生影响。
+
+当方法执行时，就是将instruction一条一条的执行：
+
+- 第一步，获取instruction。每一条instruction都是从`instructions`内存空间中取出来的。
+- 第二步，执行instruction。对于instruction的执行，就会引起operand stack和local variables的状态变化。
+  - 在执行instruction过程中，需要获取相关资源。通过`ref`可以获取runtime constant pool的“资源”，例如一个字符串的内容，一个指向方法的物理内存地址。
+
+在[Chapter 2. The Structure of the Java Virtual Machine](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-2.html)的[2.11. Instruction Set Summary](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-2.html#jvms-2.11)部分，对程序的执行进行了如下描述：
+
+Ignoring exceptions, the inner loop of a Java Virtual Machine interpreter is effectively:
+
+```pseudocode
+do {
+    atomically calculate pc and fetch opcode at pc;
+    if (operands) fetch operands;
+    execute the action for the opcode;
+} while (there is more to do);
+```
+
+![Java ASM系列：（049）JVM Execution Model_Opcode](https://s2.51cto.com/images/20210819/1629358156974803.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+需要注意的是，虽然local variable和operand stack是Stack Frame当中两个最重要的结构，两者是处于一个平等的地位上，缺少任何一个都无法正常工作；但是，从使用频率的角度来说，两者还是有很大的差别。先举个生活当中的例子，operand stack类似于“公司”，local variables类似于“临时租的房子”，虽然说“公司”和“临时租的房子”是我们经常待的场所，是两个非常重要的地方，但是我们工作的时间大部是在“公司”进行的，少部分工作时间是在“家”里进行。也就是说，<u>大多数情况下，都是先把数据加载到operand stack上，在operand stack上进行运算，最后可能将数据存储到local variables当中。只有少部分的操作（例如`iinc`），只需要在local variable上就能完成</u>。所以从使用频率的角度来说，**operand stack是进行工作的“主战场”，使用频率就比较高，大多数工作都是在它上面完成；而local variable使用频率就相对较低，它只是提供一个临时的数据存储区域**。
+
+### 1.5.2 查看方法的Stack Frame变化
+
+在这个部分，我们介绍一下如何使用`HelloWorldFrameCore02`类查看方法对应的Stack Frame的变化。
+
+#### 查看Frame变化的工具类
+
+在课程代码中，查看方法对应的Stack Frame的变化，有两个类的版本：
+
+- 第一个版本，是`HelloWorldFrameCore`类。它是在《Java ASM系列一：Core API》阶段引入的类，可以用来打印方法的Stack Frame的变化。为了保证与以前内容的一致性，我们保留了这个类的代码逻辑不变动。
+- 第二个版本，是`HelloWorldFrameCore02`类。它是在《Java ASM系列二：OPCODE》阶段引入的类，在第一个版本的基础上进行了改进：引入了instruction部分，精简了Stack Frame的类型显示。
+
+我们在使用的时候，直接使用第二个版本就可以了，也就是使用`HelloWorldFrameCore02`类。
+
+#### Frame变化过程输出
+
+我们在执行`HelloWorldFrameCore02`类之后，输出结果分成三个部分：
+
+我们在执行`HelloWorldFrameCore02`类之后，输出结果分成三个部分：
+
+- 第一部分，是offset，它表示某一条instruction的具体位置或偏移量。
+- 第二部分，是instructions，它表示方法里包含的所有指令信息。
+- 第三部分，是local variable和operand stack中存储的具体数据类型。
+  - 格式：`{local variable types} | {operand stack types}`
+  - 第一行的local variable和operand stack表示“方法的初始状态”。
+  - 其后每一行instruction
+    - 上一行的local variable和operand stack表示该instruction执行之前的状态
+    - 与该instruction位于同一行local variable和operand stack表示该instruction执行之后的状态
+
+![Java ASM系列：（049）JVM Execution Model_Java_03](https://s2.51cto.com/images/20210819/1629358215407158.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+在上面的输出结果中，我们会看到local variable和operand stack为`{} | {}`的情况，这是四种特殊情况。
+
+#### Frame清空LVR和OS的四种情况
+
+在`HelloWorldFrameCore02`类当中，会间接使用到`AnalyzerAdapter`类。在`AnalyzerAdapter`类的代码中，将`locals`和`stack`字段的取值设置为`null`的情况，就会有上面`{} | {}`的情况。
+
+在`AnalyzerAdapter`类的代码中，有四个方法会将`locals`和`stack`字段设置为`null`：
+
+- 在`AnalyzerAdapter.visitInsn(int opcode)`方法中，当`opcode`为`return`或`athrow`的情况
+- 在`AnalyzerAdapter.visitJumpInsn(int opcode, Label label)`方法中，当`opcode`为`goto`的情况
+- 在`AnalyzerAdapter.visitTableSwitchInsn(int min, int max, Label dflt, Label... labels)`方法中
+- 在`AnalyzerAdapter.visitLookupSwitchInsn(Label dflt, int[] keys, Label[] labels)`方法中
+
+#### 五种理解代码的视角
+
+在后续内容中，我们介绍代码示例的时候，一般都会从五个视角来学习：
+
+- 第一个视角，Java语言的视角，就是`sample.HelloWorld`里的代码怎么编写。
+- 第二个视角，Instruction的视角，就是`javap -c sample.HelloWorld`，这里给出的就是标准的opcode内容。
+- 第三个视角，ASM的视角，就是编写ASM代码实现某种功能，这里主要是对`visitXxxInsn()`方法的调用，与实际的opcode可能相同，也可能有差异。
+- 第四个视角，Frame的视角，就是JVM内存空间的视角，就是local variable和operand stack的变化。
+- 第五个视角，JVM Specification的视角，参考JVM文档，它是怎么说的。
+
+第一个视角，Java语言的视角。假如我们有一个`sample.HelloWorld`类，代码如下：
+
+```java
+package sample;
+
+public class HelloWorld {
+  public void test(boolean flag) {
+    if (flag) {
+      System.out.println("value is true");
+    }
+    else {
+      System.out.println("value is false");
+    }
+  }
+}
+```
+
+第二个视角，Instruction的视角。我们可以通过`javap -c sample.HelloWorld`命令查看方法包含的instruction内容：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(boolean);
+    Code:
+       0: iload_1
+       1: ifeq          15 (计算之后的值)
+       4: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       7: ldc           #3                  // String value is true
+       9: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      12: goto          23 (计算之后的值)
+      15: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      18: ldc           #5                  // String value is false
+      20: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      23: return
+}
+```
+
+第三个视角，ASM的视角。运行`ASMPrint`类，可以查看ASM代码，可以查看某一个opcode具体对应于哪一个`MethodVisitor.visitXxxInsn()`方法：
+
+```java
+Label label0 = new Label();
+Label label1 = new Label();
+
+methodVisitor.visitCode();
+methodVisitor.visitVarInsn(ILOAD, 1);
+methodVisitor.visitJumpInsn(IFEQ, label0);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("value is true");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+methodVisitor.visitJumpInsn(GOTO, label1);
+
+methodVisitor.visitLabel(label0);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("value is false");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+
+methodVisitor.visitLabel(label1);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(2, 2);
+methodVisitor.visitEnd();
+```
+
+第四个视角，Frame的视角。我们可以通过运行`HelloWorldFrameCore02`类来查看方法对应的Stack Frame的变化：
+
+```shell
+test:(Z)V
+                               // {this, int} | {}
+0000: iload_1                  // {this, int} | {int}
+0001: ifeq            14(真实值)// {this, int} | {}
+0004: getstatic       #2       // {this, int} | {PrintStream}
+0007: ldc             #3       // {this, int} | {PrintStream, String}
+0009: invokevirtual   #4       // {this, int} | {}
+0012: goto            11(真实值)// {} | {}
+                               // {this, int} | {}
+0015: getstatic       #2       // {this, int} | {PrintStream}
+0018: ldc             #5       // {this, int} | {PrintStream, String}
+0020: invokevirtual   #4       // {this, int} | {}
+                               // {this, int} | {}
+0023: return                   // {} | {}
+```
+
+> 注意，`.class`存储的是跳转的偏移量，需要将当前offset+跳转的偏移量，才能得到实际跳转的位置
+
+第五个视角，JVM Specification的视角。我们可以参考[Chapter 6. The Java Virtual Machine Instruction Set](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-6.html)文档，查看具体的opcode的内容，主要是查看opcode的Format和Operand Stack。
+
+Format
+
+```
+mnemonic
+operand1
+operand2
+...
+```
+
+Operand Stack
+
+```
+..., value1, value2 →
+
+..., value3
+```
+
+### 1.5.3 总结
+
+本文内容总结如下：
+
+- 第一点，Execution Model就是对Stack Frame进行简单、理想化之后的模型；对于Stack Frame来说，我们要关注方法的初始状态和方法的后续变化。
+- 第二点，通过运行`HelloWorldFrameCore02`类可以查看具体方法的Stack Frame变化。
+
+# 2. OPCODE
+
+在JVM文档中，一共定义了205个[opcode](https://lsieun.github.io/static/java/opcode.html)，内容比较多，我们可以根据自己的兴趣进行有选择性的学习。在下面文章的标题后面都带有`(m/n/sum)`标识，其中，`m`表示当前文章当中介绍多少个opcode，`n`表示到目前为止介绍了多少个opcode，`sum`表示一共有多少个opcode。
+
+## 2.1 opcode: return (6/6/205)
+
+### 2.1.1 概览
+
+从Instruction的角度来说，与return相关的opcode有6个，内容如下：
+
+| opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol |
+| ------ | --------------- | ------ | --------------- | ------ | --------------- |
+| 172    | ireturn         | 174    | freturn         | 176    | areturn         |
+| 173    | lreturn         | 175    | dreturn         | 177    | return          |
+
+从ASM的角度来说，这些opcode是通过`MethodVisitor.visitInsn(int opcode)`方法来调用的。
+
+### 2.1.2 return void type
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    // do nothing
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(0, 1);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```shell
+                               // {this} | {}
+0000: return                   // {} | {}
+```
+
+从JVM规范的角度来看，Operand Stack的变化如下：
+
+```shell
+... →
+
+[empty]
+```
+
+The current method must have return type `void`.
+
+- If no exception is thrown, **any values on the operand stack of the current frame are discarded.**
+- The interpreter then returns control to the invoker of the method, reinstating the frame of the invoker.
+
+### 2.1.3 return primitive type
+
+#### ireturn
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public int test() {
+    return 0;
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public int test();
+    Code:
+       0: iconst_0
+       1: ireturn
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ICONST_0);
+methodVisitor.visitInsn(IRETURN);
+methodVisitor.visitMaxs(1, 1);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```shell
+                               // {this} | {}
+0000: iconst_0                 // {this} | {int}
+0001: ireturn                  // {} | {}
+```
+
+从JVM规范的角度来看，Operand Stack的变化如下：
+
+```shell
+..., value →
+
+[empty]
+```
+
+- The current method must have return type `boolean`, `byte`, `short`, `char`, or `int`. The `value` must be of type `int`.
+- **If no exception is thrown, `value` is popped from the operand stack of the current frame and pushed onto the operand stack of the frame of the invoker.**
+- Any other values on the operand stack of the current method are discarded.
+- The interpreter then returns control to the invoker of the method, reinstating the frame of the invoker.
+
+注意：这里只要是`boolean`, `byte`, `short`, `char`, or `int`，都会以相同的指令被处理（即被转成int处理）
+
+#### freturn
+
+freturn、lreturn、dreturn描述都类似，就是指令和要求的类型不同，这里省略
+
+#### lreturn
+
+freturn、lreturn、dreturn描述都类似，就是指令和要求的类型不同，这里省略
+
+#### dreturn
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+    public double test() {
+        return 0;
+    }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public double test();
+    Code:
+       0: dconst_0
+       1: dreturn
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(DCONST_0);
+methodVisitor.visitInsn(DRETURN);
+methodVisitor.visitMaxs(2, 1);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```shell
+                               // {this} | {}
+0000: dconst_0                 // {this} | {double, top}
+0001: dreturn                  // {} | {}
+```
+
+从JVM规范的角度来看，Operand Stack的变化如下：
+
+```shell
+..., value →
+
+[empty]
+```
+
+- The current method must have return type `double`. The `value` must be of type `double`.
+- If no exception is thrown, `value` is popped from the operand stack of the current frame. The `value` is pushed onto the operand stack of the frame of the invoker.
+- Any other values on the operand stack of the current method are discarded.
+- The interpreter then returns control to the invoker of the method, reinstating the frame of the invoker.
+
+### 2.1.4 return reference type
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public Object test() {
+    return null;
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public java.lang.Object test();
+    Code:
+       0: aconst_null
+       1: areturn
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ACONST_NULL);
+methodVisitor.visitInsn(ARETURN);
+methodVisitor.visitMaxs(1, 1);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```shell
+                               // {this} | {}
+0000: aconst_null              // {this} | {null}
+0001: areturn                  // {} | {}
+```
+
+从JVM规范的角度来看，Operand Stack的变化如下：
+
+```shell
+..., objectref →
+
+[empty]
+```
+
+- **The `objectref` must be of type `reference` and must refer to an object of a type that is assignment compatible with the type represented by the return descriptor of the current method.**
+- If no exception is thrown, `objectref` is popped from the operand stack of the current frame and pushed onto the operand stack of the frame of the invoker.
+- Any other values on the operand stack of the current method are discarded.
+- The interpreter then reinstates the frame of the invoker and returns control to the invoker.
+
+## 2.2 opcode: constant (20/26/205)
