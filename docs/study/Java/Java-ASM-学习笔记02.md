@@ -5006,3 +5006,5030 @@ methodVisitor.visitEnd();
 
 ## 2.8 opcode: array (20/160/205)
 
+### 2.8.1 概览
+
+从Instruction的角度来说，与array相关的opcode有20个，内容如下：
+
+> **注意，boolean数组没有单独的指令，和byte数组共用`bastore`和`baload`**
+
+| opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol |
+| ------ | --------------- | ------ | --------------- | ------ | --------------- | ------ | --------------- |
+| 188    | newarray        | 189    | anewarray       | 190    | arraylength     | 197    | multianewarray  |
+
+| opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol |
+| ------ | --------------- | ------ | --------------- | ------ | --------------- | ------ | --------------- |
+| 46     | iaload          | 48     | faload          | 50     | aaload          | 52     | caload          |
+| 47     | laload          | 49     | daload          | 51     | baload          | 53     | saload          |
+
+| opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol |
+| ------ | --------------- | ------ | --------------- | ------ | --------------- | ------ | --------------- |
+| 79     | iastore         | 81     | fastore         | 83     | aastore         | 85     | castore         |
+| 80     | lastore         | 82     | dastore         | 84     | bastore         | 86     | sastore         |
+
+从ASM的角度来说，这些opcode与`MethodVisitor.visitXxxInsn()`方法对应关系如下：
+
+- `MethodVisitor.visitIntInsn()`: `newarray`
+- `MethodVisitor.visitTypeInsn()`: `anewarray`
+- `MethodVisitor.visitMultiANewArrayInsn()`: `multianewarray`
+- `MethodVisitor.visitInsn()`:
+  - `arraylength`
+  - `iaload`, `iastore`
+  - `laload`, `lastore`
+  - `faload`, `fastore`
+  - `daload`, `dastore`
+  - `aaload`, `aastore`
+  - `baload`, `bastore`
+  - `caload`, `castore`
+  - `saload`, `sastore`
+
+### 2.8.2 create array
+
+#### newarray: primitive type
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    byte[] byteArray = new byte[5];
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: iconst_5
+       1: newarray       byte // 这里.class实际是数字8表示byte，只是javap解析后直接显示为byte方便阅读
+       3: astore_1
+       4: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ICONST_5);
+methodVisitor.visitIntInsn(NEWARRAY, T_BYTE);
+methodVisitor.visitVarInsn(ASTORE, 1);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(1, 2);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+> 这里可以看到`.class`实际用8表示byte，而不是直接存储字符串"byte"
+
+```pseudocode
+                               // {this} | {}
+0000: iconst_5                 // {this} | {int}
+0001: newarray   8 (byte)      // {this} | {[B} // newarray 消耗一个表示数组大小的数值，然后入栈数组指针
+0003: astore_1                 // {this, [B} | {}
+0004: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`newarray`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., count →
+
+..., arrayref
+```
+
+The `count` must be of type `int`. It is popped off the operand stack. The `count` represents the number of elements in the array to be created.
+
+另外，`newarray`指令对应的Format如下：
+
+```
+newarray
+atype
+```
+
+The [`atype`](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-6.html#jvms-6.5.newarray) is a code that indicates the type of array to create. It must take one of the following values:
+
+| Array Type | atype |
+| ---------- | ----- |
+| T_BOOLEAN  | 4     |
+| T_CHAR     | 5     |
+| T_FLOAT    | 6     |
+| T_DOUBLE   | 7     |
+| T_BYTE     | 8     |
+| T_SHORT    | 9     |
+| T_INT      | 10    |
+| T_LONG     | 11    |
+
+#### anewarray: reference type
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    Object[] objArray = new Object[5];
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: iconst_5
+       1: anewarray     #2                  // class java/lang/Object
+       4: astore_1
+       5: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ICONST_5);
+methodVisitor.visitTypeInsn(ANEWARRAY, "java/lang/Object");
+methodVisitor.visitVarInsn(ASTORE, 1);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(1, 2);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: iconst_5                 // {this} | {int}
+0001: anewarray       #2       // {this} | {[Object}
+0004: astore_1                 // {this, [Object} | {}
+0005: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`anewarray`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., count →
+
+..., arrayref
+```
+
+- The `count` must be of type `int`. It is popped off the operand stack. The `count` represents the number of components of the array to be created.
+- A new array with components of that type, of length `count`, is allocated from the garbage-collected heap, and a reference `arrayref` to this new array object is pushed onto the operand stack.
+- All components of the new array are initialized to `null`, the default value for reference types.
+
+#### multianewarray
+
+> 多维数组使用multianewarray
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    Object[][] array = new Object[3][4];
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+> `multianewarray #2,  2`，第二个"2"表示数组的维度是2
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: iconst_3
+       1: iconst_4
+       2: multianewarray #2,  2             // class "[[Ljava/lang/Object;"
+       6: astore_1
+       7: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ICONST_3);
+methodVisitor.visitInsn(ICONST_4);
+methodVisitor.visitMultiANewArrayInsn("[[Ljava/lang/Object;", 2);
+methodVisitor.visitVarInsn(ASTORE, 1);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(2, 2);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: iconst_3                 // {this} | {int}
+0001: iconst_4                 // {this} | {int, int} // 因为需要多个维度的数值，所以加载多个数值到operand stack
+0002: multianewarray  #2  2    // {this} | {[[Object}
+0006: astore_1                 // {this, [[Object} | {}
+0007: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`multianewarray`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., count1, [count2, ...] →
+
+..., arrayref
+```
+
+- All of the count values are popped off the operand stack.
+- A new multidimensional array of the array type is allocated from the garbage-collected heap. A reference `arrayref` to the new array is pushed onto the operand stack.
+
+另外，`multianewarray`指令对应的Format如下：
+
+```pseudocode
+multianewarray
+indexbyte1
+indexbyte2
+dimensions
+```
+
+The `dimensions` operand is an unsigned byte that must be greater than or equal to 1. It represents the number of dimensions of the array to be created. The operand stack must contain `dimensions` values. Each such value represents the number of components in a dimension of the array to be created, must be of type `int`, and must be non-negative. The `count1` is the desired length in the first dimension, `count2` in the second, etc.
+
+#### special
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    // 注意，这里是一个二维数据，但只提供了第一维的大小
+    int[][] array = new int[10][];
+    // 这里array并不能直接使用，使用时需要如下操作
+    // array[0] = new int[10];
+    // array[0][1] = 1;
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+> 可以看到这里虽然声明二维数组，但是由于第二维还没有初始化，所以实际还是被当作一维处理
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: bipush        10
+       2: anewarray     #2                  // class "[I"
+       5: astore_1
+       6: return
+}
+```
+
+### 2.8.3 array element
+
+#### int array
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    int[] intArray = new int[5];
+    intArray[0] = 10;
+    int i = intArray[0];
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: iconst_5
+       1: newarray       int
+       3: astore_1
+       4: aload_1
+       5: iconst_0
+       6: bipush        10
+       8: iastore
+       9: aload_1
+      10: iconst_0
+      11: iaload
+      12: istore_2
+      13: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ICONST_5);
+methodVisitor.visitIntInsn(NEWARRAY, T_INT);
+methodVisitor.visitVarInsn(ASTORE, 1);
+methodVisitor.visitVarInsn(ALOAD, 1);
+methodVisitor.visitInsn(ICONST_0);
+methodVisitor.visitIntInsn(BIPUSH, 10);
+methodVisitor.visitInsn(IASTORE);
+methodVisitor.visitVarInsn(ALOAD, 1);
+methodVisitor.visitInsn(ICONST_0);
+methodVisitor.visitInsn(IALOAD);
+methodVisitor.visitVarInsn(ISTORE, 2);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(3, 3);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: iconst_5                 // {this} | {int}
+0001: newarray        int      // {this} | {[I}
+0003: astore_1                 // {this, [I} | {}
+0004: aload_1                  // {this, [I} | {[I}
+0005: iconst_0                 // {this, [I} | {[I, int}
+0006: bipush          10       // {this, [I} | {[I, int, int}
+0008: iastore                  // {this, [I} | {} // 将数组下标0的元素赋值10
+0009: aload_1                  // {this, [I} | {[I}
+0010: iconst_0                 // {this, [I} | {[I, int}
+0011: iaload                   // {this, [I} | {int} // 将数组下标0的元素加载到operand stack
+0012: istore_2                 // {this, [I, int} | {}
+0013: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`iastore`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., arrayref, index, value →
+
+...
+```
+
+The `arrayref` must be of type `reference` and must refer to an array whose components are of type `int`. Both `index` and `value` must be of type `int`. The `arrayref`, `index`, and `value` are popped from the operand stack. The `int` value is stored as the component of the array indexed by `index`.
+
+从JVM规范的角度来看，`iaload`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., arrayref, index →
+
+..., value
+```
+
+The `arrayref` must be of type `reference` and must refer to an array whose components are of type `int`. The `index` must be of type `int`. Both `arrayref` and `index` are popped from the operand stack. The `int` value in the component of the array at `index` is retrieved and pushed onto the operand stack.
+
+#### Object Array
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    Object[] objArray = new Object[2];
+    objArray[0] = null;
+    Object obj = objArray[0];
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: iconst_2
+       1: anewarray     #2                  // class java/lang/Object
+       4: astore_1
+       5: aload_1
+       6: iconst_0
+       7: aconst_null
+       8: aastore
+       9: aload_1
+      10: iconst_0
+      11: aaload
+      12: astore_2
+      13: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ICONST_2);
+methodVisitor.visitTypeInsn(ANEWARRAY, "java/lang/Object");
+methodVisitor.visitVarInsn(ASTORE, 1);
+methodVisitor.visitVarInsn(ALOAD, 1);
+methodVisitor.visitInsn(ICONST_0);
+methodVisitor.visitInsn(ACONST_NULL);
+methodVisitor.visitInsn(AASTORE);
+methodVisitor.visitVarInsn(ALOAD, 1);
+methodVisitor.visitInsn(ICONST_0);
+methodVisitor.visitInsn(AALOAD);
+methodVisitor.visitVarInsn(ASTORE, 2);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(3, 3);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: iconst_2                 // {this} | {int}
+0001: anewarray       #2       // {this} | {[Object}
+0004: astore_1                 // {this, [Object} | {}
+0005: aload_1                  // {this, [Object} | {[Object}
+0006: iconst_0                 // {this, [Object} | {[Object, int}
+0007: aconst_null              // {this, [Object} | {[Object, int, null}
+0008: aastore                  // {this, [Object} | {}
+0009: aload_1                  // {this, [Object} | {[Object}
+0010: iconst_0                 // {this, [Object} | {[Object, int}
+0011: aaload                   // {this, [Object} | {Object}
+0012: astore_2                 // {this, [Object, Object} | {}
+0013: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`aastore`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., arrayref, index, value →
+
+...
+```
+
+The `arrayref` must be of type `reference` and must refer to an array whose components are of type `reference`. The `index` must be of type `int` and `value` must be of type `reference`. The `arrayref`, `index`, and `value` are popped from the operand stack. The reference `value` is stored as the component of the array at `index`.
+
+从JVM规范的角度来看，`aaload`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., arrayref, index →
+
+..., value
+```
+
+The `arrayref` must be of type `reference` and must refer to an array whose components are of type `reference`. The `index` must be of type `int`. Both `arrayref` and `index` are popped from the operand stack. The reference `value` in the component of the array at `index` is retrieved and pushed onto the operand stack.
+
+#### multi-dimensions array
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    int[][][] array = new int[4][5][6];
+    array[1][2][3] = 10;
+    int val = array[1][2][3];
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: iconst_4
+       1: iconst_5
+       2: bipush        6
+       4: multianewarray #2,  3             // class "[[[I"
+       8: astore_1
+       9: aload_1
+      10: iconst_1
+      11: aaload
+      12: iconst_2
+      13: aaload
+      14: iconst_3
+      15: bipush        10
+      17: iastore
+      18: aload_1
+      19: iconst_1
+      20: aaload
+      21: iconst_2
+      22: aaload
+      23: iconst_3
+      24: iaload
+      25: istore_2
+      26: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ICONST_4);
+methodVisitor.visitInsn(ICONST_5);
+methodVisitor.visitIntInsn(BIPUSH, 6);
+methodVisitor.visitMultiANewArrayInsn("[[[I", 3);
+methodVisitor.visitVarInsn(ASTORE, 1);
+methodVisitor.visitVarInsn(ALOAD, 1);
+methodVisitor.visitInsn(ICONST_1);
+methodVisitor.visitInsn(AALOAD);
+methodVisitor.visitInsn(ICONST_2);
+methodVisitor.visitInsn(AALOAD);
+methodVisitor.visitInsn(ICONST_3);
+methodVisitor.visitIntInsn(BIPUSH, 10);
+methodVisitor.visitInsn(IASTORE);
+methodVisitor.visitVarInsn(ALOAD, 1);
+methodVisitor.visitInsn(ICONST_1);
+methodVisitor.visitInsn(AALOAD);
+methodVisitor.visitInsn(ICONST_2);
+methodVisitor.visitInsn(AALOAD);
+methodVisitor.visitInsn(ICONST_3);
+methodVisitor.visitInsn(IALOAD);
+methodVisitor.visitVarInsn(ISTORE, 2);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(3, 3);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+> 整体思路即，读写元素时需要先将多维数组层层解析至1维数组，然后再操作
+
+```pseudocode
+                               // {this} | {}
+0000: iconst_4                 // {this} | {int}
+0001: iconst_5                 // {this} | {int, int}
+0002: bipush          6        // {this} | {int, int, int}
+0004: multianewarray  #2  3    // {this} | {[[[I} // 创建3维int数组
+0008: astore_1                 // {this, [[[I} | {}
+0009: aload_1                  // {this, [[[I} | {[[[I}
+0010: iconst_1                 // {this, [[[I} | {[[[I, int}
+0011: aaload                   // {this, [[[I} | {[[I} // 加载array[1]，解析成2维数组
+0012: iconst_2                 // {this, [[[I} | {[[I, int}
+0013: aaload                   // {this, [[[I} | {[I} // 加载array[1][2]，解析成1维数组
+0014: iconst_3                 // {this, [[[I} | {[I, int}
+0015: bipush          10       // {this, [[[I} | {[I, int, int}
+0017: iastore                  // {this, [[[I} | {} // 将10赋值到 arrya[1][2][3]
+0018: aload_1                  // {this, [[[I} | {[[[I}
+0019: iconst_1                 // {this, [[[I} | {[[[I, int}
+0020: aaload                   // {this, [[[I} | {[[I}
+0021: iconst_2                 // {this, [[[I} | {[[I, int}
+0022: aaload                   // {this, [[[I} | {[I}
+0023: iconst_3                 // {this, [[[I} | {[I, int}
+0024: iaload                   // {this, [[[I} | {int}
+0025: istore_2                 // {this, [[[I, int} | {}
+0026: return                   // {} | {}
+```
+
+### 2.8.4 array length
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    int[] intArray = new int[5];
+    int length = intArray.length;
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: iconst_5
+       1: newarray       int
+       3: astore_1
+       4: aload_1
+       5: arraylength
+       6: istore_2
+       7: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ICONST_5);
+methodVisitor.visitIntInsn(NEWARRAY, T_INT);
+methodVisitor.visitVarInsn(ASTORE, 1);
+methodVisitor.visitVarInsn(ALOAD, 1);
+methodVisitor.visitInsn(ARRAYLENGTH);
+methodVisitor.visitVarInsn(ISTORE, 2);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(1, 3);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```shell
+                               // {this} | {}
+0000: iconst_5                 // {this} | {int}
+0001: newarray        int      // {this} | {[I}
+0003: astore_1                 // {this, [I} | {}
+0004: aload_1                  // {this, [I} | {[I}
+0005: arraylength              // {this, [I} | {int}
+0006: istore_2                 // {this, [I, int} | {}
+0007: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`arraylength`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., arrayref →
+
+..., length
+```
+
+The `arrayref` must be of type reference and must refer to an array. It is popped from the operand stack. The `length` of the array it references is determined. That `length` is pushed onto the operand stack as an `int`.
+
+### 2.8.5 boolean
+
+在[Chapter 2. The Structure of the Java Virtual Machine](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-2.html)当中，有如下几段描述：
+
+- Like the Java programming language, the Java Virtual Machine operates on two kinds of types: **primitive types** and **reference types**.
+- The **primitive data types** supported by the Java Virtual Machine are **the numeric types**, **the boolean type**, and **the returnAddress type**.
+- There are three kinds of **reference types**: **class types**, **array types**, and **interface types**.
+
+经过整理，我们可以将JVM当中的类型表示成如下形式：
+
+- JVM Types
+  - primitive types
+    - numeric types
+      - integral types: `byte`, `short`, `int`, `long`, `char`
+      - floating-point types: `float`, `double`
+    - `boolean` type
+    - `returnAddress` type
+  - reference types
+    - class types
+    - array types
+    - interface types
+
+**在这里，我们关注`boolean`、`byte`、`short`、`char`、`int`这几个primitive types；它们在local variable和operand stack当中都是作为`int`类型来进行处理。**
+
+下表的内容是来自于[Java Virtual Machine Specification](https://docs.oracle.com/javase/specs/jvms/se8/html/index.html)的[Table 2.11.1-B. Actual and Computational types in the Java Virtual Machine](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-2.html#jvms-2.11.1-320)部分。
+
+| Actual type | Computational type | Category |
+| ----------- | ------------------ | -------- |
+| boolean     | int                | 1        |
+| byte        | int                | 1        |
+| char        | int                | 1        |
+| short       | int                | 1        |
+| int         | int                | 1        |
+| float       | float              | 1        |
+| reference   | reference          | 1        |
+| long        | long               | 2        |
+| double      | double             | 2        |
+
+为什么我们要关注`boolean`、`byte`、`short`、`char`、`int`这几个primitive types呢？因为我们想把`boolean`单独拿出来，与`byte`、`short`、`char`、`int`进行一下对比：
+
+- 第一次对比，作为primitive types进行对比：`boolean`、`byte`、`short`、`char`、`int`。（处理相同）
+- 第二次对比，作为array types(reference types)进行对比：`boolean[]`、`byte[]`、`short[]`、`char[]`、`int[]`。（处理出现差异）
+
+#### boolean type
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    boolean flag_false = false;
+    boolean flag_true = true;
+  }
+}
+```
+
+或者代码如下（`byte`类型可以替换成`short`、`char`、`int`类型）：
+
+```java
+public class HelloWorld {
+  public void test() {
+    byte val0 = 0;
+    byte val1 = 1;
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+> 可以看出来上面举例的byte和boolean在operand stack、local variables都被当作int处理，使用i开头的指令
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: iconst_0
+       1: istore_1
+       2: iconst_1
+       3: istore_2
+       4: return
+}
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```shell
+                               // {this} | {}
+0000: iconst_0                 // {this} | {int}
+0001: istore_1                 // {this, int} | {}
+0002: iconst_1                 // {this, int} | {int}
+0003: istore_2                 // {this, int, int} | {}
+0004: return                   // {} | {}
+```
+
+#### boolean array
+
+我们先来看一个`int[]`类型的示例。从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    int[] array = new int[5];
+    array[0] = 1;
+    int val = array[1];
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: iconst_5
+       1: newarray       int
+       3: astore_1
+       4: aload_1
+       5: iconst_0
+       6: iconst_1
+       7: iastore
+       8: aload_1
+       9: iconst_1
+      10: iaload
+      11: istore_2
+      12: return
+}
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: iconst_5                 // {this} | {int}
+0001: newarray        int      // {this} | {[I}
+0003: astore_1                 // {this, [I} | {}
+0004: aload_1                  // {this, [I} | {[I}
+0005: iconst_0                 // {this, [I} | {[I, int}
+0006: iconst_1                 // {this, [I} | {[I, int, int}
+0007: iastore                  // {this, [I} | {}
+0008: aload_1                  // {this, [I} | {[I}
+0009: iconst_1                 // {this, [I} | {[I, int}
+0010: iaload                   // {this, [I} | {int}
+0011: istore_2                 // {this, [I, int} | {}
+0012: return                   // {} | {}
+```
+
+|          | int[]   | char[]  | short[] | byte[]  | boolean[]   |
+| -------- | ------- | ------- | ------- | ------- | ----------- |
+| 加载数据 | iaload  | caload  | saload  | baload  | **baload**  |
+| 存储数据 | iastore | castore | sastore | bastore | **bastore** |
+
+接下来，我们来验证一下`boolean[]`。从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    boolean[] boolArray = new boolean[5];
+    boolArray[0] = true;
+    boolean flag = boolArray[1];
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+> 可以看出来，在boolean数组读写操作中，使用和byte数组一致的**bastore**和**baload**
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: iconst_5
+       1: newarray       boolean
+       3: astore_1
+       4: aload_1
+       5: iconst_0
+       6: iconst_1
+       7: bastore
+       8: aload_1
+       9: iconst_1
+      10: baload
+      11: istore_2
+      12: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ICONST_5);
+methodVisitor.visitIntInsn(NEWARRAY, T_BOOLEAN);
+methodVisitor.visitVarInsn(ASTORE, 1);
+methodVisitor.visitVarInsn(ALOAD, 1);
+methodVisitor.visitInsn(ICONST_0);
+methodVisitor.visitInsn(ICONST_1);
+methodVisitor.visitInsn(BASTORE);
+methodVisitor.visitVarInsn(ALOAD, 1);
+methodVisitor.visitInsn(ICONST_1);
+methodVisitor.visitInsn(BALOAD);
+methodVisitor.visitVarInsn(ISTORE, 2);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(3, 3);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: iconst_5                 // {this} | {int}
+0001: newarray        boolean  // {this} | {[Z}
+0003: astore_1                 // {this, [Z} | {}
+0004: aload_1                  // {this, [Z} | {[Z}
+0005: iconst_0                 // {this, [Z} | {[Z, int}
+0006: iconst_1                 // {this, [Z} | {[Z, int, int}
+0007: bastore                  // {this, [Z} | {} // 可以看出来虽然Z对应boolean，但是使用指令bastore(和byte数组一致)
+0008: aload_1                  // {this, [Z} | {[Z}
+0009: iconst_1                 // {this, [Z} | {[Z, int}
+0010: baload                   // {this, [Z} | {int}
+0011: istore_2                 // {this, [Z, int} | {}
+0012: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`bastore`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., arrayref, index, value →
+
+...
+```
+
+**The `arrayref` must be of type `reference` and must refer to an array whose components are of type `byte` or of type `boolean`.** The `index` and the `value` must both be of type `int`. The `arrayref`, `index`, and `value` are popped from the operand stack. The int `value` is truncated to a `byte` and stored as the component of the array indexed by `index`.
+
+从JVM规范的角度来看，`baload`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., arrayref, index →
+
+..., value
+```
+
+**The `arrayref` must be of type `reference` and must refer to an array whose components are of type `byte` or of type `boolean`.** The `index` must be of type `int`. Both `arrayref` and `index` are popped from the operand stack. The byte `value` in the component of the array at `index` is retrieved, sign-extended to an `int` value, and pushed onto the top of the operand stack.
+
+------
+
+在[Chapter 2. The Structure of the Java Virtual Machine](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-2.html)的[2.3.4. The boolean Type](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-2.html#jvms-2.3.4)对`boolean`类型进行了如下描述：
+
+Although the Java Virtual Machine defines a `boolean` type, it only provides very limited support for it.
+
+- **There are no Java Virtual Machine instructions solely dedicated to operations on `boolean` values**.（没有相应的opcode）
+- Instead, expressions in the Java programming language that operate on `boolean` values are compiled to use values of the Java Virtual Machine `int` data type.
+
+The Java Virtual Machine does directly support **boolean arrays**.
+
+- Its `newarray` instruction enables creation of boolean arrays.（创建数组）
+- Arrays of type boolean are accessed and modified using the byte array instructions `baload` and `bastore`.（存取数据）
+
+In Oracle’s Java Virtual Machine implementation, **boolean arrays** in the Java programming language are encoded as Java Virtual Machine **byte arrays**, using 8 bits per boolean element.
+
+The Java Virtual Machine encodes `boolean` array components using `1` to represent `true` and `0` to represent `false`. Where Java programming language `boolean` values are mapped by compilers to values of Java Virtual Machine type `int`, the compilers must use the same encoding.
+
+## 2.9 opcode: jump (25/185/205)
+
+### 2.9.1 概览
+
+从Instruction的角度来说，与jump相关的opcode有25个，内容如下：
+
+> lcmp即两个long比较，a>b返回1，a=b返回0，a<b返回-1
+>
+> **java里float、double、long的比较，没有类似ifXXX直接跳转的指令，而是先比较得到一个int值，再调用ifXX跳转**
+>
+> fcmpl和fcmpg都是float的比较，区别仅对于NaN的处理 => [Chapter 6. The Java Virtual Machine Instruction Set (oracle.com)](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.dup2) 
+>
+> `fcmp<op>`
+>
+> - Otherwise, at least one of *value1*' or *value2*' is NaN. The *fcmpg* instruction pushes the `int` value 1 onto the operand stack and the *fcmpl* instruction pushes the `int` value -1 onto the operand stack.
+>
+> ifeq即int和0比较，相等则跳转
+>
+> if_ifcmple即int的a和b比较，a<=b则跳转
+>
+> tableswitch和loopupswitch都是java中的switch跳转，简单理解的话前者是case中数字连续的情况，后则是case中数字非连续的情况
+>
+> goto地址2字节，goto_w地址4字节
+
+| opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol |
+| ------ | --------------- | ------ | --------------- | ------ | --------------- | ------ | --------------- |
+| 148    | lcmp            | 153    | ifeq            | 158    | ifle            | 163    | if_icmpgt       |
+| 149    | fcmpl           | 154    | ifne            | 159    | if_icmpeq       | 164    | if_icmple       |
+| 150    | fcmpg           | 155    | iflt            | 160    | if_icmpne       | 165    | if_acmpeq       |
+| 151    | dcmpl           | 156    | ifge            | 161    | if_icmplt       | 166    | if_acmpne       |
+| 152    | dcmpg           | 157    | ifgt            | 162    | if_icmpge       | 167    | goto            |
+
+| opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol |
+| ------ | --------------- | ------ | --------------- | ------ | --------------- | ------ | --------------- |
+| 170    | tableswitch     | 171    | lookupswitch    |        |                 |        |                 |
+
+| opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol |
+| ------ | --------------- | ------ | --------------- | ------ | --------------- | ------ | --------------- |
+| 198    | ifnull          | 199    | ifnonnull       | 200    | goto_w          |        |                 |
+
+从ASM的角度来说，这些opcode与`MethodVisitor.visitXxxInsn()`方法对应关系如下：
+
+- `MethodVisitor.visitInsn()`: `lcmp`, `fcmpl`, `fcmpg`, `dcmpl`, `dcmpg`
+- `MethodVisitor.visitJumpInsn()`:
+  - `ifeq`, `ifne`, `iflt`, `ifge`, `ifgt`, `ifle`
+  - `if_icmpeq`, `if_icmpne`, `if_icmplt`, `if_icmpge`, `if_icmpgt`, `if_icmple`, `if_acmpeq`, `if_acmpne`
+  - `ifnull`, `ifnonnull`
+  - `goto`, `goto_w`
+- `MethodVisitor.visitTableSwitchInsn()`: `tableswitch`, `lookupswitch`
+
+### 2.9.2 if and goto
+
+#### compare int with zero
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test(int val) {
+    if (val == 0) {
+      System.out.println("val is 0");
+    }
+    else {
+      System.out.println("val is not 0");
+    }
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(int);
+    Code:
+       0: iload_1
+       1: ifne          15 // 注意生成的指令是 ifne 而非 ifeq
+       4: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       7: ldc           #3                  // String val is 0
+       9: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      12: goto          23
+      15: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      18: ldc           #5                  // String val is not 0
+      20: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      23: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+Label label0 = new Label();
+Label label1 = new Label();
+
+methodVisitor.visitCode();
+methodVisitor.visitVarInsn(ILOAD, 1);
+methodVisitor.visitJumpInsn(IFNE, label0);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("val is 0");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+methodVisitor.visitJumpInsn(GOTO, label1);
+
+methodVisitor.visitLabel(label0);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("val is not 0");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+
+methodVisitor.visitLabel(label1);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(2, 2);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```shell
+                               // {this, int} | {}
+0000: iload_1                  // {this, int} | {int}
+0001: ifne            14       // {this, int} | {} // 注意`.class`内存跳转的偏移量，1+14=15
+0004: getstatic       #2       // {this, int} | {PrintStream}
+0007: ldc             #3       // {this, int} | {PrintStream, String}
+0009: invokevirtual   #4       // {this, int} | {}
+0012: goto            11       // {} | {}
+                               // {this, int} | {}
+0015: getstatic       #2       // {this, int} | {PrintStream}
+0018: ldc             #5       // {this, int} | {PrintStream, String}
+0020: invokevirtual   #4       // {this, int} | {}
+                               // {this, int} | {}
+0023: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`ifne`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., value →
+
+...
+```
+
+The `value` must be of type `int`. It is popped from the operand stack and compared against **zero**. All comparisons are signed. The results of the comparisons are as follows:
+
+- `ifeq` succeeds if and only if `value = 0`
+- `ifne` succeeds if and only if `value ≠ 0`
+- `iflt` succeeds if and only if `value < 0`
+- `ifle` succeeds if and only if `value ≤ 0`
+- `ifgt` succeeds if and only if `value > 0`
+- `ifge` succeeds if and only if `value ≥ 0`
+
+#### compare int with non-zero
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test(int a, int b) {
+    if (a > b) {
+      System.out.println("a > b");
+    }
+    else {
+      System.out.println("a <= b");
+    }
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(int, int);
+    Code:
+       0: iload_1
+       1: iload_2
+       2: if_icmple     16 // 如果 a <= b 则跳转
+       5: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       8: ldc           #3                  // String a > b
+      10: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      13: goto          24
+      16: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      19: ldc           #5                  // String a <= b
+      21: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      24: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+Label label0 = new Label();
+Label label1 = new Label();
+
+methodVisitor.visitCode();
+methodVisitor.visitVarInsn(ILOAD, 1);
+methodVisitor.visitVarInsn(ILOAD, 2);
+methodVisitor.visitJumpInsn(IF_ICMPLE, label0);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("a > b");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+methodVisitor.visitJumpInsn(GOTO, label1);
+
+methodVisitor.visitLabel(label0);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("a <= b");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+
+methodVisitor.visitLabel(label1);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(2, 3);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this, int, int} | {}
+0000: iload_1                  // {this, int, int} | {int}
+0001: iload_2                  // {this, int, int} | {int, int}
+0002: if_icmple       14       // {this, int, int} | {}
+0005: getstatic       #2       // {this, int, int} | {PrintStream}
+0008: ldc             #3       // {this, int, int} | {PrintStream, String}
+0010: invokevirtual   #4       // {this, int, int} | {}
+0013: goto            11       // {} | {}
+                               // {this, int, int} | {}
+0016: getstatic       #2       // {this, int, int} | {PrintStream}
+0019: ldc             #5       // {this, int, int} | {PrintStream, String}
+0021: invokevirtual   #4       // {this, int, int} | {}
+                               // {this, int, int} | {}
+0024: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`if_icmple`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., value1, value2 →
+
+...
+```
+
+Both `value1` and `value2` must be of type `int`. They are both popped from the operand stack and compared. All comparisons are signed. The results of the comparison are as follows:
+
+- `if_icmpeq` succeeds if and only if `value1 = value2`
+- `if_icmpne` succeeds if and only if `value1 ≠ value2`
+- `if_icmplt` succeeds if and only if `value1 < value2`
+- `if_icmple` succeeds if and only if `value1 ≤ value2`
+- `if_icmpgt` succeeds if and only if `value1 > value2`
+- `if_icmpge` succeeds if and only if `value1 ≥ value2`
+
+#### compare long
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test(long a, long b) {
+    if (a > b) {
+      System.out.println("a > b");
+    }
+    else {
+      System.out.println("a <= b");
+    }
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+> 注意：因为long、float、double没有直接比较后就进行跳转的指令，所以lcmp比较后先得到int入栈，然后再借助ifle判断a<=b是否成立，成立则跳转到java代码中对应else语句块中
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(long, long);
+    Code:
+       0: lload_1
+       1: lload_3
+       2: lcmp
+       3: ifle          17
+       6: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       9: ldc           #3                  // String a > b
+      11: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      14: goto          25
+      17: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      20: ldc           #5                  // String a <= b
+      22: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      25: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+Label label0 = new Label();
+Label label1 = new Label();
+
+methodVisitor.visitCode();
+methodVisitor.visitVarInsn(LLOAD, 1);
+methodVisitor.visitVarInsn(LLOAD, 3);
+methodVisitor.visitInsn(LCMP);
+methodVisitor.visitJumpInsn(IFLE, label0);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("a > b");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+methodVisitor.visitJumpInsn(GOTO, label1);
+
+methodVisitor.visitLabel(label0);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("a <= b");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+
+methodVisitor.visitLabel(label1);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(4, 5);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this, long, top, long, top} | {}
+0000: lload_1                  // {this, long, top, long, top} | {long, top}
+0001: lload_3                  // {this, long, top, long, top} | {long, top, long, top}
+0002: lcmp                     // {this, long, top, long, top} | {int} // lcmp消耗栈顶2个long，得到int结果
+0003: ifle            14       // {this, long, top, long, top} | {}
+0006: getstatic       #2       // {this, long, top, long, top} | {PrintStream}
+0009: ldc             #3       // {this, long, top, long, top} | {PrintStream, String}
+0011: invokevirtual   #4       // {this, long, top, long, top} | {}
+0014: goto            11       // {} | {}
+                               // {this, long, top, long, top} | {}
+0017: getstatic       #2       // {this, long, top, long, top} | {PrintStream}
+0020: ldc             #5       // {this, long, top, long, top} | {PrintStream, String}
+0022: invokevirtual   #4       // {this, long, top, long, top} | {}
+                               // {this, long, top, long, top} | {}
+0025: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`lcmp`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., value1, value2 →
+
+..., result
+```
+
+Both `value1` and `value2` must be of type `long`. They are both popped from the operand stack, and a signed integer comparison is performed. If `value1` is greater than `value2`, the int value `1` is pushed onto the operand stack. If `value1` is equal to `value2`, the int value `0` is pushed onto the operand stack. If `value1` is less than `value2`, the int value `-1` is pushed onto the operand stack.
+
+#### compare obj with null
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test(Object obj) {
+    if (obj == null) {
+      System.out.println("obj is null");
+    }
+    else {
+      System.out.println("obj is not null");
+    }
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(java.lang.Object);
+    Code:
+       0: aload_1
+       1: ifnonnull     15
+       4: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       7: ldc           #3                  // String obj is null
+       9: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      12: goto          23
+      15: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      18: ldc           #5                  // String obj is not null
+      20: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      23: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+Label label0 = new Label();
+Label label1 = new Label();
+
+methodVisitor.visitCode();
+methodVisitor.visitVarInsn(ALOAD, 1);
+methodVisitor.visitJumpInsn(IFNONNULL, label0);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("obj is null");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+methodVisitor.visitJumpInsn(GOTO, label1);
+
+methodVisitor.visitLabel(label0);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("obj is not null");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+
+methodVisitor.visitLabel(label1);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(2, 2);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this, Object} | {}
+0000: aload_1                  // {this, Object} | {Object}
+0001: ifnonnull       14       // {this, Object} | {}
+0004: getstatic       #2       // {this, Object} | {PrintStream}
+0007: ldc             #3       // {this, Object} | {PrintStream, String}
+0009: invokevirtual   #4       // {this, Object} | {}
+0012: goto            11       // {} | {}
+                               // {this, Object} | {}
+0015: getstatic       #2       // {this, Object} | {PrintStream}
+0018: ldc             #5       // {this, Object} | {PrintStream, String}
+0020: invokevirtual   #4       // {this, Object} | {}
+                               // {this, Object} | {}
+0023: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`ifnonnull`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., value →
+
+...
+```
+
+另外，`ifnonnull`指令对应的Format如下：
+
+```pseudocode
+ifnonnull
+branchbyte1
+branchbyte2
+```
+
+The `value` must be of type `reference`. It is popped from the operand stack. If `value` is not `null`, the unsigned `branchbyte1` and `branchbyte2` are used to construct a signed 16-bit offset, where the offset is calculated to be `(branchbyte1 << 8) | branchbyte2`. Execution then proceeds at that offset from the address of the opcode of this `ifnonnull` instruction. The target address must be that of an opcode of an instruction within the method that contains this `ifnonnull` instruction.
+
+Otherwise, execution proceeds at the address of the instruction following this `ifnonnull` instruction.
+
+#### compare objA with objB
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test(Object objA, Object objB) {
+    if (objA == objB) {
+      System.out.println("objA == objB");
+    }
+    else {
+      System.out.println("objA != objB");
+    }
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(java.lang.Object, java.lang.Object);
+    Code:
+       0: aload_1
+       1: aload_2
+       2: if_acmpne     16
+       5: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       8: ldc           #3                  // String objA == objB
+      10: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      13: goto          24
+      16: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      19: ldc           #5                  // String objA != objB
+      21: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      24: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+Label label0 = new Label();
+Label label1 = new Label();
+
+methodVisitor.visitCode();
+methodVisitor.visitVarInsn(ALOAD, 1);
+methodVisitor.visitVarInsn(ALOAD, 2);
+methodVisitor.visitJumpInsn(IF_ACMPNE, label0);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("objA == objB");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+methodVisitor.visitJumpInsn(GOTO, label1);
+
+methodVisitor.visitLabel(label0);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("objA != objB");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+
+methodVisitor.visitLabel(label1);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(2, 3);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this, Object, Object} | {}
+0000: aload_1                  // {this, Object, Object} | {Object}
+0001: aload_2                  // {this, Object, Object} | {Object, Object}
+0002: if_acmpne       14       // {this, Object, Object} | {}
+0005: getstatic       #2       // {this, Object, Object} | {PrintStream}
+0008: ldc             #3       // {this, Object, Object} | {PrintStream, String}
+0010: invokevirtual   #4       // {this, Object, Object} | {}
+0013: goto            11       // {} | {}
+                               // {this, Object, Object} | {}
+0016: getstatic       #2       // {this, Object, Object} | {PrintStream}
+0019: ldc             #5       // {this, Object, Object} | {PrintStream, String}
+0021: invokevirtual   #4       // {this, Object, Object} | {}
+                               // {this, Object, Object} | {}
+0024: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`if_acmpne`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., value1, value2 →
+
+...
+```
+
+Both `value1` and `value2` must be of type `reference`. They are both popped from the operand stack and compared. The results of the comparison are as follows:
+
+- `if_acmpeq` succeeds if and only if `value1 = value2`
+- `if_acmpne` succeeds if and only if `value1 ≠ value2`
+
+### 2.9.3 switch
+
+#### tableswitch
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test(int val) {
+    int result = 0;
+
+    switch (val) {
+      case 1:
+        result = 1;
+        break;
+      case 2:
+        result = 2;
+        break;
+      case 3:
+        result = 3;
+        break;
+      default:
+        result = 4;
+    }
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(int);
+    Code:
+       0: iconst_0
+       1: istore_2
+       2: iload_1
+       3: tableswitch   { // 1 to 3
+                     1: 28
+                     2: 33
+                     3: 38
+               default: 43
+          }
+      28: iconst_1
+      29: istore_2
+      30: goto          45
+      33: iconst_2
+      34: istore_2
+      35: goto          45
+      38: iconst_3
+      39: istore_2
+      40: goto          45
+      43: iconst_4
+      44: istore_2
+      45: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+Label label0 = new Label();
+Label label1 = new Label();
+Label label2 = new Label();
+Label label3 = new Label();
+Label label4 = new Label();
+
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ICONST_0);
+methodVisitor.visitVarInsn(ISTORE, 2);
+methodVisitor.visitVarInsn(ILOAD, 1);
+methodVisitor.visitTableSwitchInsn(1, 3, label3, new Label[] { label0, label1, label2 });
+
+methodVisitor.visitLabel(label0);
+methodVisitor.visitInsn(ICONST_1);
+methodVisitor.visitVarInsn(ISTORE, 2);
+methodVisitor.visitJumpInsn(GOTO, label4);
+
+methodVisitor.visitLabel(label1);
+methodVisitor.visitInsn(ICONST_2);
+methodVisitor.visitVarInsn(ISTORE, 2);
+methodVisitor.visitJumpInsn(GOTO, label4);
+
+methodVisitor.visitLabel(label2);
+methodVisitor.visitInsn(ICONST_3);
+methodVisitor.visitVarInsn(ISTORE, 2);
+methodVisitor.visitJumpInsn(GOTO, label4);
+
+methodVisitor.visitLabel(label3);
+methodVisitor.visitInsn(ICONST_4);
+methodVisitor.visitVarInsn(ISTORE, 2);
+
+methodVisitor.visitLabel(label4);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(1, 3);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this, int} | {}
+0000: iconst_0                 // {this, int} | {int}
+0001: istore_2                 // {this, int, int} | {}
+0002: iload_1                  // {this, int, int} | {int}
+0003: tableswitch              // {} | {} // 这里 出栈数字，如果数字是1，则3+25=28跳转到28的位置，其他同理
+      {
+              1: 25
+              2: 30
+              3: 35
+        default: 40
+      }
+                               // {this, int, int} | {}
+0028: iconst_1                 // {this, int, int} | {int}
+0029: istore_2                 // {this, int, int} | {}
+0030: goto            15       // {} | {}
+                               // {this, int, int} | {}
+0033: iconst_2                 // {this, int, int} | {int}
+0034: istore_2                 // {this, int, int} | {}
+0035: goto            10       // {} | {}
+                               // {this, int, int} | {}
+0038: iconst_3                 // {this, int, int} | {int}
+0039: istore_2                 // {this, int, int} | {}
+0040: goto            5        // {} | {}
+                               // {this, int, int} | {}
+0043: iconst_4                 // {this, int, int} | {int}
+0044: istore_2                 // {this, int, int} | {}
+                               // {this, int, int} | {}
+0045: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`tableswitch`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., index →
+
+...
+```
+
+另外，`tableswitch`指令对应的Format如下：
+
+```pseudocode
+tableswitch
+<0-3 byte pad>
+defaultbyte1
+defaultbyte2
+defaultbyte3
+defaultbyte4
+lowbyte1
+lowbyte2
+lowbyte3
+lowbyte4
+highbyte1
+highbyte2
+highbyte3
+highbyte4
+jump offsets...
+```
+
+The `index` must be of type `int` and is popped from the operand stack.
+
+- If `index` is less than `low` or `index` is greater than `high`, then a target address is calculated by adding `default` to the address of the opcode of this `tableswitch` instruction.
+- Otherwise, the offset at position `index - low` of the jump table is extracted. The target address is calculated by adding that offset to the address of the opcode of this `tableswitch` instruction. Execution then continues at the target address.
+
+#### lookupswitch
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test(int val) {
+    int result = 0;
+
+    switch (val) {
+      case 10:
+        result = 1;
+        break;
+      case 20:
+        result = 2;
+        break;
+      case 30:
+        result = 3;
+        break;
+      default:
+        result = 4;
+    }
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```pseudocode
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(int);
+    Code:
+       0: iconst_0
+       1: istore_2
+       2: iload_1
+       3: lookupswitch  { // 3
+                    10: 36
+                    20: 41
+                    30: 46
+               default: 51
+          }
+      36: iconst_1
+      37: istore_2
+      38: goto          53
+      41: iconst_2
+      42: istore_2
+      43: goto          53
+      46: iconst_3
+      47: istore_2
+      48: goto          53
+      51: iconst_4
+      52: istore_2
+      53: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+Label label0 = new Label();
+Label label1 = new Label();
+Label label2 = new Label();
+Label label3 = new Label();
+Label label4 = new Label();
+
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ICONST_0);
+methodVisitor.visitVarInsn(ISTORE, 2);
+methodVisitor.visitVarInsn(ILOAD, 1);
+methodVisitor.visitLookupSwitchInsn(label3, new int[] { 10, 20, 30 }, new Label[] { label0, label1, label2 });
+
+methodVisitor.visitLabel(label0);
+methodVisitor.visitInsn(ICONST_1);
+methodVisitor.visitVarInsn(ISTORE, 2);
+methodVisitor.visitJumpInsn(GOTO, label4);
+
+methodVisitor.visitLabel(label1);
+methodVisitor.visitInsn(ICONST_2);
+methodVisitor.visitVarInsn(ISTORE, 2);
+methodVisitor.visitJumpInsn(GOTO, label4);
+
+methodVisitor.visitLabel(label2);
+methodVisitor.visitInsn(ICONST_3);
+methodVisitor.visitVarInsn(ISTORE, 2);
+methodVisitor.visitJumpInsn(GOTO, label4);
+
+methodVisitor.visitLabel(label3);
+methodVisitor.visitInsn(ICONST_4);
+methodVisitor.visitVarInsn(ISTORE, 2);
+
+methodVisitor.visitLabel(label4);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(1, 3);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this, int} | {}
+0000: iconst_0                 // {this, int} | {int}
+0001: istore_2                 // {this, int, int} | {}
+0002: iload_1                  // {this, int, int} | {int}
+0003: lookupswitch             // {} | {}
+      {
+             10: 33
+             20: 38
+             30: 43
+        default: 48
+      }
+                               // {this, int, int} | {}
+0036: iconst_1                 // {this, int, int} | {int}
+0037: istore_2                 // {this, int, int} | {}
+0038: goto            15       // {} | {}
+                               // {this, int, int} | {}
+0041: iconst_2                 // {this, int, int} | {int}
+0042: istore_2                 // {this, int, int} | {}
+0043: goto            10       // {} | {}
+                               // {this, int, int} | {}
+0046: iconst_3                 // {this, int, int} | {int}
+0047: istore_2                 // {this, int, int} | {}
+0048: goto            5        // {} | {}
+                               // {this, int, int} | {}
+0051: iconst_4                 // {this, int, int} | {int}
+0052: istore_2                 // {this, int, int} | {}
+                               // {this, int, int} | {}
+0053: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`lookupswitch`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., key →
+
+...
+```
+
+另外，`lookupswitch`指令对应的Format如下：
+
+```pseudocode
+lookupswitch
+<0-3 byte pad>
+defaultbyte1
+defaultbyte2
+defaultbyte3
+defaultbyte4
+npairs1
+npairs2
+npairs3
+npairs4
+match-offset pairs...
+```
+
+The `key` must be of type `int` and is popped from the operand stack. The `key` is compared against the match values.
+
+- If it is equal to one of them, then a target address is calculated by adding the corresponding offset to the address of the opcode of this `lookupswitch` instruction.
+- If the `key` does not match any of the match values, the target address is calculated by adding `default` to the address of the opcode of this `lookupswitch` instruction. Execution then continues at the target address.
+
+## 2.10 opcode: stack (9/194/205)
+
+### 2.10.1 概览
+
+从Instruction的角度来说，与stack相关的opcode有9个，内容如下：
+
+| opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol |
+| ------ | --------------- | ------ | --------------- | ------ | --------------- |
+| 87     | pop             | 90     | dup_x1          | 93     | dup2_x1         |
+| 88     | pop2            | 91     | dup_x2          | 94     | dup2_x2         |
+| 89     | dup             | 92     | dup2            | 95     | swap            |
+
+从ASM的角度来说，这些opcode与`MethodVisitor.visitXxxInsn()`方法对应关系如下：
+
+- `MethodVisitor.visitInsn()`:
+  - `pop`, `pop2`
+  - `dup`, `dup_x1`, `dup_x2`
+  - `dup2`, `dup2_x1`, `dup2_x2`
+  - `swap`
+
+### 2.10.2 pop
+
+#### pop
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    Math.max(3, 4);
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: iconst_3
+       1: iconst_4
+       2: invokestatic  #2                  // Method java/lang/Math.max:(II)I
+       5: pop // 因为没有本地变量接收 Math.max的返回值，所以生成pop指令
+       6: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ICONST_3);
+methodVisitor.visitInsn(ICONST_4);
+methodVisitor.visitMethodInsn(INVOKESTATIC, "java/lang/Math", "max", "(II)I", false);
+methodVisitor.visitInsn(POP);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(2, 1);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: iconst_3                 // {this} | {int}
+0001: iconst_4                 // {this} | {int, int}
+0002: invokestatic    #2       // {this} | {int}
+0005: pop                      // {this} | {}
+0006: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`pop`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., value →
+
+...
+```
+
+Pop the top `value` from the operand stack. The `pop` instruction must not be used unless `value` is a value of a category 1 computational type.
+
+#### pop2
+
+> 弹出栈顶两个位置的数据（常见用于long、double，因为这两个占用2位置）
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    Math.max(3L, 4L);
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: ldc2_w        #2                  // long 3l
+       3: ldc2_w        #4                  // long 4l
+       6: invokestatic  #6                  // Method java/lang/Math.max:(JJ)J
+       9: pop2 // 因为没有本地变量接收Math.max的返回值，所以栈顶弹出
+      10: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitLdcInsn(new Long(3L));
+methodVisitor.visitLdcInsn(new Long(4L));
+methodVisitor.visitMethodInsn(INVOKESTATIC, "java/lang/Math", "max", "(JJ)J", false);
+methodVisitor.visitInsn(POP2);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(4, 1);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: ldc2_w          #2       // {this} | {long, top}
+0003: ldc2_w          #4       // {this} | {long, top, long, top}
+0006: invokestatic    #6       // {this} | {long, top}
+0009: pop2                     // {this} | {}
+0010: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`pop2`指令对应的Operand Stack的变化如下：
+
+Form 1:
+
+```pseudocode
+..., value2, value1 →
+
+...
+```
+
+where each of `value1` and `value2` is a value of a category 1 computational type.
+
+Form 2:
+
+```pseudocode
+..., value →
+
+...
+```
+
+where `value` is a value of a category 2 computational type.
+
+### 2.10.3 dup
+
+#### dup
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    int a;
+    int b;
+    b = a = 2;
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: iconst_2
+       1: dup
+       2: istore_1
+       3: istore_2
+       4: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ICONST_2);
+methodVisitor.visitInsn(DUP);
+methodVisitor.visitVarInsn(ISTORE, 1);
+methodVisitor.visitVarInsn(ISTORE, 2);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(2, 3);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: iconst_2                 // {this} | {int}
+0001: dup                      // {this} | {int, int} // 赋值栈顶一个位置的数据
+0002: istore_1                 // {this, int} | {int} // 给变量a赋值
+0003: istore_2                 // {this, int, int} | {} // 给变量b赋值
+0004: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`dup`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., value →
+
+..., value, value
+```
+
+Duplicate the top value on the operand stack and push the duplicated value onto the operand stack.
+
+The `dup` instruction must not be used unless `value` is a value of a category 1 computational type.
+
+#### dup_x1
+
+> 复制栈顶的1个位置数据，并且是插入到当前栈顶往下再间隔1个位置的地方
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  private int num = 0;
+
+  public static int test(HelloWorld instance, int val) {
+    return instance.num = val;
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c -p sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+  private int num;
+...
+
+  public static int test(sample.HelloWorld, int);
+    Code:
+       0: aload_0
+       1: iload_1
+       2: dup_x1
+       3: putfield      #2                  // Field num:I
+       6: ireturn
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitVarInsn(ALOAD, 0);
+methodVisitor.visitVarInsn(ILOAD, 1);
+methodVisitor.visitInsn(DUP_X1);
+methodVisitor.visitFieldInsn(PUTFIELD, "sample/HelloWorld", "num", "I");
+methodVisitor.visitInsn(IRETURN);
+methodVisitor.visitMaxs(3, 2);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {HelloWorld, int} | {}
+0000: aload_0                  // {HelloWorld, int} | {HelloWorld}
+0001: iload_1                  // {HelloWorld, int} | {HelloWorld, int}
+0002: dup_x1                   // {HelloWorld, int} | {int, HelloWorld, int}
+0003: putfield        #2       // {HelloWorld, int} | {int}
+0006: ireturn                  // {} | {}
+```
+
+从JVM规范的角度来看，`dup_x1`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., value2, value1 →
+
+..., value1, value2, value1
+```
+
+Duplicate the top value on the operand stack and insert the duplicated `value` two values down in the operand stack.
+
+**The `dup_x1` instruction must not be used unless both `value1` and `value2` are values of a category 1 computational type**.
+
+#### dup_x2
+
+> 复制栈顶一个位置数据，并且在原栈顶再往下两个间隔的位置插入该数据
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public static int test(int[] array, int i, int value) {
+    return array[i] = value;
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c -p sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public static int test(int[], int, int);
+    Code:
+       0: aload_0
+       1: iload_1
+       2: iload_2
+       3: dup_x2
+       4: iastore
+       5: ireturn
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitVarInsn(ALOAD, 0);
+methodVisitor.visitVarInsn(ILOAD, 1);
+methodVisitor.visitVarInsn(ILOAD, 2);
+methodVisitor.visitInsn(DUP_X2);
+methodVisitor.visitInsn(IASTORE);
+methodVisitor.visitInsn(IRETURN);
+methodVisitor.visitMaxs(4, 3);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {[I, int, int} | {}
+0000: aload_0                  // {[I, int, int} | {[I}
+0001: iload_1                  // {[I, int, int} | {[I, int}
+0002: iload_2                  // {[I, int, int} | {[I, int, int}
+0003: dup_x2                   // {[I, int, int} | {int, [I, int, int}
+0004: iastore                  // {[I, int, int} | {int}
+0005: ireturn                  // {} | {}
+```
+
+从JVM规范的角度来看，`dup_x2`指令对应的Operand Stack的变化如下：
+
+Form 1:
+
+```
+..., value3, value2, value1 →
+
+..., value1, value3, value2, value1
+```
+
+where `value1`, `value2`, and `value3` are all values of a category 1 computational type.
+
+Form 2:
+
+```
+..., value2, value1 →
+
+..., value1, value2, value1
+```
+
+where `value1` is a value of a category 1 computational type and `value2` is a value of a category 2 computational type.
+
+### 2.10.4 dup2
+
+#### dup2
+
+> 复制栈顶两个位置数据
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    long a;
+    long b;
+    b = a = 2;
+  }
+}
+```
+
+```java
+public class HelloWorld {
+  public void test() {
+    int[] array = new int[5];
+    array[0]++; // 这里也会生成dup2指令
+  }
+}
+/*
+test:()V
+                               // {this} | {}
+0000: iconst_5                 // {this} | {int}
+0001: newarray   10 (int)      // {this} | {[I}
+0003: astore_1                 // {this, [I} | {}
+0004: aload_1                  // {this, [I} | {[I}
+0005: iconst_0                 // {this, [I} | {[I, int}
+0006: dup2                     // {this, [I} | {[I, int, [I, int}
+0007: iaload                   // {this, [I} | {[I, int, int}
+0008: iconst_1                 // {this, [I} | {[I, int, int, int}
+0009: iadd                     // {this, [I} | {[I, int, int}
+0010: iastore                  // {this, [I} | {}
+0011: return                   // {} | {}
+*/
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c -p sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: ldc2_w        #2                  // long 2l
+       3: dup2
+       4: lstore_1
+       5: lstore_3
+       6: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitLdcInsn(new Long(2L));
+methodVisitor.visitInsn(DUP2);
+methodVisitor.visitVarInsn(LSTORE, 1);
+methodVisitor.visitVarInsn(LSTORE, 3);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(4, 5);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: ldc2_w          #2       // {this} | {long, top}
+0003: dup2                     // {this} | {long, top, long, top}
+0004: lstore_1                 // {this, long, top} | {long, top}
+0005: lstore_3                 // {this, long, top, long, top} | {}
+0006: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`dup2`指令对应的Operand Stack的变化如下：
+
+Form 1:
+
+```pseudocode
+..., value2, value1 →
+
+..., value2, value1, value2, value1
+```
+
+where both `value1` and `value2` are values of a category 1 computational type.
+
+Form 2:
+
+```pseudocode
+..., value →
+
+..., value, value
+```
+
+where `value` is a value of a category 2 computational type.
+
+#### dup2_x1
+
+> 复制栈顶2位置数据，并且在原栈顶位置往下间隔1个位置后再插入
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  private long num = 0;
+
+  public static long test(HelloWorld instance, long val) {
+    return instance.num = val;
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c -p sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+  private long num;
+...
+
+  public static long test(sample.HelloWorld, long);
+    Code:
+       0: aload_0
+       1: lload_1
+       2: dup2_x1
+       3: putfield      #2                  // Field num:J
+       6: lreturn
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitVarInsn(ALOAD, 0);
+methodVisitor.visitVarInsn(LLOAD, 1);
+methodVisitor.visitInsn(DUP2_X1);
+methodVisitor.visitFieldInsn(PUTFIELD, "sample/HelloWorld", "num", "J");
+methodVisitor.visitInsn(LRETURN);
+methodVisitor.visitMaxs(5, 3);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {HelloWorld, long, top} | {}
+0000: aload_0                  // {HelloWorld, long, top} | {HelloWorld}
+0001: lload_1                  // {HelloWorld, long, top} | {HelloWorld, long, top}
+0002: dup2_x1                  // {HelloWorld, long, top} | {long, top, HelloWorld, long, top}
+0003: putfield        #2       // {HelloWorld, long, top} | {long, top}
+0006: lreturn                  // {} | {}
+```
+
+从JVM规范的角度来看，`dup2_x1`指令对应的Operand Stack的变化如下：
+
+Form 1:
+
+```pseudocode
+..., value3, value2, value1 →
+
+..., value2, value1, value3, value2, value1
+```
+
+where `value1`, `value2`, and `value3` are all values of a category 1 computational type.
+
+Form 2:
+
+```pseudocode
+..., value2, value1 →
+
+..., value1, value2, value1
+```
+
+where `value1` is a value of a category 2 computational type and `value2` is a value of a category 1 computational type.
+
+#### dup2_x2
+
+> 复制栈顶2个位置数据，并且原栈顶位置向下2个位置间隔后再插入
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public static long test(long[] array, int i, long value) {
+    return array[i] = value;
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c -p sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public static long test(long[], int, long);
+    Code:
+       0: aload_0
+       1: iload_1
+       2: lload_2
+       3: dup2_x2
+       4: lastore
+       5: lreturn
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitVarInsn(ALOAD, 0);
+methodVisitor.visitVarInsn(ILOAD, 1);
+methodVisitor.visitVarInsn(LLOAD, 2);
+methodVisitor.visitInsn(DUP2_X2);
+methodVisitor.visitInsn(LASTORE);
+methodVisitor.visitInsn(LRETURN);
+methodVisitor.visitMaxs(6, 4);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {[J, int, long, top} | {}
+0000: aload_0                  // {[J, int, long, top} | {[J}
+0001: iload_1                  // {[J, int, long, top} | {[J, int}
+0002: lload_2                  // {[J, int, long, top} | {[J, int, long, top}
+0003: dup2_x2                  // {[J, int, long, top} | {long, top, [J, int, long, top}
+0004: lastore                  // {[J, int, long, top} | {long, top}
+0005: lreturn                  // {} | {}
+```
+
+从JVM规范的角度来看，`dup2_x2`指令对应的Operand Stack的变化如下：
+
+Form 1:
+
+```pseudocode
+..., value4, value3, value2, value1 →
+
+..., value2, value1, value4, value3, value2, value1
+```
+
+where `value1`, `value2`, `value3`, and `value4` are all values of a category 1 computational type.
+
+Form 2:
+
+```pseudocode
+..., value3, value2, value1 →
+
+..., value1, value3, value2, value1
+```
+
+where `value1` is a value of a category 2 computational type and `value2` and `value3` are both values of a category 1 computational type.
+
+Form 3:
+
+```pseudocode
+..., value3, value2, value1 →
+
+..., value2, value1, value3, value2, value1
+```
+
+where `value1` and `value2` are both values of a category 1 computational type and `value3` is a value of a category 2 computational type.
+
+Form 4:
+
+```pseudocode
+..., value2, value1 →
+
+..., value1, value2, value1
+```
+
+where `value1` and `value2` are both values of a category 2 computational type.
+
+### 2.10.5 swap
+
+> 交换栈顶2个位置的数据，这里讲师没有找到和swap相关的代码，所以通过ASM生成代码
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    System.out.println("Hello ASM");
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c -p sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       3: ldc           #3                  // String Hello ASM
+       5: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+       8: return
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("Hello ASM");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(2, 1);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: getstatic       #2       // {this} | {PrintStream}
+0003: ldc             #3       // {this} | {PrintStream, String}
+0005: invokevirtual   #4       // {this} | {}
+0008: return                   // {} | {}
+```
+
+为了使用`swap`指令，我们编写如下ASM代码：
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+
+    // (1) 生成byte[]内容
+    byte[] bytes = dump();
+
+    // (2) 保存byte[]到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() throws Exception {
+    // (1) 创建ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用visitXxx()方法
+    cw.visit(V1_8, ACC_PUBLIC + ACC_SUPER, "sample/HelloWorld",
+             null, "java/lang/Object", null);
+
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      mv1.visitMaxs(1, 1);
+      mv1.visitEnd();
+    }
+
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "()V", null, null);
+      mv2.visitCode();
+      mv2.visitLdcInsn("Hello ASM");
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitInsn(SWAP);
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      mv2.visitInsn(RETURN);
+      mv2.visitMaxs(2, 1);
+      mv2.visitEnd();
+    }
+    cw.visitEnd();
+
+    // (3) 调用toByteArray()方法
+    return cw.toByteArray();
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c -p sample.HelloWorld
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: ldc           #11                 // String Hello ASM
+       2: getstatic     #17                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       5: swap
+       6: invokevirtual #23                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+       9: return
+}
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: ldc             #11      // {this} | {String}
+0002: getstatic       #17      // {this} | {String, PrintStream}
+0005: swap                     // {this} | {PrintStream, String}
+0006: invokevirtual   #23      // {this} | {}
+0009: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`swap`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., value2, value1 →
+
+..., value1, value2
+```
+
+Swap the top two values on the operand stack.
+
+The `swap` instruction must not be used unless `value1` and `value2` are both values of a category 1 computational type.
+
+## 2.11 opcode: wide (1/195/205)
+
+> [Chapter 6. The Java Virtual Machine Instruction Set (oracle.com)](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.wide) wide本身不能直接使用，而是需要配合下一个指令使用
+>
+> The *wide* instruction modifies the behavior of another instruction. It takes one of two formats, depending on the instruction being modified. The first form of the *wide* instruction modifies one of the instructions *iload*, *fload*, *aload*, *lload*, *dload*, *istore*, *fstore*, *astore*, *lstore*, *dstore*, or *ret* ([§*iload*](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.iload), [§*fload*](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.fload), [§*aload*](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.aload), [§*lload*](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.lload), [§*dload*](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.dload), [§*istore*](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.istore), [§*fstore*](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.fstore), [§*astore*](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.astore), [§*lstore*](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.lstore), [§*dstore*](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.dstore), [§*ret*](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.ret)). The second form applies only to the *iinc* instruction ([§*iinc*](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.iinc)).
+>
+> In either case, the *wide* opcode itself is followed in the compiled code by the opcode of the instruction *wide* modifies. In either form, two unsigned bytes *indexbyte1* and *indexbyte2* follow the modified opcode and are assembled into a 16-bit unsigned index to a local variable in the current frame ([§2.6](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-2.html#jvms-2.6)), where the value of the index is (*indexbyte1* `<<` 8) | *indexbyte2*. The calculated index must be an index into the local variable array of the current frame. Where the *wide* instruction modifies an *lload*, *dload*, *lstore*, or *dstore* instruction, the index following the calculated index (index + 1) must also be an index into the local variable array. In the second form, two immediate unsigned bytes *constbyte1* and *constbyte2* follow *indexbyte1* and *indexbyte2* in the code stream. Those bytes are also assembled into a signed 16-bit constant, where the constant is (*constbyte1* `<<` 8) | *constbyte2*.
+>
+> The widened bytecode operates as normal, except for the use of the wider index and, in the case of the second form, the larger increment range.
+
+### 2.11.1 概览
+
+> + wide主要作用即让下一个紧接着的指令原本接收的参数的字节数翻倍，即原本接收一个字节参数变成接收两个字节参数
+> + wide本身不影响Frame内的operand stack
+>
+> + ASM代码中不需要传递wide，ASM在检测到代码需要使用wide指令时会自动补上
+
+从Instruction的角度来说，与wide相关的opcode有1个，内容如下：
+
+| opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol |
+| ------ | --------------- | ------ | --------------- | ------ | --------------- | ------ | --------------- |
+| 196    | wide            |        |                 |        |                 |        |                 |
+
+从ASM的角度来说，这`wide`指令并没有与特定的`MethodVisitor.visitXxxInsn()`方法对应。
+
+The `wide` instruction modifies the behavior of another instruction. It takes one of two formats, depending on the instruction being modified.
+
+The first form of the `wide` instruction modifies one of the instructions `iload`, `fload`, `aload`, `lload`, `dload`, `istore`, `fstore`, `astore`, `lstore`, `dstore`, or `ret`.（ret是已经废弃的指令，这里可以忽略）
+
+```pseudocode
+wide
+<opcode>
+indexbyte1
+indexbyte2
+```
+
+where `<opcode>` is one of `iload`, `fload`, `aload`, `lload`, `dload`, `istore`, `fstore`, `astore`, `lstore`, `dstore`, or `ret`.
+
+The second form of the `wide` instruction applies only to the `iinc` instruction.
+
+```pseudocode
+wide
+iinc
+indexbyte1
+indexbyte2
+constbyte1
+constbyte2
+```
+
+另外，与`wide`相关的opcode有`ldc_w`、`ldc2_w`、`goto_w`和`jsr_w`（已经弃用）。
+
+### 2.11.2 wide: istore
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    int var001 = 1;
+    // ... ... 省略
+    int var257 = 257;
+  }
+
+  public static void main(String[] args) {
+    String format = "int var%03d = %d;";
+    for (int i = 1; i < 258; i++) {
+      String line = String.format(format, i, i);
+      System.out.println(line);
+    }
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c -p sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: iconst_1
+       1: istore_1
+       2: iconst_2
+       3: istore_2
+       ...
+    1140: sipush        256
+    1143: istore_w      256 // 实际不存在 istore_w 这个指令，而是 wide 紧接着 istore，只是javap以这种形式展示而已
+    1147: sipush        257
+    1150: istore_w      257
+    1154: return
+
+...
+}
+```
+
+但是，`istore_w`并不是真实存在的opcode，它其实是`wide`和`istore`指令的组合之后的结果，如下所示：
+
+```shell
+=== === ===  === === ===  === === ===
+0000: iconst_1             // 04
+0001: istore_1             // 3C
+0002: iconst_2             // 05
+0003: istore_2             // 3D
+...
+1140: sipush          256  // 110100
+1143: wide                 // C4
+1144: istore          256  // 360100
+1147: sipush          257  // 110101
+1150: wide                 // C4
+1151: istore          257  // 360101
+1154: return               // B1
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitInsn(ICONST_1);
+methodVisitor.visitVarInsn(ISTORE, 1);
+methodVisitor.visitInsn(ICONST_2);
+methodVisitor.visitVarInsn(ISTORE, 2);
+...
+methodVisitor.visitIntInsn(SIPUSH, 255);
+methodVisitor.visitVarInsn(ISTORE, 255);
+methodVisitor.visitIntInsn(SIPUSH, 256); 
+methodVisitor.visitVarInsn(ISTORE, 256); // istore 原本只能0～255索引，需要加上wide才能索引超过255的位置，这里ASM自动补齐wide指令
+methodVisitor.visitIntInsn(SIPUSH, 257);
+methodVisitor.visitVarInsn(ISTORE, 257);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(1, 258);
+methodVisitor.visitEnd();
+```
+
+### 2.11.3 wide: iinc
+
+当使用`iinc`时，如果local variable值的变化范围大于`127`或者小于`-128`，就会生成`wide`指令。（同样的，ASM自动补齐）
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test(int val) {
+    val += 128;
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c -p sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(int);
+    Code:
+       0: iinc_w        1, 128 // 同样并不存在 iinc_w 指令，实际是 wide 紧接着 iinc
+       6: return
+}
+```
+
+但是，`iinc_w`并不是真实存在的opcode，它其实是`wide`和`iinc`指令的组合之后的结果，如下所示：
+
+```shell
+=== === ===  === === ===  === === ===
+0000: wide                 // C4
+0001: iinc       1    128  // 8400010080
+0006: return               // B1
+=== === ===  === === ===  === === ===
+LocalVariableTable:
+index  start_pc  length  name_and_type
+    0         0       7  this:Lsample/HelloWorld;
+    1         0       7  val:I
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitIincInsn(1, 128); // ASM自动会补齐wide指令
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(0, 2);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this, int} | {}
+0000: wide                
+0001: iinc       1    128      // {this, int} | {}
+0006: return                   // {} | {}
+```
+
+## 2.12 opcode: exception (1/196/205)
+
+### 2.12.1 概览
+
+> 注意： catch并没有单独的指令，只有抛出异常有
+>
+> [Chapter 4. The class File Format (oracle.com)](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-4.html#jvms-4.7.3)
+>
+> 4.7.3. The Code Attribute 回顾一下，异常处理逻辑的判断和跳转逻辑在 exception_table 中
+>
+> ```java
+> Code_attribute {
+>     u2 attribute_name_index;
+>     u4 attribute_length;
+>     u2 max_stack;
+>     u2 max_locals;
+>     u4 code_length;
+>     u1 code[code_length];
+>     u2 exception_table_length;
+>     {   u2 start_pc;
+>         u2 end_pc;
+>         u2 handler_pc;
+>         u2 catch_type;
+>     } exception_table[exception_table_length];
+>     u2 attributes_count;
+>     attribute_info attributes[attributes_count];
+> }
+> ```
+
+从Instruction的角度来说，与exception相关的opcode有1个，内容如下：
+
+| opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol |
+| ------ | --------------- | ------ | --------------- | ------ | --------------- | ------ | --------------- |
+| 191    | athrow          |        |                 |        |                 |        |                 |
+
+从ASM的角度来说，这个`athrow`指令与`MethodVisitor.visitXxxInsn()`方法对应关系如下：
+
+- `MethodVisitor.visitInsn()`: `athrow`
+
+### 2.12.2 throw exception
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    throw new RuntimeException();
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c -p sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: new           #2                  // class java/lang/RuntimeException
+       3: dup
+       4: invokespecial #3                  // Method java/lang/RuntimeException."<init>":()V
+       7: athrow // 抛出异常RuntimeException
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+methodVisitor.visitCode();
+methodVisitor.visitTypeInsn(NEW, "java/lang/RuntimeException");
+methodVisitor.visitInsn(DUP);
+methodVisitor.visitMethodInsn(INVOKESPECIAL, "java/lang/RuntimeException", "<init>", "()V", false);
+methodVisitor.visitInsn(ATHROW);
+methodVisitor.visitMaxs(2, 1);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: new             #2       // {this} | {uninitialized_RuntimeException}
+0003: dup                      // {this} | {uninitialized_RuntimeException, uninitialized_RuntimeException}
+0004: invokespecial   #3       // {this} | {RuntimeException}
+0007: athrow                   // {} | {} // 消耗栈顶的 异常指针
+```
+
+从JVM规范的角度来看，`athrow`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., objectref →
+
+objectref
+```
+
+> 下面简言之，即抛出异常后，如果当前Frame内能找到对应的handle处理，那么pc程序计数器跳转到handle代码执行逻辑；
+>
+> 如果当前Frame找不到handle，则当前Frame出栈，前一个Frame内继续查找handle处理，如果一直没有，重复上抛过程，直到当前thread线程无Frame，则线程exit退出
+
+The `objectref` must be of type `reference` and must refer to an object that is an instance of class `Throwable` or of a subclass of `Throwable`. It is popped from the operand stack. The `objectref` is then thrown by searching the current method for the first exception handler that matches the class of `objectref`.
+
+- If an exception handler that matches `objectref` is found, it contains the location of the code intended to handle this exception. The `pc` register is reset to that location, the operand stack of the current frame is cleared, `objectref` is pushed back onto the operand stack, and execution continues.
+- If no matching exception handler is found in the current frame, that frame is popped. Finally, the frame of its invoker is reinstated, if such a frame exists, and the `objectref` is rethrown. If no such frame exists, the current thread exits.
+
+### 2.12.3 catch exception
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    try {
+      int val = 1 / 0;
+    }
+    catch (ArithmeticException e1) {
+      System.out.println("catch ArithmeticException");
+    }
+    catch (Exception e2) {
+      System.out.println("catch Exception");
+    }
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c -p sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: iconst_1
+       1: iconst_0
+       2: idiv
+       3: istore_1
+       4: goto          28
+       7: astore_1
+       8: getstatic     #3                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      11: ldc           #4                  // String catch ArithmeticException
+      13: invokevirtual #5                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      16: goto          28
+      19: astore_1
+      20: getstatic     #3                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      23: ldc           #7                  // String catch Exception
+      25: invokevirtual #5                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      28: return
+    Exception table: // 可以看到 catch 对应的handle跳转记录在 exception table中，即[0,4)代码执行时如果出现 ArithmeticException 异常则跳转到7执行，遇到Exception则跳转到19执行。这里7和19执行astore_1是为了存储异常指针
+       from    to  target type
+           0     4     7   Class java/lang/ArithmeticException
+           0     4    19   Class java/lang/Exception
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+Label label0 = new Label();
+Label label1 = new Label();
+Label label2 = new Label();
+Label label3 = new Label();
+Label label4 = new Label();
+
+methodVisitor.visitCode();
+methodVisitor.visitTryCatchBlock(label0, label1, label2, "java/lang/ArithmeticException");
+methodVisitor.visitTryCatchBlock(label0, label1, label3, "java/lang/Exception");
+
+methodVisitor.visitLabel(label0);
+methodVisitor.visitInsn(ICONST_1);
+methodVisitor.visitInsn(ICONST_0);
+methodVisitor.visitInsn(IDIV);
+methodVisitor.visitVarInsn(ISTORE, 1);
+
+methodVisitor.visitLabel(label1);
+methodVisitor.visitJumpInsn(GOTO, label4);
+
+methodVisitor.visitLabel(label2);
+methodVisitor.visitVarInsn(ASTORE, 1);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("catch ArithmeticException");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+methodVisitor.visitJumpInsn(GOTO, label4);
+
+methodVisitor.visitLabel(label3);
+methodVisitor.visitVarInsn(ASTORE, 1);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("catch Exception");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+
+methodVisitor.visitLabel(label4);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(2, 2);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```shell
+                               // {this} | {}
+0000: iconst_1                 // {this} | {int}
+0001: iconst_0                 // {this} | {int, int}
+0002: idiv                     // {this} | {int}
+0003: istore_1                 // {this, int} | {}
+0004: goto            24       // {} | {}
+                               // {this} | {ArithmeticException}
+0007: astore_1                 // {this, ArithmeticException} | {} // 可以看到如果跳转到这里，则存储 ArithmeticException 异常信息
+0008: getstatic       #3       // {this, ArithmeticException} | {PrintStream}
+0011: ldc             #4       // {this, ArithmeticException} | {PrintStream, String}
+0013: invokevirtual   #5       // {this, ArithmeticException} | {}
+0016: goto            12       // {} | {}
+                               // {this} | {Exception}
+0019: astore_1                 // {this, Exception} | {} // 可以看到如果跳转到这里，则存储 Exception 异常信息
+0020: getstatic       #3       // {this, Exception} | {PrintStream}
+0023: ldc             #7       // {this, Exception} | {PrintStream, String}
+0025: invokevirtual   #5       // {this, Exception} | {}
+                               // {this} | {}
+0028: return                   // {} | {}
+```
+
+## 2.13 opcode: monitor (2/198/205)
+
+### 2.13.1 概览
+
+> + monitor指令对应加锁、解锁操作
+>
+> + 每一个Heap中的java对象关联一个monitor，而该monitor同时只能被一个thread占有
+>
+> + thread可以反复monitorenter，使monitor的计数从0一直不断+1
+>
+> + 只有当monitorexit执行多次直到monitor的计数恢复到0之后，该thread就不再是monitor的拥有者
+
+从Instruction的角度来说，与monitor相关的opcode有2个，内容如下：
+
+| opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol |
+| ------ | --------------- | ------ | --------------- | ------ | --------------- | ------ | --------------- |
+| 194    | monitorenter    | 195    | monitorexit     |        |                 |        |                 |
+
+从ASM的角度来说，这些opcode与`MethodVisitor.visitXxxInsn()`方法对应关系如下：
+
+- `MethodVisitor.visitInsn()`: `monitorenter`, `monitorexit`
+
+### 2.13.2 示例
+
+从Java语言的视角，有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    synchronized (System.out) {
+      System.out.println("Hello World");
+    }
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c -p sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       3: dup
+       4: astore_1
+       5: monitorenter
+       6: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       9: ldc           #3                  // String Hello World
+      11: invokevirtual #4                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      14: aload_1
+      15: monitorexit
+      16: goto          24
+      19: astore_2 // 将[6,16)发生的异常存储到local variables的下标2位置
+      20: aload_1
+      21: monitorexit
+      22: aload_2
+      23: athrow
+      24: return
+    Exception table:
+       from    to  target type
+           6    16    19   any // any表示捕获所有类型的异常,这里[6,16)出现任何异常就会跳转到19，这里21是避免已经monitorenter了，结果代码出错没monitorexit，所以这里再执行一下monitorexit
+          19    22    19   any // [19,22)，即如果捕获异常后monitorexit生效前还是出现异常，就跳转回19，一直重复直到确保monitor释放
+}
+```
+
+从ASM的视角来看，方法体对应的内容如下：
+
+```java
+Label label0 = new Label();
+Label label1 = new Label();
+Label label2 = new Label();
+Label label3 = new Label();
+Label label4 = new Label();
+
+methodVisitor.visitCode();
+methodVisitor.visitTryCatchBlock(label0, label1, label2, null); // 这里传递null表示捕获所有类型的异常
+methodVisitor.visitTryCatchBlock(label2, label3, label2, null);
+
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitInsn(DUP);
+methodVisitor.visitVarInsn(ASTORE, 1);
+methodVisitor.visitInsn(MONITORENTER);
+
+methodVisitor.visitLabel(label0);
+methodVisitor.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+methodVisitor.visitLdcInsn("Hello World");
+methodVisitor.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+methodVisitor.visitVarInsn(ALOAD, 1);
+methodVisitor.visitInsn(MONITOREXIT);
+
+methodVisitor.visitLabel(label1);
+methodVisitor.visitJumpInsn(GOTO, label4);
+
+methodVisitor.visitLabel(label2);
+methodVisitor.visitVarInsn(ASTORE, 2);
+methodVisitor.visitVarInsn(ALOAD, 1);
+methodVisitor.visitInsn(MONITOREXIT);
+
+methodVisitor.visitLabel(label3);
+methodVisitor.visitVarInsn(ALOAD, 2);
+methodVisitor.visitInsn(ATHROW);
+
+methodVisitor.visitLabel(label4);
+methodVisitor.visitInsn(RETURN);
+methodVisitor.visitMaxs(2, 3);
+methodVisitor.visitEnd();
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: getstatic       #2       // {this} | {PrintStream}
+0003: dup                      // {this} | {PrintStream, PrintStream}
+0004: astore_1                 // {this, PrintStream} | {PrintStream}
+0005: monitorenter             // {this, PrintStream} | {} // 消耗栈顶对象指针,将当前thread和该对象的monitor关联起来
+0006: getstatic       #2       // {this, PrintStream} | {PrintStream}
+0009: ldc             #3       // {this, PrintStream} | {PrintStream, String}
+0011: invokevirtual   #4       // {this, PrintStream} | {}
+0014: aload_1                  // {this, PrintStream} | {PrintStream}
+0015: monitorexit              // {this, PrintStream} | {}
+0016: goto            8        // {} | {}
+                               // {this, Object} | {Throwable}
+0019: astore_2                 // {this, Object, Throwable} | {}
+0020: aload_1                  // {this, Object, Throwable} | {Object}
+0021: monitorexit              // {this, Object, Throwable} | {} // monitorexit 需要消耗 栈顶对象指针
+0022: aload_2                  // {this, Object, Throwable} | {Throwable}
+0023: athrow                   // {} | {}
+                               // {this} | {}
+0024: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`monitorenter`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., objectref →
+
+...
+```
+
+> 下面简言之，每个对象都有关联一个monitor，同一时间只能有一个owner（线程thread）能lock这个monitor：
+>
+> + monitor起初计数0，每次thread执行完monitorenter后，计数+1
+> + 同一个owner重复monitorenter，则计数每次进入时+1
+> + 当且仅当monitor的count计数为0时，其他线程才能有机会成为monitor的下一个owner
+
+The `objectref` must be of type `reference`.
+
+**Each object is associated with a monitor.** A monitor is locked if and only if it has an owner. The thread that executes `monitorenter` attempts to gain ownership of the monitor associated with `objectref`, as follows:
+
+- If the entry count of the monitor associated with `objectref` is zero, the thread enters the monitor and sets its entry count to one. The thread is then the owner of the monitor.
+- If the thread already owns the monitor associated with `objectref`, it reenters the monitor, incrementing its entry count.
+- If another thread already owns the monitor associated with `objectref`, the thread blocks until the monitor’s entry count is zero, then tries again to gain ownership.
+
+从JVM规范的角度来看，`monitorexit`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+..., objectref →
+
+...
+```
+
+> 简言之，只有owner线程能够执行monitorexit使关联对象的monitor的计数在`monitorexit`之后-1
+
+The `objectref` must be of type `reference`.
+
+**The thread that executes `monitorexit` must be the owner of the monitor associated with the instance referenced by `objectref`.**
+
+The thread decrements the entry count of the monitor associated with `objectref`.
+
+- If as a result the value of the entry count is zero, the thread exits the monitor and is no longer its owner.
+- Other threads that are blocking to enter the monitor are allowed to attempt to do so.
+
+## 2.14 opcode: unused (7/205/205)
+
+### 2.14.1 概览
+
+> + nop本身不产生任何作用，正常java代码不会生成nop指令（如果用ASM编写不符合规范的`.class`，会生成nop，比如在`visitMax()`方法结束后仍然执行逻辑，就会被替换成nop指令）
+> + jsr、ret、jsr_w在java7之后废弃无用
+> + breakpoint、impdep1、impdep2是java保留的指令，本身不允许编译器生成，只能JVM自己使用
+
+从Instruction的角度来说，余下的opcode有7个，内容如下：
+
+| opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol |
+| ------ | --------------- | ------ | --------------- | ------ | --------------- | ------ | --------------- |
+| 0      | nop             |        |                 |        |                 |        |                 |
+
+| opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol |
+| ------ | --------------- | ------ | --------------- | ------ | --------------- | ------ | --------------- |
+| 168    | jsr             | 169    | ret             | 201    | jsr_w           |        |                 |
+
+| opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol | opcode | mnemonic symbol |
+| ------ | --------------- | ------ | --------------- | ------ | --------------- | ------ | --------------- |
+| 202    | breakpoint      |        |                 | 254    | impdep1         | 255    | impdep2         |
+
+从ASM的角度来说，这些opcode与`MethodVisitor.visitXxxInsn()`方法对应关系如下：
+
+- `MethodVisitor.visitInsn()`: `nop`
+- `MethodVisitor.visitJumpInsn()`: `jsr`, `jsr_w`
+- `MethodVisitor.visitVarInsn()`: `ret`
+
+### 2.14.2 nop
+
+Do nothing
+
+使用ASM编写一段包含`nop`指向的代码如下：
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+
+    // (1) 生成byte[]内容
+    byte[] bytes = dump();
+
+    // (2) 保存byte[]到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() throws Exception {
+    // (1) 创建ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用visitXxx()方法
+    cw.visit(V1_8, ACC_PUBLIC + ACC_SUPER, "sample/HelloWorld",
+             null, "java/lang/Object", null);
+
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      mv1.visitMaxs(1, 1);
+      mv1.visitEnd();
+    }
+
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "()V", null, null);
+      mv2.visitCode();
+      mv2.visitInsn(NOP);
+      mv2.visitInsn(NOP);
+      mv2.visitInsn(NOP);
+      mv2.visitInsn(NOP);
+      mv2.visitInsn(NOP);
+      mv2.visitInsn(RETURN);
+      mv2.visitMaxs(0, 1);
+      mv2.visitEnd();
+    }
+    cw.visitEnd();
+
+    // (3) 调用toByteArray()方法
+    return cw.toByteArray();
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c -p sample.HelloWorld
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: nop
+       1: nop
+       2: nop
+       3: nop
+       4: nop
+       5: return
+}
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: nop                      // {this} | {}
+0001: nop                      // {this} | {}
+0002: nop                      // {this} | {}
+0003: nop                      // {this} | {}
+0004: nop                      // {this} | {}
+0005: return                   // {} | {}
+```
+
+从JVM规范的角度来看，`nop`指令对应的Operand Stack的变化如下：
+
+```pseudocode
+No change
+```
+
+### 2.14.3 Deprecated Opcodes
+
+**If the class file version number is 51.0(Java 7) or above, then neither the `jsr` opcode or the `jsr_w` opcode may appear in the `code` array.**
+
+- jsr
+- jsr_w
+- ret
+
+```java
+Code_attribute {
+    u2 attribute_name_index;
+    u4 attribute_length;
+    u2 max_stack;
+    u2 max_locals;
+    u4 code_length;
+    u1 code[code_length]; // code array
+    u2 exception_table_length;
+    {   u2 start_pc;
+        u2 end_pc;
+        u2 handler_pc;
+        u2 catch_type;
+    } exception_table[exception_table_length];
+    u2 attributes_count;
+    attribute_info attributes[attributes_count];
+}
+```
+
+### 2.14.4 Reserved Opcodes
+
+Three opcodes are reserved for internal use by a Java Virtual Machine implementation. If the instruction set of the Java Virtual Machine is extended in the future, these reserved opcodes are guaranteed not to be used.
+
+Two of the reserved opcodes, numbers `254` (`0xfe`) and `255` (`0xff`), have the mnemonics `impdep1` and `impdep2`, respectively. These instructions are intended to provide “back doors” or traps to implementation-specific functionality implemented in software and hardware, respectively. The third reserved opcode, number `202` (`0xca`), has the mnemonic `breakpoint` and is intended to be used by debuggers to implement breakpoints.
+
+Although these opcodes have been reserved, they may be used only inside a Java Virtual Machine implementation. They cannot appear in valid class files.
+
+# 3. 难点解析
+
+## 3.1 调用方法
+
+### 3.1.1 细微的差异
+
+在本文当中，主要是介绍一下`.java`文件和`.class`文件中方法调用的差异。
+
+在`.java`文件中，一般的方法由三部分组成，其书写步骤如下：
+
+- 第一步，写对象的变量名
+- 第二步，写方法的名字
+- 第三步，写方法的参数
+
+![Java ASM系列：（064）调用方法_ClassFile](https://s2.51cto.com/images/20210828/1630130358776142.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+在`.class`文件中，一般方法也是由三部分组成，但其指令执行顺序有所不同：
+
+- 第一步，加载对象
+- 第二步，加载方法的参数
+- 第三步，对方法进行调用 （第一步和第二步，就是在准备数据，此时，万事俱备，只差“方法调用”了）
+
+![img](https://s2.51cto.com/images/20210828/1630130313596345.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp)
+
+简单来说，两者的差异如下：
+
+- Java文件：instance –> method –> parameters
+- Class文件: instance –> parameters –> method
+
+### 3.1.2 举例说明
+
+假如有一个`GoodChild`类，其代码如下：
+
+```java
+public class GoodChild {
+  private String name;
+  private int age;
+
+  public GoodChild(String name, int age) {
+    this.name = name;
+    this.age = age;
+  }
+
+  public void study(String subject, int minutes) {
+    String str = String.format("%s who is %d years old has studied %s for %d minutes", name, age, subject, minutes);
+    System.out.println(str);
+  }
+
+  @Override
+  public String toString() {
+    return String.format("GoodChild{name='%s', age=%d}", name, age);
+  }
+}
+```
+
+假如有一个`HelloWorld`类，其代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    GoodChild child = new GoodChild("Lucy", 8);
+    child.study("Math", 30);
+  }
+}
+```
+
+假如有一个`HelloWorldRun`类，其代码如下：
+
+```java
+import sample.HelloWorld;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    HelloWorld instance = new HelloWorld();
+    instance.test();
+  }
+}
+```
+
+对于上面的三个类，我们只关注其中的`HelloWorld`类。通过`javap -c sample.HelloWorld`命令，我们可以查看其`test()`方法对应的instructions内容：
+
+```shell
+$  javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: new           #2                  // class sample/GoodChild
+       3: dup
+       4: ldc           #3                  // String Lucy
+       6: bipush        8
+       8: invokespecial #4                  // Method sample/GoodChild."<init>":(Ljava/lang/String;I)V
+      11: astore_1
+      12: aload_1
+      13: ldc           #5                  // String Math
+      15: bipush        30
+      17: invokevirtual #6                  // Method sample/GoodChild.study:(Ljava/lang/String;I)V
+      20: return
+}
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: new             #2       // {this} | {uninitialized_GoodChild}
+0003: dup                      // {this} | {uninitialized_GoodChild, uninitialized_GoodChild}
+0004: ldc             #3       // {this} | {uninitialized_GoodChild, uninitialized_GoodChild, String}
+0006: bipush          8        // {this} | {uninitialized_GoodChild, uninitialized_GoodChild, String, int}
+0008: invokespecial   #4       // {this} | {GoodChild}
+0011: astore_1                 // {this, GoodChild} | {}
+0012: aload_1                  // {this, GoodChild} | {GoodChild}
+0013: ldc             #5       // {this, GoodChild} | {GoodChild, String}
+0015: bipush          30       // {this, GoodChild} | {GoodChild, String, int}
+0017: invokevirtual   #6       // {this, GoodChild} | {}
+0020: return                   // {} | {}
+```
+
+## 3.2 创建对象
+
+在字节码层面，创建对象，会用到`new/dup/invokespecial`指令的集合。本文主要介绍三个问题：
+
+- 第一个问题：为什么要使用dup指令呢？
+- 第二个问题：是否可以将dup指令替换成别的指令（`astore`）呢？
+- 第三个问题：是否可以打印未初始化的对象？
+
+### 3.2.1 为什么要用dup指令
+
+假如有一个`GoodChild`类，代码如下：
+
+```java
+package sample;
+
+public class GoodChild {
+  private String name;
+  private int age;
+
+  public GoodChild(String name, int age) {
+    this.name = name;
+    this.age = age;
+  }
+
+  @Override
+  public String toString() {
+    return String.format("GoodChild{name='%s', age=%d}", name, age);
+  }
+}
+```
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test() {
+    GoodChild child = new GoodChild("tom", 10);
+    System.out.println(child);
+  }
+}
+```
+
+假如有一个`HelloWorldRun`类，其代码如下：
+
+```java
+import sample.HelloWorld;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    HelloWorld instance = new HelloWorld();
+    instance.test();
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$  javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: new           #2                  // class sample/GoodChild
+       3: dup
+       4: ldc           #3                  // String tom
+       6: bipush        10
+       8: invokespecial #4                  // Method sample/GoodChild."<init>":(Ljava/lang/String;I)V
+      11: astore_1
+      12: getstatic     #5                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      15: aload_1
+      16: invokevirtual #6                  // Method java/io/PrintStream.println:(Ljava/lang/Object;)V
+      19: return
+}
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+> dup是为了保留初始化后对象的指针，不然Heap堆中对象初始化了，结果没有指针指向该对象，后面岂不是又直接被垃圾回收了
+
+```pseudocode
+                               // {this} | {}
+0000: new             #2       // {this} | {uninitialized_GoodChild}
+0003: dup                      // {this} | {uninitialized_GoodChild, uninitialized_GoodChild}
+0004: ldc             #3       // {this} | {uninitialized_GoodChild, uninitialized_GoodChild, String}
+0006: bipush          10       // {this} | {uninitialized_GoodChild, uninitialized_GoodChild, String, int}
+0008: invokespecial   #4       // {this} | {GoodChild} // 消耗栈顶的对象指针和构造方法所需要的参数，对Heap中对象进行初始化
+0011: astore_1                 // {this, GoodChild} | {}
+0012: getstatic       #5       // {this, GoodChild} | {PrintStream}
+0015: aload_1                  // {this, GoodChild} | {PrintStream, GoodChild}
+0016: invokevirtual   #6       // {this, GoodChild} | {}
+0019: return                   // {} | {}
+```
+
+### 3.2.2 使用astore替换dup指令
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+
+    // (1) 生成byte[]内容
+    byte[] bytes = dump();
+
+    // (2) 保存byte[]到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() throws Exception {
+    // (1) 创建ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用visitXxx()方法
+    cw.visit(V1_8, ACC_PUBLIC + ACC_SUPER, "sample/HelloWorld",
+             null, "java/lang/Object", null);
+
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      mv1.visitMaxs(1, 1);
+      mv1.visitEnd();
+    }
+
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "()V", null, null);
+      mv2.visitCode();
+      mv2.visitTypeInsn(NEW, "sample/GoodChild");
+      mv2.visitVarInsn(ASTORE, 1);
+      mv2.visitVarInsn(ALOAD, 1);
+      mv2.visitLdcInsn("tom");
+      mv2.visitIntInsn(BIPUSH, 10);
+      mv2.visitMethodInsn(INVOKESPECIAL, "sample/GoodChild", "<init>", "(Ljava/lang/String;I)V", false);
+
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitVarInsn(ALOAD, 1);
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/Object;)V", false);
+      mv2.visitInsn(RETURN);
+      mv2.visitMaxs(4, 2);
+      mv2.visitEnd();
+    }
+    cw.visitEnd();
+
+    // (3) 调用toByteArray()方法
+    return cw.toByteArray();
+  }
+}
+```
+
+从Instruction的视角来看，方法体对应的内容如下：
+
+```shell
+$ javap -c sample.HelloWorld
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: new           #11                 // class sample/GoodChild
+       3: astore_1
+       4: aload_1
+       5: ldc           #13                 // String tom
+       7: bipush        10
+       9: invokespecial #16                 // Method sample/GoodChild."<init>":(Ljava/lang/String;I)V
+      12: getstatic     #22                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      15: aload_1
+      16: invokevirtual #28                 // Method java/io/PrintStream.println:(Ljava/lang/Object;)V
+      19: return
+}
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: new             #11      // {this} | {uninitialized_GoodChild}
+0003: astore_1                 // {this, uninitialized_GoodChild} | {}
+0004: aload_1                  // {this, uninitialized_GoodChild} | {uninitialized_GoodChild}
+0005: ldc             #13      // {this, uninitialized_GoodChild} | {uninitialized_GoodChild, String}
+0007: bipush          10       // {this, uninitialized_GoodChild} | {uninitialized_GoodChild, String, int}
+0009: invokespecial   #16      // {this, GoodChild} | {}
+0012: getstatic       #22      // {this, GoodChild} | {PrintStream}
+0015: aload_1                  // {this, GoodChild} | {PrintStream, GoodChild}
+0016: invokevirtual   #28      // {this, GoodChild} | {}
+0019: return                   // {} | {}
+```
+
+### 3.2.3 打印未初始化对象
+
+#### 生成instructions
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+
+    // (1) 生成byte[]内容
+    byte[] bytes = dump();
+
+    // (2) 保存byte[]到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() throws Exception {
+    // (1) 创建ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用visitXxx()方法
+    cw.visit(V1_8, ACC_PUBLIC + ACC_SUPER, "sample/HelloWorld",
+             null, "java/lang/Object", null);
+
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      mv1.visitMaxs(1, 1);
+      mv1.visitEnd();
+    }
+
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "()V", null, null);
+      mv2.visitCode();
+      mv2.visitTypeInsn(NEW, "sample/GoodChild");
+      mv2.visitVarInsn(ASTORE, 1);
+
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitVarInsn(ALOAD, 1);
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/Object;)V", false);
+      mv2.visitInsn(RETURN);
+      mv2.visitMaxs(4, 2);
+      mv2.visitEnd();
+    }
+    cw.visitEnd();
+
+    // (3) 调用toByteArray()方法
+    return cw.toByteArray();
+  }
+}
+```
+
+从Frame的视角来看，local variable和operand stack的变化：
+
+```pseudocode
+                               // {this} | {}
+0000: new             #11      // {this} | {uninitialized_GoodChild}
+0003: astore_1                 // {this, uninitialized_GoodChild} | {}
+0004: getstatic       #17      // {this, uninitialized_GoodChild} | {PrintStream}
+0007: aload_1                  // {this, uninitialized_GoodChild} | {PrintStream, uninitialized_GoodChild}
+0008: invokevirtual   #23      // {this, uninitialized_GoodChild} | {}
+0011: return                   // {} | {}
+```
+
+#### 执行结果（出现错误）
+
+运行`HelloWorldRun`类之后，得到如下结果：
+
+```shell
+Exception in thread "main" java.lang.VerifyError: Bad type on operand stack
+Exception Details:
+  Location:
+    sample/HelloWorld.test()V @8: invokevirtual
+  Reason: // 这里println的参数要求Object，但是传入的是一个 uninitialized 未初始化对象的指针，不兼容，所以报错
+    Type uninitialized 0 (current frame, stack[1]) is not assignable to 'java/lang/Object'
+  Current Frame:
+    bci: @8 // byte code index 8 位置报错
+    flags: { }
+    locals: { 'sample/HelloWorld', uninitialized 0 } // local variables 状态
+    stack: { 'java/io/PrintStream', uninitialized 0 } // operand stack 状态
+  Bytecode:
+    0x0000000: bb00 0b4c b200 112b b600 17b1          
+
+	at run.HelloWorldRun.main(HelloWorldRun.java:7)
+```
+
+#### 分析原因
+
+我们可以使用`BytecodeRun`来还原instructions的内容：
+
+```shell
+0x0000000: bb00 0b4c b200 112b b600 17b1
+==================================================
+0000: new             #11 
+0003: astore_1            
+0004: getstatic       #17 
+0007: aload_1             
+0008: invokevirtual   #23 // 报错的位置
+0011: return 
+```
+
+## 3.3 Exception处理
+
+<u>当方法内部的instructions执行的时候，可能会遇到异常情况，那么JVM会将其封装成一个具体的Exception子类的对象，然后把这个“异常对象”放在operand stack上</u>，接下来要怎么处理呢？
+
+对于operand stack上的“异常对象”，有两种处理情况：
+
+- 第一种，当前方法处理不了，只能再交给别的方法进行处理
+- 第二种，当前方法能够处理，就按照自己的处理逻辑来进行处理了
+
+在本文当中，我们就只关注第二种情况，也就是当前方法能够这个“异常对象”。
+
+在当前方法中，处理异常的机制，在`Code`属性结构当中，分成了两个部分进行存储：
+
+- 第一部分，是位于`exception_table[]`内，它类似于中国古代打仗当中“军师”（运筹帷幄），它会告诉我们应该怎么处理这个“异常对象”。
+- 第二部分，是位于`code[]`内，它类似于中国古代打仗当中的“将军和士兵”（决胜千里），它是具体的来执行对“异常对象”处理的操作。
+
+```java
+Code_attribute {
+    u2 attribute_name_index;
+    u4 attribute_length;
+    u2 max_stack;
+    u2 max_locals;
+    u4 code_length;
+    u1 code[code_length];
+    u2 exception_table_length;
+    {   u2 start_pc;
+        u2 end_pc;
+        u2 handler_pc;
+        u2 catch_type;
+    } exception_table[exception_table_length];
+    u2 attributes_count;
+    attribute_info attributes[attributes_count];
+}
+```
+
+### 3.3.1 异常处理的顺序
+
+#### 代码举例
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test(int a, int b) {
+    try {
+      int val = a / b;
+      System.out.println(val);
+    }
+    catch (ArithmeticException ex1) {
+      System.out.println("catch ArithmeticException");
+    }
+    catch (Exception ex2) {
+      System.out.println("catch Exception");
+    }
+  }
+}
+```
+
+接着，我们来写一个`HelloWorldRun`类，来对`HelloWorld.test()`方法进行调用。
+
+```java
+import sample.HelloWorld;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    HelloWorld instance = new HelloWorld();
+    instance.test(10, 0);
+  }
+}
+```
+
+我们来运行一下`HelloWorldRun`类，查看一下输出结果：
+
+```
+catch ArithmeticException
+```
+
+#### exception table结构
+
+那么，异常处理的逻辑是存储在哪里呢？
+
+从ClassFile的角度来看，异常处理的逻辑，是存在`Code`属性的`exception_table`部分。
+
+```java
+Code_attribute {
+    u2 attribute_name_index;
+    u4 attribute_length;
+    u2 max_stack;
+    u2 max_locals;
+    u4 code_length;
+    u1 code[code_length];
+    u2 exception_table_length;
+    {   u2 start_pc;
+        u2 end_pc;
+        u2 handler_pc;
+        u2 catch_type;
+    } exception_table[exception_table_length];
+    u2 attributes_count;
+    attribute_info attributes[attributes_count];
+}
+```
+
+接着，我们对`HelloWorld.class`文件进行分析，其`test()`方法的`Code`结构当中各个条目具体取值如下：
+
+```java
+Code_attribute {
+    attribute_name_index='000D' (#13)
+    attribute_length='000000C1' (193)
+    max_stack='0002' (2)
+    max_locals='0004' (4)
+    code_length='00000024' (36)
+    code: 1B1C6C3EB200021DB60003A700184EB200021205B60006A7000C4EB200021208B60006B1
+    exception_table_length='0002' (2)        // 注意，这里的数量是2
+    exception_table[0] {                     // 这里是第1个异常处理
+        start_pc='0000' (0)
+        end_pc='000B' (11)
+        handler_pc='000E' (14)
+        catch_type='0004' (#4)               // 这里表示捕获的异常是ArithmeticException
+    }
+    exception_table[1] {                     // 这里是第2个异常处理
+        start_pc='0000' (0)
+        end_pc='000B' (11)
+        handler_pc='001A' (26)
+        catch_type='0007' (#7)               // 这里表示捕获的异常是Exception类型
+    }
+    attributes_count='0003' (3)
+    LineNumberTable: 000E00000026...
+    LocalVariableTable: 000F0000003E...
+    StackMapTable: 001C0000000B...
+}
+```
+
+再接下来，我们结合着`javap`指令来理解一下exception table的含义：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(int, int);
+    Code:
+       0: iload_1
+       1: iload_2
+       2: idiv
+       3: istore_3
+       4: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       7: iload_3
+       8: invokevirtual #3                  // Method java/io/PrintStream.println:(I)V
+      11: goto          35
+      14: astore_3 // 将异常对象指针存储到 local variables 下标3位置(0 this指针，1和2对应方法参数)
+      15: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      18: ldc           #5                  // String catch ArithmeticException
+      20: invokevirtual #6                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      23: goto          35
+      26: astore_3
+      27: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      30: ldc           #8                  // String catch Exception
+      32: invokevirtual #6                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      35: return
+    Exception table:
+       from    to  target type
+           0    11    14   Class java/lang/ArithmeticException // [0,11) 出现ArithmeticException异常，则跳转到14
+           0    11    26   Class java/lang/Exception // [0,11) 出现Exception异常，则跳转到26
+}
+```
+
+#### 调换exception table顺序
+
+在这里，我们想调换一下exception table顺序：先捕获`Exception`异常，再捕获`ArithmeticException`异常。
+
+我们想通过Java语言来实现调换一下exception table顺序，会发现代码会报错：
+
+```java
+public class HelloWorld {
+  public void test(int a, int b) {
+    try {
+      int val = a / b;
+      System.out.println(val);
+    }
+    catch (Exception ex2) {
+      System.out.println("catch Exception");
+    }
+    catch (ArithmeticException ex1) { // Exception 'java.lang.ArithmeticException' has already been caught
+      System.out.println("catch ArithmeticException");
+    }
+  }
+}
+```
+
+那么，应该怎么做呢？我们就通过ASM来帮助我们实现调换一下exception table顺序。
+
+首先，我们来看一下，原本`HelloWorld`类的代码如何通过ASM代码来进行实现：
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+
+    // (1) 生成byte[]内容
+    byte[] bytes = dump();
+
+    // (2) 保存byte[]到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() throws Exception {
+    // (1) 创建ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用visitXxx()方法
+    cw.visit(V1_8, ACC_PUBLIC + ACC_SUPER, "sample/HelloWorld",
+             null, "java/lang/Object", null);
+
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      mv1.visitMaxs(1, 1);
+      mv1.visitEnd();
+    }
+
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "(II)V", null, null);
+      Label startLabel = new Label();
+      Label endLabel = new Label();
+      Label exceptionHandler01 = new Label();
+      Label exceptionHandler02 = new Label();
+      Label returnLabel = new Label();
+
+      mv2.visitCode();
+      mv2.visitTryCatchBlock(startLabel, endLabel, exceptionHandler01, "java/lang/ArithmeticException");
+      mv2.visitTryCatchBlock(startLabel, endLabel, exceptionHandler02, "java/lang/Exception");
+
+      mv2.visitLabel(startLabel);
+      mv2.visitVarInsn(ILOAD, 1);
+      mv2.visitVarInsn(ILOAD, 2);
+      mv2.visitInsn(IDIV);
+      mv2.visitVarInsn(ISTORE, 3);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitVarInsn(ILOAD, 3);
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(I)V", false);
+
+      mv2.visitLabel(endLabel);
+      mv2.visitJumpInsn(GOTO, returnLabel);
+
+      mv2.visitLabel(exceptionHandler01);
+      mv2.visitVarInsn(ASTORE, 3);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("catch ArithmeticException");
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      mv2.visitJumpInsn(GOTO, returnLabel);
+
+      mv2.visitLabel(exceptionHandler02);
+      mv2.visitVarInsn(ASTORE, 3);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitLdcInsn("catch Exception");
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+
+      mv2.visitLabel(returnLabel);
+      mv2.visitInsn(RETURN);
+      mv2.visitMaxs(2, 4);
+      mv2.visitEnd();
+    }
+    cw.visitEnd();
+
+    // (3) 调用toByteArray()方法
+    return cw.toByteArray();
+  }
+}
+```
+
+接下来，我们调换一下上述ASM代码中两个`MethodVisitor.visitTryCatchBlock()`方法调用的顺序：
+
+```java
+mv2.visitTryCatchBlock(startLabel, endLabel, exceptionHandler02, "java/lang/Exception");
+mv2.visitTryCatchBlock(startLabel, endLabel, exceptionHandler01, "java/lang/ArithmeticException");
+```
+
+那么，我们执行一下`HelloWorldGenerateCore`类，就可以生成`HelloWorld.class`文件。然后，我们执行一下`javap -c sample.HelloWorld`命令，来验证一下：
+
+```shell
+$  javap -c sample.HelloWorld
+public class sample.HelloWorld {
+...
+  public void test(int, int);
+    Code:
+       0: iload_1
+       1: iload_2
+       2: idiv
+       3: istore_3
+       4: getstatic     #20                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       7: iload_3
+       8: invokevirtual #26                 // Method java/io/PrintStream.println:(I)V
+      11: goto          35
+      14: astore_3
+      15: getstatic     #20                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      18: ldc           #28                 // String catch ArithmeticException
+      20: invokevirtual #31                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      23: goto          35
+      26: astore_3
+      27: getstatic     #20                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      30: ldc           #33                 // String catch Exception
+      32: invokevirtual #31                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      35: return
+    Exception table:
+       from    to  target type
+           0    11    26   Class java/lang/Exception // 发现exception table中记录顺序变化了
+           0    11    14   Class java/lang/ArithmeticException
+}
+```
+
+再接着，我们来运行一下`HelloWorldRun`类，查看一下输出结果：
+
+```shell
+catch Exception
+```
+
+这样的一个输出结果，说明：**exception table就是根据先后顺序来判定的，而不是找到最匹配的异常类型**。
+
+### 3.3.2 为整个方法添加异常处理的逻辑
+
+#### 代码举例
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test(String name, int age) {
+    try {
+      int length = name.length();
+      System.out.println("length = " + length);
+    }
+    catch (NullPointerException ex) {
+      System.out.println("name is null");
+    }
+
+    int val = div(10, age);
+    System.out.println("val = " + val);
+  }
+
+  public int div(int a, int b) {
+    return a / b;
+  }
+}
+```
+
+我们想实现的预期目标：将整个`test()`方法添加一个try-catch语句。
+
+首先，我们来运行一下`HelloWorldRun`类：
+
+```java
+import sample.HelloWorld;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    HelloWorld instance = new HelloWorld();
+    instance.test(null, 0);
+  }
+}
+```
+
+其输出结果如下：
+
+```shell
+name is null
+Exception in thread "main" java.lang.ArithmeticException: / by zero
+	at sample.HelloWorld.div(HelloWorld.java:18)
+	at sample.HelloWorld.test(HelloWorld.java:13)
+	at run.HelloWorldRun.main(HelloWorldRun.java:8)
+```
+
+使用`javap`命令查看exception table的内容：
+
+```shell
+$  javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(java.lang.String, int);
+    Code:
+       0: aload_1
+       1: invokevirtual #2                  // Method java/lang/String.length:()I
+       4: istore_3
+       5: getstatic     #3                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       8: new           #4                  // class java/lang/StringBuilder
+      11: dup
+      12: invokespecial #5                  // Method java/lang/StringBuilder."<init>":()V
+      15: ldc           #6                  // String length =
+      17: invokevirtual #7                  // Method java/lang/StringBuilder.append:(Ljava/lang/String;)Ljava/lang/StringBuilder;
+      20: iload_3
+      21: invokevirtual #8                  // Method java/lang/StringBuilder.append:(I)Ljava/lang/StringBuilder;
+      24: invokevirtual #9                  // Method java/lang/StringBuilder.toString:()Ljava/lang/String;
+      27: invokevirtual #10                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      30: goto          42
+      33: astore_3
+      34: getstatic     #3                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      37: ldc           #12                 // String name is null
+      39: invokevirtual #10                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      42: aload_0
+      43: bipush        10
+      45: iload_2
+      46: invokevirtual #13                 // Method div:(II)I
+      49: istore_3
+      50: getstatic     #3                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      53: new           #4                  // class java/lang/StringBuilder
+      56: dup
+      57: invokespecial #5                  // Method java/lang/StringBuilder."<init>":()V
+      60: ldc           #14                 // String val =
+      62: invokevirtual #7                  // Method java/lang/StringBuilder.append:(Ljava/lang/String;)Ljava/lang/StringBuilder;
+      65: iload_3
+      66: invokevirtual #8                  // Method java/lang/StringBuilder.append:(I)Ljava/lang/StringBuilder;
+      69: invokevirtual #9                  // Method java/lang/StringBuilder.toString:()Ljava/lang/String;
+      72: invokevirtual #10                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      75: return
+    Exception table:
+       from    to  target type
+           0    30    33   Class java/lang/NullPointerException
+
+...
+}
+```
+
+#### 正确的异常捕获处理
+
+```java
+import org.objectweb.asm.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class MethodWithWholeTryCatchVisitor extends ClassVisitor {
+  private final String methodName;
+  private final String methodDesc;
+
+  public MethodWithWholeTryCatchVisitor(int api, ClassVisitor classVisitor, String methodName, String methodDesc) {
+    super(api, classVisitor);
+    this.methodName = methodName;
+    this.methodDesc = methodDesc;
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null && !"<init>".equals(name) && methodName.equals(name) && methodDesc.equals(descriptor)) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodWithWholeTryCatchAdapter(api, mv, access, descriptor);
+      }
+    }
+    return mv;
+  }
+
+  private static class MethodWithWholeTryCatchAdapter extends MethodVisitor {
+    private final int methodAccess;
+    private final String methodDesc;
+
+    private final Label startLabel = new Label();
+    private final Label endLabel = new Label();
+    private final Label handlerLabel = new Label();
+
+    public MethodWithWholeTryCatchAdapter(int api, MethodVisitor methodVisitor, int methodAccess, String methodDesc) {
+      super(api, methodVisitor);
+      this.methodAccess = methodAccess;
+      this.methodDesc = methodDesc;
+    }
+
+    public void visitCode() {
+      // 首先，处理自己的代码逻辑
+      // (1) startLabel
+      super.visitLabel(startLabel);
+
+      // 其次，调用父类的方法实现
+      super.visitCode();
+    }
+
+    @Override
+    public void visitMaxs(int maxStack, int maxLocals) {
+      // 首先，处理自己的代码逻辑
+      // (2) endLabel
+      super.visitLabel(endLabel);
+
+      // (3) handlerLabel
+      super.visitLabel(handlerLabel);
+      int localIndex = getLocalIndex(); // 计算获取当前local variables可存储异常指针的位置
+      super.visitVarInsn(ASTORE, localIndex); // 存储异常对象指针
+      super.visitVarInsn(ALOAD, localIndex); // 加载异常对象指针
+      super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Exception", "printStackTrace", "(Ljava/io/PrintStream;)V", false);
+      super.visitVarInsn(ALOAD, localIndex);
+      super.visitInsn(Opcodes.ATHROW);
+
+      // (4) visitTryCatchBlock
+      super.visitTryCatchBlock(startLabel, endLabel, handlerLabel, "java/lang/Exception");
+
+      // 其次，调用父类的方法实现
+      super.visitMaxs(maxStack, maxLocals);
+    }
+
+    private int getLocalIndex() {
+      Type t = Type.getType(methodDesc);
+      Type[] argumentTypes = t.getArgumentTypes();
+
+      boolean isStaticMethod = ((methodAccess & ACC_STATIC) != 0);
+      int localIndex = isStaticMethod ? 0 : 1;
+      for (Type argType : argumentTypes) {
+        localIndex += argType.getSize();
+      }
+      return localIndex;
+    }
+  }
+}
+```
+
+进行转换：
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+public class HelloWorldTransformCore {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MethodWithWholeTryCatchVisitor(api, cw, "test", "(Ljava/lang/String;I)V");
+
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+转换完成之后，再次运行`HelloWorldRun`类，得到如下输出内容：
+
+```shell
+name is null
+java.lang.ArithmeticException: / by zero // 增加的ASM异常捕获逻辑，逻辑中只是打印一下，然后继续上抛
+	at sample.HelloWorld.div(Unknown Source)
+	at sample.HelloWorld.test(Unknown Source)
+	at run.HelloWorldRun.main(HelloWorldRun.java:8)
+Exception in thread "main" java.lang.ArithmeticException: / by zero // 上抛后JVM打印的异常信息
+	at sample.HelloWorld.div(Unknown Source)
+	at sample.HelloWorld.test(Unknown Source)
+	at run.HelloWorldRun.main(HelloWorldRun.java:8)
+```
+
+使用`javap`命令查看exception table的内容：
+
+```shell
+$ javap -c sample.HelloWorld
+public class sample.HelloWorld {
+...
+  public void test(java.lang.String, int);
+    Code:
+       0: aload_1
+       1: invokevirtual #18                 // Method java/lang/String.length:()I
+       4: istore_3
+       5: getstatic     #24                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       8: new           #26                 // class java/lang/StringBuilder
+      11: dup
+      12: invokespecial #27                 // Method java/lang/StringBuilder."<init>":()V
+      15: ldc           #29                 // String length =
+      17: invokevirtual #33                 // Method java/lang/StringBuilder.append:(Ljava/lang/String;)Ljava/lang/StringBuilder;
+      20: iload_3
+      21: invokevirtual #36                 // Method java/lang/StringBuilder.append:(I)Ljava/lang/StringBuilder;
+      24: invokevirtual #40                 // Method java/lang/StringBuilder.toString:()Ljava/lang/String;
+      27: invokevirtual #46                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      30: goto          42
+      33: astore_3
+      34: getstatic     #24                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      37: ldc           #48                 // String name is null
+      39: invokevirtual #46                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      42: aload_0
+      43: bipush        10
+      45: iload_2
+      46: invokevirtual #52                 // Method div:(II)I
+      49: istore_3
+      50: getstatic     #24                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      53: new           #26                 // class java/lang/StringBuilder
+      56: dup
+      57: invokespecial #27                 // Method java/lang/StringBuilder."<init>":()V
+      60: ldc           #54                 // String val =
+      62: invokevirtual #33                 // Method java/lang/StringBuilder.append:(Ljava/lang/String;)Ljava/lang/StringBuilder;
+      65: iload_3
+      66: invokevirtual #36                 // Method java/lang/StringBuilder.append:(I)Ljava/lang/StringBuilder;
+      69: invokevirtual #40                 // Method java/lang/StringBuilder.toString:()Ljava/lang/String;
+      72: invokevirtual #46                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      75: return
+      76: astore_3
+      77: aload_3
+      78: getstatic     #24                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      81: invokevirtual #60                 // Method java/lang/Exception.printStackTrace:(Ljava/io/PrintStream;)V
+      84: aload_3
+      85: athrow
+    Exception table:
+       from    to  target type
+           0    30    33   Class java/lang/NullPointerException
+           0    76    76   Class java/lang/Exception // ASM在visitMax()中添加的异常处理逻辑，排到第2个
+
+...
+}
+```
+
+#### 错误的异常捕获处理
+
+```java
+import org.objectweb.asm.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class MethodWithWholeTryCatchVisitor extends ClassVisitor {
+  private final String methodName;
+  private final String methodDesc;
+
+  public MethodWithWholeTryCatchVisitor(int api, ClassVisitor classVisitor, String methodName, String methodDesc) {
+    super(api, classVisitor);
+    this.methodName = methodName;
+    this.methodDesc = methodDesc;
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null && !"<init>".equals(name) && methodName.equals(name) && methodDesc.equals(descriptor)) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodWithWholeTryCatchAdapter(api, mv, access, descriptor);
+      }
+    }
+    return mv;
+  }
+
+  private static class MethodWithWholeTryCatchAdapter extends MethodVisitor {
+    private final int methodAccess;
+    private final String methodDesc;
+
+    private final Label startLabel = new Label();
+    private final Label endLabel = new Label();
+    private final Label handlerLabel = new Label();
+
+    public MethodWithWholeTryCatchAdapter(int api, MethodVisitor methodVisitor, int methodAccess, String methodDesc) {
+      super(api, methodVisitor);
+      this.methodAccess = methodAccess;
+      this.methodDesc = methodDesc;
+    }
+
+    public void visitCode() {
+      // 首先，处理自己的代码逻辑
+      // (1) visitTryCatchBlock和startLabel （注意，修改的是visitTryCatchBlock方法的位置）
+      super.visitTryCatchBlock(startLabel, endLabel, handlerLabel, "java/lang/Exception");
+      super.visitLabel(startLabel);
+
+      // 其次，调用父类的方法实现
+      super.visitCode();
+    }
+
+    @Override
+    public void visitMaxs(int maxStack, int maxLocals) {
+      // 首先，处理自己的代码逻辑
+      // (2) endLabel
+      super.visitLabel(endLabel);
+
+      // (3) handlerLabel
+      super.visitLabel(handlerLabel);
+      int localIndex = getLocalIndex();
+      super.visitVarInsn(ASTORE, localIndex);
+      super.visitVarInsn(ALOAD, localIndex);
+      super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Exception", "printStackTrace", "(Ljava/io/PrintStream;)V", false);
+      super.visitVarInsn(ALOAD, localIndex);
+      super.visitInsn(Opcodes.ATHROW);
+
+      // 其次，调用父类的方法实现
+      super.visitMaxs(maxStack, maxLocals);
+    }
+
+    private int getLocalIndex() {
+      Type t = Type.getType(methodDesc);
+      Type[] argumentTypes = t.getArgumentTypes();
+
+      boolean isStaticMethod = ((methodAccess & ACC_STATIC) != 0);
+      int localIndex = isStaticMethod ? 0 : 1;
+      for (Type argType : argumentTypes) {
+        localIndex += argType.getSize();
+      }
+      return localIndex;
+    }
+  }
+}
+```
+
+转换完成之后，我们运行`HelloWorldRun`来查看一下输出内容：
+
+```shell
+// 发现第一个null异常处理后，后续代码不执行了，因为 ASM中把Exception异常处理提前注册到了exception table中，null异常被消耗后，后续逻辑也就是直接上抛异常了
+java.lang.NullPointerException
+	at sample.HelloWorld.test(Unknown Source)
+	at run.HelloWorldRun.main(HelloWorldRun.java:8)
+Exception in thread "main" java.lang.NullPointerException
+	at sample.HelloWorld.test(Unknown Source)
+	at run.HelloWorldRun.main(HelloWorldRun.java:8)
+```
+
+我们使用`javap`命令查看exception table的内容：
+
+```shell
+$ javap -c sample.HelloWorld
+public class sample.HelloWorld {
+...
+  public void test(java.lang.String, int);
+    Code:
+       0: aload_1
+       1: invokevirtual #20                 // Method java/lang/String.length:()I
+       4: istore_3
+       5: getstatic     #26                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       8: new           #28                 // class java/lang/StringBuilder
+      11: dup
+      12: invokespecial #29                 // Method java/lang/StringBuilder."<init>":()V
+      15: ldc           #31                 // String length =
+      17: invokevirtual #35                 // Method java/lang/StringBuilder.append:(Ljava/lang/String;)Ljava/lang/StringBuilder;
+      20: iload_3
+      21: invokevirtual #38                 // Method java/lang/StringBuilder.append:(I)Ljava/lang/StringBuilder;
+      24: invokevirtual #42                 // Method java/lang/StringBuilder.toString:()Ljava/lang/String;
+      27: invokevirtual #48                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      30: goto          42
+      33: astore_3
+      34: getstatic     #26                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      37: ldc           #50                 // String name is null
+      39: invokevirtual #48                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      42: aload_0
+      43: bipush        10
+      45: iload_2
+      46: invokevirtual #54                 // Method div:(II)I
+      49: istore_3
+      50: getstatic     #26                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      53: new           #28                 // class java/lang/StringBuilder
+      56: dup
+      57: invokespecial #29                 // Method java/lang/StringBuilder."<init>":()V
+      60: ldc           #56                 // String val =
+      62: invokevirtual #35                 // Method java/lang/StringBuilder.append:(Ljava/lang/String;)Ljava/lang/StringBuilder;
+      65: iload_3
+      66: invokevirtual #38                 // Method java/lang/StringBuilder.append:(I)Ljava/lang/StringBuilder;
+      69: invokevirtual #42                 // Method java/lang/StringBuilder.toString:()Ljava/lang/String;
+      72: invokevirtual #48                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      75: return
+      76: astore_3
+      77: aload_3
+      78: getstatic     #26                 // Field java/lang/System.out:Ljava/io/PrintStream;
+      81: invokevirtual #60                 // Method java/lang/Exception.printStackTrace:(Ljava/io/PrintStream;)V
+      84: aload_3
+      85: athrow
+    Exception table:
+       from    to  target type
+           0    76    76   Class java/lang/Exception // Exception异常处理被提前注册，所以下面NullPointerException就不会再触发了
+           0    30    33   Class java/lang/NullPointerException
+...
+}
+```
+
+### 3.3.3 操作数栈上的异常对象
+
+当方法执行过程中，遇到异常的时候，在operand stack上会有一个“异常对象”。
+
+这个“异常对象”，可能有对应的代码处理逻辑；但是，我们想对这个“异常对象”进行多次处理，那下一步要怎么处理呢？
+
+有两种处理方式：
+
+- 第一种方式，就是将“异常对象”存储到local variable内；后续使用的时候，再将“异常对象”加载到operand stack上。
+- 第二种方式，就是在operand stack上，要使用的时候，就进行一次`dup`（复制）操作。
+
+#### 存储异常对象
+
+对于第一种情况，我们要将“异常对象”存储到local variable当中，但是，我们应该把这个“异常对象”存储到哪个位置上呢？换句话说，我们怎么计算“异常对象”在local variable当中的位置呢？我们需要考虑三个因素：
+
+- 第一个因素，是否需要存储`this`变量。
+- 第二个因素，是否需要存储方法的参数（method parameters）。
+- 第三个因素，是否需要存储方法内部定义的局部变量（method local var）。
+
+考虑这三个因素之后，我们就可以确定“异常对象”应该存储的一个什么位置上了。
+
+在上面的`MethodWithWholeTryCatchAdapter`当中，有一个`getLocalIndex()`方法。这个方法就是考虑了`this`和方法的参数（method parameters），之后就是“异常对象”可以存储的位置。再者，方法内部定义的局部变量（method local var），有的时候有，有的时候没有，大家根据实际的情况来决定是否添加。
+
+```java
+class MethodWithWholeTryCatchAdapter extends MethodVisitor {
+  @Override
+  public void visitMaxs(int maxStack, int maxLocals) {
+    // 首先，处理自己的代码逻辑
+    // (2) endLabel
+    super.visitLabel(endLabel);
+
+    // (3) handlerLabel
+    super.visitLabel(handlerLabel);
+    int localIndex = getLocalIndex();
+    super.visitVarInsn(ASTORE, localIndex);
+    super.visitVarInsn(ALOAD, localIndex);
+    super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+    super.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Exception", "printStackTrace", "(Ljava/io/PrintStream;)V", false);
+    super.visitVarInsn(ALOAD, localIndex);
+    super.visitInsn(Opcodes.ATHROW);
+
+    // 其次，调用父类的方法实现
+    super.visitMaxs(maxStack, maxLocals);
+  }    
+
+  private int getLocalIndex() {
+    Type t = Type.getType(methodDesc);
+    Type[] argumentTypes = t.getArgumentTypes();
+
+    boolean isStaticMethod = ((methodAccess & ACC_STATIC) != 0);
+    int localIndex = isStaticMethod ? 0 : 1;
+    for (Type argType : argumentTypes) {
+      localIndex += argType.getSize();
+    }
+    return localIndex;
+  }
+}
+```
+
+#### 操作数栈上复制
+
+第二种方式，就是不依赖于local variable，也就不用去计算一个具体的位置了。那么，我们想对“异常对象”进行多次的处理，直接在operand stack进行`dup`（复制），就能够进行多次处理了。
+
+```java
+import org.objectweb.asm.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class MethodWithWholeTryCatchVisitor extends ClassVisitor {
+  private final String methodName;
+  private final String methodDesc;
+
+  public MethodWithWholeTryCatchVisitor(int api, ClassVisitor classVisitor, String methodName, String methodDesc) {
+    super(api, classVisitor);
+    this.methodName = methodName;
+    this.methodDesc = methodDesc;
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null && !"<init>".equals(name) && methodName.equals(name) && methodDesc.equals(descriptor)) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodWithWholeTryCatchAdapter(api, mv, access, descriptor);
+      }
+    }
+    return mv;
+  }
+
+  private static class MethodWithWholeTryCatchAdapter extends MethodVisitor {
+    private final int methodAccess;
+    private final String methodDesc;
+
+    private final Label startLabel = new Label();
+    private final Label endLabel = new Label();
+    private final Label handlerLabel = new Label();
+
+    public MethodWithWholeTryCatchAdapter(int api, MethodVisitor methodVisitor, int methodAccess, String methodDesc) {
+      super(api, methodVisitor);
+      this.methodAccess = methodAccess;
+      this.methodDesc = methodDesc;
+    }
+
+    public void visitCode() {
+      // 首先，处理自己的代码逻辑
+      // (1) startLabel
+      super.visitLabel(startLabel);
+
+      // 其次，调用父类的方法实现
+      super.visitCode();
+    }
+
+    @Override
+    public void visitMaxs(int maxStack, int maxLocals) {
+      // 首先，处理自己的代码逻辑
+      // (2) endLabel
+      super.visitLabel(endLabel);
+
+      // (3) handlerLabel
+      super.visitLabel(handlerLabel);
+      super.visitInsn(DUP);              // 注意，这里使用了DUP指令
+      super.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Exception", "printStackTrace", "(Ljava/io/PrintStream;)V", false);
+      super.visitInsn(Opcodes.ATHROW);
+
+      // (4) visitTryCatchBlock
+      super.visitTryCatchBlock(startLabel, endLabel, handlerLabel, "java/lang/Exception");
+
+      // 其次，调用父类的方法实现
+      super.visitMaxs(maxStack, maxLocals);
+    }
+  }
+}
+```
+
+## 3.4 Java 8 Lambda
+
+在《[Java ASM系列一：Core API](https://lsieun.github.io/java/asm/java-asm-season-01.html)》当中，主要是对Core API进行了介绍，但是并没有使用Core API来生成Java 8 Lambda表达式。
+
+在本文当中，我们主要对Java 8 Lambda的两方面进行介绍：
+
+- 第一方面，如何使用ASM生成Lambda表达式？
+- 第二方面，探究Lambda表达式的实现原理是什么？
+
+### 3.4.1 使用ASM生成Lambda
+
+#### 预期目标
+
+我们的预期目标是生成一个`HelloWorld`类，代码如下：
+
+```java
+import java.util.function.BiFunction;
+
+public class HelloWorld {
+  public void test() {
+    // 这里实际上 会生成一个类实例，该类实现 BiFunction 接口，然后apply方法中使用Math类的静态方法max
+    BiFunction<Integer, Integer, Integer> func = Math::max;
+    Integer result = func.apply(10, 20);
+    System.out.println(result);
+  }
+}
+```
+
+#### 编码实现
+
+在下面的代码中，我们重点关注两个点：
+
+- 第一点，是`Handle`实例的创建。
+- 第二点，是`MethodVisitor.visitInvokeDynamicInsn()`方法。
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+
+    // (1) 生成byte[]内容
+    byte[] bytes = dump();
+
+    // (2) 保存byte[]到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() throws Exception {
+    // (1) 创建ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用visitXxx()方法
+    cw.visit(V1_8, ACC_PUBLIC + ACC_SUPER, "sample/HelloWorld",
+             null, "java/lang/Object", null);
+
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      mv1.visitMaxs(0, 0);
+      mv1.visitEnd();
+    }
+
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "()V", null, null);
+      mv2.visitCode();
+      // 第1点，Handle实例的创建
+      Handle bootstrapMethodHandle = new Handle(H_INVOKESTATIC, "java/lang/invoke/LambdaMetafactory", "metafactory",
+                                                "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;" +
+                                                "Ljava/lang/invoke/MethodHandle;Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;", false);
+      // 第2点，MethodVisitor.visitInvokeDynamicInsn()方法的调用
+      mv2.visitInvokeDynamicInsn("apply", "()Ljava/util/function/BiFunction;",
+                                 bootstrapMethodHandle,
+                                 // 因为java泛型擦除，所以实际方法签名不带有泛型参数，取而代之的是Object（实际方法签名）
+                                 Type.getType("(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"),
+                                 new Handle(H_INVOKESTATIC, "java/lang/Math", "max", "(II)I", false),
+                                 // 这个参数是用于说明实际传参时的参数类型（伪方法签名）
+                                 Type.getType("(Ljava/lang/Integer;Ljava/lang/Integer;)Ljava/lang/Integer;")
+                                );
+      mv2.visitVarInsn(ASTORE, 1);
+      mv2.visitVarInsn(ALOAD, 1);
+      mv2.visitIntInsn(BIPUSH, 10);
+      mv2.visitMethodInsn(INVOKESTATIC, "java/lang/Integer", "valueOf", "(I)Ljava/lang/Integer;", false);
+      mv2.visitIntInsn(BIPUSH, 20);
+      mv2.visitMethodInsn(INVOKESTATIC, "java/lang/Integer", "valueOf", "(I)Ljava/lang/Integer;", false);
+      mv2.visitMethodInsn(INVOKEINTERFACE, "java/util/function/BiFunction", "apply",
+                          "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", true);
+      mv2.visitTypeInsn(CHECKCAST, "java/lang/Integer");
+      mv2.visitVarInsn(ASTORE, 2);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitVarInsn(ALOAD, 2);
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/Object;)V", false);
+      mv2.visitInsn(RETURN);
+      mv2.visitMaxs(0, 0);
+      mv2.visitEnd();
+    }
+
+    cw.visitEnd();
+
+    // (3) 调用toByteArray()方法
+    return cw.toByteArray();
+  }
+}
+```
+
+#### 验证结果
+
+接下来，我们来验证生成的Lambda表达式是否能够正常运行。
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    Object obj = clazz.newInstance();
+
+    Method m = clazz.getDeclaredMethod("test");
+    m.invoke(obj);
+  }
+}
+```
+
+### 3.4.2 探究Lambda的实现原理
+
+简单来说，Lambda表达式的内部原理，是借助于Java ASM生成匿名内部类来实现的。
+
+#### 追踪Lambda
+
+首先，我们使用`javap -v -p sample.HelloWorld`命令查看输出结果：
+
+```text
+$ javap -v -p sample.HelloWorld
+...
+BootstrapMethods:
+  0: #28 invokestatic java/lang/invoke/LambdaMetafactory.metafactory:(
+        Ljava/lang/invoke/MethodHandles$Lookup;
+        Ljava/lang/String;Ljava/lang/invoke/MethodType;
+        Ljava/lang/invoke/MethodType;
+        Ljava/lang/invoke/MethodHandle;
+        Ljava/lang/invok e/MethodType;
+      )Ljava/lang/invoke/CallSite;
+    Method arguments:
+      #29 (Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;
+      #30 invokestatic java/lang/Math.max:(II)I
+      #31 (Ljava/lang/Integer;Ljava/lang/Integer;)Ljava/lang/Integer;
+```
+
+通过上面的输出结果，我们定位到BootstrapMethods的部分，可以看到它使用了`java.lang.invoke.LambdaMetafactory`类的`metafactory()`方法。
+
+至此，我们想表达的意思：Lambda表达式是与`LambdaMetafactory.metafactory()`方法有关联关系的。
+
+------
+
+在IDE当中，我们可以查看`LambdaMetafactory.metafactory()`方法，其内容如下：
+
+![Java ASM系列：（067）Java 8 Lambda原理探究_ClassFile](https://s2.51cto.com/images/20210831/1630383548682537.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+在上图中，我们可以看到`mf`指向一个`InnerClassLambdaMetafactory`的实例，并在最后调用了`buildCallSite()`方法。
+
+------
+
+接着，我们跳转到`java.lang.invoke.InnerClassLambdaMetafactory`类的`buildCallSite()`方法
+
+![Java ASM系列：（067）Java 8 Lambda原理探究_Java_02](https://s2.51cto.com/images/20210831/1630383583438639.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+在`java.lang.invoke.InnerClassLambdaMetafactory`类的`spinInnerClass()`方法中，找到如下代码：
+
+```java
+final byte[] classBytes = cw.toByteArray();
+```
+
+在其语句上，打一个断点：
+
+![Java ASM系列：（067）Java 8 Lambda原理探究_ASM_03](https://s2.51cto.com/images/20210831/1630383608841146.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+调试运行，然后使用如下表达式来查看`classBytes`的值：
+
+```java
+Arrays.toString(classBytes)
+```
+
+其实，这里的`classBytes`就是生成的类文件的字节码内容，这样的字符串内容就是该字节码内容的另一种表现形式。那么，拿到这样一个字符串内容之后，我们应该如何处理呢？
+
+#### 查看生成的类
+
+在[项目代码](https://gitee.com/lsieun/learn-java-asm)中，有一个`PrintASMTextLambda`类，它的作用就是将上述字符串内容的类信息打印出来。
+
+```java
+import lsieun.utils.StringUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.util.Printer;
+import org.objectweb.asm.util.Textifier;
+import org.objectweb.asm.util.TraceClassVisitor;
+
+import java.io.IOException;
+import java.io.PrintWriter;
+
+public class PrintASMTextLambda {
+  public static void main(String[] args) throws IOException {
+    // (1) 设置参数
+    String str = "[-54, -2, -70, -66, ...]";
+    byte[] bytes = StringUtils.array2Bytes(str);
+    int parsingOptions = ClassReader.SKIP_FRAMES | ClassReader.SKIP_DEBUG;
+
+    // (2) 打印结果
+    Printer printer = new Textifier();
+    PrintWriter printWriter = new PrintWriter(System.out, true);
+    TraceClassVisitor traceClassVisitor = new TraceClassVisitor(null, printer, printWriter);
+    new ClassReader(bytes).accept(traceClassVisitor, parsingOptions);
+  }
+}
+```
+
+我们可以将代表字节码内容的字符串放到上面代码的`str`变量中，然后运行`PrintASMTextLambda`可以得到如下结果：
+
+```java
+// class version 52.0 (52)
+// access flags 0x1030
+final synthetic class sample/HelloWorld$$Lambda$1 implements java/util/function/BiFunction {
+
+
+  // access flags 0x2
+  private <init>()V
+    ALOAD 0
+    INVOKESPECIAL java/lang/Object.<init> ()V
+    RETURN
+    MAXSTACK = 1
+    MAXLOCALS = 1
+
+  // access flags 0x1 
+  public apply(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;
+  @Ljava/lang/invoke/LambdaForm$Hidden;()
+    ALOAD 1
+    CHECKCAST java/lang/Integer
+    INVOKEVIRTUAL java/lang/Integer.intValue ()I
+    ALOAD 2
+    CHECKCAST java/lang/Integer
+    INVOKEVIRTUAL java/lang/Integer.intValue ()I
+    INVOKESTATIC java/lang/Math.max (II)I
+    INVOKESTATIC java/lang/Integer.valueOf (I)Ljava/lang/Integer;
+    ARETURN
+    MAXSTACK = 2
+    MAXLOCALS = 3
+}
+```
+
+通过上面的输出结果，我们可以看到：
+
+- 第一点，当前类的名字叫`sample/HelloWorld$$Lambda$1`
+
+  - 当前类带有`final`和`synthetic`标识。(synthetic是正常java代码不会有的，只有生成的才有这个标识)
+  - 当前类实现了`java/util/function/BiFunction`接口。
+
+- 第二点，在`sample/HelloWorld$$Lambda$1`类当中，它定义了一个构造方法（`<init>()V`）。
+
+- 第三点，在`sample/HelloWorld$$Lambda$1`
+
+  类当中，它定义了一个`apply`方法（`apply(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;`）。
+
+  - 这个`apply`方法正是`BiFunction`接口中定义的方法。
+  - `apply`方法的内部代码逻辑，是通过调用`Math.max()`方法来实现的；而`Math::max`正是Lambda表达式的内容。
+
+**至此，我们可以知道：Lambda表达式的实现，是由JVM调用ASM来实现的。也就是说，JVM使用ASM创建一个匿名内部类（`sample/HelloWorld$$Lambda$1`），让该匿名内部类实现特定的接口（`java/util/function/BiFunction`），并在接口定义的方法（`apply`）实现中包含Lambda表达式的内容。**
+
+> [Chapter 4. The class File Format (oracle.com)](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-4.html)
+>
+> 4.1. The ClassFile Structure
+>
+> **The `ACC_SYNTHETIC` flag indicates that this class or interface was generated by a compiler and does not appear in source code.**
+>
+> Table 4.1-B. Class access and property modifiers
+>
+> | Flag Name        | Value  | Interpretation                                               |
+> | ---------------- | ------ | ------------------------------------------------------------ |
+> | `ACC_PUBLIC`     | 0x0001 | Declared `public`; may be accessed from outside its package. |
+> | `ACC_FINAL`      | 0x0010 | Declared `final`; no subclasses allowed.                     |
+> | `ACC_SUPER`      | 0x0020 | Treat superclass methods specially when invoked by the *invokespecial* instruction. |
+> | `ACC_INTERFACE`  | 0x0200 | Is an interface, not a class.                                |
+> | `ACC_ABSTRACT`   | 0x0400 | Declared `abstract`; must not be instantiated.               |
+> | `ACC_SYNTHETIC`  | 0x1000 | **Declared synthetic; not present in the source code.**      |
+> | `ACC_ANNOTATION` | 0x2000 | Declared as an annotation type.                              |
+> | `ACC_ENUM`       | 0x4000 | Declared as an `enum` type.                                  |
+> | `ACC_MODULE`     | 0x8000 | Is a module, not a class or interface.                       |
