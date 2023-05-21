@@ -2799,3 +2799,2597 @@ public class HelloWorldRun {
 # 3. Class Transformation
 
 ## 3.1 Tree Based Class Transformation
+
+### 3.1.1 Core Based Class Transformation
+
+在Core API当中，使用`ClassReader`、`ClassVisitor`和`ClassWriter`类来进行Class Transformation操作的整体思路是这样的：
+
+```pseudocode
+ClassReader --> ClassVisitor(1) --> ... --> ClassVisitor(N) --> ClassWriter
+```
+
+在这些类当中，它们有各自的职责：
+
+- `ClassReader`类负责“读”Class。
+- `ClassWriter`类负责“写”Class。
+- `ClassVisitor`类负责进行“转换”（Transformation）。
+
+因此，我们可以说，`ClassVisitor`类是Class Transformation的核心操作。
+
+### 3.1.2 Class Transformation的本质
+
+对于Class Transformation来说，它的本质就是“中间人攻击”（Man-in-the-middle attack）。
+
+在[Wiki](https://en.wikipedia.org/wiki/Man-in-the-middle_attack)当中，是这样描述Man-in-the-middle attack的：
+
+> In cryptography and computer security, a man-in-the-middle(MITM) attack is a cyberattack where the attacker secretly relays and possibly alters the communications between two parties who believe that they are directly communicating with each other.
+
+![Java ASM系列：（078）Tree Based Class Transformation_Bytecode](https://s2.51cto.com/images/20210628/1624882180784922.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+### 3.1.3 Tree Based Class Transformation
+
+首先，思考一个问题：基于Tree API的Class Transformation要怎么进行呢？它是要完全开发一套全新的处理流程，还是利用已有的Core API的Class Transformation流程呢？
+
+回答：要实现Tree API的Class Transformation，Java ASM利用了已有的Core API的Class Transformation流程。
+
+```pseudocode
+ClassReader --> ClassVisitor(1) --> ... --> ClassNode(M) --> ... --> ClassVisitor(N) --> ClassWriter
+```
+
+因为`ClassNode`类（Tree API）是继承自`ClassVisitor`类（Core API），因此这里的处理流程和上面的处理流程本质上一样的。
+
+虽然处理流程本质上是一样的，但是还有三个具体的技术细节需要处理：
+
+- 第一个，如何将Core API（`ClassReader`和`ClassVisitor`）转换成Tree API（`ClassNode`）。
+- 第二个，如何将Tree API（`ClassNode`）转换成Core API（`ClassVisitor`和`ClassWriter`）。
+- 第三个，如何对`ClassNode`进行转换。
+
+#### 从Core API到Tree API
+
+从Core API到Tree API的转换，有两种情况。
+
+第一种情况，将`ClassReader`类转换成`ClassNode`类，要依赖于`ClassReader`的`accept(ClassVisitor)`方法：
+
+```java
+ClassNode cn = new ClassNode(Opcodes.ASM9);
+
+ClassReader cr = new ClassReader(bytes);
+int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+cr.accept(cn, parsingOptions);
+```
+
+第二种情况，将`ClassVisitor`类转换成`ClassNode`类，要依赖于`ClassVisitor`的构造方法：
+
+```java
+int api = Opcodes.ASM9;
+ClassNode cn = new ClassNode();
+ClassVisitor cv = new XxxClassVisitor(api, cn);
+```
+
+#### 从Tree API到Core API
+
+从Tree API到Core API的转换，要依赖于`ClassNode`的`accept(ClassVisitor)`方法：
+
+```java
+ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+cn.accept(cw);
+```
+
+#### 如何对ClassNode进行转换
+
+对`ClassNode`对象实例进行转换，其实就是对其字段的值进行修改。
+
+##### 第一个版本
+
+首先，我们来看第一个版本，就是在拿到`ClassNode cn`之后，直接对`cn`里的字段值进行修改。
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+    if (bytes1 == null) {
+      throw new RuntimeException("bytes1 is null");
+    }
+
+    // (1)构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassNode(api);
+    cr.accept(cn, ClassReader.SKIP_FRAMES | ClassReader.SKIP_DEBUG);
+
+    // (3) 进行transform
+    cn.interfaces.add("java/lang/Cloneable");
+
+    // (4) 构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+    cn.accept(cw);
+
+    // (5) 生成byte[]内容输出
+    byte[] bytes2 = cw.toByteArray();
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+这个版本有点“鲁莽”和“原始”，如果进行变换的内容复杂，代码就会变得很“臃肿”，缺少一点面向对象的“美”。那么，怎么改进呢？
+
+##### 第二个版本
+
+在第二个版本中，我们就引入一个`ClassTransformer`类，它的作用就是将“需要进行的变换”封装成一个“类”。
+
+```java
+import org.objectweb.asm.tree.ClassNode;
+
+public class ClassTransformer {
+  protected ClassTransformer ct;
+
+  public ClassTransformer(ClassTransformer ct) {
+    this.ct = ct;
+  }
+
+  public void transform(ClassNode cn) {
+    if (ct != null) {
+      ct.transform(cn);
+    }
+  }
+}
+```
+
+对于`ClassTransformer`类，我们主要理解两点内容：
+
+- 第一点，`transform()`方法是主要的关注点，它的作用是对某一个`ClassNode`对象进行转换。
+- 第二点，`ct`字段是次要的关注点，它的作用是将多个`ClassTransformer`对象连接起来，这就能够对某一个`ClassNode`对象进行连续多次处理。
+
+代码片段：
+
+```java
+// (1)构建ClassReader
+ClassReader cr = new ClassReader(bytes1);
+
+// (2) 构建ClassNode
+int api = Opcodes.ASM9;
+ClassNode cn = new ClassNode(api);
+cr.accept(cn, ClassReader.SKIP_FRAMES | ClassReader.SKIP_DEBUG);
+
+// (3) 进行transform
+ClassTransformer ct = ...;
+ct.transform(cn);
+
+// (4) 构建ClassWriter
+ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+cn.accept(cw);
+
+// (5) 生成byte[]内容输出
+byte[] bytes2 = cw.toByteArray();
+```
+
+完整代码示例：
+
+```java
+import lsieun.asm.tree.transformer.ClassAddFieldTransformer;
+import lsieun.asm.tree.transformer.ClassAddMethodTransformer;
+import lsieun.asm.tree.transformer.ClassTransformer;
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.InsnList;
+import org.objectweb.asm.tree.InsnNode;
+import org.objectweb.asm.tree.MethodNode;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+    if (bytes1 == null) {
+      throw new RuntimeException("bytes1 is null");
+    }
+
+    // (1)构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2) 构建ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassNode(api);
+    cr.accept(cn, ClassReader.SKIP_FRAMES | ClassReader.SKIP_DEBUG);
+
+    // (3) 进行transform
+    ClassTransformer ct1 = new ClassAddFieldTransformer(null, Opcodes.ACC_PUBLIC, "intValue", "I");
+    ClassTransformer ct2 = new ClassAddMethodTransformer(ct1, Opcodes.ACC_PUBLIC, "abc", "()V") {
+      @Override
+      protected void generateMethodBody(MethodNode mn) {
+        InsnList il = mn.instructions;
+        il.add(new InsnNode(Opcodes.RETURN));
+        mn.maxStack = 0;
+        mn.maxLocals = 1;
+      }
+    };
+    ct2.transform(cn);
+
+    // (4) 构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+    cn.accept(cw);
+
+    // (5) 生成byte[]内容输出
+    byte[] bytes2 = cw.toByteArray();
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+第二个版本，其实挺好的，但是仍然有改进的余地，就是“学会内敛”。“学会内敛”是什么意思呢？我们结合生活当中的例子来说一下，有一句话叫“腹有诗书气自华”。 如果你有才华，但到处卖弄，会非常招人讨厌；但如果你将才华藏于自身，不轻易示人，这样你的才华就会体现你的气质中。
+
+那么，应该怎么进一步改进呢？在ASM的官方文档（[asm4-guide.pdf](https://asm.ow2.io/asm4-guide.pdf)）提出了两种Common Patterns。
+
+### 3.1.4 Two Common Patterns
+
+#### First Pattern
+
+The first pattern uses inheritance:
+
+```java
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.tree.ClassNode;
+
+public class MyClassNode extends ClassNode {
+  public MyClassNode(int api, ClassVisitor cv) {
+    super(api);
+    this.cv = cv;
+  }
+
+  @Override
+  public void visitEnd() {
+    // 首先，处理自己的代码逻辑
+    // put your transformation code here
+    // 使用ClassTransformer进行转换
+
+    // 其次，调用父类的方法实现（根据实际情况，选择保留，或删除）
+    super.visitEnd();
+
+    // 最后，向后续ClassVisitor传递
+    if (cv != null) {
+      accept(cv);
+    }
+  }
+}
+```
+
+那么，可以对`MyClassNode`按如下思路进行使用：
+
+```java
+// (1)构建ClassReader
+ClassReader cr = new ClassReader(bytes1);
+
+// (2)构建ClassWriter
+ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+// (3)串连ClassNode
+int api = Opcodes.ASM9;
+ClassNode cn = new MyClassNode(api, cw);
+
+//（4）结合ClassReader和ClassNode
+int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+cr.accept(cn, parsingOptions);
+
+// (5) 生成byte[]
+byte[] bytes2 = cw.toByteArray();
+```
+
+#### Second Pattern
+
+The second pattern uses delegation instead of inheritance:
+
+```java
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.tree.ClassNode;
+
+public class MyClassVisitor extends ClassVisitor {
+  private final ClassVisitor next;
+
+  public MyClassVisitor(int api, ClassVisitor classVisitor) {
+    super(api, new ClassNode());    // 注意一：这里创建了一个ClassNode对象
+    this.next = classVisitor;
+  }
+
+  @Override
+  public void visitEnd() {
+    // 首先，处理自己的代码逻辑
+    ClassNode cn = (ClassNode) cv;    // 注意二：这里获取的是上面创建的ClassNode对象
+    // put your transformation code here
+    // 使用ClassTransformer进行转换
+
+    // 其次，调用父类的方法实现（根据实际情况，选择保留，或删除）
+    super.visitEnd();
+
+    // 最后，向后续ClassVisitor传递
+    if (next != null) {
+      cn.accept(next);
+    }
+  }
+}
+```
+
+那么，可以对`MyClassVisitor`按如下思路进行使用：
+
+```java
+//（1）构建ClassReader
+ClassReader cr = new ClassReader(bytes1);
+
+//（2）构建ClassWriter
+ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+//（3）串连ClassVisitor
+int api = Opcodes.ASM9;
+ClassVisitor cv = new MyClassVisitor(api, cw);
+
+//（4）结合ClassReader和ClassVisitor
+int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+cr.accept(cv, parsingOptions);
+
+//（5）生成byte[]
+byte[] bytes2 = cw.toByteArray();
+```
+
+### 3.1.5 总结
+
+本文内容总结如下：
+
+- 第一点，介绍Core Based Class Transformation的处理流程是什么。
+- 第二点，Class Transformation的本质是什么。（中间人攻击）
+- 第三点，Tree Based Class Transformation是利用了已有的Core API处理流程，在过程中需要解决三个技术细节问题：
+  - 第一个问题，如何将Core API转换成Tree API
+  - 第二个问题，如何将Tree API转换成Core API
+  - 第三个问题，如何对`ClassNode`类进行转换
+- 第四点，使用Tree API进行Class Transformation的两种Pattern是什么。
+
+在刚接触Tree Based Class Transformation的时候，可能不知道如何开始着手，我们可以按下面的步骤来进行思考：
+
+- 第一步，读取具体的`.class`文件，是使用`ClassReader`类，它属于Core API的内容。
+- 第二步，思考如何将Core API转换成Tree API。
+- 第三步，思考如何使用Tree API进行Class Transformation操作。
+- 第四步，思考如何将Tree API转换成Core API。
+- 第五步，最后落实到`ClassWriter`类，调用其`toByteArray()`方法来生成`byte[]`内容。
+
+## 3.2 Tree Based Class Transformation示例
+
+### 3.2.1 整体思路
+
+使用Tree API进行Class Transformation的思路：
+
+```pseudocode
+ClassReader --> ClassNode --> ClassWriter
+```
+
+其中，
+
+- `ClassReader`类负责“读”Class。
+- `ClassWriter`类负责“写”Class。
+- `ClassNode`类负责进行“转换”（Transformation）。
+
+### 3.2.2 示例一：删除字段
+
+#### 预期目标
+
+预期目标：删除掉`HelloWorld`类里的`String strValue`字段。
+
+```java
+public class HelloWorld {
+  public int intValue;
+  public String strValue; // 删除这个字段
+}
+```
+
+#### 编码实现
+
+```java
+import lsieun.asm.tree.transformer.ClassTransformer;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.tree.ClassNode;
+
+public class ClassRemoveFieldNode extends ClassNode {
+  private final String fieldName;
+  private final String fieldDesc;
+
+  public ClassRemoveFieldNode(int api, ClassVisitor cv, String fieldName, String fieldDesc) {
+    super(api);
+    this.cv = cv;
+    this.fieldName = fieldName;
+    this.fieldDesc = fieldDesc;
+  }
+
+  @Override
+  public void visitEnd() {
+    // 首先，处理自己的代码逻辑
+    ClassTransformer ct = new ClassRemoveFieldTransformer(null, fieldName, fieldDesc);
+    ct.transform(this);
+
+    // 其次，调用父类的方法实现（根据实际情况，选择保留，或删除）
+    super.visitEnd();
+
+    // 最后，向后续ClassVisitor传递
+    if (cv != null) {
+      accept(cv);
+    }
+  }
+
+  private static class ClassRemoveFieldTransformer extends ClassTransformer {
+    private final String fieldName;
+    private final String fieldDesc;
+
+    public ClassRemoveFieldTransformer(ClassTransformer ct, String fieldName, String fieldDesc) {
+      super(ct);
+      this.fieldName = fieldName;
+      this.fieldDesc = fieldDesc;
+    }
+
+    @Override
+    public void transform(ClassNode cn) {
+      // 首先，处理自己的代码逻辑
+      cn.fields.removeIf(fn -> fieldName.equals(fn.name) && fieldDesc.equals(fn.desc));
+
+      // 其次，调用父类的方法实现
+      super.transform(cn);
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
+
+public class HelloWorldTransformTree {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    // (1)构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2)构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3)串连ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassRemoveFieldNode(api, cw, "strValue", "Ljava/lang/String;");
+
+    //（4）结合ClassReader和ClassNode
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+```java
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    System.out.println(clazz);
+
+    Field[] declaredFields = clazz.getDeclaredFields();
+    if (declaredFields.length > 0) {
+      System.out.println("fields:");
+      for (Field f : declaredFields) {
+        System.out.println("    " + f.getName());
+      }
+    }
+
+    Method[] declaredMethods = clazz.getDeclaredMethods();
+    if (declaredMethods.length > 0) {
+      System.out.println("methods:");
+      for (Method m : declaredMethods) {
+        System.out.println("    " + m.getName());
+      }
+    }
+  }
+}
+```
+
+### 3.2.3 示例二：添加字段
+
+#### 预期目标
+
+预期目标：为了`HelloWorld`类添加一个`Object objValue`字段。
+
+```java
+public class HelloWorld {
+  public int intValue;
+  public String strValue;
+  // 添加一个Object objValue字段
+}
+```
+
+#### 编码实现
+
+```java
+import lsieun.asm.tree.transformer.ClassTransformer;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldNode;
+
+public class ClassAddFieldNode extends ClassNode {
+  private final int fieldAccess;
+  private final String fieldName;
+  private final String fieldDesc;
+
+  public ClassAddFieldNode(int api, ClassVisitor cv,
+                           int fieldAccess, String fieldName, String fieldDesc) {
+    super(api);
+    this.cv = cv;
+    this.fieldAccess = fieldAccess;
+    this.fieldName = fieldName;
+    this.fieldDesc = fieldDesc;
+  }
+
+  @Override
+  public void visitEnd() {
+    // 首先，处理自己的代码逻辑
+    ClassTransformer ct = new ClassAddFieldTransformer(null, fieldAccess, fieldName, fieldDesc);
+    ct.transform(this);
+
+    // 其次，调用父类的方法实现（根据实际情况，选择保留，或删除）
+    super.visitEnd();
+
+    // 最后，向后续ClassVisitor传递
+    if (cv != null) {
+      accept(cv);
+    }
+  }
+
+  private static class ClassAddFieldTransformer extends ClassTransformer {
+    private final int fieldAccess;
+    private final String fieldName;
+    private final String fieldDesc;
+
+    public ClassAddFieldTransformer(ClassTransformer ct, int fieldAccess, String fieldName, String fieldDesc) {
+      super(ct);
+      this.fieldAccess = fieldAccess;
+      this.fieldName = fieldName;
+      this.fieldDesc = fieldDesc;
+    }
+
+    @Override
+    public void transform(ClassNode cn) {
+      // 首先，处理自己的代码逻辑
+      boolean isPresent = false;
+      for (FieldNode fn : cn.fields) {
+        if (fieldName.equals(fn.name)) {
+          isPresent = true;
+          break;
+        }
+      }
+      if (!isPresent) {
+        cn.fields.add(new FieldNode(fieldAccess, fieldName, fieldDesc, null, null));
+      }
+
+      // 其次，调用父类的方法实现
+      super.transform(cn);
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
+
+public class HelloWorldTransformTree {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    // (1)构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2)构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3)串连ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassAddFieldNode(api, cw, Opcodes.ACC_PUBLIC, "objValue", "Ljava/lang/Object;");
+
+    //（4）结合ClassReader和ClassNode
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+### 3.2.4 示例三：删除方法
+
+#### 预期目标
+
+预期目标：删除掉`HelloWorld`类里的`add()`方法。
+
+```java
+public class HelloWorld {
+  public int add(int a, int b) { // 删除add方法
+    return a + b;
+  }
+
+  public int sub(int a, int b) {
+    return a - b;
+  }
+}
+```
+
+#### 编码实现
+
+```java
+import lsieun.asm.tree.transformer.ClassTransformer;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.tree.ClassNode;
+
+public class ClassRemoveMethodNode extends ClassNode {
+  private final String methodName;
+  private final String methodDesc;
+
+  public ClassRemoveMethodNode(int api, ClassVisitor cv, String methodName, String methodDesc) {
+    super(api);
+    this.cv = cv;
+    this.methodName = methodName;
+    this.methodDesc = methodDesc;
+  }
+
+  @Override
+  public void visitEnd() {
+    // 首先，处理自己的代码逻辑
+    ClassTransformer ct = new ClassRemoveMethodTransformer(null, methodName, methodDesc);
+    ct.transform(this);
+
+    // 其次，调用父类的方法实现（根据实际情况，选择保留，或删除）
+    super.visitEnd();
+
+    // 最后，向后续ClassVisitor传递
+    if (cv != null) {
+      accept(cv);
+    }
+  }
+
+  private static class ClassRemoveMethodTransformer extends ClassTransformer {
+    private final String methodName;
+    private final String methodDesc;
+
+    public ClassRemoveMethodTransformer(ClassTransformer ct, String methodName, String methodDesc) {
+      super(ct);
+      this.methodName = methodName;
+      this.methodDesc = methodDesc;
+    }
+
+    @Override
+    public void transform(ClassNode cn) {
+      // 首先，处理自己的代码逻辑
+      cn.methods.removeIf(mn -> methodName.equals(mn.name) && methodDesc.equals(mn.desc));
+
+      // 其次，调用父类的方法实现
+      super.transform(cn);
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
+
+public class HelloWorldTransformTree {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    // (1)构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2)构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3)串连ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassRemoveMethodNode(api, cw, "add", "(II)I");
+
+    //（4）结合ClassReader和ClassNode
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+### 3.2.5 示例四：添加方法
+
+#### 预期目标
+
+预期目标：为`HelloWorld`类添加一个`mul()`方法。
+
+```java
+public class HelloWorld {
+  public int add(int a, int b) {
+    return a + b;
+  }
+
+  public int sub(int a, int b) {
+    return a - b;
+  }
+
+  // TODO: 添加一个乘法
+}
+```
+
+#### 编码实现
+
+```java
+import lsieun.asm.tree.transformer.ClassTransformer;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.MethodNode;
+
+import java.util.function.Consumer;
+
+public class ClassAddMethodNode extends ClassNode {
+  private final int methodAccess;
+  private final String methodName;
+  private final String methodDesc;
+  private final Consumer<MethodNode> methodBody;
+
+  public ClassAddMethodNode(int api, ClassVisitor cv,
+                            int methodAccess, String methodName, String methodDesc,
+                            Consumer<MethodNode> methodBody) {
+    super(api);
+    this.cv = cv;
+    this.methodAccess = methodAccess;
+    this.methodName = methodName;
+    this.methodDesc = methodDesc;
+    this.methodBody = methodBody;
+  }
+
+  @Override
+  public void visitEnd() {
+    // 首先，处理自己的代码逻辑
+    ClassTransformer ct = new ClassAddMethodTransformer(null, methodAccess, methodName, methodDesc, methodBody);
+    ct.transform(this);
+
+    // 其次，调用父类的方法实现（根据实际情况，选择保留，或删除）
+    super.visitEnd();
+
+    // 最后，向后续ClassVisitor传递
+    if (cv != null) {
+      accept(cv);
+    }
+  }
+
+  private static class ClassAddMethodTransformer extends ClassTransformer {
+    private final int methodAccess;
+    private final String methodName;
+    private final String methodDesc;
+    private final Consumer<MethodNode> methodBody;
+
+    public ClassAddMethodTransformer(ClassTransformer ct,
+                                     int methodAccess, String methodName, String methodDesc,
+                                     Consumer<MethodNode> methodBody) {
+      super(ct);
+      this.methodAccess = methodAccess;
+      this.methodName = methodName;
+      this.methodDesc = methodDesc;
+      this.methodBody = methodBody;
+    }
+
+    @Override
+    public void transform(ClassNode cn) {
+      // 首先，处理自己的代码逻辑
+      boolean isPresent = false;
+      for (MethodNode mn : cn.methods) {
+        if (methodName.equals(mn.name) && methodDesc.equals(mn.desc)) {
+          isPresent = true;
+          break;
+        }
+      }
+      if (!isPresent) {
+        MethodNode mn = new MethodNode(methodAccess, methodName, methodDesc, null, null);
+        cn.methods.add(mn);
+
+        if (methodBody != null) {
+          methodBody.accept(mn);
+        }
+      }
+
+      // 其次，调用父类的方法实现
+      super.transform(cn);
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.*;
+
+import java.util.function.Consumer;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class HelloWorldTransformTree {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    // (1)构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2)构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3)串连ClassNode
+    int api = Opcodes.ASM9;
+    Consumer<MethodNode> methodBody = (mn) -> {
+      InsnList il = mn.instructions;
+      il.add(new VarInsnNode(ILOAD, 1));
+      il.add(new VarInsnNode(ILOAD, 2));
+      il.add(new InsnNode(IMUL));
+      il.add(new InsnNode(IRETURN));
+
+      mn.maxStack = 2;
+      mn.maxLocals = 3;
+    };
+    ClassNode cn = new ClassAddMethodNode(api, cw, ACC_PUBLIC, "mul", "(II)I", methodBody);
+
+    //（4）结合ClassReader和ClassNode
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+### 3.2.6 总结
+
+本文内容总结如下：
+
+- 第一点，代码示例，如何删除和添加字段。
+- 第二点，代码示例，如何删除和添加方法。
+
+## 3.3 Tree Based Method Transformation
+
+在在ASM的官方文档（[asm4-guide.pdf](https://asm.ow2.io/asm4-guide.pdf)）中，对Tree-Based Transformation分成了两个不同的层次：
+
+- 类层面
+- 方法层面
+
+```
+                                                ┌─── ClassTransformer
+                             ┌─── ClassNode ────┤
+                             │                  └─── Two Common Patterns
+Tree-Based Transformation ───┤
+                             │                  ┌─── MethodTransformer
+                             └─── MethodNode ───┤
+                                                └─── Two Common Patterns
+```
+
+为什么没有“字段层面”呢？主要是因为字段的处理比较简单；而方法的处理则要复杂很多，方法有方法头（method header）和方法体（method body），方法体里有指令（`InsnList`）和异常处理的逻辑（`TryCatchBlockNode`），有足够的理由成为一个单独的讨论话题。
+
+值得一提的是，对于Tree-Based Transformation来说，类层面和方法层面，两者虽然在使用细节上有差异，但在“整体的处理思路”上有非常大的相似性。
+
+### 3.3.1 MethodTransformer
+
+```java
+import org.objectweb.asm.tree.MethodNode;
+
+public class MethodTransformer {
+  protected MethodTransformer mt;
+
+  public MethodTransformer(MethodTransformer mt) {
+    this.mt = mt;
+  }
+
+  public void transform(MethodNode mn) {
+    if (mt != null) {
+      mt.transform(mn);
+    }
+  }
+}
+```
+
+### 3.3.2 Two Common Patterns
+
+#### First Pattern
+
+```java
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.tree.MethodNode;
+
+public class MyMethodNode extends MethodNode {
+  public MyMethodNode(int access, String name, String descriptor,
+                      String signature, String[] exceptions,
+                      MethodVisitor mv) {
+    super(access, name, descriptor, signature, exceptions);
+    this.mv = mv;
+  }
+
+  @Override
+  public void visitEnd() {
+    // 首先，处理自己的代码逻辑
+    // put your transformation code here
+
+    // 其次，调用父类的方法实现（根据实际情况，选择保留，或删除）
+    super.visitEnd();
+
+    // 最后，向后续MethodVisitor传递
+    if (mv != null) {
+      accept(mv);
+    }
+  }
+}
+```
+
+#### Second Pattern
+
+```java
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.tree.MethodNode;
+
+public class MyMethodAdapter extends MethodVisitor {
+  private final MethodVisitor next;
+
+  public MyMethodAdapter(int api, int access, String name, String desc,
+                         String signature, String[] exceptions, MethodVisitor mv) {
+    super(api, new MethodNode(access, name, desc, signature, exceptions));
+    this.next = mv;
+  }
+
+  @Override
+  public void visitEnd() {
+    // 首先，处理自己的代码逻辑
+    MethodNode mn = (MethodNode) mv;
+    // put your transformation code here
+
+    // 其次，调用父类的方法实现（根据实际情况，选择保留，或删除）
+    super.visitEnd();
+
+    // 最后，向后续ClassVisitor传递
+    if (next != null) {
+      mn.accept(next);
+    }
+  }
+}
+```
+
+### 3.3.3 编写代码的习惯
+
+在这里，主要是讲使用`MethodNode`进行Tree-Based Transformation过程中经常使用的编码习惯：
+
+- 在遍历`InsnList`的过程当中，对instruction进行修改。
+- 当需要添加多个instruction时，可以创建一个临时的`InsnList`，作为一个整体加入到方法当中。
+
+Transforming a method with the tree API simply consists in modifying the fields of a `MethodNode` object, and in particular the `instructions` list.
+
+#### modify it while iterating
+
+Although this list can be modified in arbitrary ways, **a common pattern is to modify it while iterating over it.**
+
+<u>Indeed, unlike with the general `ListIterator` contract, the `ListIterator` returned by an `InsnList` supports many concurrent list modifications.</u>
+
+> `InsnList`支持并发修改，即遍历时也支持添加、删除操作，和普通的List不同
+
+In fact, you can use the `InsnList` methods to **remove** one or more elements before and including the current one, to **remove** one or more elements after the next element(i.e. not just after the current element, but after its successor), or to **insert** one or more elements before the current one or after its successor. These changes will be reflected in the iterator, i.e. the elements inserted (resp. removed) after the next element will be seen (resp. not seen) in the iterator.
+
+#### temporary instruction list
+
+Another common pattern to modify an instruction list, when you need to insert several instructions after an instruction `i` inside a list, is
+
+- to add these new instructions in a **temporary instruction list**,
+- and to insert **this temporary list** inside the main one in one step
+
+```java
+InsnList il = new InsnList();
+il.add(...);
+...
+il.add(...);
+mn.instructions.insert(i, il);
+```
+
+<u>Inserting the instructions one by one is also possible but more cumbersome(麻烦), because the insertion point must be updated after each insertion.</u>
+
+### 3.3.4 总结
+
+本文内容总结如下：
+
+- 第一点，对方法进行转换的时，经常使用的两种模式。
+- 第二点，引入`MethodTransformer`类，它帮助进行转换具体的方法。
+- 第三点，在处理`InsnList`时，经常遵循的编码习惯。
+
+## 3.4 Tree Based Method Transformation示例
+
+### 3.4.1 示例一：方法计时
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+import java.util.Random;
+
+public class HelloWorld {
+  public int add(int a, int b) throws InterruptedException {
+    int c = a + b;
+    Random rand = new Random(System.currentTimeMillis());
+    int num = rand.nextInt(300);
+    Thread.sleep(100 + num);
+    return c;
+  }
+
+  public int sub(int a, int b) throws InterruptedException {
+    int c = a - b;
+    Random rand = new Random(System.currentTimeMillis());
+    int num = rand.nextInt(400);
+    Thread.sleep(100 + num);
+    return c;
+  }
+}
+```
+
+我们想实现的预期目标：计算出方法的运行时间。
+
+经过转换之后的结果，主要体现在三方面：
+
+- 第一点，添加了一个`timer`字段，是`long`类型，访问标识为`public`和`static`。
+- 第二点，在方法进入之后，`timer`字段减去一个时间戳：`timer -= System.currentTimeMillis();`。
+- 第三点，在方法退出之前，`timer`字段加上一个时间戳：`timer += System.currentTimeMillis();`。
+
+```java
+import java.util.Random;
+
+public class HelloWorld {
+  public static long timer;
+
+  public int add(int a, int b) throws InterruptedException {
+    timer -= System.currentTimeMillis();
+    int c = a + b;
+    Random rand = new Random(System.currentTimeMillis());
+    int num = rand.nextInt(300);
+    Thread.sleep(100 + num);
+    timer += System.currentTimeMillis();
+    return c;
+  }
+
+  public int sub(int a, int b) throws InterruptedException {
+    timer -= System.currentTimeMillis();
+    int c = a - b;
+    Random rand = new Random(System.currentTimeMillis());
+    int num = rand.nextInt(400);
+    Thread.sleep(100 + num);
+    timer += System.currentTimeMillis();
+    return c;
+  }
+}
+```
+
+#### 编码实现
+
+```java
+import lsieun.asm.tree.transformer.ClassTransformer;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.tree.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class ClassAddTimerNode extends ClassNode {
+  public ClassAddTimerNode(int api, ClassVisitor cv) {
+    super(api);
+    this.cv = cv;
+  }
+
+  @Override
+  public void visitEnd() {
+    // 首先，处理自己的代码逻辑
+    ClassTransformer ct = new ClassAddTimerTransformer(null);
+    ct.transform(this);
+
+    // 其次，调用父类的方法实现（根据实际情况，选择保留，或删除）
+    super.visitEnd();
+
+    // 最后，向后续ClassVisitor传递
+    if (cv != null) {
+      accept(cv);
+    }
+  }
+
+  private static class ClassAddTimerTransformer extends ClassTransformer {
+    public ClassAddTimerTransformer(ClassTransformer ct) {
+      super(ct);
+    }
+
+    @Override
+    public void transform(ClassNode cn) {
+      for (MethodNode mn : cn.methods) {
+        if ("<init>".equals(mn.name) || "<clinit>".equals(mn.name)) {
+          continue;
+        }
+        InsnList instructions = mn.instructions;
+        // 跳过没方法体的方法（比如抽象方法）
+        if (instructions.size() == 0) {
+          continue;
+        }
+        for (AbstractInsnNode item : instructions) {
+          int opcode = item.getOpcode();
+          // 在方法退出之前，加上当前时间戳
+          if ((opcode >= IRETURN && opcode <= RETURN) || (opcode == ATHROW)) {
+            InsnList il = new InsnList();
+            il.add(new FieldInsnNode(GETSTATIC, cn.name, "timer", "J"));
+            il.add(new MethodInsnNode(INVOKESTATIC, "java/lang/System", "currentTimeMillis", "()J"));
+            il.add(new InsnNode(LADD));
+            il.add(new FieldInsnNode(PUTSTATIC, cn.name, "timer", "J"));
+            instructions.insertBefore(item, il);
+          }
+        }
+
+        // 在方法刚进入之后，减去当前时间戳
+        InsnList il = new InsnList();
+        il.add(new FieldInsnNode(GETSTATIC, cn.name, "timer", "J"));
+        il.add(new MethodInsnNode(INVOKESTATIC, "java/lang/System", "currentTimeMillis", "()J"));
+        il.add(new InsnNode(LSUB));
+        il.add(new FieldInsnNode(PUTSTATIC, cn.name, "timer", "J"));
+        instructions.insert(il);
+
+        // local variables的大小，保持不变
+        // mn.maxLocals = mn.maxLocals;
+        // operand stack的大小，增加4个位置
+        mn.maxStack += 4;
+      }
+
+      int acc = ACC_PUBLIC | ACC_STATIC;
+      cn.fields.add(new FieldNode(acc, "timer", "J", null, null));
+      super.transform(cn);
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
+
+public class HelloWorldTransformTree {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    // (1)构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2)构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3)串连ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassAddTimerNode(api, cw);
+
+    //（4）结合ClassReader和ClassNode
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+```java
+import sample.HelloWorld;
+
+import java.lang.reflect.Field;
+import java.util.Random;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    // 第一部分，先让“子弹飞一会儿”，让程序运行一段时间
+    HelloWorld instance = new HelloWorld();
+    Random rand = new Random(System.currentTimeMillis());
+    for (int i = 0; i < 10; i++) {
+      boolean flag = rand.nextBoolean();
+      int a = rand.nextInt(50);
+      int b = rand.nextInt(50);
+      if (flag) {
+        int c = instance.add(a, b);
+        String line = String.format("%d + %d = %d", a, b, c);
+        System.out.println(line);
+      }
+      else {
+        int c = instance.sub(a, b);
+        String line = String.format("%d - %d = %d", a, b, c);
+        System.out.println(line);
+      }
+    }
+
+    // 第二部分，来查看方法运行的时间
+    Class<?> clazz = HelloWorld.class;
+    Field[] declaredFields = clazz.getDeclaredFields();
+    for (Field f : declaredFields) {
+      String fieldName = f.getName();
+      f.setAccessible(true);
+      if (fieldName.startsWith("timer")) {
+        Object FieldValue = f.get(null);
+        System.out.println(fieldName + " = " + FieldValue);
+      }
+    }
+  }
+}
+```
+
+### 3.4.2 示例二：移除字段赋值
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public int val;
+
+  public void test(int a, int b) {
+    int c = a + b;
+    this.val = this.val;
+    System.out.println(c);
+  }
+}
+```
+
+我们想要实现的预期目标：删除掉`this.val = this.val;`语句。
+
+通过`javap`命令，可以查看`HelloWorld`类的instructions，该语句对应的指令组合是`aload_0 aload0 getfield putfield`：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+  public int val;
+  ...
+
+  public void test(int, int);
+    Code:
+       0: iload_1
+       1: iload_2
+       2: iadd
+       3: istore_3
+       4: aload_0
+       5: aload_0
+       6: getfield      #2                  // Field val:I
+       9: putfield      #2                  // Field val:I
+      12: getstatic     #3                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      15: iload_3
+      16: invokevirtual #4                  // Method java/io/PrintStream.println:(I)V
+      19: return
+}
+```
+
+#### 编码实现
+
+```java
+import lsieun.asm.tree.transformer.MethodTransformer;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.tree.*;
+
+import java.util.ListIterator;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class RemoveGetFieldPutFieldNode extends ClassNode {
+  public RemoveGetFieldPutFieldNode(int api, ClassVisitor cv) {
+    super(api);
+    this.cv = cv;
+  }
+
+  @Override
+  public void visitEnd() {
+    // 首先，处理自己的代码逻辑
+    MethodTransformer mt = new MethodRemoveGetFieldPutFieldTransformer(null);
+    for (MethodNode mn : methods) {
+      if ("<init>".equals(mn.name) || "<clinit>".equals(mn.name)) {
+        continue;
+      }
+      InsnList instructions = mn.instructions;
+      if (instructions.size() == 0) {
+        continue;
+      }
+      mt.transform(mn);
+    }
+
+    // 其次，调用父类的方法实现（根据实际情况，选择保留，或删除）
+    super.visitEnd();
+
+    // 最后，向后续ClassVisitor传递
+    if (cv != null) {
+      accept(cv);
+    }
+  }
+
+  private static class MethodRemoveGetFieldPutFieldTransformer extends MethodTransformer {
+    public MethodRemoveGetFieldPutFieldTransformer(MethodTransformer mt) {
+      super(mt);
+    }
+
+    @Override
+    public void transform(MethodNode mn) {
+      // 首先，处理自己的代码逻辑
+      InsnList instructions = mn.instructions;
+      ListIterator<AbstractInsnNode> it = instructions.iterator();
+      while (it.hasNext()) {
+        AbstractInsnNode node1 = it.next();
+        if (isALOAD0(node1)) {
+          AbstractInsnNode node2 = getNext(node1);
+          if (node2 != null && isALOAD0(node2)) {
+            AbstractInsnNode node3 = getNext(node2);
+            if (node3 != null && node3.getOpcode() == GETFIELD) {
+              AbstractInsnNode node4 = getNext(node3);
+              if (node4 != null && node4.getOpcode() == PUTFIELD) {
+                // 只有 instance.x = instance.x 这种无意义的情况需要删除
+                if (sameField(node3, node4)) {
+                  while (it.next() != node4) {
+                  }
+                  instructions.remove(node1);
+                  instructions.remove(node2);
+                  instructions.remove(node3);
+                  instructions.remove(node4);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // 其次，调用父类的方法实现
+      super.transform(mn);
+    }
+
+    private static AbstractInsnNode getNext(AbstractInsnNode insn) {
+      do {
+        insn = insn.getNext();
+        if (insn != null && !(insn instanceof LineNumberNode)) {
+          break;
+        }
+      } while (insn != null);
+      return insn;
+    }
+
+    private static boolean isALOAD0(AbstractInsnNode insnNode) {
+      return insnNode.getOpcode() == ALOAD && ((VarInsnNode) insnNode).var == 0;
+    }
+
+    private static boolean sameField(AbstractInsnNode oneInsnNode, AbstractInsnNode anotherInsnNode) {
+      if (!(oneInsnNode instanceof FieldInsnNode)) return false;
+      if (!(anotherInsnNode instanceof FieldInsnNode)) return false;
+      FieldInsnNode fieldInsnNode1 = (FieldInsnNode) oneInsnNode;
+      FieldInsnNode fieldInsnNode2 = (FieldInsnNode) anotherInsnNode;
+      String name1 = fieldInsnNode1.name;
+      String name2 = fieldInsnNode2.name;
+      return name1.equals(name2);
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
+
+public class HelloWorldTransformTree {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    // (1)构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2)构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3)串连ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new RemoveGetFieldPutFieldNode(api, cw);
+
+    //（4）结合ClassReader和ClassNode
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+```shell
+$ javap -c sample.HelloWorld
+public class sample.HelloWorld {
+  public int val;
+...
+  public void test(int, int);
+    Code:
+       0: iload_1
+       1: iload_2
+       2: iadd
+       3: istore_3
+       4: getstatic     #18                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       7: iload_3
+       8: invokevirtual #24                 // Method java/io/PrintStream.println:(I)V
+      11: return
+}
+```
+
+### 3.4.3 示例三：优化跳转
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test(int val) {
+    System.out.println(val == 0 ? "val is 0" : "val is not 0");
+  }
+}
+```
+
+接着，我们查看`test`方法所包含的instructions内容：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test(int);
+    Code:
+       0: getstatic     #2                  // Field java/lang/System.out:Ljava/io/PrintStream;
+       3: iload_1
+       4: ifne          12
+       7: ldc           #3                  // String val is 0
+       9: goto          14
+      12: ldc           #4                  // String val is not 0
+      14: invokevirtual #5                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      17: return
+}
+```
+
+转换成流程图：
+
+```pseudocode
+┌───────────────────────────────────┐
+│ getstatic System.out              │
+│ iload_1                           │
+│ ifne L0                           ├───┐
+└────────────────┬──────────────────┘   │
+                 │                      │
+┌────────────────┴──────────────────┐   │
+│ ldc "val is 0"                    │   │
+│ goto L1                           ├───┼──┐
+└───────────────────────────────────┘   │  │
+                                        │  │
+┌───────────────────────────────────┐   │  │
+│ L0                                ├───┘  │
+│ ldc "val is not 0"                │      │
+└────────────────┬──────────────────┘      │
+                 │                         │
+┌────────────────┴──────────────────┐      │
+│ L1                                ├──────┘
+│ invokevirtual PrintStream.println │
+│ return                            │
+└───────────────────────────────────┘
+```
+
+在保证`test`方法正常运行的前提下，打乱内部instructions之间的顺序：
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class HelloWorldGenerateCore {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+
+    // (1) 生成byte[]内容
+    byte[] bytes = dump();
+
+    // (2) 保存byte[]到文件
+    FileUtils.writeBytes(filepath, bytes);
+  }
+
+  public static byte[] dump() throws Exception {
+    // (1) 创建ClassWriter对象
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (2) 调用visitXxx()方法
+    cw.visit(V1_8, ACC_PUBLIC + ACC_SUPER, "sample/HelloWorld",
+             null, "java/lang/Object", null);
+
+    {
+      MethodVisitor mv1 = cw.visitMethod(ACC_PUBLIC, "<init>", "()V", null, null);
+      mv1.visitCode();
+      mv1.visitVarInsn(ALOAD, 0);
+      mv1.visitMethodInsn(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+      mv1.visitInsn(RETURN);
+      mv1.visitMaxs(1, 1);
+      mv1.visitEnd();
+    }
+
+    {
+      MethodVisitor mv2 = cw.visitMethod(ACC_PUBLIC, "test", "(I)V", null, null);
+
+      Label startLabel = new Label();
+      Label middleLabel = new Label();
+      Label endLabel = new Label();
+      Label ifLabel = new Label();
+      Label elseLabel = new Label();
+      Label printLabel = new Label();
+      Label returnLabel = new Label();
+
+      mv2.visitCode();
+      mv2.visitJumpInsn(GOTO, middleLabel);
+      mv2.visitLabel(returnLabel);
+      mv2.visitInsn(RETURN);
+
+      mv2.visitLabel(startLabel);
+      mv2.visitFieldInsn(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      mv2.visitVarInsn(ILOAD, 1);
+      mv2.visitJumpInsn(GOTO, ifLabel);
+
+      mv2.visitLabel(middleLabel);
+      mv2.visitJumpInsn(GOTO, endLabel);
+
+      mv2.visitLabel(ifLabel);
+      mv2.visitJumpInsn(IFNE, elseLabel);
+      mv2.visitLdcInsn("val is 0");
+      mv2.visitJumpInsn(GOTO, printLabel);
+
+      mv2.visitLabel(elseLabel);
+      mv2.visitLdcInsn("val is not 0");
+
+      mv2.visitLabel(printLabel);
+      mv2.visitMethodInsn(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+      mv2.visitJumpInsn(GOTO, returnLabel);
+
+      mv2.visitLabel(endLabel);
+      mv2.visitJumpInsn(GOTO, startLabel);
+
+      mv2.visitMaxs(2, 2);
+      mv2.visitEnd();
+    }
+    cw.visitEnd();
+
+    // (3) 调用toByteArray()方法
+    return cw.toByteArray();
+  }
+}
+```
+
+接着，我们查看`test`方法包含的instructions内容：
+
+```shell
+$ javap -c sample.HelloWorld
+public class sample.HelloWorld {
+...
+  public void test(int);
+    Code:
+       0: goto          11
+       3: return
+       4: getstatic     #16                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       7: iload_1
+       8: goto          14
+      11: goto          30
+      14: ifne          22
+      17: ldc           #18                 // String val is 0
+      19: goto          24
+      22: ldc           #20                 // String val is not 0
+      24: invokevirtual #26                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      27: goto          3
+      30: goto          4
+}
+```
+
+转换成流程图：
+
+```pseudocode
+┌───────────────────────────────────┐
+│ goto L0                           ├───┐
+└───────────────────────────────────┘   │
+                                        │
+┌───────────────────────────────────┐   │
+│ L1                                ├───┼────────────────────┐
+│ return                            │   │                    │
+└───────────────────────────────────┘   │                    │
+                                        │                    │
+┌───────────────────────────────────┐   │                    │
+│ L2                                ├───┼────────────────────┼──┐
+│ getstatic System.out              │   │                    │  │
+│ iload_1                           │   │                    │  │
+│ goto L3                           ├───┼─────┐              │  │
+└───────────────────────────────────┘   │     │              │  │
+                                        │     │              │  │
+┌───────────────────────────────────┐   │     │              │  │
+│ L0                                ├───┘     │              │  │
+│ goto L4                           ├─────────┼──┐           │  │
+└───────────────────────────────────┘         │  │           │  │
+                                              │  │           │  │
+┌───────────────────────────────────┐         │  │           │  │
+│ L3                                ├─────────┘  │           │  │
+│ ifne L5                           ├────────────┼──┐        │  │
+└────────────────┬──────────────────┘            │  │        │  │
+                 │                               │  │        │  │
+┌────────────────┴──────────────────┐            │  │        │  │
+│ ldc "val is 0"                    │            │  │        │  │
+│ goto L6                           ├────────────┼──┼──┐     │  │
+└───────────────────────────────────┘            │  │  │     │  │
+                                                 │  │  │     │  │
+┌───────────────────────────────────┐            │  │  │     │  │
+│ L5                                ├────────────┼──┘  │     │  │
+│ ldc "val is not 0"                │            │     │     │  │
+└────────────────┬──────────────────┘            │     │     │  │
+                 │                               │     │     │  │
+┌────────────────┴──────────────────┐            │     │     │  │
+│ L6                                ├────────────┼─────┘     │  │
+│ invokevirtual PrintStream.println │            │           │  │
+│ goto L1                           ├────────────┼───────────┘  │
+└───────────────────────────────────┘            │              │
+                                                 │              │
+┌───────────────────────────────────┐            │              │
+│ L4                                ├────────────┘              │
+│ goto L2                           ├───────────────────────────┘
+└───────────────────────────────────┘
+```
+
+我们想要实现的预期目标：优化instruction的跳转。
+
+#### 编码实现
+
+> 这里实现优化逻辑不是关键，主要是了解整体编写思路
+
+```java
+import lsieun.asm.tree.transformer.MethodTransformer;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.tree.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class OptimizeJumpNode extends ClassNode {
+  public OptimizeJumpNode(int api, ClassVisitor cv) {
+    super(api);
+    this.cv = cv;
+  }
+
+  @Override
+  public void visitEnd() {
+    // 首先，处理自己的代码逻辑
+    MethodTransformer mt = new MethodOptimizeJumpTransformer(null);
+    for (MethodNode mn : methods) {
+      if ("<init>".equals(mn.name) || "<clinit>".equals(mn.name)) {
+        continue;
+      }
+      InsnList instructions = mn.instructions;
+      if (instructions.size() == 0) {
+        continue;
+      }
+      mt.transform(mn);
+    }
+
+    // 其次，调用父类的方法实现（根据实际情况，选择保留，或删除）
+    super.visitEnd();
+
+    // 最后，向后续ClassVisitor传递
+    if (cv != null) {
+      accept(cv);
+    }
+  }
+
+  private static class MethodOptimizeJumpTransformer extends MethodTransformer {
+    public MethodOptimizeJumpTransformer(MethodTransformer mt) {
+      super(mt);
+    }
+
+    @Override
+    public void transform(MethodNode mn) {
+      // 首先，处理自己的代码逻辑
+      InsnList instructions = mn.instructions;
+      for (AbstractInsnNode insnNode : instructions) {
+        if (insnNode instanceof JumpInsnNode) {
+          JumpInsnNode jumpInsnNode = (JumpInsnNode) insnNode;
+          LabelNode label = jumpInsnNode.label;
+          AbstractInsnNode target;
+          while (true) {
+            target = label;
+            while (target != null && target.getOpcode() < 0) {
+              target = target.getNext();
+            }
+
+            if (target != null && target.getOpcode() == GOTO) {
+              label = ((JumpInsnNode) target).label;
+            }
+            else {
+              break;
+            }
+          }
+
+          // update target
+          jumpInsnNode.label = label;
+          // if possible, replace jump with target instruction
+          if (insnNode.getOpcode() == GOTO && target != null) {
+            int opcode = target.getOpcode();
+            if ((opcode >= IRETURN && opcode <= RETURN) || opcode == ATHROW) {
+              instructions.set(insnNode, target.clone(null));
+            }
+          }
+        }
+      }
+
+      // 其次，调用父类的方法实现
+      super.transform(mn);
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
+
+public class HelloWorldTransformTree {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    // (1)构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2)构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3)串连ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new OptimizeJumpNode(api, cw);
+
+    //（4）结合ClassReader和ClassNode
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+验证结果，一方面要保证程序仍然能够正常运行：
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    Object instance = clazz.newInstance();
+    Method m = clazz.getDeclaredMethod("test", int.class);
+    m.invoke(instance, 0);
+    m.invoke(instance, 1);
+  }
+}
+```
+
+另一方面，要验证“是否对跳转进行了优化”。那么，我们通过`javap`命令来验证：
+
+```shell
+$ javap -c sample.HelloWorld
+public class sample.HelloWorld {
+...
+  public void test(int);
+    Code:
+       0: goto          4
+       3: athrow
+       4: getstatic     #16                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       7: iload_1
+       8: goto          14
+      11: nop
+      12: nop
+      13: athrow
+      14: ifne          22
+      17: ldc           #18                 // String val is 0
+      19: goto          24
+      22: ldc           #20                 // String val is not 0
+      24: invokevirtual #26                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      27: return
+      28: nop
+      29: nop
+      30: athrow
+}
+```
+
+转换成流程图：
+
+```pseudocode
+┌───────────────────────────────────┐
+│ goto L0                           ├───┐
+└───────────────────────────────────┘   │
+                                        │
+┌───────────────────────────────────┐   │
+│ return                            │   │
+└───────────────────────────────────┘   │
+                                        │
+┌───────────────────────────────────┐   │
+│ L0                                ├───┘
+│ getstatic System.out              │
+│ iload_1                           │
+│ goto L1                           ├─────────┐
+└───────────────────────────────────┘         │
+                                              │
+┌───────────────────────────────────┐         │
+│ goto L0                           │         │
+└───────────────────────────────────┘         │
+                                              │
+┌───────────────────────────────────┐         │
+│ L1                                ├─────────┘
+│ ifne L2                           ├───────────────┐
+└────────────────┬──────────────────┘               │
+                 │                                  │
+┌────────────────┴──────────────────┐               │
+│ ldc "val is 0"                    │               │
+│ goto L3                           ├───────────────┼──┐
+└───────────────────────────────────┘               │  │
+                                                    │  │
+┌───────────────────────────────────┐               │  │
+│ L2                                ├───────────────┘  │
+│ ldc "val is not 0"                │                  │
+└────────────────┬──────────────────┘                  │
+                 │                                     │
+┌────────────────┴──────────────────┐                  │
+│ L3                                ├──────────────────┘
+│ invokevirtual PrintStream.println │
+│ return                            │
+└───────────────────────────────────┘
+ 
+┌───────────────────────────────────┐
+│ goto L0                           │
+└───────────────────────────────────┘
+```
+
+### 3.4.4 总结
+
+本文内容总结如下：
+
+- 第一点，代码示例一（方法计时），使用了`ClassTransformer`的子类，因为既要增加字段，又要对方法进行修改。
+- 第二点，代码示例二（移除字段给自身赋值），使用了`MethodTransformer`的子类，需要删除方法内的`aload_0 aload0 getfield putfield`指令组合。
+- 第三点，代码示例三（优化跳转），使用了`MethodTransformer`的子类，需要对方法内的instruction替换跳转目标。
+
+## 3.5 混合使用Core API和Tree API进行类转换
+
+混合使用Core API和Tree API进行类转换，要分成两种情况：
+
+- 第一种情况，先是Core API处理，然后使用Tree API处理。
+- 第二种情况，先是Tree API处理，然后使用Core API处理。
+
+先来说第一种情况，先前是Core API，接着用Tree API进行处理，对“类”和“方法”进行转换：
+
+- ClassVisitor –> ClassNode –> ClassTransformer/MethodTransformer –> 回归Core API
+- MethodVisitor –> MethodNode –> MethodTransformer –> 回归Core API
+
+再来说第二种情况，先前是Tree API，接着用Core API进行处理，对“类”和“方法”进行转换：
+
+- ClassNode –> ClassVisitor –> 回归Tree API
+- MethodNode –> MethodVisitor –> 回归Tree API
+
+### 3.5.1 类层面：ClassVisitor和ClassNode
+
+假如有`HelloWorld`类，内容如下：
+
+```java
+public class HelloWorld {
+  public int intValue;
+}
+```
+
+我们的预期目标：使用Core API添加一个`String strValue`字段，使用Tree API添加一个`Object objValue`字段。
+
+#### 先Core API后Tree API
+
+思路：
+
+```pseudocode
+ClassReader --> ClassVisitor（Core API，添加strValue字段） --> ClassNode（Tree API，添加objValue字段） --> ClassWriter
+```
+
+代码片段：
+
+```java
+int api = Opcodes.ASM9;
+ClassNode cn = new ClassAddFieldNode(api, cw, Opcodes.ACC_PUBLIC, "objValue", "Ljava/lang/Object;");
+ClassVisitor cv = new ClassAddFieldVisitor(api, cn, Opcodes.ACC_PUBLIC, "strValue", "Ljava/lang/String;");
+
+int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+cr.accept(cv, parsingOptions);
+```
+
+#### 先Tree API后Core API
+
+思路：
+
+```pseudocode
+ClassReader --> ClassNode（Tree API，添加objValue字段） --> ClassVisitor（Core API，添加strValue字段） --> ClassWriter
+```
+
+代码片段：
+
+```java
+int api = Opcodes.ASM9;
+ClassVisitor cv = new ClassAddFieldVisitor(api, cw, Opcodes.ACC_PUBLIC, "strValue", "Ljava/lang/String;");
+ClassNode cn = new ClassAddFieldNode(api, cv, Opcodes.ACC_PUBLIC, "objValue", "Ljava/lang/Object;");
+
+int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+cr.accept(cn, parsingOptions);
+```
+
+### 3.5.2 方法层面：MethodVisitor和MethodNode
+
+#### 先Core API后Tree API
+
+思路：
+
+```pseudocode
+MethodVisitor(Core API) --> MethodNode(Tree API) --> MethodVisitor(Core API)
+```
+
+编码实现：
+
+```java
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.tree.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class MixCore2TreeVisitor extends ClassVisitor {
+  public MixCore2TreeVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null && !"<init>".equals(name) && !"<clinit>".equals(name)) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodEnterNode(api, access, name, descriptor, signature, exceptions, mv);
+      }
+    }
+    return mv;
+  }
+
+  private static class MethodEnterNode extends MethodNode {
+    public MethodEnterNode(int api, int access, String name, String descriptor,
+                           String signature, String[] exceptions,
+                           MethodVisitor mv) {
+      super(api, access, name, descriptor, signature, exceptions);
+      this.mv = mv;
+    }
+
+    @Override
+    public void visitEnd() {
+      // 首先，处理自己的代码逻辑
+      InsnList il = new InsnList();
+      il.add(new FieldInsnNode(GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;"));
+      il.add(new LdcInsnNode("Method Enter"));
+      il.add(new MethodInsnNode(INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false));
+      instructions.insert(il);
+
+      // 其次，调用父类的方法实现（根据实际情况，选择保留，或删除）
+      super.visitEnd();
+
+      // 最后，向后续MethodVisitor传递
+      if (mv != null) {
+        accept(mv);
+      }
+    }
+  }
+}
+```
+
+进行转换：
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+public class HelloWorldTransformCore {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new MixCore2TreeVisitor(api, cw);
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 先Tree API后Core API
+
+思路：
+
+```pseudocode
+MethodNode(Tree API) --> MethodVisitor(Core API) --> MethodNode(Tree API)
+```
+
+编码实现：
+
+```java
+import lsieun.asm.template.MethodEnteringAdapter;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.InsnList;
+import org.objectweb.asm.tree.MethodNode;
+
+public class MixTree2CoreNode extends ClassNode {
+  public MixTree2CoreNode(int api, ClassVisitor cv) {
+    super(api);
+    this.cv = cv;
+  }
+
+  @Override
+  public void visitEnd() {
+    // 首先，处理自己的代码逻辑
+    int size = methods.size();
+    for (int i = 0; i < size; i++) {
+      MethodNode mn = methods.get(i);
+      if ("<init>".equals(mn.name) || "<clinit>".equals(mn.name)) {
+        continue;
+      }
+      InsnList instructions = mn.instructions;
+      if (instructions.size() == 0) {
+        continue;
+      }
+
+      int api = Opcodes.ASM9;
+      MethodNode newMethodNode = new MethodNode(api, mn.access, mn.name, mn.desc, mn.signature, mn.exceptions.toArray(new String[0]));
+      MethodVisitor mv = new MethodEnteringAdapter(api, newMethodNode, mn.access, mn.name, mn.desc);
+      mn.accept(mv);
+      methods.set(i, newMethodNode);
+    }
+
+    // 其次，调用父类的方法实现（根据实际情况，选择保留，或删除）
+    super.visitEnd();
+
+    // 最后，向后续ClassVisitor传递
+    if (cv != null) {
+      accept(cv);
+    }
+  }
+}
+```
+
+进行转换：
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.*;
+
+public class HelloWorldTransformTree {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    // (1)构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2)构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3)串连ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new MixTree2CoreNode(api, cw);
+
+    //（4）结合ClassReader和ClassNode
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+### 3.5.3 总结
+
+本文内容总结如下：
+
+- 第一点，混合使用Core API和Tree API，分成两种情况，一种是从Core API到Tree API，另一种是从Tree API到Core API。
+- 第二点，这种混合使用又常体现在两个层面：类层面和方法层面。
+
+其中，Core API和Tree API是从ASM的角度来进行区分，而类层面和方法层面是一个`ClassFile`的结构来划分。
+
+在混合使用Core API和Tree API的初期，可能会觉得无从下手，这个时候可以让思路慢下来：
+
+- 首先，思考一下当前是在什么位置。
+- 其次，思考一下将要去往什么位置。
+- 最后，逐步补充中间需要的步骤就可以了。
+
+# 4. Method Analysis
+
+## 4.1 Method Analysis
+
+### 4.1.1 Method Analysis
+
+#### 类的主要分析对象
+
+Java ASM是一个操作字节码（bytecode）的工具，而字节码（bytecode）的一种具体存在形式就是一个`.class`文件。现在，我们要进行分析，就可以称之为Class Analysis。
+
+![Java ASM系列：（083）Method Analysis_java-bytecode-asm](https://s2.51cto.com/images/20210618/1624005632705532.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+在类（Class）当中，主要由字段（Field）和方法（Method）组成。如果我们仔细思考一下，其实字段（Field）本身没有什么太多内容可以分析的，**主要的分析对象是方法（Method）**。因为在方法（Method）中，它包含了主要的代码处理逻辑。
+
+因此，我们可以粗略的认为Class Analysis和Method Analysis指代同一个事物，不做严格区分。
+
+#### 方法的主要分析对象
+
+**在方法分析（method analysis）中有三个主要的分析对象：Instruction、Frame和Control Flow Graph。**
+
+```java
+public class HelloWorld {
+  public void test(int val) {
+    if (val == 0) {
+      System.out.println("val is 0");
+    }
+    else {
+      System.out.println("val is unknown");
+    }
+  }
+}
+```
+
+![Java ASM系列：（083）Method Analysis_java-bytecode-asm_02](https://s2.51cto.com/images/20211104/1636009199533148.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+对于Frame的分析就是**data flow analysis**，对于control flow graph的分析就是**control flow analysis**。
+
+#### DFA和CFA的区别
+
+A **data flow analysis** consists in computing **the state of the execution frames** of a method, for each instruction of this method. This state can be represented in a more or less abstract way. For example reference values can be represented by a single value, by one value per class, by three possible values in the `{ null, not null, may be null }` set, etc.
+
+A **control flow analysis** consists in computing **the control flow graph** of a method, and in performing analysis on this graph. The control flow graph is a graph whose nodes are instructions, and whose oriented edges connect two instructions `i → j` if `j` can be executed just after `i`.
+
+那么，data flow analysis和control flow analysis的区别：
+
+- <u>data flow analysis注重于“细节”，它需要明确计算出每一个instruction在local variable和operand stack当中的值。</u>
+- <u>control flow analysis注重于“整体”，它不关注具体的值，而是关注于整体上指令之间前后连接或跳转的逻辑关系。</u>
+
+接下来，举一个比喻的例子来帮助理解。在《礼记·大学》里谈到几件事情：正心、修身、齐家、治国、平天下。这几件事情，很容易让人们感受到它们处在不同的层次上，但是本质上又是贯通的。那么，大家也将data flow analysis和control flow analysis可以理解为“同一件事物在不同层次上的表达”：两者都是在方法的instructions的基础上生成的，data flow analysis注重每一条instruction对应的Frame的状态，类似于“齐家”层次，而control flow analysis注意多个instructions之间的连接/跳转关系，类似于“治国”层次。
+
+#### 方法分析的分类
+
+对于方法的分析，分成两种类型：
+
+- **第一种，就是静态分析（static analysis），不需要运行程序，可以直接针对源码或字节码（bytecode）进行分析。**
+- **第二种，就是动态分析（dynamic analysis），需要运行程序，是在运行过程中获取数据来进行分析。**
+- **static analysis** is the analysis of computer software that is performed without actually executing programs.
+- **dynamic analysis** is the analysis of computer software that is performed by executing programs on a real or virtual processor.
+
+我们主要介绍data flow analysis和control flow analysis，但这两种analysis都是属于static analysis：
+
+- Method Analysis
+  - static analysis
+    - data flow analysis
+    - control flow analysis
+  - dynamic analysis
+
+另外，data flow analysis和control flow analysis有一些不适合的场景：
+
+- 不适用于反射（reflection），例如通过反射调用某一个具体的方法。
+- <u>不适用于动态绑定（dynamic binding），例如子类覆写了父类的方法，方法在执行的时候体现出子类的行为</u>。
+
+因为静态分析，是在程序进入JVM之前发生的；动态分析，是在程序进入JVM之后发生的。上面这两种情况都是在程序运行过程中，才是它们发挥作用的时候，使用静态分析的技术不容易解决这样的问题。当使用到某个语言特性的时候，可以看看它是什么时候发挥作用的。
+
+### 4.1.2 asm-analysis.jar
+
+The ASM API for code analysis is in the `org.objectweb.asm.tree.analysis` package. As the package name implies, it is based on the tree API.
+
+在上面介绍的data flow analysis和control flow analysis就是通过`asm-analysis.jar`当中定义的类来实现的。
+
+#### 涉及到哪些类
+
+在学习`asm-analysis.jar`时，我们的重点是理解`Analyzer`、`Frame`、`Interpreter`和`Value`这四个类之间的关系：
+
+- `Interpreter`类，依赖于`Value`类
+- `Frame`类，依赖于`Interpreter`和`Value`类
+- `Analyzer`类，依赖于`Frame`、`Interpreter`和`Value`类
+
+这四个类的依赖关系也可以表示成如下：
+
+- `Analyzer`
+  - `Frame`
+  - `Interpreter`
+    - `Value`
+
+除了这四个主要的类，还有一些类是`Interpreter`和`Value`的子类：
+
+```
+┌───┬───────────────────┬─────────────┐
+│ 0 │    Interpreter    │    Value    │
+├───┼───────────────────┼─────────────┤
+│ 1 │ BasicInterpreter  │ BasicValue  │
+├───┼───────────────────┼─────────────┤
+│ 2 │   BasicVerifier   │ BasicValue  │
+├───┼───────────────────┼─────────────┤
+│ 3 │  SimpleVerifier   │ BasicValue  │
+├───┼───────────────────┼─────────────┤
+│ 4 │ SourceInterpreter │ SourceValue │
+└───┴───────────────────┴─────────────┘
+```
+
+> 这里不介绍Subroutine，因为这个对应jsr指令，jdk7或更早版本在遇到try-catch-finally语句生成jsr指令。但是后续有更优的方案，jsr已经是弃用指令。
+
+#### 四个类如何协作
+
+在`asm-analysis.jar`当中，是如何实现data flow analysis和control flow analysis的呢？
+
+Two types of **data flow analysis** can be performed:
+
+- a **forward analysis** computes, for each instruction, the state of the execution frame after this instruction, from the state before its execution.
+- a **backward analysis** computes, for each instruction, the state of the execution frame before this instruction, from the state after its execution.
+
+In fact, the `org.objectweb.asm.tree.analysis` package provides a framework for doing **forward data flow analysis**.
+
+In order to be able to perform various data flow analysis, with more or less precise sets of values, the **data flow analysis algorithm** is split in two parts: **one is fixed and is provided by the framework**, **the other is variable and provided by users**. More precisely:
+
+- The overall data flow analysis algorithm, and the task of popping from the stack, and pushing back to the stack, the appropriate number of values, is implemented once and for all in the `Analyzer` and `Frame` classes.
+- The task of combining values and of computing unions of value sets is performed by user defined subclasses of the `Interpreter` and `Value` abstract classes. Several predefined subclasses are provided.
+
+`Analyzer`和`Frame`是属于“固定”的部分，而`Interpreter`和`Value`类是属于“变化”的部分。
+
+```pseudocode
+┌──────────┬─────────────┐
+│          │  Analyzer   │
+│  Fixed   ├─────────────┤
+│          │    Frame    │
+├──────────┼─────────────┤
+│          │ Interpreter │
+│ Variable ├─────────────┤
+│          │    Value    │
+└──────────┴─────────────┘
+```
+
+Although the primary goal of the framework is to perform **data flow analysis**, the `Analyzer` class can also construct the **control flow graph** of the analysed method. This can be done by overriding the `newControlFlowEdge` and `newControlFlowExceptionEdge` methods of this class, which by default do nothing. The result can be used for doing **control flow analysis**.
+
+```pseudocode
+            ┌─── data flow analysis
+            │
+Analyzer ───┤
+            │
+            └─── control flow analysis
+```
+
+#### 主要讲什么
+
+在本章当中，我们会围绕着`asm-analysis.jar`来展开，那么我们主要讲什么内容呢？主要讲以下两行代码：
+
+```java
+   ┌── Analyzer
+   │        ┌── Value                                   ┌── Interpreter
+   │        │                                           │
+Analyzer<BasicValue> analyzer = new Analyzer<>(new BasicInterpreter());
+Frame<BasicValue>[] frames = analyzer.analyze(owner, mn);
+   │        │
+   │        └── Value
+   └── Frame
+```
+
+不管我们讲多少的内容细节，它们的最终落角点仍然是这两行代码，它是贯穿这一章内容的核心点。我们的目的就是拿到这个`frames`值，然后用它进行分析。
+
+### 4.1.3 HelloWorldFrameTree类
+
+在[项目](https://gitee.com/lsieun/learn-java-asm)当中，有一个`HelloWorldFrameTree`类，它的作用就是打印出Instruction和Frame的信息。
+
+```java
+public class HelloWorldFrameTree {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes = FileUtils.readBytes(filepath);
+
+    // (1)构建ClassReader
+    ClassReader cr = new ClassReader(bytes);
+
+    // (2) 构建ClassNode
+    ClassNode cn = new ClassNode();
+    cr.accept(cn, ClassReader.SKIP_FRAMES | ClassReader.SKIP_DEBUG);
+
+    // (3) 查看方法Instruction和Frame
+    String owner = cn.name;
+    List<MethodNode> methods = cn.methods;
+    for (MethodNode mn : methods) {
+      print(owner, mn, 3);
+    }
+  }
+}
+```
+
+为了展示`HelloWorldFrameTree`类的功能，让我们准备一个`HelloWorld`类：
+
+```java
+public class HelloWorld {
+  public void test(boolean flag, int val) {
+    Object obj;
+    if (flag) {
+      obj = Integer.valueOf(val);
+    }
+    else {
+      obj = Long.valueOf(val);
+    }
+    System.out.println(obj);
+  }
+}
+```
+
+#### BasicInterpreter
+
+如果使用`BasicInterpreter`类，所有的引用类型（reference type）都使用`R`来表示：
+
+```shell
+test:(ZI)V
+000:    iload_1                                 {R, I, I, .} | {}
+001:    ifeq L0                                 {R, I, I, .} | {I}
+002:    iload_2                                 {R, I, I, .} | {}
+003:    invokestatic Integer.valueOf            {R, I, I, .} | {I}
+004:    astore_3                                {R, I, I, .} | {R}
+005:    goto L1                                 {R, I, I, R} | {}
+006:    L0                                      {R, I, I, .} | {}
+007:    iload_2                                 {R, I, I, .} | {}
+008:    i2l                                     {R, I, I, .} | {I}
+009:    invokestatic Long.valueOf               {R, I, I, .} | {J}
+010:    astore_3                                {R, I, I, .} | {R}
+011:    L1                                      {R, I, I, R} | {}
+012:    getstatic System.out                    {R, I, I, R} | {}
+013:    aload_3                                 {R, I, I, R} | {R}
+014:    invokevirtual PrintStream.println       {R, I, I, R} | {R, R}
+015:    return                                  {R, I, I, R} | {}
+================================================================
+```
+
+#### SimpleVerifier
+
+如果使用`SimpleVerifier`类，每一个不同的引用类型（reference type）都有自己的表示形式：
+
+```shell
+test:(ZI)V
+000:    iload_1                                 {HelloWorld, I, I, .} | {}
+001:    ifeq L0                                 {HelloWorld, I, I, .} | {I}
+002:    iload_2                                 {HelloWorld, I, I, .} | {}
+003:    invokestatic Integer.valueOf            {HelloWorld, I, I, .} | {I}
+004:    astore_3                                {HelloWorld, I, I, .} | {Integer}
+005:    goto L1                                 {HelloWorld, I, I, Integer} | {}
+006:    L0                                      {HelloWorld, I, I, .} | {}
+007:    iload_2                                 {HelloWorld, I, I, .} | {}
+008:    i2l                                     {HelloWorld, I, I, .} | {I}
+009:    invokestatic Long.valueOf               {HelloWorld, I, I, .} | {J}
+010:    astore_3                                {HelloWorld, I, I, .} | {Long}
+011:    L1                                      {HelloWorld, I, I, Number} | {}
+012:    getstatic System.out                    {HelloWorld, I, I, Number} | {}
+013:    aload_3                                 {HelloWorld, I, I, Number} | {PrintStream}
+014:    invokevirtual PrintStream.println       {HelloWorld, I, I, Number} | {PrintStream, Number}
+015:    return                                  {HelloWorld, I, I, Number} | {}
+================================================================
+```
+
+#### SourceInterpreter
+
+如果使用`SourceInterpreter`类，可以查看指令（Instruction）与Frame（local variable和operand stack）值的关系：
+
+```shell
+test:(ZI)V
+000:    iload_1                                 {[], [], [], []} | {}
+001:    ifeq L0                                 {[], [], [], []} | {[iload_1]}
+002:    iload_2                                 {[], [], [], []} | {}
+003:    invokestatic Integer.valueOf            {[], [], [], []} | {[iload_2]}
+004:    astore_3                                {[], [], [], []} | {[invokestatic Integer.valueOf]}
+005:    goto L1                                 {[], [], [], [astore_3]} | {}
+006:    L0                                      {[], [], [], []} | {}
+007:    iload_2                                 {[], [], [], []} | {}
+008:    i2l                                     {[], [], [], []} | {[iload_2]}
+009:    invokestatic Long.valueOf               {[], [], [], []} | {[i2l]}
+010:    astore_3                                {[], [], [], []} | {[invokestatic Long.valueOf]}
+011:    L1                                      {[], [], [], [astore_3, astore_3]} | {}
+012:    getstatic System.out                    {[], [], [], [astore_3, astore_3]} | {}
+013:    aload_3                                 {[], [], [], [astore_3, astore_3]} | {[getstatic System.out]}
+014:    invokevirtual PrintStream.println       {[], [], [], [astore_3, astore_3]} | {[getstatic System.out], [aload_3]}
+015:    return                                  {[], [], [], [astore_3, astore_3]} | {}
+================================================================
+```
+
+在`011`行，有`[astore_3, astore_3]`，那么为什么有两个`astore_3`呢？
+
+为了回答这个问题，我们也可以换一种方式来显示，查看指令索引（Instruction Index）与Frame值之间的关系：
+
+> 下面数字[4, 10]表示当前 local variables指定位置的值可能来自指令4，也可能来之指令10
+
+```shell
+test:(ZI)V
+000:    iload_1                                 {[], [], [], []} | {}
+001:    ifeq L0                                 {[], [], [], []} | {[0]}
+002:    iload_2                                 {[], [], [], []} | {}
+003:    invokestatic Integer.valueOf            {[], [], [], []} | {[2]}
+004:    astore_3                                {[], [], [], []} | {[3]}
+005:    goto L1                                 {[], [], [], [4]} | {}
+006:    L0                                      {[], [], [], []} | {}
+007:    iload_2                                 {[], [], [], []} | {}
+008:    i2l                                     {[], [], [], []} | {[7]}
+009:    invokestatic Long.valueOf               {[], [], [], []} | {[8]}
+010:    astore_3                                {[], [], [], []} | {[9]}
+011:    L1                                      {[], [], [], [4, 10]} | {}
+012:    getstatic System.out                    {[], [], [], [4, 10]} | {}
+013:    aload_3                                 {[], [], [], [4, 10]} | {[12]}
+014:    invokevirtual PrintStream.println       {[], [], [], [4, 10]} | {[12], [13]}
+015:    return                                  {[], [], [], [4, 10]} | {}
+================================================================
+```
+
+### 4.1.4 ControlFlowGraphRun类
+
+使用`ControlFlowGraphRun`类，可以生成指令的流程图，重点是修改`display`方法的第三个参数，推荐使用`ControlFlowGraphType.STANDARD`。
+
+```java
+public class ControlFlowGraphRun {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes);
+
+    //（2）生成ClassNode
+    ClassNode cn = new ClassNode();
+
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    //（3）查找方法
+    String methodName = "test";
+    MethodNode targetNode = null;
+    for (MethodNode mn : cn.methods) {
+      if (mn.name.equals(methodName)) {
+        targetNode = mn;
+        break;
+      }
+    }
+    if (targetNode == null) {
+      System.out.println("Can not find method: " + methodName);
+      return;
+    }
+
+    //（4）进行图形化显示
+    System.out.println("Origin:");
+    display(cn.name, targetNode, ControlFlowGraphType.NONE);
+    System.out.println("Control Flow Graph:");
+    display(cn.name, targetNode, ControlFlowGraphType.STANDARD);
+
+    //（5）打印复杂度
+    int complexity = CyclomaticComplexity.getCyclomaticComplexity(cn.name, targetNode);
+    String line = String.format("%s:%s complexity: %d", targetNode.name, targetNode.desc, complexity);
+    System.out.println(line);
+  }
+}
+```
+
+### 4.1.5 总结
+
+本文内容总结如下：
+
+- 第一点，在Method Analysis中，主要的分析对象是Instruction、Frame和Control Flow Graph。
+- 第二点，在`asm-analysis.jar`当中，主要有`Analyzer`、`Frame`、`Interpreter`和`Value`四个类来进行data flow analysis和control flow analysis。
+- 第三点，使用`HelloWorldFrameTree`类来查看instructions对应的不同的frames形式。
+- 第四点，使用`ControlFlowGraphRun`类来查看instructions对应的control flow graph。
+
+## 4.2 Frame/Interpreter/Value
