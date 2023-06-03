@@ -3205,6 +3205,10 @@ name2 [type] [DEFAULT|MATERIALIZED|ALIAS expr],
 ### 6.1.2 MergeTree的存储结构
 
 > [ClickHouse核心引擎MergeTree解读 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/361622782)
+>
+> [Clickhouse的数据存储原理、二进制文件内容分析与索引详解_clickhouse 数据文件_JermeryBesian的博客-CSDN博客](https://blog.csdn.net/Urbanears/article/details/129509398)
+>
+> 上面这个博文中提到，ClickHouse新版本有compact功能，可以提高插入量少插入频率频繁时的性能。**但是底层就不会每一列都生成一个.bin文件了。只会生成一个统一的data.bin。建表时可以关闭通过设置参(min_rows_for_wide_part = 0, min_bytes_for_wide_part = 0)关闭compact功能，方便观察分区目录下数据存储(即每个列数据生成一个对应的[Column].bin数据文件)。**
 
 ​	MergeTree表引擎中的数据是拥有物理存储的，数据会按照分区目录的形式保存到磁盘之上，其完整的存储结构如图6-2所示。
 

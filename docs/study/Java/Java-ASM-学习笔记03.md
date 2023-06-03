@@ -6894,3 +6894,2219 @@ Frame<V>[] frames = analyzer.analyze(owner, mn);
 ```
 
 ## 4.4 BasicValue-BasicInterpreter
+
+在本章内容当中，最核心的内容就是下面两行代码。这两行代码包含了`asm-analysis.jar`当中`Analyzer`、`Frame`、`Interpreter`和`Value`最重要的四个类：
+
+```java
+   ┌── Analyzer
+   │        ┌── Value                                   ┌── Interpreter
+   │        │                                           │
+Analyzer<BasicValue> analyzer = new Analyzer<>(new BasicInterpreter());
+Frame<BasicValue>[] frames = analyzer.analyze(owner, mn);
+   │        │
+   │        └── Value
+   └── Frame
+```
+
+在本文当中，我们将介绍`BasicInterpreter`和`BasicValue`类：
+
+```pseudocode
+┌───┬───────────────────┬─────────────┬───────┐
+│ 0 │    Interpreter    │    Value    │ Range │
+├───┼───────────────────┼─────────────┼───────┤
+│ 1 │ BasicInterpreter  │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 2 │   BasicVerifier   │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 3 │  SimpleVerifier   │ BasicValue  │   N   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 4 │ SourceInterpreter │ SourceValue │   N   │
+└───┴───────────────────┴─────────────┴───────┘
+```
+
+### 4.4.1 BasicValue
+
+#### class info
+
+第一个部分，`BasicValue`类实现了`Value`接口。
+
+```java
+public class BasicValue implements Value {
+}
+```
+
+#### fields
+
+第二个部分，`BasicValue`类定义的字段有哪些。
+
+```java
+public class BasicValue implements Value {
+  private final Type type;
+
+  public Type getType() {
+    return type;
+  }
+}
+```
+
+通过以下三点来理解`BasicValue`和`Type`之间的关系：
+
+- 第一点，`BasicValue`是`asm-analysis.jar`当中定义的类，是local variable和operand stack当中存储的数据类型。
+- 第二点，`Type`是`asm.jar`当中定义的类，它是对具体的`.class`文件当中的Internal Name和Descriptor的一种ASM表示方式。
+- 第三点，`BasicValue`类就是对`Type`类的封装。
+
+| 领域 | ClassFile                | ASM                                                | Frame(local variable+operand stack)      |
+| ---- | ------------------------ | -------------------------------------------------- | ---------------------------------------- |
+| 类型 | Internal Name/Descriptor | Type                                               | Value                                    |
+| 示例 | `Ljava/lang/String;`     | `Type t = Type.getObjectType("java/lang/String");` | `BasicValue val = BasicValue.INT_VALUE;` |
+
+```pseudocode
+  ┌─────────────────────────────┐     |        ┌──────────────────────────────────────────────┐
+  │          asm.jar            │     |        │            asm-analysis.jar                  │
+  │  ClassReader   Type         │     |        │                                              │
+  │  ClassVisitor  ClassWriter  │     |        │  Value Interpreter Frame Analyzer            │
+  └─────────────────────────────┘     |        └──────────────────────────────────────────────┘
+---------------------------------------------------------------------------------------------------
+                                      |    ┌──────────────────────────────────────────────────────┐
+                                      |    │     operand stack                                    │
+    ┌────────────────────────┐        |    │    ┌──────────────┐              JVM                 │
+    │     Internal Name      │        |    │    ├──────────────┤           Stack Frame            │
+    │       Descriptor       │        |    │    ├──────────────┤                                  │
+    │                        │        |    │    ├──────────────┤                                  │
+    │        .class          │        |    │    ├──────────────┤                                  │
+    │       ClassFile        │        |    │    ├──────────────┤         local variable           │
+    │                        │        |    │    ├──────────────┤     ┌──┐ ┌──┐ ┌──┐ ┌──┐ ┌──┐     │
+    └────────────────────────┘        |    │    └──────────────┘     └──┘ └──┘ └──┘ └──┘ └──┘     │
+                                      |    │                           0    1    2    3    4      │
+                                      |    └──────────────────────────────────────────────────────┘
+```
+
+#### constructors
+
+第三个部分，`BasicValue`类定义的构造方法有哪些。
+
+```java
+public class BasicValue implements Value {
+  public BasicValue(Type type) {
+    this.type = type;
+  }
+}
+```
+
+#### methods
+
+> [关于字节码：哪些Java编译器使用jsr指令，以及用于什么目的？ | 码农家园 (codenong.com)](https://www.codenong.com/21150154/)
+>
+> In Oracle's implementation of a compiler for the Java programming language prior to Java SE 6, the jsr instruction was used with the ret instruction in the implementation of the finally clause
+
+第四个部分，`BasicValue`类定义的方法有哪些。
+
+```java
+public class BasicValue implements Value {
+  @Override
+  public int getSize() {
+    return type == Type.LONG_TYPE || type == Type.DOUBLE_TYPE ? 2 : 1;
+  }
+
+  public boolean isReference() {
+    return type != null && (type.getSort() == Type.OBJECT || type.getSort() == Type.ARRAY);
+  }
+
+  @Override
+  public String toString() {
+    if (this == UNINITIALIZED_VALUE) {
+      return ".";
+      // A 这个 对应 jsr 指令，jdk7即往后已经弃用
+    } else if (this == RETURNADDRESS_VALUE) {
+      return "A";
+    } else if (this == REFERENCE_VALUE) {
+      return "R";
+    } else {
+      return type.getDescriptor();
+    }
+  }
+}
+```
+
+#### static fields
+
+在`BasicValue`类当中，定义了7个静态字段：
+
+- `UNINITIALIZED_VALUE` means “all possible values”.
+- `INT_VALUE` means “all int, short, byte, boolean or char values”.
+- `FLOAT_VALUE` means “all float values”.
+- `LONG_VALUE` means “all long values”.
+- `DOUBLE_VALUE` means “all double values”.
+- `REFERENCE_VALUE` means “all object and array values”.
+- `RETURNADDRESS_VALUE` is used for subroutines.（对应JSR指令，jdk7已经废弃）
+
+```java
+public class BasicValue implements Value {
+  public static final BasicValue UNINITIALIZED_VALUE = new BasicValue(null);
+
+  public static final BasicValue INT_VALUE = new BasicValue(Type.INT_TYPE);
+  public static final BasicValue FLOAT_VALUE = new BasicValue(Type.FLOAT_TYPE);
+  public static final BasicValue LONG_VALUE = new BasicValue(Type.LONG_TYPE);
+  public static final BasicValue DOUBLE_VALUE = new BasicValue(Type.DOUBLE_TYPE);
+
+  public static final BasicValue REFERENCE_VALUE = new BasicValue(Type.getObjectType("java/lang/Object"));
+  public static final BasicValue RETURNADDRESS_VALUE = new BasicValue(Type.VOID_TYPE);//对应JSR指令, jdk7已经废弃
+}
+```
+
+在这里，我们要注意：虽然`BasicValue`类定义了这7个静态字段，但是并不是表示说`BasicValue`只能有这7个字段的值，它还可以创建许许多的对象实例。为什么我们要说这样一件事情呢？因为在刚开始，我们会经常用到这7个静态字段的值，很容易误导我们，让我们觉得只有这7个静态字段的值。实际上，只有`BasicInterpreter`和`BasicVerifier`两个类完全限定于使用这7个静态字段，而`SimpleVerifier`就会创建许许多的`BasicValue`对象。
+
+```pseudocode
+┌───┬───────────────────┬─────────────┬───────┐
+│ 0 │    Interpreter    │    Value    │ Range │
+├───┼───────────────────┼─────────────┼───────┤
+│ 1 │ BasicInterpreter  │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 2 │   BasicVerifier   │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 3 │  SimpleVerifier   │ BasicValue  │   N   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 4 │ SourceInterpreter │ SourceValue │   N   │
+└───┴───────────────────┴─────────────┴───────┘
+```
+
+用一个比喻来加深印象。`BasicInterpreter`和`BasicVerifier`两个类就像两个小孩儿，他们只会7个单词，说的所有的话都是由这7个单词组成；而`SimpleVerifier`就像是一个词汇量丰富的初中学生，可以描述事物的具体细节。
+
+### 4.4.2 BasicInterpreter
+
+The `BasicInterpreter` class is one of the predefined subclass of the `Interpreter` abstract class. It simulates the effect of bytecode instructions by using seven sets of values, defined in the `BasicValue` class.
+
+#### class info
+
+第一个部分，`BasicInterpreter`类继承自`Interpreter<BasicValue>`类。
+
+```java
+public class BasicInterpreter extends Interpreter<BasicValue> implements Opcodes {
+}
+```
+
+#### fields
+
+第二个部分，`BasicInterpreter`类定义的字段有哪些。
+
+```java
+public class BasicInterpreter extends Interpreter<BasicValue> implements Opcodes {
+  /**
+   * Special type used for the {@literal null} literal. This is an object reference type with
+   * descriptor 'Lnull;'.
+   */  
+  public static final Type NULL_TYPE = Type.getObjectType("null");
+}
+```
+
+#### constructors
+
+第三个部分，`BasicInterpreter`类定义的构造方法有哪些。
+
+```java
+public class BasicInterpreter extends Interpreter<BasicValue> implements Opcodes {
+  public BasicInterpreter() {
+    super(ASM9);
+    if (getClass() != BasicInterpreter.class) {
+      throw new IllegalStateException();
+    }
+  }
+
+  protected BasicInterpreter(int api) {
+    super(api);
+  }
+}
+```
+
+#### methods
+
+> 方法内的处理逻辑不是重点，知道返回值类型是BasicValue即可
+
+第四个部分，`BasicInterpreter`类定义的方法有哪些。下面这几个方法都是对`Interpreter`定义的方法进行重写。
+
+```java
+public class BasicInterpreter extends Interpreter<BasicValue> implements Opcodes {
+  @Override
+  public BasicValue newValue(Type type) {
+    // 返回BasicValue定义的7个静态字段之一
+  }
+
+  @Override
+  public BasicValue newOperation(AbstractInsnNode insn) throws AnalyzerException {
+    // 返回BasicValue定义的7个静态字段之一
+  }
+
+  @Override
+  public BasicValue copyOperation(AbstractInsnNode insn, BasicValue value) throws AnalyzerException {
+    return value;
+  }
+
+  public BasicValue unaryOperation(AbstractInsnNode insn, BasicValue value) throws AnalyzerException {
+    // 返回BasicValue定义的7个静态字段之一
+  }
+
+  public BasicValue binaryOperation(AbstractInsnNode insn, BasicValue value1, BasicValue value2) throws AnalyzerException {
+    // 返回BasicValue定义的7个静态字段之一
+  }
+
+  @Override
+  public BasicValue ternaryOperation(AbstractInsnNode insn, BasicValue value1, BasicValue value2, BasicValue value3) throws AnalyzerException {
+    return null;
+  }
+
+  @Override
+  public BasicValue naryOperation(AbstractInsnNode insn, List<? extends BasicValue> values) throws AnalyzerException {
+    // 返回BasicValue定义的7个静态字段之一
+  }
+
+  @Override
+  public void returnOperation(AbstractInsnNode insn, BasicValue value, BasicValue expected) throws AnalyzerException {
+    // Nothing to do.
+  }
+
+  @Override
+  public BasicValue merge(BasicValue value1, BasicValue value2) {
+    if (!value1.equals(value2)) {
+      return BasicValue.UNINITIALIZED_VALUE;
+    }
+    return value1;
+  }
+}
+```
+
+### 4.4.3 示例：打印Frame的状态
+
+Get type info for each variable and stack slot for each method instruction
+
+```java
+Analyzer<BasicValue> analyzer = new Analyzer<>(new BasicInterpreter());
+Frame<BasicValue>[] frames = analyzer.analyze(className, mn);
+
+for (Frame<BasicValue> f : frames) {
+  for (int i = 0; i < f.getLocals(); ++i) {
+    BasicValue local = f.getLocal(i);
+    // ... local.getType()
+  }
+
+  for (int j = 0; j < f.getStackSize(); ++j) {
+    BasicValue stack = f.getStack(j);
+    // ...
+  }
+}
+```
+
+打印每条instruction对应的Frame状态：
+
+```java
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.analysis.Analyzer;
+import org.objectweb.asm.tree.analysis.BasicInterpreter;
+import org.objectweb.asm.tree.analysis.BasicValue;
+import org.objectweb.asm.tree.analysis.Frame;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class HelloWorldAnalysisTree {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes);
+
+    //（2）生成ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassNode(api);
+
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    //（3）进行分析
+    String className = cn.name;
+    List<MethodNode> methods = cn.methods;
+    MethodNode mn = methods.get(1);
+
+    Analyzer<BasicValue> analyzer = new Analyzer<>(new BasicInterpreter());
+    Frame<BasicValue>[] frames = analyzer.analyze(className, mn);
+
+    for (Frame<BasicValue> f : frames) {
+      List<BasicValue> localList = new ArrayList<>();
+      for (int i = 0; i < f.getLocals(); ++i) {
+        BasicValue local = f.getLocal(i);
+        localList.add(local);
+      }
+
+      List<BasicValue> stackList = new ArrayList<>();
+      for (int j = 0; j < f.getStackSize(); ++j) {
+        BasicValue stack = f.getStack(j);
+        stackList.add(stack);
+      }
+
+      String line = FrameUtils.toLine(localList, stackList);
+      System.out.println(line);
+    }
+  }
+}
+```
+
+### 4.4.4 细节：top、null和void的处理
+
+在`BasicInterpreter`类当中，对于top值、null值和void进行了处理，但是其中有一些让人容易混淆的地方。
+
+#### 三者分别指什么
+
+- **`top`：在JVM文档的[4.7.4. The StackMapTable Attribute](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-4.html#jvms-4.7.4)定义的一个类型，它表示当前local variable当中的某一个位置处于未初始化的状态。**
+- `null`或`aconst_null`：在Java语言当中，表现为`null`值；在`.class`文件中，表现为`aconst_null`，是[JVM文档](https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-6.html#jvms-6.5.aconst_null)定义的一个指令，将一个`null`加载到operand stack上。（null在class中也是一个类型，即type null，且JVM不要求给null类型赋具体值）
+- `void`：方法的返回值是`void`类型。
+  - 如果方法的返回值类型不是`void`类型，假如说是一个`int`类型，那么它会将返回的`int`值加载到operand stack上。
+  - 如果返回值类型是`void`类型，那么则不需要加载任何值到operand stack上。
+
+#### 概念领域的转换
+
+刚刚介绍的`top`、`null`和`void`都是在`.class`文件所存在的内容，接下来它进行转换成ASM当中的`Type`类型，再接着转换成ASM当中的`Value`类型，之后就可以结合`Frame`类来模拟local variable和operand stack的变化了。
+
+```pseudocode
+.class --> ASM Type --> ASM Value
+```
+
+三个概念领域的关系可以表示成下图：
+
+```pseudocode
+  ┌─────────────────────────────┐     |        ┌──────────────────────────────────────────────┐
+  │          asm.jar            │     |        │            asm-analysis.jar                  │
+  │  ClassReader   Type         │     |        │                                              │
+  │  ClassVisitor  ClassWriter  │     |        │  Value Interpreter Frame Analyzer            │
+  └─────────────────────────────┘     |        └──────────────────────────────────────────────┘
+---------------------------------------------------------------------------------------------------
+                                      |    ┌──────────────────────────────────────────────────────┐
+                                      |    │     operand stack                                    │
+    ┌────────────────────────┐        |    │    ┌──────────────┐              JVM                 │
+    │     Internal Name      │        |    │    ├──────────────┤           Stack Frame            │
+    │       Descriptor       │        |    │    ├──────────────┤                                  │
+    │                        │        |    │    ├──────────────┤                                  │
+    │ top, aconst_null, void │        |    │    ├──────────────┤                                  │
+    │                        │        |    │    ├──────────────┤         local variable           │
+    │        .class          │        |    │    ├──────────────┤     ┌──┐ ┌──┐ ┌──┐ ┌──┐ ┌──┐     │
+    │       ClassFile        │        |    │    └──────────────┘     └──┘ └──┘ └──┘ └──┘ └──┘     │
+    └────────────────────────┘        |    │                           0    1    2    3    4      │
+                                      |    └──────────────────────────────────────────────────────┘
+```
+
+#### 转换过程
+
+> [Chapter 6. The Java Virtual Machine Instruction Set (oracle.com)](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.2) 中对`aconst_null`操作码的描述为Push the `null` object `reference` onto the operand stack. 也就是说null也是算 object 引用类型。这样比较好理解为啥ASM中 `BasicValue.REFERENCE_VALUE`对应`aconst_null`
+
+在下表当中，就是`top`、`null`和`void`三者相对应的转换值：
+
+```pseudocode
+┌─────────────┬────────────────────────────┬────────────────────────────────┐
+│   .class    │          ASM Type          │      ASM Value in Frame        │
+├─────────────┼────────────────────────────┼────────────────────────────────┤
+│     top     │            null            │ BasicValue.UNINITIALIZED_VALUE │
+├─────────────┼────────────────────────────┼────────────────────────────────┤
+│ aconst_null │ BasicInterpreter.NULL_TYPE │   BasicValue.REFERENCE_VALUE   │
+├─────────────┼────────────────────────────┼────────────────────────────────┤
+│    void     │       Type.VOID_TYPE       │              null              │
+└─────────────┴────────────────────────────┴────────────────────────────────┘
+```
+
+在上表当中，容易混淆的地方就是：第一列有`aconst_null`，第二列有`null`，第三列有`null`，但是这三者不在同一行，且所隶属的“领域”是不同的。
+
+首先，是`top`的查找过程:
+
+- `Analyzer.analyze()`方法 –> `Analyzer.computeInitialFrame()`方法
+- `Interpreter.newEmptyValue()`方法
+- `BasicInterpreter.newValue()`方法
+
+```java
+public abstract class Interpreter<V extends Value> {
+  public V newEmptyValue(int local) {
+    return newValue(null);
+  }
+}
+```
+
+其次，是`null`或`aconst_null`的查找过程:
+
+- `Analyzer.analyze()`方法
+- `Frame.execute()`方法的`ACONST_NULL`指令
+- `BasicInterpreter.newOperation()`方法当中的`ACONST_NULL`指令 –> `BasicInterpreter.newValue()`方法
+
+最后，是`void`的查找过程:
+
+- `Analyzer.analyze()`方法
+- `Frame.execute()`方法调用方法的指令 –> `Frame.executeInvokeInsn()`方法
+- `BasicInterpreter.naryOperation()`方法 –> `BasicInterpreter.newValue()`方法
+
+如果遇到`void`类型的时候，它不应该向Frame当中添加任何值，因此其相应的`BasicValue`值为`null`。
+
+在`BasicInterpreter`类当中，定义了一个`NULL_TYPE`字段：
+
+```java
+public class BasicInterpreter extends Interpreter<BasicValue> implements Opcodes {
+    public static final Type NULL_TYPE = Type.getObjectType("null");
+}
+```
+
+这个`NULL_TYPE`字段在`newOperation`方法中处理`aconst_null`指令时用到。
+
+```java
+public class BasicInterpreter extends Interpreter<BasicValue> implements Opcodes {
+  @Override
+  public BasicValue newOperation(final AbstractInsnNode insn) throws AnalyzerException {
+    switch (insn.getOpcode()) {
+      case ACONST_NULL:
+        return newValue(NULL_TYPE);      // aconst_null --> NULL_TYPE
+        // ...
+      case GETSTATIC:
+        return newValue(Type.getType(((FieldInsnNode) insn).desc));
+      case NEW:
+        return newValue(Type.getObjectType(((TypeInsnNode) insn).desc));
+      default:
+        throw new AssertionError();
+    }
+  }
+
+  @Override
+  public BasicValue newValue(final Type type) {
+    if (type == null) {
+      return BasicValue.UNINITIALIZED_VALUE; // top --> null --> UNINITIALIZED_VALUE
+    }
+    switch (type.getSort()) {
+      case Type.VOID:
+        return null; // void --> Type.VOID_TYPE --> null
+      case Type.BOOLEAN:
+      case Type.CHAR:
+      case Type.BYTE:
+      case Type.SHORT:
+      case Type.INT:
+        return BasicValue.INT_VALUE;
+      case Type.FLOAT:
+        return BasicValue.FLOAT_VALUE;
+      case Type.LONG:
+        return BasicValue.LONG_VALUE;
+      case Type.DOUBLE:
+        return BasicValue.DOUBLE_VALUE;
+      case Type.ARRAY:
+      case Type.OBJECT:
+        return BasicValue.REFERENCE_VALUE;
+      default:
+        throw new AssertionError();
+    }
+  }
+
+  @Override
+  public BasicValue naryOperation(AbstractInsnNode insn, final List<? extends BasicValue> values)
+    throws AnalyzerException {
+    int opcode = insn.getOpcode();
+    if (opcode == MULTIANEWARRAY) {
+      return newValue(Type.getType(((MultiANewArrayInsnNode) insn).desc));
+    } else if (opcode == INVOKEDYNAMIC) {
+      return newValue(Type.getReturnType(((InvokeDynamicInsnNode) insn).desc));
+    } else {
+      return newValue(Type.getReturnType(((MethodInsnNode) insn).desc));
+    }
+  }
+}
+```
+
+### 4.4.5 总结
+
+本文内容总结如下：
+
+- 第一点，`BasicValue`类实现了`Value`接口，它本质是在`Type`类型基础的进一步封装。在`BasicValue`类当中，定义了7个静态字段。
+- 第二点，`BasicInterpreter`类继承自`Interpreter`类，它就是利用`BasicValue`类当中定义的7个静态字段进行运算，得到的结果是这7个字段当中的任意一个值，或者是`null`值。
+- 第三点，代码示例，打印出Frame(local variable和operand stack)当中的元素。
+- 第四点，从细节上来说，对top、null和void进行区分。
+
+## 4.5 BasicValue-BasicInterpreter示例：移除Dead Code
+
+### 4.5.1 如何移除Dead Code
+
+This `BasicInterpreter` is not very useful in itself, but it can be used as an “empty” `Interpreter` implementation in order to construct an `Analyzer`. This analyzer can then be used to detect unreachable code in a method.
+
+```java
+   ┌── Analyzer
+   │        ┌── Value                                   ┌── Interpreter
+   │        │                                           │
+Analyzer<BasicValue> analyzer = new Analyzer<>(new BasicInterpreter());
+Frame<BasicValue>[] frames = analyzer.analyze(owner, mn);
+   │        │
+   │        └── Value
+   └── Frame
+```
+
+Indeed, even by following both branches in jumps instructions, it is not possible to reach code that cannot be reached from the first instruction. The consequence is that, after an analysis, and whatever the `Interpreter` implementation, the computed frames – returned by the `Analyzer.getFrames` method - are `null` for instructions that cannot be reached.
+
+那么，为什么可以移除dead code呢？
+
+- 其实，`BasicInterpreter`类本身并没有太多的作用，因为所有的引用类型都使用`BasicValue.REFERENCE_VALUE`来表示，类型非常单一，没有太多的操作空间。
+- 相反的，`Analyzer`类才是起到主要作用的类，`Frame<V>[] frames = (Frame<V>[]) new Frame<?>[insnListSize];`。那么，在默认情况下，`frames`里所有元素都是`null`值。如果某一条instruction可以执行到，那么就会设置对应的`frames`当中的值，就不再为`null`了。反过来说，如果`frames`当中的某一个元素为`null`，那么也就表示对应的instruction就是dead code。
+
+使用`BasicInterpreter`类时，指令（Instruction）和Frame之间的关系：
+
+```shell
+test:(I)V
+000:                                 goto L0    {R, I} | {}
+001:                                  athrow    {} | {}
+002:                                      L0    {R, I} | {}
+003:                    getstatic System.out    {R, I} | {}
+004:                                 iload_1    {R, I} | {R}
+005:                                 goto L1    {R, I} | {R, I}
+006:                                     nop    {} | {}
+007:                                     nop    {} | {}
+008:                                  athrow    {} | {}
+009:                                      L1    {R, I} | {R, I}
+010:                                 ifne L2    {R, I} | {R, I}
+011:                          ldc "val is 0"    {R, I} | {R}
+012:                                 goto L3    {R, I} | {R, R}
+013:                                      L2    {R, I} | {R}
+014:                      ldc "val is not 0"    {R, I} | {R}
+015:                                      L3    {R, I} | {R, R}
+016:       invokevirtual PrintStream.println    {R, I} | {R, R}
+017:                                  return    {R, I} | {}
+018:                                     nop    {} | {}
+019:                                     nop    {} | {}
+020:                                  athrow    {} | {}
+================================================================
+```
+
+### 4.5.2 代码示例
+
+#### 预期目标
+
+在之前的Tree Based Class Transformation示例当中，有一个示例是“优化跳转”，经过优化之后，有一些instruction就成为dead code。
+
+我们的预期目标就是移除那些成为dead code的instruction。
+
+#### 编码实现
+
+```java
+import lsieun.asm.tree.transformer.MethodTransformer;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.LabelNode;
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.analysis.*;
+
+public class RemoveDeadCodeNode extends ClassNode {
+  public RemoveDeadCodeNode(int api, ClassVisitor cv) {
+    super(api);
+    this.cv = cv;
+  }
+
+  @Override
+  public void visitEnd() {
+    // 首先，处理自己的代码逻辑
+    MethodTransformer mt = new MethodRemoveDeadCodeTransformer(name, null);
+    for (MethodNode mn : methods) {
+      mt.transform(mn);
+    }
+
+    // 其次，调用父类的方法实现
+    super.visitEnd();
+
+    // 最后，向后续ClassVisitor传递
+    if (cv != null) {
+      accept(cv);
+    }
+  }
+
+  private static class MethodRemoveDeadCodeTransformer extends MethodTransformer {
+    private final String owner;
+
+    public MethodRemoveDeadCodeTransformer(String owner, MethodTransformer mt) {
+      super(mt);
+      this.owner = owner;
+    }
+
+    @Override
+    public void transform(MethodNode mn) {
+      // 首先，处理自己的代码逻辑
+      Analyzer<BasicValue> analyzer = new Analyzer<>(new BasicInterpreter());
+      try {
+        analyzer.analyze(owner, mn);
+        Frame<BasicValue>[] frames = analyzer.getFrames();
+        AbstractInsnNode[] insnNodes = mn.instructions.toArray();
+        for (int i = 0; i < frames.length; i++) {
+          // Label不算真正的指令，但是可以用来标记跳转位置
+          if (frames[i] == null && !(insnNodes[i] instanceof LabelNode)) {
+            mn.instructions.remove(insnNodes[i]);
+          }
+        }
+      }
+      catch (AnalyzerException ex) {
+        ex.printStackTrace();
+      }
+
+      // 其次，调用父类的方法实现
+      super.transform(mn);
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.*;
+
+public class HelloWorldTransformTree {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    // (1)构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2)构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3)串连ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new RemoveDeadCodeNode(api, cw);
+
+    //（4）结合ClassReader和ClassNode
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+```shell
+$ javap -c sample.HelloWorld
+public class sample.HelloWorld {
+...
+  public void test(int);
+    Code:
+       0: goto          3
+       3: getstatic     #16                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       6: iload_1
+       7: goto          10
+      10: ifne          18
+      13: ldc           #18                 // String val is 0
+      15: goto          20
+      18: ldc           #20                 // String val is not 0
+      20: invokevirtual #26                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      23
+```
+
+### 4.5.3 解决方式二：抛弃Frame信息
+
+There are more efficient ways, but they require writing more code.
+
+```pseudocode
+            ┌─── data flow analysis
+            │
+Analyzer ───┤
+            │
+            └─── control flow analysis
+```
+
+#### ControlFlowAnalyzer
+
+这个`ControlFlowAnalyzer`是模仿`org.objectweb.asm.tree.analysis.Analyzer`写的，但是不带有泛型信息，也不带有`Frame`相关的信息，只是将control flow analysis功能抽取出来。
+
+```java
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.*;
+import org.objectweb.asm.tree.analysis.AnalyzerException;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class ControlFlowAnalyzer implements Opcodes {
+
+  private InsnList insnList;
+  private int insnListSize;
+  private List<TryCatchBlockNode>[] handlers;
+
+  /**
+     * 记录需要处理的instructions.
+     *
+     * NOTE: 这三个字段为一组，应该一起处理，最好是放到同一个方法里来处理。
+     * 因此，我就加了三个新方法。
+     * {@link #initInstructionsToProcess()}、{@link #addInstructionsToProcess(int)}和
+     * {@link #removeInstructionsToProcess()}
+     *
+     * @see #initInstructionsToProcess()
+     * @see #addInstructionsToProcess(int)
+     * @see #removeInstructionsToProcess()
+     */
+  private boolean[] inInstructionsToProcess;
+  private int[] instructionsToProcess;
+  private int numInstructionsToProcess;
+
+  public ControlFlowAnalyzer() {
+  }
+
+  public List<TryCatchBlockNode> getHandlers(final int insnIndex) {
+    return handlers[insnIndex];
+  }
+
+
+  @SuppressWarnings("unchecked")
+  // NOTE: analyze方法的返回值类型变成了void类型。
+  public void analyze(final String owner, final MethodNode method) throws AnalyzerException {
+    if ((method.access & (ACC_ABSTRACT | ACC_NATIVE)) != 0) {
+      return;
+    }
+    insnList = method.instructions;
+    insnListSize = insnList.size();
+    handlers = (List<TryCatchBlockNode>[]) new List<?>[insnListSize];
+
+    initInstructionsToProcess();
+
+    // For each exception handler, and each instruction within its range, record in 'handlers' the
+    // fact that execution can flow from this instruction to the exception handler.
+    for (int i = 0; i < method.tryCatchBlocks.size(); ++i) {
+      TryCatchBlockNode tryCatchBlock = method.tryCatchBlocks.get(i);
+      int startIndex = insnList.indexOf(tryCatchBlock.start);
+      int endIndex = insnList.indexOf(tryCatchBlock.end);
+      for (int j = startIndex; j < endIndex; ++j) {
+        List<TryCatchBlockNode> insnHandlers = handlers[j];
+        if (insnHandlers == null) {
+          insnHandlers = new ArrayList<>();
+          handlers[j] = insnHandlers;
+        }
+        insnHandlers.add(tryCatchBlock);
+      }
+    }
+
+
+    // Initializes the data structures for the control flow analysis.
+    // NOTE: 调用addInstructionsToProcess方法，传入参数0，启动整个循环过程。
+    addInstructionsToProcess(0);
+    init(owner, method);
+
+    // Control flow analysis.
+    while (numInstructionsToProcess > 0) {
+      // Get and remove one instruction from the list of instructions to process.
+      int insnIndex = removeInstructionsToProcess();
+
+      // Simulate the execution of this instruction.
+      AbstractInsnNode insnNode = method.instructions.get(insnIndex);
+      int insnOpcode = insnNode.getOpcode();
+      int insnType = insnNode.getType();
+
+      if (insnType == AbstractInsnNode.LABEL
+          || insnType == AbstractInsnNode.LINE
+          || insnType == AbstractInsnNode.FRAME) {
+        newControlFlowEdge(insnIndex, insnIndex + 1);
+      }
+      else {
+        if (insnNode instanceof JumpInsnNode) {
+          JumpInsnNode jumpInsn = (JumpInsnNode) insnNode;
+          if (insnOpcode != GOTO && insnOpcode != JSR) {
+            newControlFlowEdge(insnIndex, insnIndex + 1);
+          }
+          int jumpInsnIndex = insnList.indexOf(jumpInsn.label);
+          newControlFlowEdge(insnIndex, jumpInsnIndex);
+        }
+        else if (insnNode instanceof LookupSwitchInsnNode) {
+          LookupSwitchInsnNode lookupSwitchInsn = (LookupSwitchInsnNode) insnNode;
+          int targetInsnIndex = insnList.indexOf(lookupSwitchInsn.dflt);
+          newControlFlowEdge(insnIndex, targetInsnIndex);
+          for (int i = 0; i < lookupSwitchInsn.labels.size(); ++i) {
+            LabelNode label = lookupSwitchInsn.labels.get(i);
+            targetInsnIndex = insnList.indexOf(label);
+            newControlFlowEdge(insnIndex, targetInsnIndex);
+          }
+        }
+        else if (insnNode instanceof TableSwitchInsnNode) {
+          TableSwitchInsnNode tableSwitchInsn = (TableSwitchInsnNode) insnNode;
+          int targetInsnIndex = insnList.indexOf(tableSwitchInsn.dflt);
+          newControlFlowEdge(insnIndex, targetInsnIndex);
+          for (int i = 0; i < tableSwitchInsn.labels.size(); ++i) {
+            LabelNode label = tableSwitchInsn.labels.get(i);
+            targetInsnIndex = insnList.indexOf(label);
+            newControlFlowEdge(insnIndex, targetInsnIndex);
+          }
+        }
+        else if (insnOpcode != ATHROW && (insnOpcode < IRETURN || insnOpcode > RETURN)) {
+          newControlFlowEdge(insnIndex, insnIndex + 1);
+        }
+      }
+
+      List<TryCatchBlockNode> insnHandlers = handlers[insnIndex];
+      if (insnHandlers != null) {
+        for (TryCatchBlockNode tryCatchBlock : insnHandlers) {
+          newControlFlowExceptionEdge(insnIndex, tryCatchBlock);
+        }
+      }
+
+    }
+  }
+
+
+  protected void init(final String owner, final MethodNode method) throws AnalyzerException {
+    // Nothing to do.
+  }
+
+  // NOTE: 这是一个新添加的方法
+  private void initInstructionsToProcess() {
+    inInstructionsToProcess = new boolean[insnListSize];
+    instructionsToProcess = new int[insnListSize];
+    numInstructionsToProcess = 0;
+  }
+
+  // NOTE: 这是一个新添加的方法
+  private int removeInstructionsToProcess() {
+    int insnIndex = this.instructionsToProcess[--numInstructionsToProcess];
+    inInstructionsToProcess[insnIndex] = false;
+    return insnIndex;
+  }
+
+  // NOTE: 这是一个新添加的方法
+  private void addInstructionsToProcess(final int insnIndex) {
+    if (!inInstructionsToProcess[insnIndex]) {
+      inInstructionsToProcess[insnIndex] = true;
+      instructionsToProcess[numInstructionsToProcess++] = insnIndex;
+    }
+  }
+
+  protected void newControlFlowEdge(final int insnIndex, final int successorIndex) {
+    // Nothing to do.
+    addInstructionsToProcess(successorIndex);
+  }
+
+  protected void newControlFlowExceptionEdge(final int insnIndex, final TryCatchBlockNode tryCatchBlock) {
+    newControlFlowExceptionEdge(insnIndex, insnList.indexOf(tryCatchBlock.handler));
+  }
+
+  protected void newControlFlowExceptionEdge(final int insnIndex, final int successorIndex) {
+    // Nothing to do.
+    addInstructionsToProcess(successorIndex);
+  }
+}
+```
+
+#### 编码实现
+
+```java
+import org.objectweb.asm.tree.InsnList;
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.analysis.AnalyzerException;
+
+public class DeadCodeDiagnosis {
+  public static int[] diagnose(String className, MethodNode mn) throws AnalyzerException {
+    InsnList instructions = mn.instructions;
+    int size = instructions.size();
+
+    boolean[] flags = new boolean[size];
+    ControlFlowAnalyzer analyzer = new ControlFlowAnalyzer() {
+      @Override
+      protected void newControlFlowEdge(int insnIndex, int successorIndex) {
+        // 首先，处理自己的代码逻辑
+        flags[insnIndex] = true;
+        flags[successorIndex] = true;
+
+        // 其次，调用父类的实现
+        super.newControlFlowEdge(insnIndex, successorIndex);
+      }
+    };
+    analyzer.analyze(className, mn);
+
+
+    TIntArrayList intArrayList = new TIntArrayList();
+    for (int i = 0; i < size; i++) {
+      boolean flag = flags[i];
+      if (!flag) {
+        intArrayList.add(i);
+      }
+    }
+
+    return intArrayList.toNativeArray();
+  }
+}
+```
+
+对于`DeadCodeDiagnosis`类，我们从三点来把握：
+
+- 第一点，实现逻辑。通过重写`ControlFlowAnalyzer`类的`newControlFlowEdge`方法实现，将能够访问到了指令索引（instruction index）存放到一个`boolean[] flags`当中。
+- 第二点，类名的命名规则。
+  - 如果当前类是自己写的，那么类名的命名规则为`XxxDiagnosis`，其中定义的主要方法叫`diagnose`方法（诊断）。
+  - 如果当前类继承自`Analyzer`类，或者说模仿`Analyzer`类，那么类命名规则为`XxxAnalyzer`类，其主要的方法为`analyze`方法（分析）。
+- 第三点，`TIntArrayList`类的使用。
+  - 类的作用：它的操作类似于`List<int>`类型，里面的每一个元素都是`int`类型，比使用`List<Integer>`更高效。
+  - 类的来源：`TIntArrayList`类来源于trove4j类库。Trove is a high-performance library which provides primitive collections for Java.
+  - 类的优势：The greatest benefit of using `TIntArrayList` is performance and memory consumption gains. No additional boxing/unboxing is needed as it stores the data inside of an `int[]` array.
+  - 类的引用：在实际项目当中，可以在`pom.xml`文件中添加maven依赖
+
+```xml
+<dependency>
+    <groupId>org.jetbrains.intellij.deps</groupId>
+    <artifactId>trove4j</artifactId>
+    <version>1.0.20200330</version>
+</dependency>
+```
+
+#### 进行分析
+
+```java
+public class HelloWorldAnalysisTree {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes);
+
+    //（2）生成ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassNode(api);
+
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    //（3）进行分析
+    List<MethodNode> methods = cn.methods;
+    MethodNode mn = methods.get(1);
+    int[] array = DeadCodeDiagnosis.diagnose(cn.name, mn);
+    System.out.println(Arrays.toString(array));
+    BoxDrawingUtils.printInstructionLinks(mn.instructions, array);
+  }
+}
+```
+
+输出结果：
+
+```shell
+[1, 6, 7, 8, 18, 19, 20]
+      000: goto L0
+┌──── 001: athrow
+│     002: L0
+│     003: getstatic System.out
+│     004: iload_1
+│     005: goto L1
+├──── 006: nop
+├──── 007: nop
+├──── 008: athrow
+│     009: L1
+│     010: ifne L2
+│     011: ldc "val is 0"
+│     012: goto L3
+│     013: L2
+│     014: ldc "val is not 0"
+│     015: L3
+│     016: invokevirtual PrintStream.println
+│     017: return
+├──── 018: nop
+├──── 019: nop
+└──── 020: athrow
+```
+
+#### 逻辑上的dead code
+
+上面介绍的两种解决问题是没有办法处理代码逻辑上的dead code的：
+
+```java
+public class HelloWorld {
+  public void test(int val) {
+    if (val > 0) {
+      if (val < -1) {
+        // 这里是不可能执行的
+        System.out.println(val);
+      }
+    }
+  }
+}
+```
+
+### 4.5.4 总结
+
+本文内容总结如下：
+
+- 第一点，移除dead code的识别标志：如果某一条指令（instruction）是dead code，那么它对应的frame是`null`。
+- 第二点，如果不借助于frame信息，那么我们可以使用`Analyzer`类的control flow analysis部分进行实现。
+- 第三点，当前介绍的两种解决方法有局限性，不能处理代码逻辑上的dead code。
+
+## 4.6 BasicValue-BasicVerifier
+
+在本章内容当中，最核心的内容就是下面两行代码。这两行代码包含了`asm-analysis.jar`当中`Analyzer`、`Frame`、`Interpreter`和`Value`最重要的四个类：
+
+```
+   ┌── Analyzer
+   │        ┌── Value                                   ┌── Interpreter
+   │        │                                           │
+Analyzer<BasicValue> analyzer = new Analyzer<>(new BasicVerifier());
+Frame<BasicValue>[] frames = analyzer.analyze(owner, mn);
+   │        │
+   │        └── Value
+   └── Frame
+```
+
+在本文当中，我们将介绍`BasicVerifier`类：
+
+```
+┌───┬───────────────────┬─────────────┬───────┐
+│ 0 │    Interpreter    │    Value    │ Range │
+├───┼───────────────────┼─────────────┼───────┤
+│ 1 │ BasicInterpreter  │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 2 │   BasicVerifier   │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 3 │  SimpleVerifier   │ BasicValue  │   N   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 4 │ SourceInterpreter │ SourceValue │   N   │
+└───┴───────────────────┴─────────────┴───────┘
+```
+
+在上面这个表当中，我们关注以下三点：
+
+- 第一点，类的继承关系。`BasicVerifier`类继承自`BasicInterpreter`类，而`BasicInterpreter`类继承自`Interpreter`抽象类。另外，`SimpleVerifier`类是当前`BasicVerifier`类的子类。
+- 第二点，类的合作关系。`BasicVerifier`与`BasicValue`类是一起使用的。
+- 第三点，类的表达能力。`BasicVerifier`类能够使用的`BasicValue`对象有7个，也就是`BasicValue`类定义的7个静态字段值。
+
+值得注意的是，`BasicInterpreter`类和`BasicVerifier`类为什么会使用相同的`BasicValue`类定义的7个静态字段呢？因为`BasicVerifier`类沿用了`BasicInterpreter`类的`newValue()`方法；而`newValue()`就是生产`Value`对象的工厂。相应的，`SimpleVerifier`重新实现了`newValue()`方法，因此可以生成很多个`BasicValue`类的实例。
+
+### 4.6.1 BasicVerifier
+
+在介绍`BasicVerifier`类具体组成部分之前，我们来提出两个问题：
+
+- 第一个问题，类名的含义是什么呢？
+- 第二个问题，这个类的作用大吗？
+
+首先，回答第一个问题。`BasicVerifier`类名当中带有verify（检查）的含义。那么，检查什么内容呢？（What）检查的是指令（instruction）使用的是否正确。怎么检查呢？（How）指令（instruction）自身会带有类型信息（期望类型），让它与local variable和operand stack当中的数据类型（实际类型）是否兼容。那么，理解`BasicVerifier`类重点就在于，看看它是如何实现类型检查（verify）的。
+
+- For instance it checks that the operands of an `IADD` instruction are `BasicValue.INT_VALUE` values (while `BasicInterpreter`
+
+   just returns the result, i.e. `BasicValue.INT_VALUE`).
+
+  - 在`BasicVerifier`类当中，`binaryOperation`方法处理`IADD`指令时，会检查两个operand是否是`BasicValue.INT_VALUE`类型，然而再调用父类（`BasicInterpreter`）的实现。
+  - 在`BasicInterpreter`类当中，`binaryOperation`方法处理`IADD`指令时，会直接返回`BasicValue.INT_VALUE`类型。
+
+- For instance this class can detect that the `ISTORE 1 ALOAD 1` sequence is invalid.
+
+  - 在`BasicVerifier`类当中，`copyOperation`方法处理`ISTORE`指令时，会检查参数`value`是否为`BasicValue.INT_VALUE`类型。
+  - 在`BasicVerifier`类当中，`copyOperation`方法处理`ALOAD`指令时，会检查参数`value`是否为引用类型（`isReference()`方法）。
+
+其次，回答第二个问题。从实际应用的角度来说，`BasicVerifier`类的价值不大。为什么价值不大呢？因为它只能使用`BasicValue`所定义的7个静态字段值，对问题的表达能力非常有限，能够检查的也是简单的错误。那么，我们着重，学习和模仿`BasicVerifier`检查类型的处理思路。
+
+#### class info
+
+第一个部分，`BasicVerifier`类继承自`BasicInterpreter`类。
+
+```java
+/**
+ * An extended {@link BasicInterpreter} that checks that bytecode instructions are correctly used.
+ *
+ * @author Eric Bruneton
+ * @author Bing Ran
+ */
+public class BasicVerifier extends BasicInterpreter {
+}
+```
+
+#### fields
+
+第二个部分，`BasicVerifier`类定义的字段有哪些。
+
+```java
+public class BasicVerifier extends BasicInterpreter {
+    // 没有定义字段
+}
+```
+
+#### constructors
+
+第三个部分，`BasicVerifier`类定义的构造方法有哪些。
+
+```java
+public class BasicVerifier extends BasicInterpreter {
+  public BasicVerifier() {
+    super(ASM9);
+    if (getClass() != BasicVerifier.class) {
+      throw new IllegalStateException();
+    }
+  }
+
+  protected BasicVerifier(int api) {
+    super(api);
+  }
+}
+```
+
+#### methods
+
+第四个部分，`BasicVerifier`类定义的方法有哪些。
+
+##### opcode相关的方法
+
+在`Interpreter`类当中，定义了7个与opcode相关的抽象方法（abstract method）：
+
+1. newOperation
+2. copyOperation
+3. unaryOperation
+4. binaryOperation
+5. ternaryOperation
+6. naryOperation
+7. returnOperation
+
+在`BasicInterpreter`类当中，对这7个方法进行了实现。
+
+在`BasicVerifier`类当中，对6个方法进行了重新实现，有1个方法（`newOperation`）沿用了`BasicInterpreter`类的实现。
+
+在这6个重新实现的方法当中，它们的整体思路是一样的：将期望值（期望类型）和实际值（实际类型）进行比较。这里以`copyOperation`方法为例，其中`value`是实际值，`expected`是期望值，如果两者不匹配，则抛出`AnalyzerException`类型的异常。
+
+```java
+public class BasicVerifier extends BasicInterpreter {
+  @Override
+  public BasicValue copyOperation(final AbstractInsnNode insn, final BasicValue value) throws AnalyzerException {
+    Value expected;
+    switch (insn.getOpcode()) {
+      case ILOAD:
+      case ISTORE:
+        expected = BasicValue.INT_VALUE;
+        break;
+      case FLOAD:
+      case FSTORE:
+        expected = BasicValue.FLOAT_VALUE;
+        break;
+      case LLOAD:
+      case LSTORE:
+        expected = BasicValue.LONG_VALUE;
+        break;
+      case DLOAD:
+      case DSTORE:
+        expected = BasicValue.DOUBLE_VALUE;
+        break;
+      case ALOAD:
+        if (!value.isReference()) {
+          throw new AnalyzerException(insn, null, "an object reference", value);
+        }
+        return value;
+      case ASTORE:
+        if (!value.isReference() && !BasicValue.RETURNADDRESS_VALUE.equals(value)) {
+          throw new AnalyzerException(insn, null, "an object reference or a return address", value);
+        }
+        return value;
+      default:
+        return value;
+    }
+    if (!expected.equals(value)) {
+      throw new AnalyzerException(insn, null, expected, value);
+    }
+    return value;
+  }
+}
+```
+
+##### 自定义的protected方法
+
+在`BasicVerifier`类当中，它除了继承自`Interpreter`的方法之外，还定义了一些自己的`protected`方法。虽然这些`protected`方法比较简单，但是子类（例如，`SimpleVerifier`）可以对这些方法进行扩展。
+
+```java
+public class BasicVerifier extends BasicInterpreter {
+  protected boolean isArrayValue(final BasicValue value) {
+    return value.isReference();
+  }
+  protected BasicValue getElementValue(final BasicValue objectArrayValue) throws AnalyzerException {
+    return BasicValue.REFERENCE_VALUE;
+  }
+  protected boolean isSubTypeOf(final BasicValue value, final BasicValue expected) {
+    return value.equals(expected);
+  }
+}
+```
+
+数组类型：`BasicVerifier.isArrayValue(BasicValue value)`和`BasicVerifier.getElementValue(BasicValue objectArrayValue)`方法
+
+- 遇到`arraylength`指令时，判断operand stack栈顶是不是一个数组。
+- 遇到`aaload`指令时，根据当前的数组类型，获取其中的元素类型。
+
+两个类型之间的兼容性：`BasicVerifier.isSubTypeOf(BasicValue value, BasicValue expected)`
+
+- 遇到`invokevirtual`等指令时，实际返回的类型和方法的返回值类型之间是否兼容。
+
+引用类型：`BasicValue.isReference()`
+
+- 遇到`ifnull`或`areturn`这类指令的时候，它需要一个引用类型的值，不能是primitive type类型的值。
+
+### 4.6.2 示例：检测不合理指令组合
+
+假如我们想实现下面的`test`方法：
+
+```java
+package sample;
+
+public class HelloWorld {
+  public void test() {
+    int a = 1;
+    int b = 2;
+    int c = a + b;
+  }
+}
+```
+
+我们可以使用`BasicVerifier`来检验出`ISTORE 1 ALOAD 1`指令组合是不合理的。
+
+```java
+import org.objectweb.asm.tree.*;
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.analysis.*;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    MethodNode mn = new MethodNode(ACC_PUBLIC, "test", "()V", null, null);
+
+    InsnList il = mn.instructions;
+    il.add(new InsnNode(ICONST_1));
+    il.add(new VarInsnNode(ISTORE, 1));
+    il.add(new InsnNode(ICONST_2));
+    il.add(new VarInsnNode(ISTORE, 2));
+    il.add(new VarInsnNode(ILOAD, 1)); // 将ILOAD替换成ALOAD，就会报错
+    il.add(new VarInsnNode(ILOAD, 2));
+    il.add(new InsnNode(IADD));
+    il.add(new VarInsnNode(ISTORE, 3));
+    il.add(new InsnNode(RETURN));
+
+    mn.maxStack = 2;
+    mn.maxLocals = 4;
+
+    Analyzer<BasicValue> analyzer = new Analyzer<>(new BasicVerifier());
+    analyzer.analyze("sample/HelloWorld", mn);
+  }
+}
+```
+
+### 4.6.3 总结
+
+本文内容总结如下：
+
+- 第一点，介绍`BasicVerifier`类，它是属于`Interpreter`的部分，它的特点是进行类型检查。
+  - 进行类型检查的方式：将一个实际值和一个期望值进行比较，判断两者是否兼容（对应于`isSubTypeOf()`方法，或者相等，或者说父类和子类的关系）；如果兼容，则表示类型没有错误；如果不兼容，则表示类型出现错误。
+- 第二点，代码示例，学习`BasicVerifier`检查类型的思路。
+
+## 4.7 BasicValue-SimpleVerifier
+
+在本章内容当中，最核心的内容就是下面两行代码。这两行代码包含了`asm-analysis.jar`当中`Analyzer`、`Frame`、`Interpreter`和`Value`最重要的四个类：
+
+```java
+   ┌── Analyzer
+   │        ┌── Value                                   ┌── Interpreter
+   │        │                                           │
+Analyzer<BasicValue> analyzer = new Analyzer<>(new SimpleVerifier());
+Frame<BasicValue>[] frames = analyzer.analyze(owner, mn);
+   │        │
+   │        └── Value
+   └── Frame
+```
+
+在本文当中，我们将介绍`SimpleVerifier`类：
+
+```pseudocode
+┌───┬───────────────────┬─────────────┬───────┐
+│ 0 │    Interpreter    │    Value    │ Range │
+├───┼───────────────────┼─────────────┼───────┤
+│ 1 │ BasicInterpreter  │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 2 │   BasicVerifier   │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 3 │  SimpleVerifier   │ BasicValue  │   N   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 4 │ SourceInterpreter │ SourceValue │   N   │
+└───┴───────────────────┴─────────────┴───────┘
+```
+
+在上面这个表当中，我们关注以下三点：
+
+- 第一点，类的继承关系。`SimpleVerifier`类继承自`BasicVerifier`类，`BasicVerifier`类继承自`BasicInterpreter`类，而`BasicInterpreter`类继承自`Interpreter`抽象类。
+- 第二点，类的合作关系。`SimpleVerifier`与`BasicValue`类是一起使用的。
+- 第三点，类的表达能力。`SimpleVerifier`类能够使用的`BasicValue`对象有很多个。因为`SimpleVerifier`类重新实现了`newValue()`方法。每个类都有自己的表示形式。
+
+The `SimpleVerifier` class extends the `BasicVerifier` class. It uses **more sets** to simulate the execution of bytecode instructions: indeed **each class is represented by its own set, representing all possible objects of this class**.
+
+This class uses the **Java reflection API** in order to perform verifications and computations related to the class hierarchy. It therefore loads the classes referenced by a method into the JVM. This default behavior can be changed by overriding the protected methods of this class.
+
+### 4.7.1 SimpleVerifier
+
+理解`SimpleVerifier`类，从两个方面来把握：
+
+- 第一点，`SimpleVerifier`类可以模拟的`Value`值有多少个？为什么关注这个问题呢？因为这些`Value`值会存储在`Frame`内，它体现了`Frame`的表达能力。
+- 第二点，`SimpleVerifier`类如何实现验证（Verify）的功能？
+
+#### class info
+
+第一个部分，`SimpleVerifier`类继承自`BasicVerifier`类。
+
+```java
+/**
+ * An extended {@link BasicVerifier} that performs more precise verifications. This verifier
+ * computes exact class types, instead of using a single "object reference" type (as done in {@link
+ * BasicVerifier}).
+ *
+ * @author Eric Bruneton
+ * @author Bing Ran
+ */
+public class SimpleVerifier extends BasicVerifier {
+}
+```
+
+#### fields
+
+第二个部分，`SimpleVerifier`类定义的字段有哪些。
+
+```java
+public class SimpleVerifier extends BasicVerifier {
+  // 第一组字段，当前类、父类、接口
+  private Type currentClass;
+  private Type currentSuperClass;
+  private List<Type> currentClassInterfaces;
+  private boolean isInterface;
+
+  // 第二组字段，ClassLoader
+  private ClassLoader loader = getClass().getClassLoader();
+}
+```
+
+第一组字段，是记录当前类的相关信息。同时，我们也要注意到`Analyzer.analyze(owner, mn)`方法只提供了当前类的名字（`owner`），提供的类相关信息太少；而`SimpleVerifier`这个类记录了当前类、父类、接口和当前类是不是接口的信息。
+
+```java
+   ┌── Analyzer
+   │        ┌── Value                                   ┌── Interpreter
+   │        │                                           │
+Analyzer<BasicValue> analyzer = new Analyzer<>(new BasicInterpreter());
+Frame<BasicValue>[] frames = analyzer.analyze(owner, mn);
+   │        │                                   │
+   │        └── Value                           └── 只提供了当前类的名字信息
+   └── Frame
+```
+
+第二组字段，`loader`字段通过反射的方式将某个类加载进来，从而进一步判断类的继承关系。另外，`SimpleVerifier`也提供了一个`setter`方法来设置`loader`字段的值。
+
+```java
+public class SimpleVerifier extends BasicVerifier {
+  public void setClassLoader(ClassLoader loader) {
+    this.loader = loader;
+  }    
+}
+```
+
+#### constructors
+
+第三个部分，`SimpleVerifier`类定义的构造方法有哪些。
+
+注意，前三个构造方法都不适合由子类继承，因为它会判断`getClass() != SimpleVerifier.class`是否成立；如果是子类实现，就会抛出`IllegalStateException`类型的异常。
+
+```java
+public class SimpleVerifier extends BasicVerifier {
+  public SimpleVerifier() {
+    this(null, null, false);
+  }
+
+  public SimpleVerifier(Type currentClass, Type currentSuperClass, boolean isInterface) {
+    this(currentClass, currentSuperClass, null, isInterface);
+  }
+
+  public SimpleVerifier(Type currentClass, Type currentSuperClass, List<Type> currentClassInterfaces, boolean isInterface) {
+    this(ASM9, currentClass, currentSuperClass, currentClassInterfaces, isInterface);
+    if (getClass() != SimpleVerifier.class) {
+      throw new IllegalStateException();
+    }
+  }
+
+  protected SimpleVerifier(int api, Type currentClass, Type currentSuperClass, List<Type> currentClassInterfaces, boolean isInterface) {
+    super(api);
+    this.currentClass = currentClass;
+    this.currentSuperClass = currentSuperClass;
+    this.currentClassInterfaces = currentClassInterfaces;
+    this.isInterface = isInterface;
+  }
+}
+```
+
+#### methods
+
+第四个部分，`SimpleVerifier`类定义的方法有哪些。
+
+##### Interpreter.newValue方法
+
+这个`newValue`方法原本是在`Interpreter`类里定义的。
+
+在下面的表当中，我们可以看到：
+
+- 在`BasicInterpreter`和`BasicVerifier`类当中，可以使用的`BasicValue`值有`7`个。
+- 在`SimpleVerifier`类当中，可以使用的`BasicValue`值有`N`个。
+
+```pseudocode
+┌───┬───────────────────┬─────────────┬───────┐
+│ 0 │    Interpreter    │    Value    │ Range │
+├───┼───────────────────┼─────────────┼───────┤
+│ 1 │ BasicInterpreter  │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 2 │   BasicVerifier   │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 3 │  SimpleVerifier   │ BasicValue  │   N   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 4 │ SourceInterpreter │ SourceValue │   N   │
+└───┴───────────────────┴─────────────┴───────┘
+```
+
+那么，为什么`SimpleVerifier`类可以使用更多的`BasicValue`值呢？原因就在于`newValue`方法。我们从两点来把握：
+
+- 第一点，在`SimpleVerifier`类当中，`newValue`方法使用`new BasicValue(Type)`创建新的对象，因此使得`BasicValue`值多样化，每个不同的类都有一个对应的`BasicValue`值。
+- 第二点，<u>在`SimpleVerifier`类当中，`new BasicValue(Type)`的调用只在`newValue`方法中发生，不会在其它方法中调用。也就是说，创建新的`BasicValue`值，只会在`newValue`方法发生</u>。
+
+```java
+public class SimpleVerifier extends BasicVerifier {
+  @Override
+  public BasicValue newValue(Type type) {
+    if (type == null) {
+      return BasicValue.UNINITIALIZED_VALUE;
+    }
+
+    boolean isArray = type.getSort() == Type.ARRAY;
+    if (isArray) {
+      switch (type.getElementType().getSort()) {
+        case Type.BOOLEAN:
+        case Type.CHAR:
+        case Type.BYTE:
+        case Type.SHORT:
+          return new BasicValue(type);
+        default:
+          break;
+      }
+    }
+
+    BasicValue value = super.newValue(type);
+    if (BasicValue.REFERENCE_VALUE.equals(value)) {
+      if (isArray) {
+        value = newValue(type.getElementType());
+        StringBuilder descriptor = new StringBuilder();
+        for (int i = 0; i < type.getDimensions(); ++i) {
+          descriptor.append('[');
+        }
+        descriptor.append(value.getType().getDescriptor());
+        value = new BasicValue(Type.getType(descriptor.toString()));
+      } else {
+        value = new BasicValue(type);
+      }
+    }
+    return value;
+  }
+}
+```
+
+##### Interpreter.merge方法
+
+其实，`newValue`和`merge`方法都是`Interpreter`类所定义的方法。
+
+- 在`Interpreter`类当中，`merge`方法是一个抽象方法。
+- 在`BasicInterpreter`类当中，为`merge`方法提供了一个简单实现。
+- 在`BasicVerifier`类当中，继承了`BasicInterpreter`类的`merge`方法没有做任何改变。
+- 在`SimpleVerifier`类当中，对`merge`方法的代码逻辑进行了重新编写。
+
+在`BasicInterpreter`和`BasicVerifier`类当中，只使用7个`BasicValue`值，因此`merge`方法实现起来很简单。然而，在`SimpleVerifier`类当中，可以使用N个`BasicValue`值；也就是说，每个类型都有一个对应的`BasicValue`值，那么相应的merge操作就变得复杂起来了。
+
+```java
+public class SimpleVerifier extends BasicVerifier {
+  @Override
+  public BasicValue merge(BasicValue value1, BasicValue value2) {
+    if (!value1.equals(value2)) {
+      Type type1 = value1.getType();
+      Type type2 = value2.getType();
+      if (type1 != null
+          && (type1.getSort() == Type.OBJECT || type1.getSort() == Type.ARRAY)
+          && type2 != null
+          && (type2.getSort() == Type.OBJECT || type2.getSort() == Type.ARRAY)) {
+        if (type1.equals(NULL_TYPE)) {
+          return value2;
+        }
+        if (type2.equals(NULL_TYPE)) {
+          return value1;
+        }
+        if (isAssignableFrom(type1, type2)) {
+          return value1;
+        }
+        if (isAssignableFrom(type2, type1)) {
+          return value2;
+        }
+        int numDimensions = 0;
+        if (type1.getSort() == Type.ARRAY
+            && type2.getSort() == Type.ARRAY
+            && type1.getDimensions() == type2.getDimensions()
+            && type1.getElementType().getSort() == Type.OBJECT
+            && type2.getElementType().getSort() == Type.OBJECT) {
+          numDimensions = type1.getDimensions();
+          type1 = type1.getElementType();
+          type2 = type2.getElementType();
+        }
+        while (true) {
+          if (type1 == null || isInterface(type1)) {
+            return newArrayValue(Type.getObjectType("java/lang/Object"), numDimensions);
+          }
+          type1 = getSuperClass(type1);
+          if (isAssignableFrom(type1, type2)) {
+            return newArrayValue(type1, numDimensions);
+          }
+        }
+      }
+      return BasicValue.UNINITIALIZED_VALUE;
+    }
+    return value1;
+  }    
+}
+```
+
+##### BasicVerifier方法
+
+下面几个方法是从`BasicVerifier`继承来的方法
+
+```java
+public class SimpleVerifier extends BasicVerifier {
+  @Override
+  protected boolean isArrayValue(BasicValue value) {
+    Type type = value.getType();
+    return type != null && (type.getSort() == Type.ARRAY || type.equals(NULL_TYPE));
+  }
+
+  @Override
+  protected BasicValue getElementValue(BasicValue objectArrayValue) throws AnalyzerException {
+    Type arrayType = objectArrayValue.getType();
+    if (arrayType != null) {
+      if (arrayType.getSort() == Type.ARRAY) {
+        return newValue(Type.getType(arrayType.getDescriptor().substring(1)));
+      } else if (arrayType.equals(NULL_TYPE)) {
+        return objectArrayValue;
+      }
+    }
+    throw new AssertionError();
+  }
+
+  @Override
+  protected boolean isSubTypeOf(BasicValue value, BasicValue expected) {
+    Type expectedType = expected.getType();
+    Type type = value.getType();
+    switch (expectedType.getSort()) {
+      case Type.INT:
+      case Type.FLOAT:
+      case Type.LONG:
+      case Type.DOUBLE:
+        return type.equals(expectedType);
+      case Type.ARRAY:
+      case Type.OBJECT:
+        // 注意 null 类型也算是引用类型 (毕竟primitive type不允许null值，只有reference type允许null值)
+        if (type.equals(NULL_TYPE)) {
+          return true;
+        } else if (type.getSort() == Type.OBJECT || type.getSort() == Type.ARRAY) {
+          if (isAssignableFrom(expectedType, type)) {
+            return true;
+          } else if (getClass(expectedType).isInterface()) {
+            // The merge of class or interface types can only yield class types (because it is not
+            // possible in general to find an unambiguous common super interface, due to multiple
+            // inheritance). Because of this limitation, we need to relax the subtyping check here
+            // if 'value' is an interface.
+            return Object.class.isAssignableFrom(getClass(type));
+          } else {
+            return false;
+          }
+        } else {
+          return false;
+        }
+      default:
+        throw new AssertionError();
+    }
+  }
+}
+```
+
+##### protected方法
+
+下面几个方法是`SimpleVerifier`自定义的`protected`方法：
+
+- `isAssignableFrom`方法：判断两个`Type`之间是否兼容。
+- `isInterface`方法：判断某个`Type`是否为接口。
+- `getSuperClass`方法：获取某个`Type`的父类型。
+- `getClass`方法：通过反射的方式加载某个`Type`类型，是`loader`字段发挥作用的地方。另外，`isAssignableFrom`、`isInterface`和`getSuperClass`方法都会调用`getClass`方法。
+
+```java
+public class SimpleVerifier extends BasicVerifier {
+  protected boolean isAssignableFrom(Type type1, Type type2) {
+    if (type1.equals(type2)) {
+      return true;
+    }
+    if (currentClass != null && currentClass.equals(type1)) {
+      if (getSuperClass(type2) == null) {
+        return false;
+      } else {
+        if (isInterface) {
+          return type2.getSort() == Type.OBJECT || type2.getSort() == Type.ARRAY;
+        }
+        return isAssignableFrom(type1, getSuperClass(type2));
+      }
+    }
+    if (currentClass != null && currentClass.equals(type2)) {
+      if (isAssignableFrom(type1, currentSuperClass)) {
+        return true;
+      }
+      if (currentClassInterfaces != null) {
+        for (Type currentClassInterface : currentClassInterfaces) {
+          if (isAssignableFrom(type1, currentClassInterface)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+    return getClass(type1).isAssignableFrom(getClass(type2));
+  }
+
+  protected boolean isInterface(Type type) {
+    if (currentClass != null && currentClass.equals(type)) {
+      return isInterface;
+    }
+    return getClass(type).isInterface();
+  }
+
+  protected Type getSuperClass(Type type) {
+    if (currentClass != null && currentClass.equals(type)) {
+      return currentSuperClass;
+    }
+    Class<?> superClass = getClass(type).getSuperclass();
+    return superClass == null ? null : Type.getType(superClass);
+  }
+
+  protected Class<?> getClass(Type type) {
+    try {
+      if (type.getSort() == Type.ARRAY) {
+        return Class.forName(type.getDescriptor().replace('/', '.'), false, loader);
+      }
+      return Class.forName(type.getClassName(), false, loader);
+    } catch (ClassNotFoundException e) {
+      throw new TypeNotPresentException(e.toString(), e);
+    }
+  }    
+}
+```
+
+### 4.7.2 SimpleVerifier的表达能力
+
+#### primitive type无法区分
+
+SimpleVerifier的表达能力可以描述成这样：
+
+- 可以区分不同的引用类型（Reference Type），例如`String`、`Object`类型
+- 可以区分同一个引用类型的不同对象实例，例如”AAA”和”BBB”是`String`类型的不同对象实例
+- 但是，不能够区分同一种primitive type的不同值
+
+例如，下面的`HelloWorld`类当中，`str1`和`str2`这两个变量是`String`类型，它们分别使用不同的`BasicValue`对象来表示；相应的，`a`和`b`都是`int`类型（primitive type），它们分别是`1`和`2`两个值，但是它们都是用`BasicValue.INT_VALUE`来表示，没有办法进行区分。
+
+```java
+public class HelloWorld {
+  public void test() {
+    int a = 1;
+    int b = 2;
+    String str1 = "AAA";
+    String str2 = "BBB";
+  }
+}
+```
+
+#### 如何验证
+
+为了验证上面的内容是否正确，我们可以使用`HelloWorldFrameTree`类查看frame当中存储的数据：看一看`int`类型的`a`和`b`能不能区分，看一个`String`类型的`str1`和`str2`能不能区分开？
+
+第一次尝试（错误示例，不能区分）：
+
+```java
+print(owner, mn, new SimpleVerifier(), null);
+```
+
+输出结果：`a`和`b`都用`I`表示，`str1`和`str2`都用`Ljava/lang/String;`，看不出`str1`和`str2`有什么区别
+
+```shell
+test:()V
+000:    iconst_1                                {Lsample/HelloWorld;, ., ., ., .} | {}
+001:    istore_1                                {Lsample/HelloWorld;, ., ., ., .} | {I}
+002:    iconst_2                                {Lsample/HelloWorld;, I, ., ., .} | {}
+003:    istore_2                                {Lsample/HelloWorld;, I, ., ., .} | {I}
+004:    ldc "AAA"                               {Lsample/HelloWorld;, I, I, ., .} | {}
+005:    astore_3                                {Lsample/HelloWorld;, I, I, ., .} | {Ljava/lang/String;}
+006:    ldc "BBB"                               {Lsample/HelloWorld;, I, I, Ljava/lang/String;, .} | {}
+007:    astore 4                                {Lsample/HelloWorld;, I, I, Ljava/lang/String;, .} | {Ljava/lang/String;}
+008:    return                                  {Lsample/HelloWorld;, I, I, Ljava/lang/String;, Ljava/lang/String;} | {}
+================================================================
+```
+
+第二次尝试（错误示例，不能区分）：
+
+```java
+print(owner, mn, new SimpleVerifier(), item -> item.toString() + "@" + item.hashCode());
+```
+
+输出结果：`a`和`b`都用`I@65`表示，`str1`和`str2`都用`Ljava/lang/String;@-689322901`，看不出`str1`和`str2`有什么区别
+
+```shell
+test:()V
+000:    iconst_1                                {Lsample/HelloWorld;@1649535039, .@0, .@0, .@0, .@0} | {}
+001:    istore_1                                {Lsample/HelloWorld;@1649535039, .@0, .@0, .@0, .@0} | {I@65}
+002:    iconst_2                                {Lsample/HelloWorld;@1649535039, I@65, .@0, .@0, .@0} | {}
+003:    istore_2                                {Lsample/HelloWorld;@1649535039, I@65, .@0, .@0, .@0} | {I@65}
+004:    ldc "AAA"                               {Lsample/HelloWorld;@1649535039, I@65, I@65, .@0, .@0} | {}
+005:    astore_3                                {Lsample/HelloWorld;@1649535039, I@65, I@65, .@0, .@0} | {Ljava/lang/String;@-689322901}
+006:    ldc "BBB"                               {Lsample/HelloWorld;@1649535039, I@65, I@65, Ljava/lang/String;@-689322901, .@0} | {}
+007:    astore 4                                {Lsample/HelloWorld;@1649535039, I@65, I@65, Ljava/lang/String;@-689322901, .@0} | {Ljava/lang/String;@-689322901}
+008:    return                                  {Lsample/HelloWorld;@1649535039, I@65, I@65, Ljava/lang/String;@-689322901, Ljava/lang/String;@-689322901} | {}
+================================================================
+```
+
+那么，为什么第二次尝试是错误的呢？是因为`BasicValue.hashCode()`是经过修改的，它会进一步调用`Type.hashCode()`；而`Type.hashCode()`会根据descritor来计算hash值，只要descriptor相同，那么hash值就相同。
+
+第三次尝试（正确示例，能够区分）：借助于`System.identityHashCode()`方法
+
+```java
+print(owner, mn, new SimpleVerifier(), item -> item.toString() + "@" + System.identityHashCode(item));
+```
+
+输出结果：`a`和`b`都用`I@1267032364`表示，`str1`用`Ljava/lang/String;@661672156`表示，`str2`都用`Ljava/lang/String;@96639997`，可以看出`str1`和`str2`是不同的对象。
+
+```shell
+test:()V
+000:    iconst_1                                {Lsample/HelloWorld;@1147985808, .@2040495657, .@2040495657, .@2040495657, .@2040495657} | {}
+001:    istore_1                                {Lsample/HelloWorld;@1147985808, .@2040495657, .@2040495657, .@2040495657, .@2040495657} | {I@1267032364}
+002:    iconst_2                                {Lsample/HelloWorld;@1147985808, I@1267032364, .@2040495657, .@2040495657, .@2040495657} | {}
+003:    istore_2                                {Lsample/HelloWorld;@1147985808, I@1267032364, .@2040495657, .@2040495657, .@2040495657} | {I@1267032364}
+004:    ldc "AAA"                               {Lsample/HelloWorld;@1147985808, I@1267032364, I@1267032364, .@2040495657, .@2040495657} | {}
+005:    astore_3                                {Lsample/HelloWorld;@1147985808, I@1267032364, I@1267032364, .@2040495657, .@2040495657} | {Ljava/lang/String;@661672156}
+006:    ldc "BBB"                               {Lsample/HelloWorld;@1147985808, I@1267032364, I@1267032364, Ljava/lang/String;@661672156, .@2040495657} | {}
+007:    astore 4                                {Lsample/HelloWorld;@1147985808, I@1267032364, I@1267032364, Ljava/lang/String;@661672156, .@2040495657} | {Ljava/lang/String;@96639997}
+008:    return                                  {Lsample/HelloWorld;@1147985808, I@1267032364, I@1267032364, Ljava/lang/String;@661672156, Ljava/lang/String;@96639997} | {}
+================================================================
+```
+
+那么，我们为什么要将三次尝试都记录下来呢？因为大家在自己尝试的过程当中，可能也会想去确定local variable和operand stack上的某两个位置的值到底是不是同一个元素呢？如果说具体的`Value`值修改过`hashCode()`方法，那么可能就检测不出来。**为了正确的检测两个位置的值是不是同一个对象，我们可以借助于`System.identityHashCode()`方法**。
+
+> [hashCode和identityHashCode的区别你知道吗？ - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/62109977)
+>
+> + `System.identityHashCode()`永远返回根据对象物理内存地址产生的hash值。
+> + 如果没重写`hashCode()`方法，那么`hashCode()`返回值会和`System.identityHashCode()`一致
+
+### 4.7.3 总结
+
+本文内容总结如下：
+
+- 第一点，介绍`SimpleVerifier`类的各个部分。
+- 第二点，理解`SimpleVerifier`类的表达能力。
+
+## 4.8 BasicValue-SimpleVerifier示例：移除checkcast
+
+### 4.8.1 示例：移除不必要的转换
+
+> [Chapter 6. The Java Virtual Machine Instruction Set (oracle.com)](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.2)
+>
+> `checkcast indexbyte1 indexbyte2`
+>
+> **Operand Stack**
+>
+> ```pseudocode
+> ..., objectref →
+> 
+> ..., objectref
+> ```
+>
+> **Operation**
+>
+> Check whether object is of given type
+>
+> **Description**
+>
+> The *objectref* must be of type `reference`. The unsigned *indexbyte1* and *indexbyte2* are used to construct an index into the run-time constant pool of the current class ([§2.6](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-2.html#jvms-2.6)), where the value of the index is (*indexbyte1* `<<` 8) | *indexbyte2*. <u>The run-time constant pool entry at the index must be a symbolic reference to a class, array, or interface type.</u>
+>
+> <u>If *objectref* is `null`, then the operand stack is unchanged.</u>
+>
+> Otherwise, the named class, array, or interface type is resolved ([§5.4.3.1](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-5.html#jvms-5.4.3.1)). If *objectref* can be cast to the resolved class, array, or interface type, the operand stack is unchanged; otherwise, the *checkcast* instruction throws a `ClassCastException`.
+>
+> The following rules are used to determine whether an *objectref* that is not `null` can be cast to the resolved type. If S is the type of the object referred to by *objectref*, and T is the resolved class, array, or interface type, then *checkcast* determines whether *objectref* can be cast to type T as follows:
+>
+> - If S is a class type, then:
+>   - If T is a class type, then S must be the same class as T, or S must be a subclass of T;
+>   - If T is an interface type, then S must implement interface T.
+> - If S is an array type SC`[]`, that is, an array of components of type SC, then:
+>   - If T is a class type, then T must be `Object`.
+>   - If T is an interface type, then T must be one of the interfaces implemented by arrays (JLS §4.10.3, [Chapter 4. Types, Values, and Variables (oracle.com)](https://docs.oracle.com/javase/specs/jls/se20/html/jls-4.html#jls-4.10.3)).
+>   - If T is an array type TC`[]`, that is, an array of components of type TC, then one of the following must be true:
+>     - TC and SC are the same primitive type.
+>     - TC and SC are reference types, and type SC can be cast to TC by recursive application of these rules.
+>
+> **Linking Exceptions**
+>
+> During resolution of the symbolic reference to the class, array, or interface type, any of the exceptions documented in [§5.4.3.1](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-5.html#jvms-5.4.3.1) can be thrown.
+>
+> **Run-time Exception**
+>
+> Otherwise, if *objectref* cannot be cast to the resolved class, array, or interface type, the *checkcast* instruction throws a `ClassCastException`.
+>
+> **Notes**
+>
+> The *checkcast* instruction is very similar to the *instanceof* instruction ([§*instanceof*](https://docs.oracle.com/javase/specs/jvms/se11/html/jvms-6.html#jvms-6.5.instanceof)). It differs in its treatment of `null`, its behavior when its test fails (*checkcast* throws an exception, *instanceof* pushes a result code), and its effect on the operand stack.
+
+#### 预期目标
+
+```java
+public class HelloWorld {
+  public void test() {
+    Object obj = "ABC";
+    String val = (String) obj;
+    System.out.println(val);
+  }
+}
+```
+
+我们可以使用`javap`指令查看`test`方法包含的instructions内容：
+
+```shell
+$ javap -c sample.HelloWorld
+Compiled from "HelloWorld.java"
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: ldc           #2                  // String ABC
+       2: astore_1
+       3: aload_1
+       4: checkcast     #3                  // class java/lang/String
+       7: astore_2
+       8: getstatic     #4                  // Field java/lang/System.out:Ljava/io/PrintStream;
+      11: aload_2
+      12: invokevirtual #5                  // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      15: return
+}
+```
+
+我们想实现的目标：移除不必要的`checkcast`指令。
+
+```shell
+test:()V
+000:    ldc "ABC"                               {HelloWorld, ., .} | {}
+001:    astore_1                                {HelloWorld, ., .} | {String}
+002:    aload_1                                 {HelloWorld, String, .} | {}
+003:    checkcast String                        {HelloWorld, String, .} | {String}
+004:    astore_2                                {HelloWorld, String, .} | {String}
+005:    getstatic System.out                    {HelloWorld, String, String} | {}
+006:    aload_2                                 {HelloWorld, String, String} | {PrintStream}
+007:    invokevirtual PrintStream.println       {HelloWorld, String, String} | {PrintStream, String}
+008:    return                                  {HelloWorld, String, String} | {}
+================================================================
+```
+
+#### 编码实现
+
+```java
+import lsieun.asm.tree.transformer.MethodTransformer;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.*;
+import org.objectweb.asm.tree.analysis.*;
+
+import static org.objectweb.asm.Opcodes.CHECKCAST;
+
+public class RemoveUnusedCastNode extends ClassNode {
+  public RemoveUnusedCastNode(int api, ClassVisitor cv) {
+    super(api);
+    this.cv = cv;
+  }
+
+  @Override
+  public void visitEnd() {
+    // 首先，处理自己的代码逻辑
+    MethodTransformer mt = new MethodRemoveUnusedCastTransformer(name, null);
+    for (MethodNode mn : methods) {
+      if ("<init>".equals(mn.name) || "<clinit>".equals(mn.name)) {
+        continue;
+      }
+      InsnList insns = mn.instructions;
+      if (insns.size() == 0) {
+        continue;
+      }
+      mt.transform(mn);
+    }
+
+    // 其次，调用父类的方法实现
+    super.visitEnd();
+
+    // 最后，向后续ClassVisitor传递
+    if (cv != null) {
+      accept(cv);
+    }
+  }
+
+  private static class MethodRemoveUnusedCastTransformer extends MethodTransformer {
+    private final String owner;
+
+    public MethodRemoveUnusedCastTransformer(String owner, MethodTransformer mt) {
+      super(mt);
+      this.owner = owner;
+    }
+
+    @Override
+    public void transform(MethodNode mn) {
+      // 首先，处理自己的代码逻辑
+      Analyzer<BasicValue> analyzer = new Analyzer<>(new SimpleVerifier());
+      try {
+        Frame<BasicValue>[] frames = analyzer.analyze(owner, mn);
+        AbstractInsnNode[] insnNodes = mn.instructions.toArray();
+        for (int i = 0; i < insnNodes.length; i++) {
+          AbstractInsnNode insn = insnNodes[i];
+          if (insn.getOpcode() == CHECKCAST) {
+            Frame<BasicValue> f = frames[i];
+            if (f != null && f.getStackSize() > 0) {
+              BasicValue operand = f.getStack(f.getStackSize() - 1);
+              Class<?> to = getClass(((TypeInsnNode) insn).desc);
+              Class<?> from = getClass(operand.getType());
+              if (to.isAssignableFrom(from)) {
+                // 如果验证确实可转换，那么移除 checkcast 指令
+                mn.instructions.remove(insn);
+              }
+            }
+          }
+        }
+      }
+      catch (AnalyzerException ex) {
+        ex.printStackTrace();
+      }
+
+      // 其次，调用父类的方法实现
+      super.transform(mn);
+    }
+
+    private static Class<?> getClass(String desc) {
+      try {
+        return Class.forName(desc.replace('/', '.'));
+      }
+      catch (ClassNotFoundException ex) {
+        throw new RuntimeException(ex.toString());
+      }
+    }
+
+    private static Class<?> getClass(Type t) {
+      if (t.getSort() == Type.OBJECT) {
+        return getClass(t.getInternalName());
+      }
+      return getClass(t.getDescriptor());
+    }
+  }
+}
+```
+
+#### 进行转换
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.*;
+
+public class HelloWorldTransformTree {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+
+    // (1)构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    // (2)构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    // (3)串连ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new RemoveUnusedCastNode(api, cw);
+
+    //（4）结合ClassReader和ClassNode
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    // (5) 生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+#### 验证结果
+
+一方面，验证`test`方法的功能是否正常：
+
+```java
+import java.lang.reflect.Method;
+
+public class HelloWorldRun {
+  public static void main(String[] args) throws Exception {
+    Class<?> clazz = Class.forName("sample.HelloWorld");
+    Object instance = clazz.newInstance();
+    Method m = clazz.getDeclaredMethod("test");
+    m.invoke(instance);
+  }
+}
+```
+
+另一方面，验证`test`方法是否包含`checkcast`指令：
+
+```shell
+$ javap -c sample.HelloWorld
+public class sample.HelloWorld {
+...
+  public void test();
+    Code:
+       0: ldc           #11                 // String ABC
+       2: astore_1
+       3: aload_1
+       4: astore_2
+       5: getstatic     #17                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       8: aload_2
+       9: invokevirtual #23                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+      12: return
+}
+```
+
+### 4.8.2 解决方式二：使用Core API
+
+这个实现主要是依赖于Core API当中介绍的`AnalyzerAdapter`类。
+
+#### 编码实现
+
+```java
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.commons.AnalyzerAdapter;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class RemoveUnusedCastVisitor extends ClassVisitor {
+  private String owner;
+
+  public RemoveUnusedCastVisitor(int api, ClassVisitor classVisitor) {
+    super(api, classVisitor);
+  }
+
+  @Override
+  public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    super.visit(version, access, name, signature, superName, interfaces);
+    this.owner = name;
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null && !name.equals("<init>")) {
+      boolean isAbstractMethod = (access & ACC_ABSTRACT) != 0;
+      boolean isNativeMethod = (access & ACC_NATIVE) != 0;
+      if (!isAbstractMethod && !isNativeMethod) {
+        RemoveUnusedCastAdapter adapter = new RemoveUnusedCastAdapter(api, mv);
+        adapter.aa = new AnalyzerAdapter(owner, access, name, descriptor, adapter);
+        return adapter.aa;
+      }
+    }
+
+    return mv;
+  }
+
+  private static class RemoveUnusedCastAdapter extends MethodVisitor {
+    public AnalyzerAdapter aa;
+
+    public RemoveUnusedCastAdapter(int api, MethodVisitor methodVisitor) {
+      super(api, methodVisitor);
+    }
+
+    @Override
+    public void visitTypeInsn(int opcode, String type) {
+      if (opcode == CHECKCAST) {
+        Class<?> to = getClass(type);
+        if (aa.stack != null && aa.stack.size() > 0) {
+          Object operand = aa.stack.get(aa.stack.size() - 1);
+          if (operand instanceof String) {
+            Class<?> from = getClass((String) operand);
+            if (to.isAssignableFrom(from)) {
+              //直接return 即不向后传递指令，最后效果即删除 checkcast指令
+              return;
+            }
+          }
+        }
+      }
+      super.visitTypeInsn(opcode, type);
+    }
+
+    private static Class<?> getClass(String desc) {
+      try {
+        return Class.forName(desc.replace('/', '.'));
+      }
+      catch (ClassNotFoundException ex) {
+        throw new RuntimeException(ex.toString());
+      }
+    }
+  }
+}
+```
+
+#### 进行转换
+
+需要注意的地方是，在使用`AnalyzerAdapter`类时，要使用`ClassReader.EXPAND_FRAMES`选项。
+
+```java
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+public class HelloWorldTransformCore {
+  public static void main(String[] args) {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes1 = FileUtils.readBytes(filepath);
+    if (bytes1 == null) {
+      throw new RuntimeException("bytes1 is null");
+    }
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes1);
+
+    //（2）构建ClassWriter
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+
+    //（3）串连ClassVisitor
+    int api = Opcodes.ASM9;
+    ClassVisitor cv = new RemoveUnusedCastVisitor(api, cw);
+
+    //（4）结合ClassReader和ClassVisitor
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.EXPAND_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    //（5）生成byte[]
+    byte[] bytes2 = cw.toByteArray();
+
+    FileUtils.writeBytes(filepath, bytes2);
+  }
+}
+```
+
+### 4.8.3 总结
+
+本文内容总结如下：
+
+- 第一点，移除`checkcast`指令，从本质上来说，就是判断checkcast带有的“预期类型”和operand stack上栈顶的“实际类型”是否兼容。
+- 第二点，虽然使用的分别是Tree API和Core API的内容来进行实现，但两者的本质是一样的逻辑。
+
+## 4.9 BasicValue-SimpleVerifier示例：冗余变量分析
+
