@@ -9110,3 +9110,1751 @@ public class HelloWorldTransformCore {
 
 ## 4.9 BasicValue-SimpleVerifier示例：冗余变量分析
 
+### 4.9.1 如何判断变量是否冗余
+
+如果在IntelliJ IDEA当中编写如下的代码，它会提示`str2`和`str3`局部变量是多余的：
+
+```java
+public class HelloWorld {
+  public void test() {
+    String str1 = "Hello ASM";
+    Object obj1 = new Object();
+    // Local variable 'str2' is redundant
+    String str2 = str1;
+    Object obj2 = new Object();
+    // Local variable 'str3' is redundant
+    String str3 = str2;
+    Object obj3 = new Object();
+    int length = str3.length();
+    System.out.println(length);
+  }
+}
+```
+
+#### 整体思路
+
+结合`Analyzer`和`SimpleVerifier`类，我们可以查看Frame的变化情况：
+
+```shell
+test:()V
+000:                         ldc "Hello ASM"    {HelloWorld, ., ., ., ., ., ., .} | {}
+001:                                astore_1    {HelloWorld, ., ., ., ., ., ., .} | {String}
+002:                              new Object    {HelloWorld, String, ., ., ., ., ., .} | {}
+003:                                     dup    {HelloWorld, String, ., ., ., ., ., .} | {Object}
+004:             invokespecial Object.<init>    {HelloWorld, String, ., ., ., ., ., .} | {Object, Object}
+005:                                astore_2    {HelloWorld, String, ., ., ., ., ., .} | {Object}
+006:                                 aload_1    {HelloWorld, String, Object, ., ., ., ., .} | {}
+007:                                astore_3    {HelloWorld, String, Object, ., ., ., ., .} | {String}
+008:                              new Object    {HelloWorld, String, Object, String, ., ., ., .} | {}
+009:                                     dup    {HelloWorld, String, Object, String, ., ., ., .} | {Object}
+010:             invokespecial Object.<init>    {HelloWorld, String, Object, String, ., ., ., .} | {Object, Object}
+011:                                astore 4    {HelloWorld, String, Object, String, ., ., ., .} | {Object}
+012:                                 aload_3    {HelloWorld, String, Object, String, Object, ., ., .} | {}
+013:                                astore 5    {HelloWorld, String, Object, String, Object, ., ., .} | {String}
+014:                              new Object    {HelloWorld, String, Object, String, Object, String, ., .} | {}
+015:                                     dup    {HelloWorld, String, Object, String, Object, String, ., .} | {Object}
+016:             invokespecial Object.<init>    {HelloWorld, String, Object, String, Object, String, ., .} | {Object, Object}
+017:                                astore 6    {HelloWorld, String, Object, String, Object, String, ., .} | {Object}
+018:                                 aload 5    {HelloWorld, String, Object, String, Object, String, Object, .} | {}
+019:             invokevirtual String.length    {HelloWorld, String, Object, String, Object, String, Object, .} | {String}
+020:                                istore 7    {HelloWorld, String, Object, String, Object, String, Object, .} | {I}
+021:                    getstatic System.out    {HelloWorld, String, Object, String, Object, String, Object, I} | {}
+022:                                 iload 7    {HelloWorld, String, Object, String, Object, String, Object, I} | {PrintStream}
+023:       invokevirtual PrintStream.println    {HelloWorld, String, Object, String, Object, String, Object, I} | {PrintStream, I}
+024:                                  return    {HelloWorld, String, Object, String, Object, String, Object, I} | {}
+================================================================
+```
+
+我们的整体思路是这样的：
+
+- 在每一个Frame当中，它有local variable和operand stack两部分组成。
+- 程序中定义的“变量”是存储在local variable当中。
+- 在理想的情况下，一个“变量”对应于local variable当中的一个位置；如果一个“变量”对应于local variable当中的两个或多个位置，那么我们就认为“变量”出现了冗余。
+
+那么，针对某一个具体的frame，相应的实现思路上是这样的：
+
+- 判断`local[0]`和`local[1]`是否相同，如果相同，那么表示`local[1]`是冗余的变量。
+- 判断`local[0]`和`local[2]`是否相同，如果相同，那么表示`local[2]`是冗余的变量。
+- …
+- 判断`local[0]`和`local[n]`是否相同，如果相同，那么表示`local[n]`是冗余的变量。
+- 判断`local[1]`和`local[2]`是否相同，如果相同，那么表示`local[2]`是冗余的变量。
+- 判断`local[1]`和`local[3]`是否相同，如果相同，那么表示`local[3]`是冗余的变量。
+- …
+
+需要注意的一点就是，如果local variable当中存储“未初始化的值”（`BasicValue.UNINITIALIZED_VALUE`），那么我们就不进行处理了。
+
+具体来说，“未初始化的值”（`BasicValue.UNINITIALIZED_VALUE`）有两种情况：
+
+- 第一种情况，在方法刚进入的时候，local variable有些位置存储的就是“未初始化的值”（`BasicValue.UNINITIALIZED_VALUE`）。
+- 第二种情况，在存储`long`和`double`类型的数据时，它占用两个位置，其中第二个位置就是“未初始化的值”（`BasicValue.UNINITIALIZED_VALUE`）。
+
+#### 为什么选择SimpleVerifier
+
+在ASM当中，`Interpreter`类是一个抽象类，其中提供的子类有`BasicInterpreter`、`BasicVerifier`、`SimpleVerifier`和`SourceInterpreter`类。那么，我们到底应该选择哪一个呢？
+
+```pseudocode
+┌───┬───────────────────┬─────────────┬───────┐
+│ 0 │    Interpreter    │    Value    │ Range │
+├───┼───────────────────┼─────────────┼───────┤
+│ 1 │ BasicInterpreter  │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 2 │   BasicVerifier   │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 3 │  SimpleVerifier   │ BasicValue  │   N   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 4 │ SourceInterpreter │ SourceValue │   N   │
+└───┴───────────────────┴─────────────┴───────┘
+```
+
+首先，不能选择`BasicInterpreter`和`BasicVerifier`类。因为它们使用7个值（`BasicValue`类定义的7个静态字段）来模拟Frame的变化，这7个值的“表达能力”很弱。如果一个对象是`String`类型，另一个对象是`Object`类型，这两个对象都会被表示成`BasicValue.REFERENCE_VALUE`，没有办法进行区分。
+
+其次，不能选择`SourceInterpreter`类。因为它定义的`copyOperation`方法中会创建一个新的对象（`new SourceValue(value.getSize(), insn)`），不能识别为同一个对象。
+
+```java
+public class SourceInterpreter extends Interpreter<SourceValue> implements Opcodes {
+  @Override
+  public SourceValue copyOperation(final AbstractInsnNode insn, final SourceValue value) {
+    return new SourceValue(value.getSize(), insn);
+  }
+}
+```
+
+为什么要关注这个`copyOperation`方法呢？因为`copyOperation`方法负责处理load和store相关的指令。
+
+```java
+public abstract class Interpreter<V extends Value> {
+    /**
+     * Interprets a bytecode instruction that moves a value on the stack or to or from local variables.
+     * This method is called for the following opcodes:
+     *
+     * ILOAD, LLOAD, FLOAD, DLOAD, ALOAD,
+     * ISTORE, LSTORE, FSTORE, DSTORE, ASTORE,
+     * DUP, DUP_X1, DUP_X2, DUP2, DUP2_X1, DUP2_X2, SWAP
+     *
+     */
+    public abstract V copyOperation(AbstractInsnNode insn, V value) throws AnalyzerException;
+}
+```
+
+最后，选择`SimpleVerifier`是合适的。一方面，它能区分不同的类型（class）、区分不同的对象实例（object instance）；另一方面，在`copyOperation`方法中保证了对象的一致性，传入的是`value`，返回的仍然是`value`。更准确的来说，`SimpleVerifier`是继承了父类`BasicVerifier`类的`copyOperation`方法。
+
+```java
+public class BasicVerifier extends BasicInterpreter {
+  @Override
+  public BasicValue copyOperation(final AbstractInsnNode insn, final BasicValue value)
+    throws AnalyzerException {
+    //...
+    return value;
+  }
+}
+```
+
+### 4.9.2 示例：冗余变量分析
+
+#### 预期目标
+
+在下面的代码中，会提示`str2`和`str3`局部变量是多余的：
+
+```java
+public class HelloWorld {
+  public void test() {
+    String str1 = "Hello ASM";
+    Object obj1 = new Object();
+    // Local variable 'str2' is redundant
+    String str2 = str1;
+    Object obj2 = new Object();
+    // Local variable 'str3' is redundant
+    String str3 = str2;
+    Object obj3 = new Object();
+    int length = str3.length();
+    System.out.println(length);
+  }
+}
+```
+
+我们的预期目标：识别出`str2`和`str3`是冗余变量。
+
+#### 编码实现
+
+```java
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.InsnList;
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.VarInsnNode;
+import org.objectweb.asm.tree.analysis.*;
+
+import java.util.Arrays;
+
+public class RedundantVariableDiagnosis {
+  public static int[] diagnose(String className, MethodNode mn) throws AnalyzerException {
+    // 第一步，准备工作。使用SimpleVerifier进行分析，得到frames信息
+    Analyzer<BasicValue> analyzer = new Analyzer<>(new SimpleVerifier());
+    Frame<BasicValue>[] frames = analyzer.analyze(className, mn);
+
+    // 第二步，利用frames信息，查看local variable当中哪些slot数据出现了冗余
+    TIntArrayList localIndexList = new TIntArrayList();
+    for (Frame<BasicValue> f : frames) {
+      int locals = f.getLocals();
+      for (int i = 0; i < locals; i++) {
+        BasicValue val1 = f.getLocal(i);
+        if (val1 == BasicValue.UNINITIALIZED_VALUE) {
+          continue;
+        }
+        for (int j = i + 1; j < locals; j++) {
+          BasicValue val2 = f.getLocal(j);
+          if (val2 == BasicValue.UNINITIALIZED_VALUE) {
+            continue;
+          }
+          if (val1 == val2) {
+            if (!localIndexList.contains(j)) {
+              localIndexList.add(j);
+            }
+          }
+        }
+      }
+    }
+
+    // 第三步，将slot的索引值（local index）转换成instruction的索引值（insn index）
+    TIntArrayList insnIndexList = new TIntArrayList();
+    InsnList instructions = mn.instructions;
+    int size = instructions.size();
+    for (int i = 0; i < size; i++) {
+      AbstractInsnNode node = instructions.get(i);
+      int opcode = node.getOpcode();
+      if (opcode >= Opcodes.ISTORE && opcode <= Opcodes.ASTORE) {
+        VarInsnNode varInsnNode = (VarInsnNode) node;
+        if (localIndexList.contains(varInsnNode.var)) {
+          if (!insnIndexList.contains(i)) {
+            insnIndexList.add(i);
+          }
+        }
+      }
+    }
+
+    // 第四步，将insnIndexList转换成int[]形式
+    int[] array = insnIndexList.toNativeArray();
+    Arrays.sort(array);
+    return array;
+  }
+}
+```
+
+#### 进行分析
+
+```java
+public class HelloWorldAnalysisTree {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes);
+
+    //（2）生成ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassNode(api);
+
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    //（3）进行分析
+    List<MethodNode> methods = cn.methods;
+    MethodNode mn = methods.get(1);
+    int[] array = RedundantVariableDiagnosis.diagnose(cn.name, mn);
+    System.out.println(Arrays.toString(array));
+    BoxDrawingUtils.printInstructionLinks(mn.instructions, array);
+  }
+}
+```
+
+输出结果：
+
+```shell
+[7, 13]
+      000: ldc "Hello ASM"
+      001: astore_1
+      002: new Object
+      003: dup
+      004: invokespecial Object.<init>
+      005: astore_2
+      006: aload_1
+┌──── 007: astore_3
+│     008: new Object
+│     009: dup
+│     010: invokespecial Object.<init>
+│     011: astore 4
+│     012: aload_3
+└──── 013: astore 5
+      014: new Object
+      015: dup
+      016: invokespecial Object.<init>
+      017: astore 6
+      018: aload 5
+      019: invokevirtual String.length
+      020: istore 7
+      021: getstatic System.out
+      022: iload 7
+      023: invokevirtual PrintStream.println
+      024: return
+```
+
+### 4.9.3 测试用例
+
+#### primitive type - no
+
+本文介绍的方法不适合对primitive type进行分析：
+
+- 所有`int`类型的值都用`BasicValue.INT_VALUE`表示，不能对两个不同的值进行区分
+- 所有`float`类型的值都用`BasicValue.FLOAT_VALUE`表示，不能对两个不同的值进行区分
+- 所有`long`类型的值都用`BasicValue.LONG_VALUE`表示，不能对两个不同的值进行区分
+- 所有`double`类型的值都用`BasicValue.DOUBLE_VALUE`表示，不能对两个不同的值进行区分
+
+```java
+public class HelloWorld {
+  public void test() {
+    int a = 1;
+    int b = 2;
+    int c = a + b;
+    int d = a - b;
+    int e = c * d;
+    System.out.println(e);
+  }
+}
+```
+
+输出结果（错误）：
+
+```shell
+[3, 7, 11, 15]
+      000: iconst_1
+      001: istore_1
+      002: iconst_2
+┌──── 003: istore_2
+│     004: iload_1
+│     005: iload_2
+│     006: iadd
+├──── 007: istore_3
+│     008: iload_1
+│     009: iload_2
+│     010: isub
+├──── 011: istore 4
+│     012: iload_3
+│     013: iload 4
+│     014: imul
+└──── 015: istore 5
+      016: getstatic System.out
+      017: iload 5
+      018: invokevirtual PrintStream.println
+      019: return
+```
+
+#### return-no
+
+本文介绍的方法也不适用于`return`语句的判断。在下面的代码中，会提示`result`局部变量是多余的：
+
+```java
+public class HelloWorld {
+  public Object test() {
+    // Local variable 'result' is redundant
+    Object result = new Object();
+    return result;
+  }
+}
+```
+
+我觉得，可以使用`astore aload areturn`的指令组合来识别这种情况，不一定要使用Frame的分析做到。
+
+### 4.9.4 总结
+
+本文内容总结如下：
+
+- 第一点，如何判断一个变量是否冗余呢？看看local variable当中是否有两个或多个相同的值。
+- 第二点，代码示例，编码实现冗余变量分析。
+
+## 4.10 SourceValue-SourceInterpreter
+
+在本章内容当中，最核心的内容就是下面两行代码。这两行代码包含了`asm-analysis.jar`当中`Analyzer`、`Frame`、`Interpreter`和`Value`最重要的四个类：
+
+```java
+   ┌── Analyzer
+   │        ┌── Value                                   ┌── Interpreter
+   │        │                                           │
+Analyzer<SourceValue> analyzer = new Analyzer<>(new SourceInterpreter());
+Frame<BasicValue>[] frames = analyzer.analyze(owner, mn);
+   │        │
+   │        └── Value
+   └── Frame
+```
+
+在本文当中，我们将介绍`SourceInterpreter`和`SourceValue`类：
+
+```pseudocode
+┌───┬───────────────────┬─────────────┬───────┐
+│ 0 │    Interpreter    │    Value    │ Range │
+├───┼───────────────────┼─────────────┼───────┤
+│ 1 │ BasicInterpreter  │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 2 │   BasicVerifier   │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 3 │  SimpleVerifier   │ BasicValue  │   N   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 4 │ SourceInterpreter │ SourceValue │   N   │
+└───┴───────────────────┴─────────────┴───────┘
+```
+
+在上面这个表当中，我们关注以下三点：
+
+- 第一点，类的继承关系。`SourceInterpreter`类继承自`Interpreter`抽象类。
+- 第二点，类的合作关系。`SourceInterpreter`与`SourceValue`类是一起使用的。
+- 第三点，类的表达能力。`SourceInterpreter`类能够使用的`SourceValue`对象有很多个。
+
+### 4.10.1 SourceValue
+
+#### class info
+
+第一个部分，`SourceValue`类实现了`Value`接口。
+
+```java
+/**
+ * A {@link Value} which keeps track of the bytecode instructions that can produce it.
+ *
+ * @author Eric Bruneton
+ */
+public class SourceValue implements Value {
+}
+```
+
+#### fields
+
+第二个部分，`SourceValue`类定义的字段有哪些。
+
+```java
+public class SourceValue implements Value {
+  public int size;
+
+  public Set<AbstractInsnNode> insns;
+}
+```
+
+#### constructors
+
+第三个部分，`SourceValue`类定义的构造方法有哪些。这三个构造方法，有不同的应用场景：
+
+- `SourceValue(int)`构造方法，**在指令（Instruction）开始执行之前**，设置local variable的初始值，例如`this`、方法接收的参数，这些不需要指令（Instruction）参数。
+- `SourceValue(int, AbstractInsnNode)`构造方法，**在指令（Instruction）开始执行之后**，记录一条指令（`AbstractInsnNode`）和对应的local variable、operand stack上的值（`SourceValue`）之间的关系。
+- `SourceValue(int, Set<AbstractInsnNode>)`构造方法，在**`SourceValue`值进行合并（merge）的时候**，记录多条指令（`Set<AbstractInsnNode>`）和对应的local variable、operand stack上的值（`SourceValue`）之间的关系。
+
+```java
+public class SourceValue implements Value {
+  public SourceValue(int size) {
+    this(size, new SmallSet<AbstractInsnNode>());
+  }
+
+  public SourceValue(int size, AbstractInsnNode insnNode) {
+    this.size = size;
+    this.insns = new SmallSet<>(insnNode);
+  }
+
+  public SourceValue(int size, Set<AbstractInsnNode> insnSet) {
+    this.size = size;
+    this.insns = insnSet;
+  }
+}
+```
+
+#### methods
+
+第四个部分，`SourceValue`类定义的方法有哪些。
+
+```java
+public class SourceValue implements Value {
+  @Override
+  public int getSize() {
+    return size;
+  }
+}
+```
+
+### 4.10.2 SourceInterpreter
+
+`SourceInterpreter`的主要作用是记录指令（instruction）与Frame当中值（`SourceValue`）的关联关系。
+
+#### class info
+
+第一个部分，`SourceInterpreter`类实现了`Interpreter`抽象类。
+
+```java
+/**
+ * An {@link Interpreter} for {@link SourceValue} values.
+ *
+ * @author Eric Bruneton
+ */
+public class SourceInterpreter extends Interpreter<SourceValue> implements Opcodes {
+}
+```
+
+#### fields
+
+第二个部分，`SourceInterpreter`类定义的字段有哪些。
+
+```java
+public class SourceInterpreter extends Interpreter<SourceValue> implements Opcodes {
+  // 没有定义字段
+}
+```
+
+#### constructors
+
+第三个部分，`SourceInterpreter`类定义的构造方法有哪些。
+
+```java
+public class SourceInterpreter extends Interpreter<SourceValue> implements Opcodes {
+  public SourceInterpreter() {
+    super(ASM9);
+    if (getClass() != SourceInterpreter.class) {
+      throw new IllegalStateException();
+    }
+  }
+
+  protected SourceInterpreter(int api) {
+    super(api);
+  }
+}
+```
+
+#### methods
+
+第四个部分，`SourceInterpreter`类定义的方法有哪些。
+
+##### newValue方法
+
+```java
+public class SourceInterpreter extends Interpreter<SourceValue> implements Opcodes {
+  @Override
+  public SourceValue newValue(Type type) {
+    if (type == Type.VOID_TYPE) {
+      return null;
+    }
+    // 这里是SourceValue定义的第1个构造方法，不需要指令参与
+    return new SourceValue(type == null ? 1 : type.getSize());
+  }
+}
+```
+
+##### opcode相关方法
+
+下面7个方法中的6个，遵循一个共同特点：“创建SourceValue对象”。
+
+```java
+public class SourceInterpreter extends Interpreter<SourceValue> implements Opcodes {
+  @Override
+  public SourceValue newOperation(AbstractInsnNode insn) {
+    int size = 1; // 或者 size = 2
+    // 这里是SourceValue定义的第2个构造方法，需要1个指令参与
+    return new SourceValue(size, insn);
+  }
+
+  @Override
+  public SourceValue copyOperation(AbstractInsnNode insn, SourceValue value) {
+    // 这里是SourceValue定义的第2个构造方法，需要1个指令参与
+    return new SourceValue(value.getSize(), insn);
+  }
+
+  @Override
+  public SourceValue unaryOperation(AbstractInsnNode insn,
+                                    SourceValue value) {
+    int size = 1; // 或者 size = 2
+    // 这里是SourceValue定义的第2个构造方法，需要1个指令参与
+    return new SourceValue(size, insn);
+  }
+
+  @Override
+  public SourceValue binaryOperation(AbstractInsnNode insn,
+                                     SourceValue value1,
+                                     SourceValue value2) {
+    int size = 1; // 或者 size = 2
+    // 这里是SourceValue定义的第2个构造方法，需要1个指令参与
+    return new SourceValue(size, insn);
+  }
+
+  @Override
+  public SourceValue ternaryOperation(AbstractInsnNode insn,
+                                      SourceValue value1,
+                                      SourceValue value2,
+                                      SourceValue value3) {
+    // 这里是SourceValue定义的第2个构造方法，需要1个指令参与
+    return new SourceValue(1, insn);
+  }
+
+  @Override
+  public SourceValue naryOperation(AbstractInsnNode insn,
+                                   List<? extends SourceValue> values) {
+    int size = 1; // 或者 size = 2
+    // 这里是SourceValue定义的第2个构造方法，需要1个指令参与
+    return new SourceValue(size, insn);
+  }
+
+  @Override
+  public void returnOperation(AbstractInsnNode insn,
+                              SourceValue value,
+                              SourceValue expected) {
+    // Nothing to do.
+  }
+}
+```
+
+##### merge方法
+
+```java
+public class SourceInterpreter extends Interpreter<SourceValue> implements Opcodes {
+  @Override
+  public SourceValue merge(SourceValue value1, SourceValue value2) {
+    // 第一种情况，SmallSet类型
+    if (value1.insns instanceof SmallSet && value2.insns instanceof SmallSet) {
+      Set<AbstractInsnNode> setUnion = value1.insns + value2.insns;
+      if (setUnion == value1.insns && value1.size == value2.size) {
+        // value1包含了value2
+        return value1;
+      } else {
+        // 这里是SourceValue定义的第3个构造方法，需要多个指令参与
+        // value1不能包含value2，那就生成一个新的SourceValue对象
+        return new SourceValue(Math.min(value1.size, value2.size), setUnion);
+      }
+    }
+
+    // 第二种情况，其它类型，value1不能包含value2，那就生成一个新的SourceValue对象
+    if (value1.size != value2.size || !containsAll(value1.insns, value2.insns)) {
+      HashSet<AbstractInsnNode> setUnion = new HashSet<>();
+      setUnion.addAll(value1.insns);
+      setUnion.addAll(value2.insns);
+      // 这里是SourceValue定义的第3个构造方法，需要多个指令参与
+      return new SourceValue(Math.min(value1.size, value2.size), setUnion);
+    }
+
+    // 第三种情况，其它类型，value1包含了value2
+    return value1;
+  }
+}
+```
+
+### 4.10.3 测试代码
+
+#### simple
+
+```java
+public class HelloWorld {
+  public void test() {
+    int a = 1;
+    int b = 2;
+    int c = a + b;
+    System.out.println(c);
+  }
+}
+```
+
+对应的Frame变化如下：
+
+```shell
+test:()V
+000:    iconst_1                                {[], [], [], []} | {}
+001:    istore_1                                {[], [], [], []} | {[iconst_1]}
+002:    iconst_2                                {[], [istore_1], [], []} | {}
+003:    istore_2                                {[], [istore_1], [], []} | {[iconst_2]}
+004:    iload_1                                 {[], [istore_1], [istore_2], []} | {}
+005:    iload_2                                 {[], [istore_1], [istore_2], []} | {[iload_1]}
+006:    iadd                                    {[], [istore_1], [istore_2], []} | {[iload_1], [iload_2]}
+007:    istore_3                                {[], [istore_1], [istore_2], []} | {[iadd]}
+008:    getstatic System.out                    {[], [istore_1], [istore_2], [istore_3]} | {}
+009:    iload_3                                 {[], [istore_1], [istore_2], [istore_3]} | {[getstatic System.out]}
+010:    invokevirtual PrintStream.println       {[], [istore_1], [istore_2], [istore_3]} | {[getstatic System.out], [iload_3]}
+011:    return                                  {[], [istore_1], [istore_2], [istore_3]} | {}
+================================================================
+```
+
+##### if
+
+```java
+public class HelloWorld {
+  public void test(int a, int b) {
+    Object obj;
+    int c = a + b;
+    if (c > 10) {
+      obj = Integer.valueOf(c);
+    }
+    else {
+      obj = Float.valueOf(c);
+    }
+    System.out.println(obj);
+  }
+}
+```
+
+### 4.10.4 总结
+
+本文内容总结如下：
+
+- 第一点，**`SourceValue`类是“记录”instruction（`AbstractInsnNode`）与Frame当中的值（`SourceValue`）之间的关系，而`SourceInterpreter`类是“建立”两者之间的联系**。
+- 第二点，`SourceInterpreter`类是属于`Interpreter`的部分，它使用`SourceValue`的逻辑分成三个部分：
+  - 在指令（instruction）执行之前，计算方法的初始Frame（initial frame），this、方法的参数和未初始化的值，它们对应的`SourceValue`对象不与任何的指令（instruction）相关，对应于`SourceValue`第1个构造方法。
+  - 在指令（instruction）开始执行之后，如果某一条指令（instruction）改变了local variable和operand stack上的值，那么对应的`SourceValue`对象就记录该instruction（`AbstractInsnNode`）与`SourceValue`对象的联系，对应于`SourceValue`第2个构造方法。
+  - 在指令（instruction）开始执行之后，control flow有分支（brach），也就意味着将来的合并（merge）；在合并（merge）时对应的`SourceValue`对象就记录该多个instruction（`Set<AbstractInsnNode>`）与`SourceValue`对象的联系，对应于`SourceValue`第3个构造方法。
+
+## 4.11 SourceValue-SourceInterpreter示例：反编译-方法参数
+
+### 4.11.1 如何反编译方法参数
+
+#### 提出问题
+
+我们在学习Java的过程中，多多少少都会用到[Java Decompiler](http://java-decompiler.github.io/)工具，它可以将具体的`.class`文件转换成相应的Java代码。
+
+假如有一个`HelloWorld`类：
+
+```java
+public class HelloWorld {
+  public void test(int a, int b) {
+    int sum = Math.addExact(a, b);
+    int diff = Math.subtractExact(a, b);
+    int result = Math.multiplyExact(sum, diff);
+    System.out.println(result);
+  }
+}
+```
+
+上面的`HelloWorld.java`经过编译之后会生成`HelloWorld.class`文件，然后可以查看其包含的instruction内容：
+
+```shell
+$ javap -v sample.HelloWorld
+  Compiled from "HelloWorld.java"
+public class sample.HelloWorld
+{
+...
+  public void test(int, int);
+    descriptor: (II)V
+    flags: ACC_PUBLIC
+    Code:
+      stack=2, locals=6, args_size=3
+         0: iload_1
+         1: iload_2
+         2: invokestatic  #2                  // Method java/lang/Math.addExact:(II)I
+         5: istore_3
+         6: iload_1
+         7: iload_2
+         8: invokestatic  #3                  // Method java/lang/Math.subtractExact:(II)I
+        11: istore        4
+        13: iload_3
+        14: iload         4
+        16: invokestatic  #4                  // Method java/lang/Math.multiplyExact:(II)I
+        19: istore        5
+        21: getstatic     #5                  // Field java/lang/System.out:Ljava/io/PrintStream;
+        24: iload         5
+        26: invokevirtual #6                  // Method java/io/PrintStream.println:(I)V
+        29: return
+      LocalVariableTable:
+        Start  Length  Slot  Name   Signature
+            0      30     0  this   Lsample/HelloWorld;
+            0      30     1     a   I
+            0      30     2     b   I
+            6      24     3   sum   I
+           13      17     4  diff   I
+           21       9     5 result   I
+}
+```
+
+那么，我们能不能利用Java ASM帮助我们做一些反编译的工作呢？
+
+#### 整体思路
+
+我们的整体思路就是，结合`SourceInterpreter`类和`LocalVariableTable`来对invoke（方法调用）相关的指令进行反编译。
+
+使用`SourceInterpreter`类输出Frame变化信息：
+
+```shell
+test:(II)V
+000:                                 iload_1    {[], [], [], [], [], []} | {}
+001:                                 iload_2    {[], [], [], [], [], []} | {[iload_1]}
+002:              invokestatic Math.addExact    {[], [], [], [], [], []} | {[iload_1], [iload_2]}
+003:                                istore_3    {[], [], [], [], [], []} | {[invokestatic Math.addExact]}
+004:                                 iload_1    {[], [], [], [istore_3], [], []} | {}
+005:                                 iload_2    {[], [], [], [istore_3], [], []} | {[iload_1]}
+006:         invokestatic Math.subtractExact    {[], [], [], [istore_3], [], []} | {[iload_1], [iload_2]}
+007:                                istore 4    {[], [], [], [istore_3], [], []} | {[invokestatic Math.subtractExact]}
+008:                                 iload_3    {[], [], [], [istore_3], [istore 4], []} | {}
+009:                                 iload 4    {[], [], [], [istore_3], [istore 4], []} | {[iload_3]}
+010:         invokestatic Math.multiplyExact    {[], [], [], [istore_3], [istore 4], []} | {[iload_3], [iload 4]}
+011:                                istore 5    {[], [], [], [istore_3], [istore 4], []} | {[invokestatic Math.multiplyExact]}
+012:                    getstatic System.out    {[], [], [], [istore_3], [istore 4], [istore 5]} | {}
+013:                                 iload 5    {[], [], [], [istore_3], [istore 4], [istore 5]} | {[getstatic System.out]}
+014:       invokevirtual PrintStream.println    {[], [], [], [istore_3], [istore 4], [istore 5]} | {[getstatic System.out], [iload 5]}
+015:                                  return    {[], [], [], [istore_3], [istore 4], [istore 5]} | {}
+================================================================
+```
+
+### 4.11.2 示例：方法参数反编译
+
+#### 预期目标
+
+我们想对`HelloWorld.class`中的`test`方法内的invoke相关的instruction进行反编译。
+
+```java
+public class HelloWorld {
+  public void test(int a, int b) {
+    int sum = Math.addExact(a, b);
+    int diff = Math.subtractExact(a, b);
+    int result = Math.multiplyExact(sum, diff);
+    System.out.println(result);
+  }
+}
+```
+
+预期目标：将方法调用的参数进行反编译。
+
+例如，将下面的instructions反编译成`Math.addExact(a, b)`。
+
+```shell
+0: iload_1
+1: iload_2
+2: invokestatic  #2                  // Method java/lang/Math.addExact:(II)I
+```
+
+#### 编码实现
+
+```java
+import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.*;
+import org.objectweb.asm.tree.analysis.*;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class ReverseEngineerMethodArgumentsDiagnosis {
+  private static final String UNKNOWN_VARIABLE_NAME = "unknown";
+
+  public static void diagnose(String className, MethodNode mn) throws AnalyzerException {
+    // 第一步，获取Frame信息
+    Analyzer<SourceValue> analyzer = new Analyzer<>(new SourceInterpreter());
+    Frame<SourceValue>[] frames = analyzer.analyze(className, mn);
+
+    // 第二步，获取LocalVariableTable信息
+    List<LocalVariableNode> localVariables = mn.localVariables;
+    if (localVariables == null || localVariables.size() < 1) {
+      System.out.println("LocalVariableTable is Empty");
+      return;
+    }
+
+    // 第三步，获取instructions，并找到与invoke相关的指令
+    InsnList instructions = mn.instructions;
+    int[] methodInsnArray = findMethodInvokes(instructions);
+
+    // 第四步，对invoke相关的指令进行反编译
+    for (int methodInsn : methodInsnArray) {
+      // (1) 获取方法的参数
+      MethodInsnNode methodInsnNode = (MethodInsnNode) instructions.get(methodInsn);
+      Type methodType = Type.getMethodType(methodInsnNode.desc);
+      Type[] argumentTypes = methodType.getArgumentTypes();
+      int argNum = argumentTypes.length;
+
+      // (2) 从Frame当中获取指令，并将指令转换LocalVariableTable当中的变量名
+      Frame<SourceValue> f = frames[methodInsn];
+      int stackSize = f.getStackSize();
+      List<String> argList = new ArrayList<>();
+      for (int i = 0; i < argNum; i++) {
+        int stackIndex = stackSize - argNum + i;
+        SourceValue stackValue = f.getStack(stackIndex);
+        AbstractInsnNode insn = stackValue.insns.iterator().next();
+        String argName = getMethodVariableName(insn, localVariables);
+        argList.add(argName);
+      }
+
+      // (3) 将反编译的结果打印出来
+      String line = String.format("%s.%s(%s)", methodInsnNode.owner, methodInsnNode.name, argList);
+      System.out.println(line);
+    }
+  }
+
+  public static String getMethodVariableName(AbstractInsnNode insn, List<LocalVariableNode> localVariables) {
+    if (insn instanceof VarInsnNode) {
+      VarInsnNode varInsnNode = (VarInsnNode) insn;
+      int localIndex = varInsnNode.var;
+
+      for (LocalVariableNode node : localVariables) {
+        if (node.index == localIndex) {
+          return node.name;
+        }
+      }
+
+      return String.format("locals[%d]", localIndex);
+    }
+    return UNKNOWN_VARIABLE_NAME;
+  }
+
+  public static int[] findMethodInvokes(InsnList instructions) {
+    int size = instructions.size();
+    boolean[] methodArray = new boolean[size];
+    for (int i = 0; i < size; i++) {
+      AbstractInsnNode node = instructions.get(i);
+      if (node instanceof MethodInsnNode) {
+        methodArray[i] = true;
+      }
+    }
+
+    int count = 0;
+    for (boolean flag : methodArray) {
+      if (flag) {
+        count++;
+      }
+    }
+
+    int[] array = new int[count];
+    int j = 0;
+    for (int i = 0; i < size; i++) {
+      boolean flag = methodArray[i];
+      if (flag) {
+        array[j] = i;
+        j++;
+      }
+    }
+    return array;
+  }
+}
+```
+
+#### 进行分析
+
+在`HelloWorldAnalysisTree`类当中，要注意：不能使用`ClassReader.SKIP_DEBUG`，因为我们要使用到`MethodNode.localVariables`字段的信息。
+
+```java
+public class HelloWorldAnalysisTree {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes);
+
+    //（2）生成ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassNode(api);
+
+    int parsingOptions = ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    //（3）进行分析
+    String className = cn.name;
+    List<MethodNode> methods = cn.methods;
+    MethodNode mn = methods.get(1);
+    ReverseEngineerMethodArgumentsDiagnosis.diagnose(className, mn);
+  }
+}
+```
+
+输出结果：
+
+```shell
+java/lang/Math.addExact([a, b])
+java/lang/Math.subtractExact([a, b])
+java/lang/Math.multiplyExact([sum, diff])
+java/io/PrintStream.println([result])
+```
+
+### 4.11.3 总结
+
+本文内容总结如下：
+
+- 第一点，整体的思路，是利用`SourceInterpreter`类和LocalVariableTable来实现的。
+- 第二点，代码示例。如何编码实现对于方法的参数进行反编译。
+
+## 4.12 SourceValue-SourceInterpreter示例：查找相关的指令
+
+在StackOverflow上有这样一个问题：[Find all instructions belonging to a specific method-call](https://stackoverflow.com/questions/60969392/java-asm-bytecode-find-all-instructions-belonging-to-a-specific-method-call)。在解决方法当中，就用到了`SourceInterpreter`和`SourceValue`类。在本文当中，我们将这个问题和解决思路简单地进行介绍。
+
+### 4.12.1 实现思路
+
+#### 回顾SourceInterpreter
+
+首先，我们来回顾一下`SourceInterpreter`的作用：记录指令（instruction）与Frame当中值（`SourceValue`）的关联关系。
+
+```java
+public class HelloWorld {
+  public void test(int a, int b) {
+    int c = a + b;
+    System.out.println(c);
+  }
+}
+```
+
+那么，借助于`SourceInterpreter`类查看`test`方法内某一条instuction将某一个`SourceValue`加载（入栈）到Frame上：
+
+```shell
+test:(II)V
+000:                                 iload_1    {[], [], [], []} | {}
+001:                                 iload_2    {[], [], [], []} | {[iload_1]}
+002:                                    iadd    {[], [], [], []} | {[iload_1], [iload_2]}
+003:                                istore_3    {[], [], [], []} | {[iadd]}
+004:                    getstatic System.out    {[], [], [], [istore_3]} | {}
+005:                                 iload_3    {[], [], [], [istore_3]} | {[getstatic System.out]}
+006:       invokevirtual PrintStream.println    {[], [], [], [istore_3]} | {[getstatic System.out], [iload_3]}
+007:                                  return    {[], [], [], [istore_3]} | {}
+================================================================
+```
+
+由此，我们可以模仿一下，进一步记录某一条instuction将某一个`SourceValue`从Frame上消耗掉（出栈）：
+
+```shell
+test:(II)V
+000:                                 iload_1    {[], [], [], []} | {}
+001:                                 iload_2    {[], [], [], []} | {[iadd]}
+002:                                    iadd    {[], [], [], []} | {[iadd], [iadd]}
+003:                                istore_3    {[], [], [], []} | {[istore_3]}
+004:                    getstatic System.out    {[], [], [], []} | {}
+005:                                 iload_3    {[], [], [], []} | {[invokevirtual PrintStream.println]}
+006:       invokevirtual PrintStream.println    {[], [], [], []} | {[invokevirtual PrintStream.println], [invokevirtual PrintStream.println]}
+007:                                  return    {[], [], [], []} | {}
+================================================================
+```
+
+那么，我们怎么实现这样一个功能呢？用一个`DestinationInterpreter`类来实现。
+
+#### DestinationInterpreter
+
+首先，我们编写一个`DestinationInterpreter`类。对于这个类，我们从两点来把握：
+
+- 第一点，抽象功能。要实现什么的功能呢？记录operand stack上某一个元素是被哪一个指令（instruction）消耗掉（出栈）的。这个功能正好与`SourceInterpreter`类的功能相反。
+- 第二点，具体实现。如何进行编码实现呢？`DestinationInterpreter`类，是模仿着`SourceInterpreter`类实现的。
+
+```java
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.*;
+import org.objectweb.asm.tree.analysis.AnalyzerException;
+import org.objectweb.asm.tree.analysis.Interpreter;
+import org.objectweb.asm.tree.analysis.SourceValue;
+
+import java.util.HashSet;
+import java.util.List;
+
+public class DestinationInterpreter extends Interpreter<SourceValue> implements Opcodes {
+  public DestinationInterpreter() {
+    super(ASM9);
+    if (getClass() != DestinationInterpreter.class) {
+      throw new IllegalStateException();
+    }
+  }
+
+  protected DestinationInterpreter(final int api) {
+    super(api);
+  }
+
+  @Override
+  public SourceValue newValue(Type type) {
+    if (type == Type.VOID_TYPE) {
+      return null;
+    }
+    return new SourceValue(type == null ? 1 : type.getSize(), new HashSet<>());
+  }
+
+  @Override
+  public SourceValue newOperation(AbstractInsnNode insn) {
+    int size;
+    switch (insn.getOpcode()) {
+      case LCONST_0:
+      case LCONST_1:
+      case DCONST_0:
+      case DCONST_1:
+        size = 2;
+        break;
+      case LDC:
+        Object value = ((LdcInsnNode) insn).cst;
+        size = value instanceof Long || value instanceof Double ? 2 : 1;
+        break;
+      case GETSTATIC:
+        size = Type.getType(((FieldInsnNode) insn).desc).getSize();
+        break;
+      default:
+        size = 1;
+        break;
+    }
+    return new SourceValue(size, new HashSet<>());
+  }
+
+  @Override
+  public SourceValue copyOperation(AbstractInsnNode insn, SourceValue value) throws AnalyzerException {
+    int opcode = insn.getOpcode();
+    if (opcode >= ISTORE && opcode <= ASTORE) {
+      value.insns.add(insn);
+    }
+
+    return new SourceValue(value.getSize(), new HashSet<>());
+  }
+
+  @Override
+  public SourceValue unaryOperation(AbstractInsnNode insn, SourceValue value) throws AnalyzerException {
+    value.insns.add(insn);
+
+    int size;
+    switch (insn.getOpcode()) {
+      case LNEG:
+      case DNEG:
+      case I2L:
+      case I2D:
+      case L2D:
+      case F2L:
+      case F2D:
+      case D2L:
+        size = 2;
+        break;
+      case GETFIELD:
+        size = Type.getType(((FieldInsnNode) insn).desc).getSize();
+        break;
+      default:
+        size = 1;
+        break;
+    }
+    return new SourceValue(size, new HashSet<>());
+  }
+
+  @Override
+  public SourceValue binaryOperation(AbstractInsnNode insn, SourceValue value1, SourceValue value2) throws AnalyzerException {
+    value1.insns.add(insn);
+    value2.insns.add(insn);
+
+    int size;
+    switch (insn.getOpcode()) {
+      case LALOAD:
+      case DALOAD:
+      case LADD:
+      case DADD:
+      case LSUB:
+      case DSUB:
+      case LMUL:
+      case DMUL:
+      case LDIV:
+      case DDIV:
+      case LREM:
+      case DREM:
+      case LSHL:
+      case LSHR:
+      case LUSHR:
+      case LAND:
+      case LOR:
+      case LXOR:
+        size = 2;
+        break;
+      default:
+        size = 1;
+        break;
+    }
+    return new SourceValue(size, new HashSet<>());
+  }
+
+  @Override
+  public SourceValue ternaryOperation(AbstractInsnNode insn, SourceValue value1, SourceValue value2, SourceValue value3) throws AnalyzerException {
+    value1.insns.add(insn);
+    value2.insns.add(insn);
+    value3.insns.add(insn);
+
+    return new SourceValue(1, new HashSet<>());
+  }
+
+  @Override
+  public SourceValue naryOperation(AbstractInsnNode insn, List<? extends SourceValue> values) throws AnalyzerException {
+    if (values != null) {
+      for (SourceValue v : values) {
+        v.insns.add(insn);
+      }
+    }
+
+    int size;
+    int opcode = insn.getOpcode();
+    if (opcode == MULTIANEWARRAY) {
+      size = 1;
+    }
+    else if (opcode == INVOKEDYNAMIC) {
+      size = Type.getReturnType(((InvokeDynamicInsnNode) insn).desc).getSize();
+    }
+    else {
+      size = Type.getReturnType(((MethodInsnNode) insn).desc).getSize();
+    }
+    return new SourceValue(size, new HashSet<>());
+  }
+
+  @Override
+  public void returnOperation(AbstractInsnNode insn, SourceValue value, SourceValue expected) throws AnalyzerException {
+    // Nothing to do.
+  }
+
+  // 不像 SourceInterpreter需要标记Value来源的可能值集合，这里Value被消耗一定是被具体某一指令消耗
+  @Override
+  public SourceValue merge(final SourceValue value1, final SourceValue value2) {
+    return new SourceValue(Math.min(value1.size, value2.size), new HashSet<>());
+  }
+}
+```
+
+### 4.12.2 示例：查找相关的指令
+
+#### 预期目标
+
+假如有一个`HelloWorld`类：
+
+```java
+public class HelloWorld {
+  public void test() {
+    int a = 1;
+    int b = 2;
+    int c = 3;
+    int d = 4;
+    int sum = add(a, b);
+    int diff = sub(c, d);
+    int result = mul(sum, diff);
+    System.out.println(result);
+  }
+
+  public int add(int a, int b) {
+    return a + b;
+  }
+
+  public int sub(int a, int b) {
+    return a - b;
+  }
+
+  public int mul(int a, int b) {
+    return a * b;
+  }
+}
+```
+
+我们对`test`方法进行分析，想实现的预期目标：如果想删除对某一个方法的调用，有哪些指令会变得无效呢？
+
+例如，想删除`add(a, b)`方法调用，直接使用`int sum = 10;`，那么`a`和`b`两个变量就不需要了：
+
+```java
+public class HelloWorld {
+  public void test() {
+    int c = 3;
+    int d = 4;
+    int sum = 10;
+    int diff = sub(c, d);
+    int result = mul(sum, diff);
+    System.out.println(result);
+  }
+
+  // ...
+}
+```
+
+#### 编码实现
+
+```java
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.InsnList;
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.VarInsnNode;
+import org.objectweb.asm.tree.analysis.*;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+public class RelatedInstructionDiagnosis {
+  public static int[] diagnose(String className, MethodNode mn, int insnIndex) throws AnalyzerException {
+    // 第一步，判断insnIndex范围是否合理
+    InsnList instructions = mn.instructions;
+    int size = instructions.size();
+    if (insnIndex < 0 || insnIndex >= size) {
+      String message = String.format("the 'insnIndex' argument should in range [0, %d]", size - 1);
+      throw new IllegalArgumentException(message);
+    }
+
+    // 第二步，获取两个Frame
+    Frame<SourceValue>[] sourceFrames = getSourceFrames(className, mn);
+    Frame<SourceValue>[] destinationFrames = getDestinationFrames(className, mn);
+
+    // 第三步，循环处理，所有结果记录到这个intArrayList变量中
+    TIntArrayList intArrayList = new TIntArrayList();
+    // 循环tmpInsnList
+    List<AbstractInsnNode> tmpInsnList = new ArrayList<>();
+    AbstractInsnNode insnNode = instructions.get(insnIndex);
+    tmpInsnList.add(insnNode);
+    for (int i = 0; i < tmpInsnList.size(); i++) {
+      AbstractInsnNode currentNode = tmpInsnList.get(i);
+      int opcode = currentNode.getOpcode();
+
+      int index = instructions.indexOf(currentNode);
+      intArrayList.add(index);
+
+      // 第一种情况，处理load相关的opcode情况
+      Frame<SourceValue> srcFrame = sourceFrames[index];
+      if (opcode >= Opcodes.ILOAD && opcode <= Opcodes.ALOAD) {
+        VarInsnNode varInsnNode = (VarInsnNode) currentNode;
+        int localIndex = varInsnNode.var;
+        SourceValue value = srcFrame.getLocal(localIndex);
+        for (AbstractInsnNode insn : value.insns) {
+          if (!tmpInsnList.contains(insn)) {
+            tmpInsnList.add(insn);
+          }
+        }
+      }
+
+      // 第二种情况，从dstFrame到srcFrame查找
+      Frame<SourceValue> dstFrame = destinationFrames[index];
+      int stackSize = dstFrame.getStackSize();
+      for (int j = 0; j < stackSize; j++) {
+        SourceValue value = dstFrame.getStack(j);
+        if (value.insns.contains(currentNode)) {
+          for (AbstractInsnNode insn : srcFrame.getStack(j).insns) {
+            if (!tmpInsnList.contains(insn)) {
+              tmpInsnList.add(insn);
+            }
+          }
+        }
+      }
+    }
+
+    // 第四步，将intArrayList变量转换成int[]，并进行排序
+    int[] array = intArrayList.toNativeArray();
+    Arrays.sort(array);
+    return array;
+  }
+
+
+  private static Frame<SourceValue>[] getSourceFrames(String className, MethodNode mn) throws AnalyzerException {
+    Analyzer<SourceValue> analyzer = new Analyzer<>(new SourceInterpreter());
+    return analyzer.analyze(className, mn);
+  }
+
+  private static Frame<SourceValue>[] getDestinationFrames(String className, MethodNode mn) throws AnalyzerException {
+    Analyzer<SourceValue> analyzer = new Analyzer<>(new DestinationInterpreter());
+    return analyzer.analyze(className, mn);
+  }
+}
+```
+
+#### 进行分析
+
+```java
+public class HelloWorldAnalysisTree {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes);
+
+    //（2）生成ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassNode(api);
+
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    //（3）进行分析
+    List<MethodNode> methods = cn.methods;
+    MethodNode mn = methods.get(1);
+    int[] array = RelatedInstructionDiagnosis.diagnose(cn.name, mn, 11);
+    System.out.println(Arrays.toString(array));
+    BoxDrawingUtils.printInstructionLinks(mn.instructions, array);
+  }
+}
+```
+
+输出结果：
+
+```shell
+[0, 1, 2, 3, 8, 9, 10, 11]
+┌──── 000: iconst_1
+├──── 001: istore_1
+├──── 002: iconst_2
+├──── 003: istore_2
+│     004: iconst_3
+│     005: istore_3
+│     006: iconst_4
+│     007: istore 4
+├──── 008: aload_0
+├──── 009: iload_1
+├──── 010: iload_2
+└──── 011: invokevirtual HelloWorld.add
+      012: istore 5
+      013: aload_0
+      014: iload_3
+      015: iload 4
+      016: invokevirtual HelloWorld.sub
+      017: istore 6
+      018: aload_0
+      019: iload 5
+      020: iload 6
+      021: invokevirtual HelloWorld.mul
+      022: istore 7
+      023: getstatic System.out
+      024: iload 7
+      025: invokevirtual PrintStream.println
+      026: return
+```
+
+### 4.12.3 测试用例
+
+#### switch-yes
+
+```java
+public class HelloWorld {
+  public void test(int val) {
+    double doubleValue = Math.random();
+    switch (val) {
+      case 10:
+        System.out.println("val = 10");
+        break;
+      case 20:
+        System.out.println("val = 20");
+        break;
+      case 30:
+        System.out.println("val = 30");
+        break;
+      case 40:
+        System.out.println("val = 40");
+        break;
+      default:
+        System.out.println("val is unknown");
+    }
+    System.out.println(doubleValue); // 分析这条语句
+  }
+}
+```
+
+输出结果：
+
+```shell
+[0, 1, 29, 30, 31]
+┌──── 000: invokestatic Math.random
+├──── 001: dstore_2
+│     002: iload_1
+│     003: lookupswitch {
+│              10: L0
+│              20: L1
+│              30: L2
+│              40: L3
+│              default: L4
+│          }
+│     004: L0
+│     005: getstatic System.out
+│     006: ldc "val = 10"
+│     007: invokevirtual PrintStream.println
+│     008: goto L5
+│     009: L1
+│     010: getstatic System.out
+│     011: ldc "val = 20"
+│     012: invokevirtual PrintStream.println
+│     013: goto L5
+│     014: L2
+│     015: getstatic System.out
+│     016: ldc "val = 30"
+│     017: invokevirtual PrintStream.println
+│     018: goto L5
+│     019: L3
+│     020: getstatic System.out
+│     021: ldc "val = 40"
+│     022: invokevirtual PrintStream.println
+│     023: goto L5
+│     024: L4
+│     025: getstatic System.out
+│     026: ldc "val is unknown"
+│     027: invokevirtual PrintStream.println
+│     028: L5
+├──── 029: getstatic System.out
+├──── 030: dload_2
+└──── 031: invokevirtual PrintStream.println
+      032: return
+```
+
+#### switch-no
+
+在当前的解决思路中，还不能很好的处理创建对象（`new`）的情况。
+
+```java
+public class HelloWorld {
+  public void test(int val) {
+    Random rand = new Random(); // 注意，这里创建了Random对象
+    double doubleValue = rand.nextDouble();
+    switch (val) {
+      case 10:
+        System.out.println("val = 10");
+        break;
+      case 20:
+        System.out.println("val = 20");
+        break;
+      case 30:
+        System.out.println("val = 30");
+        break;
+      case 40:
+        System.out.println("val = 40");
+        break;
+      default:
+        System.out.println("val is unknown");
+    }
+    System.out.println(doubleValue); // 分析这条语句
+  }
+}
+```
+
+输出结果：
+
+```shell
+[0, 3, 4, 5, 6, 34, 35, 36]
+┌──── 000: new Random                              // new + dup + invokespecial三个指令一起来创建对象
+│     001: dup                                     // 当前的方法只分析出了new，而没有分析出dup和invokespecial
+│     002: invokespecial Random.<init>
+├──── 003: astore_2
+├──── 004: aload_2
+├──── 005: invokevirtual Random.nextDouble
+├──── 006: dstore_3
+│     007: iload_1
+│     008: lookupswitch {
+│              10: L0
+│              20: L1
+│              30: L2
+│              40: L3
+│              default: L4
+│          }
+│     009: L0
+│     010: getstatic System.out
+│     011: ldc "val = 10"
+│     012: invokevirtual PrintStream.println
+│     013: goto L5
+│     014: L1
+│     015: getstatic System.out
+│     016: ldc "val = 20"
+│     017: invokevirtual PrintStream.println
+│     018: goto L5
+│     019: L2
+│     020: getstatic System.out
+│     021: ldc "val = 30"
+│     022: invokevirtual PrintStream.println
+│     023: goto L5
+│     024: L3
+│     025: getstatic System.out
+│     026: ldc "val = 40"
+│     027: invokevirtual PrintStream.println
+│     028: goto L5
+│     029: L4
+│     030: getstatic System.out
+│     031: ldc "val is unknown"
+│     032: invokevirtual PrintStream.println
+│     033: L5
+├──── 034: getstatic System.out
+├──── 035: dload_3
+└──── 036: invokevirtual PrintStream.println
+      037: return
+```
+
+### 4.12.4 总结
+
+本文内容总结如下：
+
+- 第一点，模拟`SourceInterpreter`类来编写一个`DestinationInterpreter`类，这两个类的作用是相反的。
+- 第二点，结合`SourceInterpreter`和`DestinationInterpreter`类，用来查找相关的指令。
+
+## 4.13 Interpreter和Value的精妙之处
+
+### 4.13.1 内容回顾
+
+首先，我们要强调：**在`asm-analysis.jar`当中，最重要的类就是`Analyzer`、`Frame`、`Interpreter`和`Value`四个类**。
+
+其次，贯穿本章内容的核心就是下面两行代码：
+
+```java
+   ┌── Analyzer
+   │        ┌── Value                                   ┌── Interpreter
+   │        │                                           │
+Analyzer<BasicValue> analyzer = new Analyzer<>(new BasicInterpreter());
+Frame<BasicValue>[] frames = analyzer.analyze(owner, mn);
+   │        │
+   │        └── Value
+   └── Frame
+```
+
+在这两行代码当中，用到了`Analyzer`、`Frame`、`Interpreter`和`Value`这四个类：
+
+- 第一行代码，使用`Interpreter`来创建`Analyzer`对象。
+- 第二行代码，调用`Analyzer.analyze`方法生成`Frame<?>[]`信息，之后可以进行各种不同类型的分析。
+
+再者，这四个类当中，`Analyzer`和`Frame`是相对固定的，而`Interpreter`和`Value`是变化的：
+
+```pseudocode
+┌──────────┬─────────────┐
+│          │  Analyzer   │
+│  Fixed   ├─────────────┤
+│          │    Frame    │
+├──────────┼─────────────┤
+│          │ Interpreter │
+│ Variable ├─────────────┤
+│          │    Value    │
+└──────────┴─────────────┘
+```
+
+最后，`Interpreter`和`Value`类有不同的具体表现形式：
+
+```pseudocode
+┌───┬───────────────────┬─────────────┬───────┐
+│ 0 │    Interpreter    │    Value    │ Range │
+├───┼───────────────────┼─────────────┼───────┤
+│ 1 │ BasicInterpreter  │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 2 │   BasicVerifier   │ BasicValue  │   7   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 3 │  SimpleVerifier   │ BasicValue  │   N   │
+├───┼───────────────────┼─────────────┼───────┤
+│ 4 │ SourceInterpreter │ SourceValue │   N   │
+└───┴───────────────────┴─────────────┴───────┘
+```
+
+回顾了这些内容之后，我们再来看一下`Interpreter`和`Value`的精妙之处。
+
+### 4.13.2 Interpreter类的精妙之处
+
+`Interpreter`类的精妙之处体现在它的功能上，我们从三点来把握，来欣赏`Interpreter`类的“艺术和美”。
+
+第一点，从功能的角度来讲，`Interpreter`类与`Frame`类的功能分割恰到好处：**入栈和出栈的操作交给了`Frame`来进行处理，而具体的入栈和出栈的值是由`Interpreter`来处理的**。举一个生活中的例子，国有资本（Government Capital，相当于`Frame`类）新建了一个高铁站，进入车站的车辆和离开车站的车辆是它来负责的；具体的运作交给民营资本（Private Investment，相当于`Interpreter`类），每辆车上装载的是货物还是人是由它来决定的。
+
+第二点，从opcode的角度来讲，它将原本200多个opcode分类成（浓缩成）了7个方法，分类的依据就是使用的（或者说，消耗的、出栈的、入栈的）元素数量来决定的。
+
+```java
+public abstract class Interpreter {
+  public abstract Value newOperation(AbstractInsnNode insn) throws AnalyzerException;
+
+  public abstract Value copyOperation(AbstractInsnNode insn, Value value) throws AnalyzerException;
+
+  public abstract Value unaryOperation(AbstractInsnNode insn, Value value) throws AnalyzerException;
+
+  public abstract Value binaryOperation(AbstractInsnNode insn, Value value1, Value value2) throws AnalyzerException;
+
+  public abstract Value ternaryOperation(AbstractInsnNode insn, Value value1, Value value2, Value value3) throws AnalyzerException;
+
+  public abstract Value naryOperation(AbstractInsnNode insn, List<Value> values) throws AnalyzerException;
+
+  public abstract void returnOperation(AbstractInsnNode insn, Value value, Value expected) throws AnalyzerException;
+}
+```
+
+第三点，从`Value`的角度来讲，`Interpreter`类决定了`Value`类对象的数量、表达能力。一般来说，`Value`类对象的数量越多，它的表达能力越丰富。举个生活当中的例子，这有点类似于“计划生育”，`Interpreter`类决定了`Value`类的数量。
+
+### 4.13.3 Value类的表达能力
+
+在Frame当中，我们可以存储的`Value`值有两种：**类型**（type或者class）和**实例对象**（object或者instance）。
+
+```java
+public class HelloWorld {
+  public void test() {
+    int a = 1;
+    int b = 2;
+    String str1 = "Hello";
+    String str2 = "World";
+    Object obj1 = new Object();
+    Object obj2 = new Object();
+  }
+}
+```
+
+如果使用`BasicInterpreter`类，那么`BasicValue`值的表达能力（**类型**）如下：每个类型
+
+```shell
+test:()V
+000:    iconst_1                                {R, ., ., ., ., ., .} | {}
+001:    istore_1                                {R, ., ., ., ., ., .} | {I}
+002:    iconst_2                                {R, I, ., ., ., ., .} | {}
+003:    istore_2                                {R, I, ., ., ., ., .} | {I}
+004:    ldc "Hello"                             {R, I, I, ., ., ., .} | {}
+005:    astore_3                                {R, I, I, ., ., ., .} | {R}
+006:    ldc "World"                             {R, I, I, R, ., ., .} | {}
+007:    astore 4                                {R, I, I, R, ., ., .} | {R}
+008:    new Object                              {R, I, I, R, R, ., .} | {}
+009:    dup                                     {R, I, I, R, R, ., .} | {R}
+010:    invokespecial Object.<init>             {R, I, I, R, R, ., .} | {R, R}
+011:    astore 5                                {R, I, I, R, R, ., .} | {R}
+012:    new Object                              {R, I, I, R, R, R, .} | {}
+013:    dup                                     {R, I, I, R, R, R, .} | {R}
+014:    invokespecial Object.<init>             {R, I, I, R, R, R, .} | {R, R}
+015:    astore 6                                {R, I, I, R, R, R, .} | {R}
+016:    return                                  {R, I, I, R, R, R, R} | {}
+================================================================
+```
+
+如果使用`SimpleVerifier`类，那么`BasicValue`值的表达能力（**对象实例**）如下：每个不同的对象对应一个`BasicValue`值（看着好像是一样的，实际下面出现的两个String，三个Object各自都是新`BasicValue`对象）。
+
+```shell
+test:()V
+000:    iconst_1                                {HelloWorld, ., ., ., ., ., .} | {}
+001:    istore_1                                {HelloWorld, ., ., ., ., ., .} | {I}
+002:    iconst_2                                {HelloWorld, I, ., ., ., ., .} | {}
+003:    istore_2                                {HelloWorld, I, ., ., ., ., .} | {I}
+004:    ldc "Hello"                             {HelloWorld, I, I, ., ., ., .} | {}
+005:    astore_3                                {HelloWorld, I, I, ., ., ., .} | {String}
+006:    ldc "World"                             {HelloWorld, I, I, String, ., ., .} | {}
+007:    astore 4                                {HelloWorld, I, I, String, ., ., .} | {String}
+008:    new Object                              {HelloWorld, I, I, String, String, ., .} | {}
+009:    dup                                     {HelloWorld, I, I, String, String, ., .} | {Object}
+010:    invokespecial Object.<init>             {HelloWorld, I, I, String, String, ., .} | {Object, Object}
+011:    astore 5                                {HelloWorld, I, I, String, String, ., .} | {Object}
+012:    new Object                              {HelloWorld, I, I, String, String, Object, .} | {}
+013:    dup                                     {HelloWorld, I, I, String, String, Object, .} | {Object}
+014:    invokespecial Object.<init>             {HelloWorld, I, I, String, String, Object, .} | {Object, Object}
+015:    astore 6                                {HelloWorld, I, I, String, String, Object, .} | {Object}
+016:    return                                  {HelloWorld, I, I, String, String, Object, Object} | {}
+================================================================
+```
+
+如果使用`SourceInterpreter`类，那么`SourceValue`值的表达能力（**对象实例**）如下：差不多每个instruction都会生成一个新的`SourceValue`对象
+
+```shell
+test:()V
+000:    iconst_1                                {[], [], [], [], [], [], []} | {}
+001:    istore_1                                {[], [], [], [], [], [], []} | {[iconst_1]}
+002:    iconst_2                                {[], [istore_1], [], [], [], [], []} | {}
+003:    istore_2                                {[], [istore_1], [], [], [], [], []} | {[iconst_2]}
+004:    ldc "Hello"                             {[], [istore_1], [istore_2], [], [], [], []} | {}
+005:    astore_3                                {[], [istore_1], [istore_2], [], [], [], []} | {[ldc "Hello"]}
+006:    ldc "World"                             {[], [istore_1], [istore_2], [astore_3], [], [], []} | {}
+007:    astore 4                                {[], [istore_1], [istore_2], [astore_3], [], [], []} | {[ldc "World"]}
+008:    new Object                              {[], [istore_1], [istore_2], [astore_3], [astore 4], [], []} | {}
+009:    dup                                     {[], [istore_1], [istore_2], [astore_3], [astore 4], [], []} | {[new Object]}
+010:    invokespecial Object.<init>             {[], [istore_1], [istore_2], [astore_3], [astore 4], [], []} | {[new Object], [dup]}
+011:    astore 5                                {[], [istore_1], [istore_2], [astore_3], [astore 4], [], []} | {[new Object]}
+012:    new Object                              {[], [istore_1], [istore_2], [astore_3], [astore 4], [astore 5], []} | {}
+013:    dup                                     {[], [istore_1], [istore_2], [astore_3], [astore 4], [astore 5], []} | {[new Object]}
+014:    invokespecial Object.<init>             {[], [istore_1], [istore_2], [astore_3], [astore 4], [astore 5], []} | {[new Object], [dup]}
+015:    astore 6                                {[], [istore_1], [istore_2], [astore_3], [astore 4], [astore 5], []} | {[new Object]}
+016:    return                                  {[], [istore_1], [istore_2], [astore_3], [astore 4], [astore 5], [astore 6]} | {}
+================================================================
+```
+
+我们暂时不考虑primitive type（`int`、`float`、`long`和`double`类型），只考虑reference type：
+
+```pseudocode
+模拟类型（抽象）: R - BasicInterpreter, BasicVerifier
+模拟类型（具体）: Integer, String, Object - StackMapTable
+模拟对象（具体）: Integer(1), Integer(2), String("AAA"), String("BBB"), Object(obj1), Object(obj2) - SimpleVerifier
+模拟指令（超级具体）: 每个指令对应一个Value对象 - SourceInterpreter
+```
+
+那么`Value`的表达能力可以描述成这样：
+
+```
+         ┌─── abstract type
+         │
+         ├─── concrete type
+Value ───┤
+         ├─── concrete object
+         │
+         └─── instruction-based object
+```
+
+### 4.14.4 总结
+
+本文内容总结如下：
+
+- 第一点，把握`Interpreter`类的精妙之处就是结合`Frame`（功能切割）、opcode（方法定义）和`Value`（表达能力）来理解。
+- 第二点，把握`Value`类的精妙之处在于理解四个不同层次的表达。
+
+## 4.14 示例：检测潜在的NullPointerException
