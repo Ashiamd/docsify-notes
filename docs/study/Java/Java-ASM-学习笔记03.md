@@ -10850,7 +10850,7 @@ Value ───┤
          └─── instruction-based object
 ```
 
-### 4.14.4 总结
+### 4.13.4 总结
 
 本文内容总结如下：
 
@@ -10858,3 +10858,2489 @@ Value ───┤
 - 第二点，把握`Value`类的精妙之处在于理解四个不同层次的表达。
 
 ## 4.14 示例：检测潜在的NullPointerException
+
+### 4.14.1 如何实现NPE分析
+
+#### 代码比对
+
+在IntelliJ IDEA当中，如果我们编写如下代码，它就会提示有`NullPointerException`异常：
+
+```java
+// 第一种写法
+public class HelloWorld {
+  public void test() {
+    String str = null;
+    // Method invocation 'trim' will produce 'NullPointerException'
+    System.out.println(str.trim());
+  }
+}
+```
+
+接着，我们将`str`变量作为参数传递给`test`方法，就不会提示有潜在的`NullPointerException`异常：
+
+```java
+// 第二种写法
+public class HelloWorld {
+  public void test(String str) {
+    // No Warning
+    System.out.println(str.trim());
+  }
+}
+```
+
+再进一步，在`test`方法内，对`str`与`null`进行判断，就会再次提示有潜在的`NullPointerException`异常：
+
+```java
+// 第三种写法
+public class HelloWorld {
+  public void test(String str) {
+    if (str == null) {
+      System.out.println("str is null");
+    }
+    else {
+      System.out.println("str is not null");
+    }
+
+    // Method invocation 'trim' may produce 'NullPointerException'
+    System.out.println(str.trim());
+  }
+}
+```
+
+最后，在`test`方法内，将`str`与一个`boolean flag`进行关联，根据`flag`的值来调用`str.trim()`方法，不出现任何提示：
+
+```java
+// 第四种写法
+public class HelloWorld {
+  public void test(String str) {
+    boolean flag;
+    if (str == null) {
+      flag = true;
+      System.out.println("str is null");
+    }
+    else {
+      flag = false;
+      System.out.println("str is not null");
+    }
+
+    if (!flag) {
+      // No Warning
+      System.out.println(str.trim());
+    }
+  }
+}
+```
+
+此时，我们可能会有如下的想法：
+
+- 第一种写法，提示`NullPointerException`异常，很正常，也很容易理解。
+- 第二种写法，`str`是有`null`的可能性，那么为什么不提示`NullPointerException`异常呢？
+- 第三种写法，比第二种写法多了`if`语句对`null`进行判断，就会再次提示有潜在的`NullPointerException`异常，这是为什么呢？
+- 第四种写法，添加了一个`boolean`类型的辅助判断，不提示`NullPointerException`异常，也很合理。
+
+关于这些种写法，有各自的结果（提示或不提示`NullPointerException`异常），这里涉及到两组概念：
+
+- dereference的概念，它是一个过程，是从“变量”到“结果”的分析过程。
+- nullness相关的概念，它是一个工具，是解释从“变量”到“结果”的原因。
+
+![#yyds干货盘点#Java ASM系列：（096）检测潜在的NPE_java-bytecode-asm](https://s2.51cto.com/images/20211126/1637908090262800.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+在nullness这个概念当中，有四个状态：unknown、not-null、null和nullable。not-null和null两个比较好理解，但是unknown和nullable的区别是什么呢？
+
+最直观的理解方式是这样的：
+
+- unknown表示一种“不知道”的状态，那么“不知道”是不是意味着可能是null，也可能不是null（not-null）呢？ `unknown = not-null + null`
+- nullable表示“可以为null”，是不是也同时意味着可以不为null（not-null）呢？ `nullable = not-null + null`
+
+> 个人理解：unknown是由于不知道引用的情况，所以可能not-null、null；而nullable则是明确知道引用会是not-null或null
+
+#### Nullability
+
+Nullness kinds有四种状态：
+
+- unknown
+- not-null
+- null
+- nullable
+
+其中，`unknown`可以理解成“混沌”的状态，它代表“纯净”的物质；而`not-null`和`null`可以理解成由`unknown`衍生出的“纯净”的“阳”和“阴”两种物质；最后，`nullable`可以理解成不同比例`not-null`和`null`结合成的“混合”物质。
+
+![#yyds干货盘点#Java ASM系列：（096）检测潜在的NPE_java-bytecode-asm_02](https://s2.51cto.com/images/20211126/1637908256391476.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+我们将任意两个状态进行合并（merge），合并的规律就是“只能向前演进，不能向后退化”。那么，任意两个状态合并之后的结果，可以使用表格来进行表示：
+
+|            | `unknown`  | `not-null` | `null`     | `nullable` |
+| ---------- | ---------- | ---------- | ---------- | ---------- |
+| `unknown`  | `unknown`  | `not-null` | `null`     | `nullable` |
+| `not-null` | `not-null` | `not-null` | `nullable` | `nullable` |
+| `null`     | `null`     | `nullable` | `null`     | `nullable` |
+| `nullable` | `nullable` | `nullable` | `nullable` | `nullable` |
+
+我们以结果为导向，对上面的表格进行总结：
+
+- `unknown`
+  - `unknown + unknown = unknown`
+- `not-null`
+  - `not-null + not-null = not-null`
+  - `unknown + not-null = not-null`
+- `null`
+  - `null + null = null`
+  - `unknown + null = null`
+- `nullable` 剩余情况
+  - `nullable + nullable = nullable`
+  - `not-null + null = nullable`
+  - `nullable + other = nullable`
+
+其中，`nullable`可以理解为“最强烈的状态”，任何其它的状态都会被`nullable`所“掩盖”。
+
+```java
+public enum Nullability {
+  UNKNOWN(0),
+  NOT_NULL(1),
+  NULL(1),
+  NULLABLE(2);
+
+  public final int priority;
+
+  Nullability(int priority) {
+    this.priority = priority;
+  }
+
+  public static Nullability merge(Nullability value1, Nullability value2) {
+    // 第一种情况，两者相等，则直接返回一个
+    if (value1 == value2) {
+      return value1;
+    }
+
+    // 第二种情况，两者不相等，比较优先级大小，谁大返回谁
+    int priority1 = value1.priority;
+    int priority2 = value2.priority;
+    if (priority1 > priority2) {
+      return value1;
+    }
+    else if (priority1 < priority2) {
+      return value2;
+    }
+
+    // 第三种情况，两者不相等，但优先级相等，则一个是NOT_NULL，另一个是NULL
+    return NULLABLE;
+  }
+}
+```
+
+`unknown`、`not-null`、`null`和`nullable`四种状态与`NullPointerException`异常的关系：
+
+- 如果变量是`unknown`或`not-null`状态，不会提示`NullPointerException`异常。
+  - 如果是`not-null`状态，就不可能有`NullPointerException`异常。
+  - 如果是`unknown`状态，它有可能演进成`null`的状态。如果提示`NullPointerException`异常，那提示就太多了；如果提示太多了，也就没有什么用了。
+- 如果变量是`null`或`nullable`状态，就会提示`NullPointerException`异常。
+
+在下面的代码中，遇到`str.trim()`的时候，`str`是`unknown`的状态：
+
+```java
+public class HelloWorld {
+  public void test(String str) {
+    // State: str:nullness = unknown
+    System.out.println(str.trim());
+  }
+}
+```
+
+相应的，在下面的代码中，加上了`if`语句对`str`与`null`进行判断，再次遇到`str.trim()`的时候，`str`是`nullable`的状态：
+
+```java
+public class HelloWorld {
+  public void test(String str) {
+    // State: str:nullness = unknown
+    if (str == null) {
+      // State#1: str:nullness = null
+      System.out.println("str is null");
+    }
+    else {
+      // State#2: str:nullness = not-null
+      System.out.println("str is not null");
+    }
+
+    // State#1: str:nullness = null
+    // State#2: str:nullness = not-null
+    // Merged state: str:nullness = nullable
+    System.out.println(str.trim());
+  }
+}
+```
+
+我们生活当中，经常会听到有人说“薛定谔的猫”：比喻一件事，如果你不去做，它就可能有两个结果；而一旦你去做了，最后结果就只能有一个。也就是说，**你的参与直接干预了结果**。
+
+接下来，就是将unknown、not-null、null和nullable这4个状态和彼此之间的转换关系应用于代码逻辑当中。
+
+### 4.14.2 代码示例：实现一
+
+这个实现是ASM官方文档（[asm4-guide.pdf](https://asm.ow2.io/asm4-guide.pdf)）提供的实现，代码比较简单，功能也比较简单。
+
+#### 预期目标
+
+假如有一个`HelloWorld`类：
+
+```java
+public class HelloWorld {
+  public void test(boolean flag) {
+    Object obj = null;
+    if (flag) {
+      obj = "10";
+      System.out.println(obj);
+    }
+    // Method invocation 'hashCode' may produce 'NullPointerException'
+    int hash = obj.hashCode();
+    System.out.println(hash);
+  }
+}
+```
+
+我们的预期目标：检测出`obj.hashCode()`方法可能会造成`NullPointerException`异常。
+
+借助于`NullDeferenceInterpreter`类，我们来查看一下`test`方法的Frame变化：
+
+```shell
+test:(Z)V
+000:    aconst_null                             {R, I, ., .} | {}
+001:    astore_2                                {R, I, ., .} | {null}
+002:    iload_1                                 {R, I, null, .} | {}
+003:    ifeq L0                                 {R, I, null, .} | {I}
+004:    ldc "10"                                {R, I, null, .} | {}
+005:    astore_2                                {R, I, null, .} | {R}
+006:    getstatic System.out                    {R, I, R, .} | {}
+007:    aload_2                                 {R, I, R, .} | {R}
+008:    invokevirtual PrintStream.println       {R, I, R, .} | {R, R}
+009:    L0                                      {R, I, may-be-null, .} | {}
+010:    aload_2                                 {R, I, may-be-null, .} | {}
+011:    invokevirtual Object.hashCode           {R, I, may-be-null, .} | {may-be-null}
+012:    istore_3                                {R, I, may-be-null, .} | {I}
+013:    getstatic System.out                    {R, I, may-be-null, I} | {}
+014:    iload_3                                 {R, I, may-be-null, I} | {R}
+015:    invokevirtual PrintStream.println       {R, I, may-be-null, I} | {R, I}
+016:    return                                  {R, I, may-be-null, I} | {}
+================================================================
+```
+
+在`011`行的operand stack上，能够看到`obj`有可能为`null`值（`may-be-null`），这就是我们判断的依据。
+
+#### 编码实现
+
+##### NullDeferenceInterpreter
+
+在`BasicInterpreter`类当中，它使用`BasicValue.REFERENCE_VALUE`来表示所有的reference type（引用类型）。
+
+在下面的`NullDeferenceInterpreter`类，继承自`BasicInterpreter`类。`NullDeferenceInterpreter`类使用三个不同的`BasicValue`值来表示reference type（引用类型）：
+
+- `BasicValue.REFERENCE_VALUE`：表示unknown和not-null的状态。
+- `NullDeferenceInterpreter.NULL_VALUE`：表示null的状态。
+- `NullDeferenceInterpreter.MAYBE_NULL_VALUE`：表示nullable的状态。
+
+这三个`BasicValue`值进行合并（merge）的操作定义在`merge`方法内。
+
+```java
+import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.analysis.AnalyzerException;
+import org.objectweb.asm.tree.analysis.BasicInterpreter;
+import org.objectweb.asm.tree.analysis.BasicValue;
+import org.objectweb.asm.tree.analysis.Value;
+
+public class NullDeferenceInterpreter extends BasicInterpreter {
+  public final static BasicValue NULL_VALUE = new BasicValue(NULL_TYPE);
+  public final static BasicValue MAYBE_NULL_VALUE = new BasicValue(Type.getObjectType("may-be-null"));
+
+  public NullDeferenceInterpreter(int api) {
+    super(api);
+  }
+
+  @Override
+  public BasicValue newOperation(AbstractInsnNode insn) throws AnalyzerException {
+    if (insn.getOpcode() == ACONST_NULL) {
+      return NULL_VALUE;
+    }
+    return super.newOperation(insn);
+  }
+
+  @Override
+  public BasicValue merge(BasicValue value1, BasicValue value2) {
+    if (isRef(value1) && isRef(value2) && value1 != value2) {
+      return MAYBE_NULL_VALUE;
+    }
+    return super.merge(value1, value2);
+  }
+
+  private boolean isRef(Value value) {
+    return value == BasicValue.REFERENCE_VALUE || value == NULL_VALUE || value == MAYBE_NULL_VALUE;
+  }
+}
+```
+
+##### NullDereferenceDiagnosis
+
+在下面的`NullDereferenceDiagnosis`类当中，主要的逻辑就是判断operand stack上的某一个元素是否可能为`null`值：
+
+```java
+import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.InsnList;
+import org.objectweb.asm.tree.MethodInsnNode;
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.analysis.*;
+
+import java.util.Arrays;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class NullDereferenceDiagnosis {
+  public static int[] diagnose(String owner, MethodNode mn) throws AnalyzerException {
+    // 第一步，获取Frame信息
+    Analyzer<BasicValue> analyzer = new Analyzer<>(new NullDeferenceInterpreter(ASM9));
+    Frame<BasicValue>[] frames = analyzer.analyze(owner, mn);
+
+    // 第二步，判断是否为null或maybe-null，收集数据
+    TIntArrayList intArrayList = new TIntArrayList();
+    InsnList instructions = mn.instructions;
+    int size = instructions.size();
+    for (int i = 0; i < size; i++) {
+      AbstractInsnNode insn = instructions.get(i);
+      if (frames[i] != null) {
+        Value value = getTarget(insn, frames[i]);
+        if (value == NullDeferenceInterpreter.NULL_VALUE || value == NullDeferenceInterpreter.MAYBE_NULL_VALUE) {
+          intArrayList.add(i);
+        }
+      }
+    }
+
+    // 第三步，将结果转换成int[]形式
+    int[] array = intArrayList.toNativeArray();
+    Arrays.sort(array);
+    return array;
+  }
+
+  private static BasicValue getTarget(AbstractInsnNode insn, Frame<BasicValue> frame) {
+    int opcode = insn.getOpcode();
+    switch (opcode) {
+      case GETFIELD:
+      case ARRAYLENGTH:
+      case MONITORENTER:
+      case MONITOREXIT:
+        return getStackValue(frame, 0);
+      case PUTFIELD:
+        return getStackValue(frame, 1);
+      case INVOKEVIRTUAL:
+      case INVOKESPECIAL:
+      case INVOKEINTERFACE:
+        String desc = ((MethodInsnNode) insn).desc;
+        return getStackValue(frame, Type.getArgumentTypes(desc).length);
+
+    }
+    return null;
+  }
+
+  private static BasicValue getStackValue(Frame<BasicValue> frame, int index) {
+    int top = frame.getStackSize() - 1;
+    return index <= top ? frame.getStack(top - index) : null;
+  }
+}
+```
+
+#### 进行分析
+
+```java
+public class HelloWorldAnalysisTree {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes);
+
+    //（2）生成ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassNode(api);
+
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    //（3）进行分析
+    String className = cn.name;
+    List<MethodNode> methods = cn.methods;
+    MethodNode mn = methods.get(1);
+    int[] array = NullDereferenceDiagnosis.diagnose(className, mn);
+    System.out.println(Arrays.toString(array));
+    BoxDrawingUtils.printInstructionLinks(mn.instructions, array);
+  }
+}
+```
+
+运行结果：
+
+```shell
+[11]
+      000: aconst_null
+      001: astore_2
+      002: iload_1
+      003: ifeq L0
+      004: ldc "10"
+      005: astore_2
+      006: getstatic System.out
+      007: aload_2
+      008: invokevirtual PrintStream.println
+      009: L0
+      010: aload_2
+├──── 011: invokevirtual Object.hashCode
+      012: istore_3
+      013: getstatic System.out
+      014: iload_3
+      015: invokevirtual PrintStream.println
+      016: return
+```
+
+但是，我们当前介绍的方法有局限性，无法识别下面的代码。在下面的例子当中，并没有直接将`null`赋值给`str`变量，而是判断`str`是否为`null`：
+
+```java
+public class HelloWorld {
+  public void test(String str) {
+    if (str == null) {
+      System.out.println("str is null");
+    }
+    else {
+      System.out.println("str is not null");
+    }
+
+    // Method invocation 'trim' may produce 'NullPointerException'
+    System.out.println(str.trim());
+  }
+}
+```
+
+### 4.14.3 代码示例：实现二
+
+这个实现是[项目](https://gitee.com/lsieun/learn-java-asm)当中提供的实现，代码比较复杂，功能也相对上一个版本较强一些。
+
+#### 预期目标
+
+```java
+public class HelloWorld {
+  public void test(String str) {
+    if (str == null) {
+      System.out.println("str is null");
+    }
+    else {
+      System.out.println("str is not null");
+    }
+
+    // Method invocation 'trim' may produce 'NullPointerException'
+    System.out.println(str.trim());
+  }
+}
+```
+
+我们的预期目标：检测出`str.trim()`方法可能会造成`NullPointerException`异常。
+
+借助于`NullabilityAnalyzer`和`NullabilityInterpreter`类，我们来查看一下`test`方法的Frame变化：
+
+```shell
+test:(Ljava/lang/String;)V
+000:    aload_1                                 {HelloWorld, String} | {}
+001:    ifnonnull L0                            {HelloWorld, String} | {String}
+002:    getstatic System.out                    {HelloWorld, String:NULL} | {}
+003:    ldc "str is null"                       {HelloWorld, String:NULL} | {PrintStream}
+004:    invokevirtual PrintStream.println       {HelloWorld, String:NULL} | {PrintStream, String:NOT-NULL}
+005:    goto L1                                 {HelloWorld, String:NULL} | {}
+006:    L0                                      {HelloWorld, String:NOT-NULL} | {}
+007:    getstatic System.out                    {HelloWorld, String:NOT-NULL} | {}
+008:    ldc "str is not null"                   {HelloWorld, String:NOT-NULL} | {PrintStream}
+009:    invokevirtual PrintStream.println       {HelloWorld, String:NOT-NULL} | {PrintStream, String:NOT-NULL}
+010:    L1                                      {HelloWorld, String:NULLABLE} | {}
+011:    getstatic System.out                    {HelloWorld, String:NULLABLE} | {}
+012:    aload_1                                 {HelloWorld, String:NULLABLE} | {PrintStream}
+013:    invokevirtual String.trim               {HelloWorld, String:NULLABLE} | {PrintStream, String:NULLABLE}
+014:    invokevirtual PrintStream.println       {HelloWorld, String:NULLABLE} | {PrintStream, String}
+015:    return                                  {HelloWorld, String:NULLABLE} | {}
+================================================================
+```
+
+在`013`行的operand stack上，能够看到`str`有可能为`null`值（`String:NULLABLE`），这就是我们判断的依据。
+
+#### 编码实现
+
+##### NullabilityValue
+
+下面的`NullabilityValue`类，是模拟着`BasicValue`类来写的，但是`NullabilityValue`类包含一个`Nullability state`字段，它记录了unknown、not-null、null和nullable四种状态。
+
+```java
+import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.analysis.Value;
+
+public class NullabilityValue implements Value {
+  private final Type type;
+  private Nullability state;
+
+  public NullabilityValue(Type type) {
+    this(type, Nullability.UNKNOWN);
+  }
+
+  public NullabilityValue(Type type, Nullability state) {
+    this.type = type;
+    this.state = state;
+  }
+
+  public Type getType() {
+    return type;
+  }
+
+  public void setState(Nullability state) {
+    this.state = state;
+  }
+
+  public Nullability getState() {
+    return state;
+  }
+
+  @Override
+  public int getSize() {
+    return type == Type.LONG_TYPE || type == Type.DOUBLE_TYPE ? 2 : 1;
+  }
+
+  public boolean isReference() {
+    return type != null && (type.getSort() == Type.OBJECT || type.getSort() == Type.ARRAY);
+  }
+
+  @Override
+  public boolean equals(final Object value) {
+    if (value == this) {
+      return true;
+    }
+    else if (value instanceof NullabilityValue) {
+      NullabilityValue another = (NullabilityValue) value;
+      if (type == null) {
+        return ((NullabilityValue) value).type == null;
+      }
+      else {
+        return type.equals(((NullabilityValue) value).type) && state == another.state;
+      }
+    }
+    else {
+      return false;
+    }
+  }
+
+  @Override
+  public int hashCode() {
+    return type == null ? 0 : type.hashCode();
+  }
+}
+```
+
+##### NullabilityInterpreter
+
+在下面的`NullabilityInterpreter`类当中，它是模拟着`SimpleVerifier`类来写的。这个类并没有经过很多的测试，可能有许多的bug存在，所以我们就不介绍它的具体逻辑了。
+
+```java
+import org.objectweb.asm.ConstantDynamic;
+import org.objectweb.asm.Handle;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.*;
+import org.objectweb.asm.tree.analysis.AnalyzerException;
+import org.objectweb.asm.tree.analysis.Interpreter;
+
+import java.util.List;
+
+public class NullabilityInterpreter extends Interpreter<NullabilityValue> implements Opcodes {
+  public static final Type NULL_TYPE = Type.getObjectType("null");
+
+  public static final NullabilityValue UNINITIALIZED_VALUE = new NullabilityValue(null);
+  public static final NullabilityValue RETURN_ADDRESS_VALUE = new NullabilityValue(Type.VOID_TYPE);
+
+  private final ClassLoader loader = getClass().getClassLoader();
+
+  public NullabilityInterpreter(int api) {
+    super(api);
+  }
+
+  @Override
+  public NullabilityValue newValue(Type type) {
+    if (type == null) {
+      return UNINITIALIZED_VALUE;
+    }
+
+    int sort = type.getSort();
+    if (sort == Type.VOID) {
+      return null;
+    }
+    return new NullabilityValue(type);
+  }
+
+  @Override
+  public NullabilityValue newOperation(AbstractInsnNode insn) throws AnalyzerException {
+    switch (insn.getOpcode()) {
+      case ACONST_NULL:
+        return new NullabilityValue(NULL_TYPE, Nullability.NULL);
+      case ICONST_M1:
+      case ICONST_0:
+      case ICONST_1:
+      case ICONST_2:
+      case ICONST_3:
+      case ICONST_4:
+      case ICONST_5:
+      case BIPUSH:
+      case SIPUSH:
+        return newValue(Type.INT_TYPE);
+      case LCONST_0:
+      case LCONST_1:
+        return newValue(Type.LONG_TYPE);
+      case FCONST_0:
+      case FCONST_1:
+      case FCONST_2:
+        return newValue(Type.FLOAT_TYPE);
+      case DCONST_0:
+      case DCONST_1:
+        return newValue(Type.DOUBLE_TYPE);
+      case LDC:
+        Object value = ((LdcInsnNode) insn).cst;
+        if (value instanceof Integer) {
+          return newValue(Type.INT_TYPE);
+        }
+        else if (value instanceof Float) {
+          return newValue(Type.FLOAT_TYPE);
+        }
+        else if (value instanceof Long) {
+          return newValue(Type.LONG_TYPE);
+        }
+        else if (value instanceof Double) {
+          return newValue(Type.DOUBLE_TYPE);
+        }
+        else if (value instanceof String) {
+          return new NullabilityValue(Type.getObjectType("java/lang/String"), Nullability.NOT_NULL);
+        }
+        else if (value instanceof Type) {
+          int sort = ((Type) value).getSort();
+          if (sort == Type.OBJECT || sort == Type.ARRAY) {
+            return newValue(Type.getObjectType("java/lang/Class"));
+          }
+          else if (sort == Type.METHOD) {
+            return newValue(Type.getObjectType("java/lang/invoke/MethodType"));
+          }
+          else {
+            throw new AnalyzerException(insn, "Illegal LDC value " + value);
+          }
+        }
+        else if (value instanceof Handle) {
+          return newValue(Type.getObjectType("java/lang/invoke/MethodHandle"));
+        }
+        else if (value instanceof ConstantDynamic) {
+          return newValue(Type.getType(((ConstantDynamic) value).getDescriptor()));
+        }
+        else {
+          throw new AnalyzerException(insn, "Illegal LDC value " + value);
+        }
+      case JSR:
+        return RETURN_ADDRESS_VALUE;
+      case GETSTATIC:
+        return newValue(Type.getType(((FieldInsnNode) insn).desc));
+      case NEW:
+        return newValue(Type.getObjectType(((TypeInsnNode) insn).desc));
+      default:
+        throw new AssertionError();
+    }
+  }
+
+  @Override
+  public NullabilityValue copyOperation(AbstractInsnNode insn, NullabilityValue value) {
+    return value;
+  }
+
+  @Override
+  public NullabilityValue unaryOperation(AbstractInsnNode insn, NullabilityValue value) throws AnalyzerException {
+    switch (insn.getOpcode()) {
+      case INEG:
+      case IINC:
+      case L2I:
+      case F2I:
+      case D2I:
+      case I2B:
+      case I2C:
+      case I2S:
+      case ARRAYLENGTH:
+      case INSTANCEOF:
+        return newValue(Type.INT_TYPE);
+      case FNEG:
+      case I2F:
+      case L2F:
+      case D2F:
+        return newValue(Type.FLOAT_TYPE);
+      case LNEG:
+      case I2L:
+      case F2L:
+      case D2L:
+        return newValue(Type.LONG_TYPE);
+      case DNEG:
+      case I2D:
+      case L2D:
+      case F2D:
+        return newValue(Type.DOUBLE_TYPE);
+      case GETFIELD:
+        return newValue(Type.getType(((FieldInsnNode) insn).desc));
+      case NEWARRAY:
+        switch (((IntInsnNode) insn).operand) {
+          case T_BOOLEAN:
+            return newValue(Type.getType("[Z"));
+          case T_CHAR:
+            return newValue(Type.getType("[C"));
+          case T_BYTE:
+            return newValue(Type.getType("[B"));
+          case T_SHORT:
+            return newValue(Type.getType("[S"));
+          case T_INT:
+            return newValue(Type.getType("[I"));
+          case T_FLOAT:
+            return newValue(Type.getType("[F"));
+          case T_DOUBLE:
+            return newValue(Type.getType("[D"));
+          case T_LONG:
+            return newValue(Type.getType("[J"));
+          default:
+            break;
+        }
+        throw new AnalyzerException(insn, "Invalid array type");
+      case ANEWARRAY:
+        return newValue(Type.getType("[" + Type.getObjectType(((TypeInsnNode) insn).desc)));
+      case CHECKCAST:
+        return value;
+      case IFEQ:
+      case IFNE:
+      case IFLT:
+      case IFGE:
+      case IFGT:
+      case IFLE:
+      case TABLESWITCH:
+      case LOOKUPSWITCH:
+      case IRETURN:
+      case LRETURN:
+      case FRETURN:
+      case DRETURN:
+      case ARETURN:
+      case PUTSTATIC:
+      case ATHROW:
+      case MONITORENTER:
+      case MONITOREXIT:
+      case IFNULL:
+      case IFNONNULL:
+        return null;
+      default:
+        throw new AssertionError();
+    }
+  }
+
+  @Override
+  public NullabilityValue binaryOperation(AbstractInsnNode insn,
+                                          NullabilityValue value1,
+                                          NullabilityValue value2) {
+    switch (insn.getOpcode()) {
+      case IALOAD:
+      case BALOAD:
+      case CALOAD:
+      case SALOAD:
+      case IADD:
+      case ISUB:
+      case IMUL:
+      case IDIV:
+      case IREM:
+      case ISHL:
+      case ISHR:
+      case IUSHR:
+      case IAND:
+      case IOR:
+      case IXOR:
+      case LCMP:
+      case FCMPL:
+      case FCMPG:
+      case DCMPL:
+      case DCMPG:
+        return newValue(Type.INT_TYPE);
+      case FALOAD:
+      case FADD:
+      case FSUB:
+      case FMUL:
+      case FDIV:
+      case FREM:
+        return newValue(Type.FLOAT_TYPE);
+      case LALOAD:
+      case LADD:
+      case LSUB:
+      case LMUL:
+      case LDIV:
+      case LREM:
+      case LSHL:
+      case LSHR:
+      case LUSHR:
+      case LAND:
+      case LOR:
+      case LXOR:
+        return newValue(Type.LONG_TYPE);
+      case DALOAD:
+      case DADD:
+      case DSUB:
+      case DMUL:
+      case DDIV:
+      case DREM:
+        return newValue(Type.LONG_TYPE);
+      case AALOAD:
+        return getElementValue(value1);
+      case IF_ICMPEQ:
+      case IF_ICMPNE:
+      case IF_ICMPLT:
+      case IF_ICMPGE:
+      case IF_ICMPGT:
+      case IF_ICMPLE:
+      case IF_ACMPEQ:
+      case IF_ACMPNE:
+      case PUTFIELD:
+        return null;
+      default:
+        throw new AssertionError();
+    }
+  }
+
+  @Override
+  public NullabilityValue ternaryOperation(AbstractInsnNode insn,
+                                           NullabilityValue value1,
+                                           NullabilityValue value2,
+                                           NullabilityValue value3) {
+    return null;
+  }
+
+  @Override
+  public NullabilityValue naryOperation(AbstractInsnNode insn,
+                                        List<? extends NullabilityValue> values) {
+    int opcode = insn.getOpcode();
+    if (opcode == MULTIANEWARRAY) {
+      return newValue(Type.getType(((MultiANewArrayInsnNode) insn).desc));
+    }
+    else if (opcode == INVOKEDYNAMIC) {
+      return newValue(Type.getReturnType(((InvokeDynamicInsnNode) insn).desc));
+    }
+    else {
+      return newValue(Type.getReturnType(((MethodInsnNode) insn).desc));
+    }
+  }
+
+  @Override
+  public void returnOperation(AbstractInsnNode insn,
+                              NullabilityValue value,
+                              NullabilityValue expected) {
+    // Nothing to do.
+  }
+
+  @Override
+  public NullabilityValue merge(NullabilityValue value1, NullabilityValue value2) {
+    // 合并两者的状态
+    Nullability mergedState = Nullability.merge(value1.getState(), value2.getState());
+
+
+    // 第一种情况，两个value的类型相同且状态（state）相同
+    if (value1.equals(value2)) {
+      return value1;
+    }
+
+    // 第二种情况，两个value的类型相同，但状态（state）不同，需要合并它们的状态（state）
+    Type type1 = value1.getType();
+    Type type2 = value2.getType();
+    if (type1 != null && type1.equals(type2)) {
+      Type type = value1.getType();
+      return new NullabilityValue(type, mergedState);
+    }
+
+    // 第三种情况，两个value的类型不相同的，而且要合并它们的状态（state）
+    if (type1 != null
+        && (type1.getSort() == Type.OBJECT || type1.getSort() == Type.ARRAY)
+        && type2 != null
+        && (type2.getSort() == Type.OBJECT || type2.getSort() == Type.ARRAY)) {
+      if (type1.equals(NULL_TYPE)) {
+        return new NullabilityValue(type2, mergedState);
+      }
+      if (type2.equals(NULL_TYPE)) {
+        return new NullabilityValue(type1, mergedState);
+      }
+      if (isAssignableFrom(type1, type2)) {
+        return new NullabilityValue(type1, mergedState);
+      }
+      if (isAssignableFrom(type2, type1)) {
+        return new NullabilityValue(type2, mergedState);
+      }
+      int numDimensions = 0;
+      if (type1.getSort() == Type.ARRAY
+          && type2.getSort() == Type.ARRAY
+          && type1.getDimensions() == type2.getDimensions()
+          && type1.getElementType().getSort() == Type.OBJECT
+          && type2.getElementType().getSort() == Type.OBJECT) {
+        numDimensions = type1.getDimensions();
+        type1 = type1.getElementType();
+        type2 = type2.getElementType();
+      }
+
+
+      while (true) {
+        if (type1 == null || isInterface(type1)) {
+          NullabilityValue arrayValue = newArrayValue(Type.getObjectType("java/lang/Object"), numDimensions);
+          return new NullabilityValue(arrayValue.getType(), mergedState);
+        }
+        type1 = getSuperClass(type1);
+        if (isAssignableFrom(type1, type2)) {
+          NullabilityValue arrayValue = newArrayValue(type1, numDimensions);
+          return new NullabilityValue(arrayValue.getType(), mergedState);
+        }
+      }
+    }
+    return UNINITIALIZED_VALUE;
+  }
+
+  protected boolean isInterface(final Type type) {
+    return getClass(type).isInterface();
+  }
+
+  protected Type getSuperClass(final Type type) {
+    Class<?> superClass = getClass(type).getSuperclass();
+    return superClass == null ? null : Type.getType(superClass);
+  }
+
+  private NullabilityValue newArrayValue(final Type type, final int dimensions) {
+    if (dimensions == 0) {
+      return newValue(type);
+    }
+    else {
+      StringBuilder descriptor = new StringBuilder();
+      for (int i = 0; i < dimensions; ++i) {
+        descriptor.append('[');
+      }
+      descriptor.append(type.getDescriptor());
+      return newValue(Type.getType(descriptor.toString()));
+    }
+  }
+
+  protected NullabilityValue getElementValue(final NullabilityValue objectArrayValue) {
+    Type arrayType = objectArrayValue.getType();
+    if (arrayType != null) {
+      if (arrayType.getSort() == Type.ARRAY) {
+        return newValue(Type.getType(arrayType.getDescriptor().substring(1)));
+      }
+      else if (arrayType.equals(NULL_TYPE)) {
+        return objectArrayValue;
+      }
+    }
+    throw new AssertionError();
+  }
+
+  protected boolean isSubTypeOf(final NullabilityValue value, final NullabilityValue expected) {
+    Type expectedType = expected.getType();
+    Type type = value.getType();
+    switch (expectedType.getSort()) {
+      case Type.INT:
+      case Type.FLOAT:
+      case Type.LONG:
+      case Type.DOUBLE:
+        return type.equals(expectedType);
+      case Type.ARRAY:
+      case Type.OBJECT:
+        if (type.equals(NULL_TYPE)) {
+          return true;
+        }
+        else if (type.getSort() == Type.OBJECT || type.getSort() == Type.ARRAY) {
+          if (isAssignableFrom(expectedType, type)) {
+            return true;
+          }
+          else if (getClass(expectedType).isInterface()) {
+            // The merge of class or interface types can only yield class types (because it is not
+            // possible in general to find an unambiguous common super interface, due to multiple
+            // inheritance). Because of this limitation, we need to relax the subtyping check here
+            // if 'value' is an interface.
+            return Object.class.isAssignableFrom(getClass(type));
+          }
+          else {
+            return false;
+          }
+        }
+        else {
+          return false;
+        }
+      default:
+        throw new AssertionError();
+    }
+  }
+
+  protected boolean isAssignableFrom(final Type type1, final Type type2) {
+    if (type1.equals(type2)) {
+      return true;
+    }
+    return getClass(type1).isAssignableFrom(getClass(type2));
+  }
+
+  protected Class<?> getClass(final Type type) {
+    try {
+      if (type.getSort() == Type.ARRAY) {
+        return Class.forName(type.getDescriptor().replace('/', '.'), false, loader);
+      }
+      return Class.forName(type.getClassName(), false, loader);
+    }
+    catch (ClassNotFoundException e) {
+      throw new TypeNotPresentException(e.toString(), e);
+    }
+  }
+}
+```
+
+##### NullabilityFrame
+
+在下面的`NullabilityFrame`当中，重点是关注`initJumpTarget`方法。Overriding this method and changing the frame values allows implementing branch-sensitive analyses.
+
+```java
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.LabelNode;
+import org.objectweb.asm.tree.analysis.Frame;
+
+public class NullabilityFrame extends Frame<NullabilityValue> {
+  public NullabilityFrame(int numLocals, int numStack) {
+    super(numLocals, numStack);
+  }
+
+  public NullabilityFrame(NullabilityFrame frame) {
+    super(frame);
+  }
+
+  @Override
+  public void initJumpTarget(int opcode, LabelNode target) {
+    // 首先，处理自己的代码逻辑
+    int stackIndex = getStackSize();
+    NullabilityValue oldValue = getStack(stackIndex);
+    switch (opcode) {
+      case Opcodes.IFNULL: {
+        if (target == null) {
+          updateFrame(oldValue, Nullability.NOT_NULL);
+        }
+        else {
+          updateFrame(oldValue, Nullability.NULL);
+        }
+        break;
+      }
+      case Opcodes.IFNONNULL: {
+        if (target == null) {
+          updateFrame(oldValue, Nullability.NULL);
+        }
+        else {
+          updateFrame(oldValue, Nullability.NOT_NULL);
+        }
+        break;
+      }
+    }
+
+    // 其次，调用父类的方法实现
+    super.initJumpTarget(opcode, target);
+  }
+
+  private void updateFrame(NullabilityValue oldValue, Nullability newState) {
+    NullabilityValue newValue = new NullabilityValue(oldValue.getType(), newState);
+    int numLocals = getLocals();
+    for (int i = 0; i < numLocals; i++) {
+      NullabilityValue currentValue = getLocal(i);
+      if (oldValue == currentValue) {
+        setLocal(i, newValue);
+      }
+    }
+
+    int numStack = getMaxStackSize();
+    for (int i = 0; i < numStack; i++) {
+      NullabilityValue currentValue = getStack(i);
+      if (oldValue == currentValue) {
+        setStack(i, newValue);
+      }
+    }
+  }
+}
+```
+
+##### NullabilityAnalyzer
+
+在下面的`NullabilityAnalyzer`当中，重点是关注`newFrame`方法，它使用`NullabilityFrame`替换掉了`Frame`类的实现：
+
+```java
+import org.objectweb.asm.tree.analysis.Analyzer;
+import org.objectweb.asm.tree.analysis.Frame;
+import org.objectweb.asm.tree.analysis.Interpreter;
+
+public class NullabilityAnalyzer extends Analyzer<NullabilityValue> {
+  public NullabilityAnalyzer(Interpreter<NullabilityValue> interpreter) {
+    super(interpreter);
+  }
+
+  @Override
+  protected Frame<NullabilityValue> newFrame(Frame<? extends NullabilityValue> frame) {
+    return new NullabilityFrame((NullabilityFrame) frame);
+  }
+
+  @Override
+  protected Frame<NullabilityValue> newFrame(int numLocals, int numStack) {
+    return new NullabilityFrame(numLocals, numStack);
+  }
+}
+```
+
+##### NullabilityDiagnosis
+
+在`NullabilityDiagnosis`类当中，主要的逻辑也是判断operand stack上的某一个元素是否可能为`null`值：
+
+```java
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.InsnList;
+import org.objectweb.asm.tree.MethodInsnNode;
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.analysis.Analyzer;
+import org.objectweb.asm.tree.analysis.AnalyzerException;
+import org.objectweb.asm.tree.analysis.Frame;
+
+import java.util.Arrays;
+
+import static org.objectweb.asm.Opcodes.*;
+
+public class NullabilityDiagnosis {
+  public static int[] diagnose(String className, MethodNode mn) throws AnalyzerException {
+    // 第一步，获取Frame信息
+    Analyzer<NullabilityValue> analyzer = new NullabilityAnalyzer(new NullabilityInterpreter(Opcodes.ASM9));
+    Frame<NullabilityValue>[] frames = analyzer.analyze(className, mn);
+
+    // 第二步，判断是否为null或maybe-null，收集数据
+    TIntArrayList intArrayList = new TIntArrayList();
+    InsnList instructions = mn.instructions;
+    int size = instructions.size();
+    for (int i = 0; i < size; i++) {
+      AbstractInsnNode insn = instructions.get(i);
+      if (frames[i] != null) {
+        NullabilityValue value = getTarget(insn, frames[i]);
+        if (value == null) continue;
+        if (value.getState() == Nullability.NULL || value.getState() == Nullability.NULLABLE) {
+          intArrayList.add(i);
+        }
+      }
+    }
+
+    // 第三步，将结果转换成int[]形式
+    int[] array = intArrayList.toNativeArray();
+    Arrays.sort(array);
+    return array;
+  }
+
+  private static NullabilityValue getTarget(AbstractInsnNode insn, Frame<NullabilityValue> frame) {
+    int opcode = insn.getOpcode();
+    switch (opcode) {
+      case GETFIELD:
+      case ARRAYLENGTH:
+      case MONITORENTER:
+      case MONITOREXIT:
+        return getStackValue(frame, 0);
+      case PUTFIELD:
+        return getStackValue(frame, 1);
+      case INVOKEVIRTUAL:
+      case INVOKESPECIAL:
+      case INVOKEINTERFACE:
+        String desc = ((MethodInsnNode) insn).desc;
+        return getStackValue(frame, Type.getArgumentTypes(desc).length);
+
+    }
+    return null;
+  }
+
+  private static NullabilityValue getStackValue(Frame<NullabilityValue> frame, int index) {
+    int top = frame.getStackSize() - 1;
+    return index <= top ? frame.getStack(top - index) : null;
+  }
+}
+```
+
+#### 进行分析
+
+```java
+public class HelloWorldAnalysisTree {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes);
+
+    //（2）生成ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassNode(api);
+
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    //（3）进行分析
+    String className = cn.name;
+    List<MethodNode> methods = cn.methods;
+    MethodNode mn = methods.get(1);
+    int[] array = NullabilityDiagnosis.diagnose(className, mn);
+    System.out.println(Arrays.toString(array));
+    BoxDrawingUtils.printInstructionLinks(mn.instructions, array);
+  }
+}
+```
+
+输出结果：
+
+```shell
+[13]
+      000: aload_1
+      001: ifnonnull L0
+      002: getstatic System.out
+      003: ldc "str is null"
+      004: invokevirtual PrintStream.println
+      005: goto L1
+      006: L0
+      007: getstatic System.out
+      008: ldc "str is not null"
+      009: invokevirtual PrintStream.println
+      010: L1
+      011: getstatic System.out
+      012: aload_1
+├──── 013: invokevirtual String.trim
+      014: invokevirtual PrintStream.println
+      015: return
+```
+
+### 4.14.4 测试用例
+
+#### unknown
+
+```java
+public class HelloWorld {
+  public void test(String str) {
+    System.out.println(str.trim());
+  }
+}
+```
+
+#### not-null
+
+```java
+public class HelloWorld {
+  public void test() {
+    String str = "ABC";
+    System.out.println(str.trim());
+  }
+}
+```
+
+#### null
+
+```java
+public class HelloWorld {
+  public void test() {
+    String str = null;
+    System.out.println(str.trim());
+  }
+}
+```
+
+#### if: not-null+null=nullable
+
+```java
+public class HelloWorld {
+  public void test(String str) {
+    // unknown
+    if (str == null) {
+      // null
+      System.out.println("str is null");
+    }
+    else {
+      // not-null
+      System.out.println("str is not null");
+    }
+    // nullable
+    System.out.println(str.trim());
+  }
+}
+```
+
+#### Infeasible Paths
+
+```java
+public class HelloWorld {
+  public void test(String str) {
+    boolean flag;
+    if (str != null) {
+      flag = true;
+    }
+    else {
+      flag = false;
+    }
+
+    if (flag) {
+      // flag记录了str的状态，因此不会出现NullPointerException异常
+      int length = str.length();
+      System.out.println(length);
+    }
+  }
+}
+```
+
+### 4.14.5 总结
+
+本文内容总结如下：
+
+- 第一点，使用unknown、not-null、null和nullable四个状态对潜在`NullPointerException`进行分析。
+- 第二点，代码示例，进行两个版本的实现。第一个版本，代码比较简单，实现的功能也比较简单；第二个版本，代码比较复杂，实现的功能也相对较强。
+- 第三点，对于`NullPointerException`进行分析，仍然有很多改进的空间。在一些特殊情况下，本文呈现的思路无法进行解决。
+
+## 4.15 生成Control Flow Graph
+
+### 4.15.1 如何生成控制流程图
+
+#### 整体思路
+
+```
+Instruction --> Block --> Box（图形） --> Graph（图形）
+```
+
+生成控制流程图经过三个步骤：
+
+- 第一步，将Instruction组织成Block。在每个Block当中，包含1个或多个Instruction。
+- 第二步，将Block封装成Box。Block就是单纯的Instruction的有序集合，而Box在Block的基础上添加了Rectangle图形信息。
+- 第三步，将多个Box组织到一起，形成一个整体的Graph。
+
+![#yyds干货盘点#Java ASM系列：（097）生成Control Flow Graph_java-bytecode-asm](https://s2.51cto.com/images/20211127/1637993433520407.png?x-oss-process=image/watermark,size_14,text_QDUxQ1RP5Y2a5a6i,color_FFFFFF,t_30,g_se,x_10,y_10,shadow_20,type_ZmFuZ3poZW5naGVpdGk=/format,webp/resize,m_fixed,w_1184)
+
+#### 难点解析
+
+在这个过程中，实现的难点就在于“如何将Instruction转换成Block”；其它部分，则相对容易一些。
+
+那么，如何将Instruction转换成Block呢？我们可以依赖于`Analyzer`类的`newControlFlowEdge`方法来实现。
+
+在`Analyzer`类中，`newControlFlowEdge`方法提供了一个空的实现：
+
+```java
+protected void newControlFlowEdge(final int insnIndex, final int successorIndex) {
+  // Nothing to do.
+}
+```
+
+如果我们仔细观察一下，就会发现：`newControlFlowEdge`方法是在`analyze`方法进行调用。
+
+在`analyze`方法中，根据当前指令（`insnNode`）的类型，会对`newControlFlowEdge`方法的调用，有以下几种情况：
+
+- 如果当前的`insnNode`是`LabelNode`、`LineNumberNode`或`FrameNode`类型
+  - 它们并不是真正意义上的instruction（不会存储到具体的`.class`文件中），只是起到辅助作用，按照顺序执行就可以了。
+- 如果当前的`insnNode`是`JumpInsnNode`类型
+  - 它代表选择结构，判断是否要进行跳转。
+  - 注意，`if`语句有两个分支，一个是`true`，另一个是`false`；而`goto`就只有一个分支，不需要考虑`true`或`false`，直接跳转就可以了。
+- 如果当前的`insnNode`是`LookupSwitchInsnNode`或`TableSwitchInsnNode`类型
+  - 它代表多重选择跳转，有多个分支结构。`if`语句只有两个分支，而`switch`可以支持更多分支，支持`default`和多个`case`的情况。
+- 如果当前的`insnNode`是`ATHROW`或`RETURN`等代表结束的opcode，它表示方法的执行结束，没有任何的跳转分支。
+- 其它情况（大多数的指令都是属于这种），按照顺序执行。
+
+```java
+public class Analyzer<V extends Value> implements Opcodes {
+  public Frame<V>[] analyze(final String owner, final MethodNode method) throws AnalyzerException {
+    // Control flow analysis.
+    while (numInstructionsToProcess > 0) {
+      // Get and remove one instruction from the list of instructions to process.
+      int insnIndex = instructionsToProcess[--numInstructionsToProcess];
+
+      // Simulate the execution of this instruction.
+      AbstractInsnNode insnNode = null;
+      try {
+        insnNode = method.instructions.get(insnIndex);
+        int insnOpcode = insnNode.getOpcode();
+        int insnType = insnNode.getType();
+
+        if (insnType == AbstractInsnNode.LABEL
+            || insnType == AbstractInsnNode.LINE
+            || insnType == AbstractInsnNode.FRAME) {
+          newControlFlowEdge(insnIndex, insnIndex + 1);              // 这里调用了newControlFlowEdge方法
+        } else {
+          if (insnNode instanceof JumpInsnNode) {
+            JumpInsnNode jumpInsn = (JumpInsnNode) insnNode;
+            if (insnOpcode != GOTO && insnOpcode != JSR) {
+              newControlFlowEdge(insnIndex, insnIndex + 1);      // 这里调用了newControlFlowEdge方法
+            }
+            int jumpInsnIndex = insnList.indexOf(jumpInsn.label);
+            newControlFlowEdge(insnIndex, jumpInsnIndex);          // 这里调用了newControlFlowEdge方法
+          } else if (insnNode instanceof LookupSwitchInsnNode) {
+            LookupSwitchInsnNode lookupSwitchInsn = (LookupSwitchInsnNode) insnNode;
+            int targetInsnIndex = insnList.indexOf(lookupSwitchInsn.dflt);
+            newControlFlowEdge(insnIndex, targetInsnIndex);        // 这里调用了newControlFlowEdge方法
+            for (int i = 0; i < lookupSwitchInsn.labels.size(); ++i) {
+              LabelNode label = lookupSwitchInsn.labels.get(i);
+              targetInsnIndex = insnList.indexOf(label);
+              newControlFlowEdge(insnIndex, targetInsnIndex);    // 这里调用了newControlFlowEdge方法
+            }
+          } else if (insnNode instanceof TableSwitchInsnNode) {
+            TableSwitchInsnNode tableSwitchInsn = (TableSwitchInsnNode) insnNode;
+            int targetInsnIndex = insnList.indexOf(tableSwitchInsn.dflt);
+            newControlFlowEdge(insnIndex, targetInsnIndex);       // 这里调用了newControlFlowEdge方法
+            for (int i = 0; i < tableSwitchInsn.labels.size(); ++i) {
+              LabelNode label = tableSwitchInsn.labels.get(i);
+              targetInsnIndex = insnList.indexOf(label);
+              newControlFlowEdge(insnIndex, targetInsnIndex);   // 这里调用了newControlFlowEdge方法
+            }
+          } else if (insnOpcode != ATHROW && (insnOpcode < IRETURN || insnOpcode > RETURN)) {
+            newControlFlowEdge(insnIndex, insnIndex + 1);         // 这里调用了newControlFlowEdge方法
+          }
+        }
+      } catch (AnalyzerException e) {
+        throw new AnalyzerException(e.node, "Error at instruction " + insnIndex + ": " + e.getMessage(), e);
+      } catch (RuntimeException e) {
+        // DontCheck(IllegalCatch): can't be fixed, for backward compatibility.
+        throw new AnalyzerException(insnNode, "Error at instruction " + insnIndex + ": " + e.getMessage(), e);
+      }
+    }
+
+    return frames;
+  }
+}
+```
+
+#### 图形部分
+
+> [Simple Java Graphics Library (horstmann.com)](https://horstmann.com/sjsu/graphics/)
+
+在项目当中提供了`TextGraph`类，可以用文本的形式将control flow graph打印出来。
+
+```
+┌───────────────────────────────────┐
+│ iload_1                           │
+│ ifne L0                           ├───┐
+└────────────────┬──────────────────┘   │
+                 │                      │
+┌────────────────┴──────────────────┐   │
+│ getstatic System.out              │   │
+│ ldc "val is 0"                    │   │
+│ invokevirtual PrintStream.println │   │
+│ goto L1                           ├───┼──┐
+└───────────────────────────────────┘   │  │
+                                        │  │
+┌───────────────────────────────────┐   │  │
+│ L0                                ├───┘  │
+│ getstatic System.out              │      │
+│ ldc "val is unknown"              │      │
+│ invokevirtual PrintStream.println │      │
+└────────────────┬──────────────────┘      │
+                 │                         │
+┌────────────────┴──────────────────┐      │
+│ L1                                ├──────┘
+│ return                            │
+└───────────────────────────────────┘
+```
+
+### 4.15.2 代码实现
+
+接下来，我们要将抽象思路转换成具体的代码实现。
+
+| 概念        | 类                 |
+| ----------- | ------------------ |
+| instruction | `AbstractInsnNode` |
+| block       | `InsnBlock`        |
+| box         | `InsnBox`          |
+| graph       | `InsnGraph`        |
+
+#### InsnBlock
+
+```java
+import java.util.ArrayList;
+import java.util.List;
+
+public class InsnBlock {
+  // 文字信息
+  public final List<String> lines = new ArrayList<>();
+
+  // 关联关系
+  public final List<InsnBlock> nextBlockList = new ArrayList<>();
+  public final List<InsnBlock> jumpBlockList = new ArrayList<>();
+
+  public void addLines(List<String> list) {
+    lines.addAll(list);
+  }
+
+  public void addNext(InsnBlock item) {
+    nextBlockList.add(item);
+  }
+
+  public void addJump(InsnBlock item) {
+    jumpBlockList.add(item);
+  }
+
+}
+```
+
+#### InsnBox
+
+```java
+import lsieun.graphics.Rectangle;
+import lsieun.graphics.Text;
+
+public class InsnBox {
+  private static final int INNER_PADDING = 10;
+  private static final int RECTANGLE_WIDTH = 250;
+
+  // 位置信息
+  public int x;
+  public int y;
+
+  // 图形信息
+  public Rectangle rectangle;
+
+  public final InsnBlock block;
+
+  public InsnBox(InsnBlock block) {
+    this.block = block;
+  }
+
+  public void draw(int x, int y) {
+    this.x = x;
+    this.y = y;
+
+    int currentX = x + INNER_PADDING;
+    int currentY = y + INNER_PADDING;
+
+    int currentWidth = 0;
+    int currentHeight = 0;
+    for (String item : block.lines) {
+      Text text = new Text(currentX, currentY, item);
+      text.draw();
+
+      int textWidth = text.getWidth() + 2 * INNER_PADDING;
+      if (textWidth > currentWidth) {
+        currentWidth = textWidth;
+      }
+      currentY += text.getHeight();
+      currentHeight = currentY - y;
+    }
+
+    int width = RECTANGLE_WIDTH;
+    int height = currentHeight + INNER_PADDING;
+    rectangle = new Rectangle(x, y, width, height);
+    rectangle.draw();
+  }
+
+  public int getWidth() {
+    if (rectangle != null) {
+      return rectangle.getWidth();
+    }
+    else {
+      return 0;
+    }
+  }
+
+  public int getHeight() {
+    if (rectangle != null) {
+      return rectangle.getHeight();
+    }
+    else {
+      return 0;
+    }
+  }
+}
+```
+
+#### InsnGraph
+
+```java
+public class InsnGraph {
+  // 部分内容省略
+  private static final int START_X = 10;
+  private static final int START_Y = 10;
+
+  private final int startX;
+  private final int startY;
+
+  private final InsnBox[] boxes;
+
+  public InsnGraph(InsnBlock[] blocks) {
+    this(START_X, START_Y, blocks);
+  }
+
+  public InsnGraph(int startX, int startY, InsnBlock[] blocks) {
+    this.startX = startX;
+    this.startY = startY;
+    int length = blocks.length;
+    this.boxes = new InsnBox[length];
+    for (int i = 0; i < length; i++) {
+      this.boxes[i] = new InsnBox(blocks[i]);
+    }
+  }
+
+  public void draw() {
+    int length = boxes.length;
+    if (length < 1) return;
+
+    drawBlockRectangles();
+    drawConnectionLines();
+  }
+
+  private void drawBlockRectangles() {
+    int currentX = this.startX;
+    int currentY = this.startY;
+
+    int length = boxes.length;
+    for (int i = 0; i < length; i++) {
+      InsnBox box = boxes[i];
+      if (i != 0) {
+        InsnBox previousBox = boxes[i - 1];
+        currentY = previousBox.y + previousBox.getHeight() + ROW_SPACE;
+      }
+
+      box.draw(currentX, currentY);
+    }
+  }
+
+  private void drawConnectionLines() {
+    int length = boxes.length;
+    for (int i = 0; i < length; i++) {
+      InsnBox currentBox = boxes[i];
+
+      List<InsnBox> nextBoxList = findNextBoxes(currentBox);
+      for (InsnBox nextBox : nextBoxList) {
+        connectTop2BottomBlock(currentBox.rectangle, nextBox.rectangle);
+      }
+
+      List<InsnBox> jumpBoxList = findJumpBoxes(currentBox);
+      for (InsnBox jumpbox : jumpBoxList) {
+        jumpOne2Another(currentBox.rectangle, jumpbox.rectangle, i);
+      }
+    }
+  }
+
+  // 后续内容省略
+}
+```
+
+#### 第一个版本
+
+首先，我们先做一个简单的实现：每个Instruction生成一个Block。
+
+```java
+import lsieun.asm.analysis.graph.InsnBlock;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.analysis.*;
+
+import java.util.List;
+
+public class ControlFlowEdgeAnalyzer<V extends Value> extends Analyzer<V> {
+  private AbstractInsnNode[] nodeArray;
+  public InsnBlock[] blocks;
+
+  public ControlFlowEdgeAnalyzer(Interpreter<V> interpreter) {
+    super(interpreter);
+  }
+
+  @Override
+  public Frame<V>[] analyze(String owner, MethodNode method) throws AnalyzerException {
+    nodeArray = method.instructions.toArray();
+    int length = nodeArray.length;
+    blocks = new InsnBlock[length];
+    InsnText insnText = new InsnText();
+    for (int i = 0; i < length; i++) {
+      blocks[i] = getBlock(i);
+      AbstractInsnNode node = nodeArray[i];
+      List<String> lines = insnText.toLines(node);
+      blocks[i].addLines(lines);
+    }
+
+    return super.analyze(owner, method);
+  }
+
+  @Override
+  protected void newControlFlowEdge(int insnIndex, int successorIndex) {
+    // 首先，处理自己的代码逻辑
+    AbstractInsnNode insnNode = nodeArray[insnIndex];
+    int insnOpcode = insnNode.getOpcode();
+    int insnType = insnNode.getType();
+
+    if (insnType == AbstractInsnNode.JUMP_INSN) {
+      if ((insnIndex + 1) == successorIndex) {
+        addNext(insnIndex, successorIndex);
+      }
+      else {
+        addJump(insnIndex, successorIndex);
+      }
+    }
+    else if (insnOpcode == LOOKUPSWITCH) {
+      addJump(insnIndex, successorIndex);
+    }
+    else if (insnOpcode == TABLESWITCH) {
+      addJump(insnIndex, successorIndex);
+    }
+    else if (insnOpcode == RET) {
+      addJump(insnIndex, successorIndex);
+    }
+    else if (insnOpcode == ATHROW || (insnOpcode >= IRETURN && insnOpcode <= RETURN)) {
+      assert false : "should not be here";
+      removeNextAndJump(insnIndex);
+    }
+    else {
+      addNext(insnIndex, successorIndex);
+    }
+
+    // 其次，调用父类的方法实现
+    super.newControlFlowEdge(insnIndex, successorIndex);
+  }
+
+  private void addNext(int fromIndex, int toIndex) {
+    InsnBlock currentBlock = getBlock(fromIndex);
+    InsnBlock nextBlock = getBlock(toIndex);
+    currentBlock.addNext(nextBlock);
+  }
+
+  private void addJump(int fromIndex, int toIndex) {
+    InsnBlock currentBlock = getBlock(fromIndex);
+    InsnBlock nextBlock = getBlock(toIndex);
+    currentBlock.addJump(nextBlock);
+  }
+
+  private void removeNextAndJump(int insnIndex) {
+    InsnBlock currentBlock = getBlock(insnIndex);
+    currentBlock.nextBlockList.clear();
+    currentBlock.jumpBlockList.clear();
+  }
+
+  private InsnBlock getBlock(int insnIndex) {
+    InsnBlock block = blocks[insnIndex];
+    if (block == null){
+      block = new InsnBlock();
+      blocks[insnIndex] = block;
+    }
+    return block;
+  }
+
+  public InsnBlock[] getBlocks() {
+    return blocks;
+  }
+
+}
+```
+
+#### 第二个版本
+
+接着，我们在`ControlFlowEdgeAnalyzer`实现的基础上进一步扩展：将顺序执行多个Block合并为一个Block。
+
+```java
+import lsieun.asm.analysis.graph.InsnBlock;
+import org.objectweb.asm.tree.analysis.Interpreter;
+import org.objectweb.asm.tree.analysis.Value;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+public class ControlFlowEdgeAnalyzer2<V extends Value> extends ControlFlowEdgeAnalyzer<V> {
+
+  public ControlFlowEdgeAnalyzer2(Interpreter<V> interpreter) {
+    super(interpreter);
+  }
+
+  @Override
+  public InsnBlock[] getBlocks() {
+    //（1）调用父类实现
+    InsnBlock[] blocks = super.getBlocks();
+
+    //（2）如果结果为空，则提前返回
+    if (blocks == null || blocks.length < 1) {
+      return blocks;
+    }
+
+    //（3）记录“分隔点”
+    Set<InsnBlock> newBlockSet = new HashSet<>();
+    int length = blocks.length;
+    for (int i = 0; i < length; i++) {
+      InsnBlock currentBlock = blocks[i];
+      List<InsnBlock> nextBlockList = currentBlock.nextBlockList;
+      List<InsnBlock> jumpBlockList = currentBlock.jumpBlockList;
+
+      boolean hasNext = false;
+      boolean hasJump = false;
+
+      if (nextBlockList.size() > 0) {
+        hasNext = true;
+      }
+
+      if (jumpBlockList.size() > 0) {
+        hasJump = true;
+      }
+
+      if (!hasNext && (i + 1) < length) {
+        newBlockSet.add(blocks[i + 1]);
+      }
+
+      if (hasJump) {
+        newBlockSet.addAll(jumpBlockList);
+
+        if (hasNext) {
+          newBlockSet.add(blocks[i + 1]);
+        }
+      }
+    }
+
+    //（4）利用“分隔点”，合并成不同的分组
+    List<InsnBlock> resultList = new ArrayList<>();
+    for (int i = 0; i < length; i++) {
+      InsnBlock currentBlock = blocks[i];
+
+      if (i == 0) {
+        resultList.add(currentBlock);
+      }
+      else if (newBlockSet.contains(currentBlock)) {
+        resultList.add(currentBlock);
+      }
+      else {
+        int size = resultList.size();
+        InsnBlock lastBlock = resultList.get(size - 1);
+        lastBlock.lines.addAll(currentBlock.lines);
+        lastBlock.jumpBlockList.clear();
+        lastBlock.jumpBlockList.addAll(currentBlock.jumpBlockList);
+        lastBlock.nextBlockList.clear();
+        lastBlock.nextBlockList.addAll(currentBlock.nextBlockList);
+      }
+    }
+
+    return resultList.toArray(new InsnBlock[0]);
+  }
+}
+```
+
+#### 验证结果
+
+```java
+public class ControlFlowGraphRun {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes);
+
+    //（2）生成ClassNode
+    ClassNode cn = new ClassNode();
+
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    //（3）查找方法
+    String methodName = "test";
+    MethodNode targetNode = null;
+    for (MethodNode mn : cn.methods) {
+      if (mn.name.equals(methodName)) {
+        targetNode = mn;
+        break;
+      }
+    }
+    if (targetNode == null) {
+      System.out.println("Can not find method: " + methodName);
+      return;
+    }
+
+    //（4）进行图形化显示
+    display(cn.name, targetNode, 2);
+
+    //（5）打印复杂度
+    CyclomaticComplexity cc = new CyclomaticComplexity();
+    int complexity = cc.getCyclomaticComplexity(cn.name, targetNode);
+    String line = String.format("%s:%s complexity: %d", targetNode.name, targetNode.desc, complexity);
+    System.out.println(line);
+  }
+}
+```
+
+### 4.15.3 测试数据
+
+#### simple
+
+顺序执行：
+
+```java
+public class HelloWorld {
+  public void test() {
+    System.out.println("Hello ASM");
+  }
+}
+```
+
+####  if
+
+选择判断：
+
+```java
+public class HelloWorld {
+  public void test(int val) {
+    if (val == 0) {
+      System.out.println("val is 0");
+    }
+    else {
+      System.out.println("val is unknown");
+    }
+  }
+}
+```
+
+#### switch
+
+多重选择：
+
+```java
+public class HelloWorld {
+  public void test(int val) {
+    switch (val) {
+      case 0:
+        System.out.println("val is 0");
+        break;
+      default:
+        System.out.println("val is unknown");
+    }
+  }
+}
+```
+
+#### for
+
+循环语句：
+
+```java
+public class HelloWorld {
+  public void test() {
+    for (int i = 0; i < 10; i++) {
+      System.out.println(i);
+    }
+  }
+}
+```
+
+#### while-break
+
+循环语句：
+
+```java
+public class HelloWorld {
+  public void test() {
+    int i = 1;
+    while (i < 10) {
+      if (i == 5) {
+        break;
+      }
+      i++;
+    }
+  }
+}
+```
+
+#### throw
+
+异常退出：
+
+```java
+public class HelloWorld {
+  public void test(int val) {
+    if (val == 0) {
+      System.out.println("val is 0");
+    }
+    else {
+      throw new RuntimeException("val is unknown");
+    }
+  }
+}
+```
+
+#### try-catch
+
+异常处理：
+
+```java
+public class HelloWorld {
+  public void test() {
+    try {
+      Thread.sleep(1000);
+    }
+    catch (InterruptedException ex) {
+      ex.printStackTrace();
+    }
+  }
+}
+```
+
+#### dead code
+
+在之前的Tree Based Class Transformation示例当中，有一个示例是“优化跳转”，经过优化之后，有一些instruction就成为dead code。
+
+我们可以查看内容三次变化：
+
+- 第一次，优化之前，instruction当中存在多次跳转。
+- 第二次，优化之后，减少跳转次数，出现dead code。
+- 第三次，移除dead code之后，instruction精简。
+
+### 4.15.4 总结
+
+本文内容总结如下：
+
+- 第一点，介绍生成control flow graph的思路：instruction –> block –> box –> graph。
+- 第二点，在具体代码实现上，主要是依赖于`Analyzer`类的`newControlFlowEdge`方法。
+  - 第一个版本中，每一条instruction都生成一个block。
+  - 第二个版本中，将多个顺序执行的block合并成一个新的block。
+
+## 4.16 示例：Cyclomatic Complexity
+
+### 4.16.1 Cyclomatic Complexity
+
+**Code complexity** is important, yet difficult metric to measure.
+
+One of the most relevant **complexity measurement** is the **Cyclomatic Complexity**(**CC**).
+
+#### 直观视角
+
+**CC** value can be calculated by measuring the number of independent execution paths of a program.
+
+下面的`HelloWorld`类的`test`方法的复杂度是1。
+
+```java
+public class HelloWorld {
+  public void test() {
+    System.out.println("Hello World");
+  }
+}
+```
+
+其control flow graph如下：
+
+```pseudocode
+┌───────────────────────────────────┐
+│ getstatic System.out              │
+│ ldc "Hello World"                 │
+│ invokevirtual PrintStream.println │
+│ return                            │
+└───────────────────────────────────┘
+```
+
+下面的`HelloWorld`类的`test`方法的复杂度是2。
+
+```java
+public class HelloWorld {
+  public void test(boolean flag) {
+    if (flag) {
+      System.out.println("flag is true");
+    }
+    else {
+      System.out.println("flag is false");
+    }
+  }
+}
+```
+
+其control flow graph如下：
+
+```pseudocode
+┌───────────────────────────────────┐
+│ iload_1                           │
+│ ifeq L0                           ├───┐
+└─────────────────┬─────────────────┘   │
+                  │                     │
+┌─────────────────┴─────────────────┐   │
+│ getstatic System.out              │   │
+│ ldc "flag is true"                │   │
+│ invokevirtual PrintStream.println │   │
+│ goto L1                           ├───┼──┐
+└───────────────────────────────────┘   │  │
+                                        │  │
+┌───────────────────────────────────┐   │  │
+│ L0                                ├───┘  │
+│ getstatic System.out              │      │
+│ ldc "flag is false"               │      │
+│ invokevirtual PrintStream.println │      │
+└─────────────────┬─────────────────┘      │
+                  │                        │
+┌─────────────────┴─────────────────┐      │
+│ L1                                ├──────┘
+│ return                            │
+└───────────────────────────────────┘
+```
+
+下面的`HelloWorld`类的`test`方法的复杂度是3。
+
+```java
+public class HelloWorld {
+  public void test(boolean flag, boolean flag2) {
+    if (flag && flag2) {
+      System.out.println("both flags are true");
+    }
+    else {
+      System.out.println("one flag must be false");
+    }
+  }
+}
+```
+
+其control flow graph如下：
+
+```pseudocode
+┌───────────────────────────────────┐
+│ iload_1                           │
+│ ifeq L0                           ├───┐
+└─────────────────┬─────────────────┘   │
+                  │                     │
+┌─────────────────┴─────────────────┐   │
+│ iload_2                           │   │
+│ ifeq L0                           ├───┼──┐
+└─────────────────┬─────────────────┘   │  │
+                  │                     │  │
+┌─────────────────┴─────────────────┐   │  │
+│ getstatic System.out              │   │  │
+│ ldc "both flags are true"         │   │  │
+│ invokevirtual PrintStream.println │   │  │
+│ goto L1                           ├───┼──┼──┐
+└───────────────────────────────────┘   │  │  │
+                                        │  │  │
+┌───────────────────────────────────┐   │  │  │
+│ L0                                ├───┴──┘  │
+│ getstatic System.out              │         │
+│ ldc "one flag must be false"      │         │
+│ invokevirtual PrintStream.println │         │
+└─────────────────┬─────────────────┘         │
+                  │                           │
+┌─────────────────┴─────────────────┐         │
+│ L1                                ├─────────┘
+│ return                            │
+└───────────────────────────────────┘
+```
+
+下面的`HelloWorld`类的`test`方法的复杂度是4。
+
+```java
+public class HelloWorld {
+  public void test(int value) {
+    String result;
+    switch (value) {
+      case 10:
+        result = "val = 1";
+        break;
+      case 20:
+        result = "val = 2";
+        break;
+      case 30:
+        result = "val = 3";
+        break;
+      default:
+        result = "val is unknown";
+    }
+    System.out.println(result);
+  }
+}
+```
+
+其control flow graph如下：
+
+```pseudocode
+┌───────────────────────────────────┐
+│ iload_1                           │
+│ lookupswitch {                    │
+│     10: L0                        │
+│     20: L1                        │
+│     30: L2                        │
+│     default: L3                   │
+│ }                                 ├───┐
+└───────────────────────────────────┘   │
+                                        │
+┌───────────────────────────────────┐   │
+│ L0                                ├───┤
+│ ldc "val = 1"                     │   │
+│ astore_2                          │   │
+│ goto L4                           ├───┼──┐
+└───────────────────────────────────┘   │  │
+                                        │  │
+┌───────────────────────────────────┐   │  │
+│ L1                                ├───┤  │
+│ ldc "val = 2"                     │   │  │
+│ astore_2                          │   │  │
+│ goto L4                           ├───┼──┼──┐
+└───────────────────────────────────┘   │  │  │
+                                        │  │  │
+┌───────────────────────────────────┐   │  │  │
+│ L2                                ├───┤  │  │
+│ ldc "val = 3"                     │   │  │  │
+│ astore_2                          │   │  │  │
+│ goto L4                           ├───┼──┼──┼──┐
+└───────────────────────────────────┘   │  │  │  │
+                                        │  │  │  │
+┌───────────────────────────────────┐   │  │  │  │
+│ L3                                ├───┘  │  │  │
+│ ldc "val is unknown"              │      │  │  │
+│ astore_2                          │      │  │  │
+└─────────────────┬─────────────────┘      │  │  │
+                  │                        │  │  │
+┌─────────────────┴─────────────────┐      │  │  │
+│ L4                                ├──────┴──┴──┘
+│ getstatic System.out              │
+│ aload_2                           │
+│ invokevirtual PrintStream.println │
+│ return                            │
+└───────────────────────────────────┘
+```
+
+下面的`HelloWorld`类的`test`方法的复杂度是5。
+
+```java
+public class HelloWorld {
+  public void test(int i) {
+    String result = i % 2 == 0 ? "a" : i % 3 == 0 ? "b" : i % 5 == 0 ? "c" : i % 7 == 0 ? "d" : "e";
+    System.out.println(result);
+  }
+}
+```
+
+其control flow graph如下：
+
+```pseudocode
+┌───────────────────────────────────┐
+│ iload_1                           │
+│ iconst_2                          │
+│ irem                              │
+│ ifne L0                           ├───┐
+└─────────────────┬─────────────────┘   │
+                  │                     │
+┌─────────────────┴─────────────────┐   │
+│ ldc "a"                           │   │
+│ goto L1                           ├───┼──┐
+└───────────────────────────────────┘   │  │
+                                        │  │
+┌───────────────────────────────────┐   │  │
+│ L0                                ├───┘  │
+│ iload_1                           │      │
+│ iconst_3                          │      │
+│ irem                              │      │
+│ ifne L2                           ├──────┼──┐
+└─────────────────┬─────────────────┘      │  │
+                  │                        │  │
+┌─────────────────┴─────────────────┐      │  │
+│ ldc "b"                           │      │  │
+│ goto L1                           ├──────┼──┼──┐
+└───────────────────────────────────┘      │  │  │
+                                           │  │  │
+┌───────────────────────────────────┐      │  │  │
+│ L2                                ├──────┼──┘  │
+│ iload_1                           │      │     │
+│ iconst_5                          │      │     │
+│ irem                              │      │     │
+│ ifne L3                           ├──────┼─────┼──┐
+└─────────────────┬─────────────────┘      │     │  │
+                  │                        │     │  │
+┌─────────────────┴─────────────────┐      │     │  │
+│ ldc "c"                           │      │     │  │
+│ goto L1                           ├──────┼─────┼──┼──┐
+└───────────────────────────────────┘      │     │  │  │
+                                           │     │  │  │
+┌───────────────────────────────────┐      │     │  │  │
+│ L3                                ├──────┼─────┼──┘  │
+│ iload_1                           │      │     │     │
+│ bipush 7                          │      │     │     │
+│ irem                              │      │     │     │
+│ ifne L4                           ├──────┼─────┼─────┼──┐
+└─────────────────┬─────────────────┘      │     │     │  │
+                  │                        │     │     │  │
+┌─────────────────┴─────────────────┐      │     │     │  │
+│ ldc "d"                           │      │     │     │  │
+│ goto L1                           ├──────┼─────┼─────┼──┼──┐
+└───────────────────────────────────┘      │     │     │  │  │
+                                           │     │     │  │  │
+┌───────────────────────────────────┐      │     │     │  │  │
+│ L4                                ├──────┼─────┼─────┼──┘  │
+│ ldc "e"                           │      │     │     │     │
+└─────────────────┬─────────────────┘      │     │     │     │
+                  │                        │     │     │     │
+┌─────────────────┴─────────────────┐      │     │     │     │
+│ L1                                ├──────┴─────┴─────┴─────┘
+│ astore_2                          │
+│ getstatic System.out              │
+│ aload_2                           │
+│ invokevirtual PrintStream.println │
+│ return                            │
+└───────────────────────────────────┘
+```
+
+#### 数学视角
+
+The complexity `M` is then defined as
+
+```
+M = E - N + 2P
+```
+
+where
+
+- `E` = the number of edges of the graph.
+- `N` = the number of nodes of the graph.
+- `P` = the number of connected components.
+
+For a single program, `P` is always equal to `1`. So a simpler formula for a single subroutine is
+
+```
+M = E - N + 2
+```
+
+#### 复杂度分级
+
+The complexity level affects the testability of the code, **the higher the CC, the higher the difficulty to implement pertinent tests**. In fact, the cyclomatic complexity value shows exactly the number of test cases needed to achieve a 100% branches coverage score.
+
+Some common values used by static analysis tools are shown below:
+
+- `1-4`: low complexity – easy to test
+- `5-7`: moderate complexity – tolerable
+- `8-10`: high complexity – refactoring should be considered to ease testing
+- `11` + very high complexity – very difficult to test
+
+Generally speaking, a code with a value higher than 11 in terms of CC, is considered very complex, and difficult to test and maintain.
+
+### 4.16.2 示例：计算圈复杂度
+
+#### 预期目标
+
+假如有一个`HelloWorld`类，代码如下：
+
+```java
+public class HelloWorld {
+  public void test(int val) {
+    if (val == 0) {
+      System.out.println("val is 0");
+    }
+    else if (val == 1) {
+      System.out.println("val is 1");
+    }
+    else {
+      System.out.println("val is unknown");
+    }
+  }
+}
+```
+
+我们的预期目标：确定`test`方法的复杂度。
+
+#### 编码实现
+
+在下面的`CyclomaticComplexityFrame`类当中，关键点是定义了一个`successors`字段，用来记录当前Frame与其它Frame之间的关联关系。
+
+```java
+import org.objectweb.asm.tree.analysis.Frame;
+import org.objectweb.asm.tree.analysis.Value;
+
+import java.util.HashSet;
+import java.util.Set;
+
+public class CyclomaticComplexityFrame<V extends Value> extends Frame<V> {
+  public Set<CyclomaticComplexityFrame<V>> successors = new HashSet<>();
+
+  public CyclomaticComplexityFrame(int numLocals, int numStack) {
+    super(numLocals, numStack);
+  }
+
+  public CyclomaticComplexityFrame(Frame<? extends V> frame) {
+    super(frame);
+  }
+}
+```
+
+在下面的`CyclomaticComplexityAnalyzer`类当中，从两点来把握：
+
+- 第一点，两个`newFrame`方法是用来替换掉默认的`Frame`类，而使用上面定义的`CyclomaticComplexityFrame`类。
+- 第二点，修改`newControlFlowEdge`方法，记录Frame之间的关联关系。
+
+```java
+import org.objectweb.asm.tree.analysis.*;
+
+public class CyclomaticComplexityAnalyzer<V extends Value> extends Analyzer<V> {
+  public CyclomaticComplexityAnalyzer(Interpreter<V> interpreter) {
+    super(interpreter);
+  }
+
+  @Override
+  protected Frame<V> newFrame(int numLocals, int numStack) {
+    return new CyclomaticComplexityFrame<>(numLocals, numStack);
+  }
+
+  @Override
+  protected Frame<V> newFrame(Frame<? extends V> frame) {
+    return new CyclomaticComplexityFrame<>(frame);
+  }
+
+  @Override
+  protected void newControlFlowEdge(int insnIndex, int successorIndex) {
+    CyclomaticComplexityFrame<V> frame = (CyclomaticComplexityFrame<V>) getFrames()[insnIndex];
+    frame.successors.add((CyclomaticComplexityFrame<V>) getFrames()[successorIndex]);
+  }
+}
+```
+
+在下面的`CyclomaticComplexity`类当中，应用`M = E - N + 2`公式：
+
+```java
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.analysis.*;
+
+public class CyclomaticComplexity {
+  public static int getCyclomaticComplexity(String owner, MethodNode mn) throws AnalyzerException {
+    // 第一步，获取Frame信息
+    Analyzer<BasicValue> analyzer = new CyclomaticComplexityAnalyzer<>(new BasicInterpreter());
+    Frame<BasicValue>[] frames = analyzer.analyze(owner, mn);
+
+    // 第二步，计算复杂度
+    int edges = 0;
+    int nodes = 0;
+    for (Frame<BasicValue> frame : frames) {
+      if (frame != null) {
+        edges += ((CyclomaticComplexityFrame<BasicValue>) frame).successors.size();
+        nodes += 1;
+      }
+    }
+    return edges - nodes + 2;
+  }
+}
+```
+
+#### 进行分析
+
+```java
+public class HelloWorldAnalysisTree {
+  public static void main(String[] args) throws Exception {
+    String relative_path = "sample/HelloWorld.class";
+    String filepath = FileUtils.getFilePath(relative_path);
+    byte[] bytes = FileUtils.readBytes(filepath);
+
+    //（1）构建ClassReader
+    ClassReader cr = new ClassReader(bytes);
+
+    //（2）生成ClassNode
+    int api = Opcodes.ASM9;
+    ClassNode cn = new ClassNode(api);
+
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cn, parsingOptions);
+
+    //（3）进行分析
+    String className = cn.name;
+    List<MethodNode> methods = cn.methods;
+    for (MethodNode mn : methods) {
+      int complexity = CyclomaticComplexity.getCyclomaticComplexity(className, mn);
+      String line = String.format("%s:%s%n    complexity: %d", mn.name, mn.desc, complexity);
+      System.out.println(line);
+    }
+  }
+}
+```
+
+### 4.16.3 总结
+
+本文内容总结如下：
+
+- 第一点，介绍Cyclomatic Complexity的概念，如何用数学公式表达，以及复杂度分级。
+- 第二点，代码示例，如何使用Java ASM实现Cyclomatic Complexity计算。
