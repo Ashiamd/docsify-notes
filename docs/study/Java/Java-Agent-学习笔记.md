@@ -3568,6 +3568,1018 @@ public static void agentmain(String agentArgs);
 
 ## 1. Load-Time: agentArgs参数
 
+首先，我们需要注意：并不是所有的虚拟机，都支持从 command line 启动 Java Agent。
+
+An implementation is not required to provide a way to start agents from the command-line interface. [Link](https://docs.oracle.com/javase/8/docs/api/java/lang/instrument/package-summary.html)
+
+> 问题：当前的 JVM implementation 是否支持从 command line 启动 Java Agent？回答：一般都支持
+
+其次，如何在 command-line 为 Agent Jar 添加参数信息呢？
+
+### 1.1 命令行启动
+
+#### Command-Line
+
+从命令行启动 Java Agent 需要使用 `-javagent` 选项：
+
+```shell
+-javaagent:jarpath[=options]
+```
+
+- `jarpath` is the path to the agent JAR file.
+- `options` is the agent options.
+
+```pseudocode
+                                                  ┌─── -javaagent:jarpath
+                             ┌─── Command-Line ───┤
+                             │                    └─── -javaagent:jarpath=options
+Load-Time Instrumentation ───┤
+                             │                    ┌─── MANIFEST.MF - Premain-Class: lsieun.agent.LoadTimeAgent
+                             └─── Agent Jar ──────┤
+                                                  └─── Agent Class - premain(String agentArgs, Instrumentation inst)
+```
+
+示例：
+
+```shell
+java -cp ./target/classes/ -javaagent:./target/TheAgent.jar=this-is-a-long-message sample.Program
+```
+
+#### Agent Jar
+
+在 `TheAgent.jar` 中，依据 `META-INF/MANIFEST.MF` 里定义 `Premain-Class` 属性找到 Agent Class:
+
+```txt
+Premain-Class: lsieun.agent.LoadTimeAgent
+
+```
+
+The agent is passed its agent `options` via the `agentArgs` parameter.
+
+```java
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // ...
+  }
+}
+```
+
+The agent `options` are passed as a single string, any additional parsing should be performed by the agent itself.
+
+![img](https://lsieun.github.io/assets/images/java/agent/java-agent-command-line-options.png)
+
+### 1.2 示例一：读取agentArgs
+
+#### LoadTimeAgent.java
+
+```java
+package lsieun.agent;
+
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    System.out.println("Premain-Class: " + LoadTimeAgent.class.getName());
+    System.out.println("agentArgs: " + agentArgs);
+    System.out.println("Instrumentation Class: " + inst.getClass().getName());
+  }
+}
+```
+
+#### 运行
+
+每次修改代码之后，都需要重新生成 `.jar` 文件：
+
+```shell
+mvn clean package
+```
+
+获取示例命令：
+
+```shell
+$ cd learn-java-agent
+
+$ java -jar ./target/TheAgent.jar
+Load-Time Usage:
+    java -javaagent:/path/to/TheAgent.jar sample.Program
+Example:
+    java -cp ./target/classes/ sample.Program
+    java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+```
+
+第一次运行，在使用 `-javagent` 选项时不添加 `options` 信息：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+Premain-Class: lsieun.agent.LoadTimeAgent
+agentArgs: null
+Instrumentation Class: sun.instrument.InstrumentationImpl
+```
+
+从上面的输出结果中，我们可以看到：
+
+- 第一点，`agentArgs` 的值为 `null`。
+- 第二点，`Instrumentation` 是一个接口，它的具体实现是 `sun.instrument.InstrumentationImpl` 类。
+
+第二次运行，在使用 `-javagent` 选项时添加 `options` 信息：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar=this-is-a-long-message sample.Program
+Premain-Class: lsieun.agent.LoadTimeAgent
+agentArgs: this-is-a-long-message
+Instrumentation Class: sun.instrument.InstrumentationImpl
+```
+
+### 1.3 示例二：解析 agentArgs
+
+我们传入的信息，一般情况下是 `key-value` 的形式，有人喜欢用 `:` 分隔，有人喜欢用 `=` 分隔：
+
+```shell
+username:tomcat,password:123456
+username=tomcat,password=123456
+```
+
+#### LoadTimeAgent.java
+
+```java
+package lsieun.agent;
+
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    System.out.println("Premain-Class: " + LoadTimeAgent.class.getName());
+    System.out.println("agentArgs: " + agentArgs);
+    System.out.println("Instrumentation Class: " + inst.getClass().getName());
+
+    if (agentArgs != null) {
+      String[] array = agentArgs.split(",");
+      int length = array.length;
+      for (int i = 0; i < length; i++) {
+        String item = array[i];
+        String[] key_value_pair = getKeyValuePair(item);
+
+        String key = key_value_pair[0];
+        String value = key_value_pair[1];
+
+        String line = String.format("|%03d| %s: %s", i, key, value);
+        System.out.println(line);
+      }
+    }
+  }
+
+  private static String[] getKeyValuePair(String str) {
+    {
+      int index = str.indexOf("=");
+      if (index != -1) {
+        return str.split("=", 2);
+      }
+    }
+
+    {
+      int index = str.indexOf(":");
+      if (index != -1) {
+        return str.split(":", 2);
+      }
+    }
+    return new String[]{str, ""};
+  }
+}
+```
+
+#### 运行
+
+第一次运行，使用 `:` 分隔：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar=username:tomcat,password:123456 sample.Program
+Premain-Class: lsieun.agent.LoadTimeAgent
+agentArgs: username:tomcat,password:123456
+Instrumentation Class: sun.instrument.InstrumentationImpl
+|000| username: tomcat
+|001| password: 123456
+```
+
+第二次运行，使用 `=` 分隔：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar=username=jerry,password=12345 sample.Program
+Premain-Class: lsieun.agent.LoadTimeAgent
+agentArgs: username=jerry,password=12345
+Instrumentation Class: sun.instrument.InstrumentationImpl
+|000| username: jerry
+|001| password: 12345
+```
+
+### 1.4 总结
+
+本文内容总结如下：
+
+- 第一点，在命令行启动 Java Agent，需要使用 `-javaagent:jarpath[=options]` 选项，其中的 `options` 信息会转换成为 `premain` 方法的 `agentArgs` 参数。
+- 第二点，对于 `agentArgs` 参数的进一步解析，需要由我们自己来完成。
+
+## 2. Load-Time: inst参数
+
+在 `LoadTimeAgent` 类当中，有一个 `premain` 方法，我们关注两个问题：
+
+- 第一个问题，`Instrumentation` 是一个接口，它的具体实现是哪个类？
+- 第二个问题，是“谁”调用了 `LoadTimeAgent.premain()` 方法的呢？
+
+```java
+public static void premain(String agentArgs, Instrumentation inst)
+```
+
+### 2.1 查看 StackTrace
+
+#### LoadTimeAgent
+
+```java
+package lsieun.agent;
+
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    System.out.println("Premain-Class: " + LoadTimeAgent.class.getName());
+    System.out.println("agentArgs: " + agentArgs);
+    System.out.println("Instrumentation Class: " + inst.getClass().getName());
+
+    Exception ex = new Exception("Exception from LoadTimeAgent");
+    ex.printStackTrace(System.out);
+  }
+}
+```
+
+#### 运行
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+Premain-Class: lsieun.agent.LoadTimeAgent
+agentArgs: null
+Instrumentation Class: sun.instrument.InstrumentationImpl
+java.lang.Exception: Exception from LoadTimeAgent
+        at lsieun.agent.LoadTimeAgent.premain(LoadTimeAgent.java:11)
+        at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+        at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)
+        at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+        at java.lang.reflect.Method.invoke(Method.java:498)
+        at sun.instrument.InstrumentationImpl.loadClassAndStartAgent(InstrumentationImpl.java:386)
+        at sun.instrument.InstrumentationImpl.loadClassAndCallPremain(InstrumentationImpl.java:401)
+```
+
+从上面的输出结果中，可以看到 `InstrumentationImpl.loadClassAndCallPremain` 方法。
+
+### 2.2 InstrumentationImpl
+
+`sun.instrument.InstrumentationImpl` 实现了 `java.lang.instrument.Instrumentation` 接口：
+
+```java
+/**
+ * The Java side of the JPLIS implementation. Works in concert with a native JVMTI agent
+ * to implement the JPLIS API set. Provides both the Java API implementation of
+ * the Instrumentation interface and utility Java routines to support the native code.
+ * Keeps a pointer to the native data structure in a scalar field to allow native
+ * processing behind native methods.
+ */
+public class InstrumentationImpl implements Instrumentation {
+}
+```
+
+#### loadClassAndCallPremain
+
+在 `sun.instrument.InstrumentationImpl` 类当中，`loadClassAndCallPremain` 方法的实现非常简单，它直接调用了 `loadClassAndStartAgent` 方法：
+
+```java
+public class InstrumentationImpl implements Instrumentation {
+  // WARNING: the native code knows the name & signature of this method
+  private void loadClassAndCallPremain(String classname, String optionsString) throws Throwable {
+    loadClassAndStartAgent(classname, "premain", optionsString);
+  }
+}
+```
+
+#### loadClassAndCallAgentmain
+
+```java
+public class InstrumentationImpl implements Instrumentation {
+  // WARNING: the native code knows the name & signature of this method
+  private void loadClassAndCallAgentmain(String classname, String optionsString) throws Throwable {
+    loadClassAndStartAgent(classname, "agentmain", optionsString);
+  }
+}
+```
+
+#### loadClassAndStartAgent
+
+在 `sun.instrument.InstrumentationImpl` 类当中，`loadClassAndStartAgent` 方法的作用就是通过Java反射的机制来对 `premain` 或 `agentmain` 方法进行调用。
+
+在 `loadClassAndStartAgent` 源码中，我们能够看到更多的细节信息：
+
+- 第一步，从自身的方法定义中，去寻找目标方法：先找带有两个参数的方法；如果没有找到，则找带有一个参数的方法。如果第一步没有找到，则进行第二步。
+- 第二步，从父类的方法定义中，去寻找目标方法：先找带有两个参数的方法；如果没有找到，则找带有一个参数的方法。
+
+```java
+public class InstrumentationImpl implements Instrumentation {
+  // Attempt to load and start an agent
+  private void loadClassAndStartAgent(String classname, String methodname, String optionsString) throws Throwable {
+
+    ClassLoader mainAppLoader = ClassLoader.getSystemClassLoader();
+    Class<?> javaAgentClass = mainAppLoader.loadClass(classname);
+
+    Method m = null;
+    NoSuchMethodException firstExc = null;
+    boolean twoArgAgent = false;
+
+    // The agent class must have a premain or agentmain method that
+    // has 1 or 2 arguments. We check in the following order:
+    //
+    // 1) declared with a signature of (String, Instrumentation)
+    // 2) declared with a signature of (String)
+    // 3) inherited with a signature of (String, Instrumentation)
+    // 4) inherited with a signature of (String)
+    //
+    // So the declared version of either 1-arg or 2-arg always takes
+    // primary precedence over an inherited version. After that, the
+    // 2-arg version takes precedence over the 1-arg version.
+    //
+    // If no method is found then we throw the NoSuchMethodException
+    // from the first attempt so that the exception text indicates
+    // the lookup failed for the 2-arg method (same as JDK5.0).
+
+    try {
+      m = javaAgentClass.getDeclaredMethod(methodname,
+                                           new Class<?>[]{
+                                             String.class,
+                                             java.lang.instrument.Instrumentation.class
+                                               }
+                                          );
+      twoArgAgent = true;
+    } catch (NoSuchMethodException x) {
+      // remember the NoSuchMethodException
+      firstExc = x;
+    }
+
+    if (m == null) {
+      // now try the declared 1-arg method
+      try {
+        m = javaAgentClass.getDeclaredMethod(methodname, new Class<?>[]{String.class});
+      } catch (NoSuchMethodException x) {
+        // ignore this exception because we'll try
+        // two arg inheritance next
+      }
+    }
+
+    if (m == null) {
+      // now try the inherited 2-arg method
+      try {
+        m = javaAgentClass.getMethod(methodname,
+                                     new Class<?>[]{
+                                       String.class,
+                                       java.lang.instrument.Instrumentation.class
+                                         }
+                                    );
+        twoArgAgent = true;
+      } catch (NoSuchMethodException x) {
+        // ignore this exception because we'll try
+        // one arg inheritance next
+      }
+    }
+
+    if (m == null) {
+      // finally try the inherited 1-arg method
+      try {
+        m = javaAgentClass.getMethod(methodname, new Class<?>[]{String.class});
+      } catch (NoSuchMethodException x) {
+        // none of the methods exists so we throw the
+        // first NoSuchMethodException as per 5.0
+        throw firstExc;
+      }
+    }
+
+    // the premain method should not be required to be public,
+    // make it accessible so we can call it
+    // Note: The spec says the following:
+    //     The agent class must implement a public static premain method...
+    setAccessible(m, true);
+
+    // invoke the 1 or 2-arg method
+    if (twoArgAgent) {
+      m.invoke(null, new Object[]{optionsString, this});
+    }
+    else {
+      m.invoke(null, new Object[]{optionsString});
+    }
+
+    // don't let others access a non-public premain method
+    setAccessible(m, false);
+  }
+}
+```
+
+### 2.3 总结
+
+本文内容总结如下：
+
+- 第一点，在 `premain` 方法中，`Instrumentation` 接口的具体实现是 `sun.instrument.InstrumentationImpl` 类。
+- 第二点，查看 Stack Trace，可以看到 `sun.instrument.InstrumentationImpl.loadClassAndCallPremain` 方法对 `LoadTimeAgent.premain` 方法进行了调用。
+
+## 3. Dynamic: Attach API
+
+### 3.1 Attach API
+
+> [Java Attach API使用笔记_墨、鱼的博客-CSDN博客](https://blog.csdn.net/qq_18515155/article/details/114831664)
+>
+> [com.sun.tools.attach - Java 11中文版 - API参考文档 (apiref.com)](https://www.apiref.com/java11-zh/jdk.attach/com/sun/tools/attach/package-summary.html)
+
+在进行Dynamic Instrumentation的时候，我们需要用到**Attach API，它允许一个JVM连接到另一个JVM**。
+
+> 作用：允许一个JVM连接到另一个JVM
+
+Attach API是在Java 1.6引入的。
+
+> 时间：Java 1.6之后
+
+在Attach API当中，主要的类位于`com.sun.tools.attach`包，它有版本的变化：
+
+- 在Java 8版本，`com.sun.tools.attach`包位于`JDK_HOME/lib/tools.jar`文件。
+- 在Java 9版本之后，`com.sun.tools.attach`包位于`jdk.attach`模块（`JDK_HOME/jmods/jdk.attach.jmod`文件）。
+
+> 位置：tools.jar文件或jdk.attach模块
+
+我们主要使用Java 8版本。
+
+![img](https://lsieun.github.io/assets/images/java/agent/virtual-machine-of-dynamic-instrumentation.png)
+
+在`com.sun.tools.attach`包当中，包含的类内容如下：
+
+> com.sun.tools.attach有哪些主要的类
+
+```pseudocode
+                        ┌─── spi ──────────────────────────────┼─── AttachProvider
+                        │
+                        ├─── AgentInitializationException
+                        │
+                        ├─── AgentLoadException
+                        │
+                        ├─── AttachNotSupportedException
+com.sun.tools.attach ───┤
+                        ├─── AttachOperationFailedException
+                        │
+                        ├─── AttachPermission
+                        │
+                        ├─── VirtualMachine
+                        │
+                        └─── VirtualMachineDescriptor
+```
+
+在上面这些类当中，我们忽略掉其中的Exception和Permission类，简化之后如下：
+
+```pseudocode
+                        ┌─── spi ────────────────────────┼─── AttachProvider
+                        │
+com.sun.tools.attach ───┼─── VirtualMachine
+                        │
+                        └─── VirtualMachineDescriptor
+```
+
+在这三个类当中，核心的类是 `VirtualMachine` 类，代码围绕着它来展开； `VirtualMachineDescriptor` 类比较简单，就是对几个字段（id、provider和display name）的包装； 而 `AttachProvider` 类提供了底层实现。
+
+### 3.2 VirtualMachine
+
+A `com.sun.tools.attach.VirtualMachine` represents a Java virtual machine to which this Java virtual machine has attached. The Java virtual machine to which it is attached is sometimes called the **target virtual machine**, or **target VM**.
+
+![img](https://lsieun.github.io/assets/images/java/agent/vm-attach-load-agent-detach.png)
+
+使用 `VirtualMachine` 类，我们分成三步：
+
+- 第一步，与 target VM 建立连接，获得一个 `VirtualMachine` 对象。
+- 第二步，使用 `VirtualMachine` 对象，可以将Agent Jar加载到target VM上，也可以从target VM 读取一些属性信息。
+- 第三步，与 target VM 断开连接。
+
+```pseudocode
+                                       ┌─── VirtualMachine.attach(String id)
+                  ┌─── 1. Get VM ──────┤
+                  │                    └─── VirtualMachine.attach(VirtualMachineDescriptor vmd)
+                  │
+                  │                                            ┌─── VirtualMachine.loadAgent(String agent)
+                  │                    ┌─── Load Agent ────────┤
+VirtualMachine ───┤                    │                       └─── VirtualMachine.loadAgent(String agent, String options)
+                  ├─── 2. Use VM ──────┤
+                  │                    │                       ┌─── VirtualMachine.getAgentProperties()
+                  │                    └─── read properties ───┤
+                  │                                            └─── VirtualMachine.getSystemProperties()
+                  │
+                  └─── 3. detach VM ───┼─── VirtualMachine.detach()
+```
+
+#### Get VM
+
+##### attach 1
+
+A `VirtualMachine` is obtained by invoking the `attach` method with an identifier that identifies the target virtual machine. The identifier is implementation-dependent but is typically the process identifier (or pid) in environments where each Java virtual machine runs in its own operating system process.
+
+```java
+public abstract class VirtualMachine {
+  public static VirtualMachine attach(String id) throws AttachNotSupportedException, IOException {
+    // ...
+  }
+}
+```
+
+##### attach 2
+
+Alternatively, a `VirtualMachine` instance is obtained by invoking the `attach` method with a `VirtualMachineDescriptor` obtained from the list of virtual machine descriptors returned by the `list` method.
+
+```java
+public abstract class VirtualMachine {
+  public static VirtualMachine attach(VirtualMachineDescriptor vmd) throws AttachNotSupportedException, IOException {
+    // ...
+  }
+}
+```
+
+#### Use VM
+
+##### Load Agent
+
+Once a reference to a virtual machine is obtained, the `loadAgent`, `loadAgentLibrary`, and `loadAgentPath` methods are used to load agents into target virtual machine.
+
+- **The `loadAgent` method is used to load agents that are written in the Java Language and deployed in a JAR file.**
+- **The `loadAgentLibrary` and `loadAgentPath` methods are used to load agents that are deployed either in a dynamic library or statically linked into the VM and make use of the JVM Tools Interface.**
+
+```java
+public abstract class VirtualMachine {
+  public void loadAgent(String agent) throws AgentLoadException, AgentInitializationException, IOException {
+    loadAgent(agent, null);
+  }
+
+  public abstract void loadAgent(String agent, String options)
+    throws AgentLoadException, AgentInitializationException, IOException;    
+}
+```
+
+##### read properties
+
+In addition to loading agents a `VirtualMachine` provides read access to the **system properties** in the target VM. This can be useful in some environments where properties such as `java.home`, `os.name`, or `os.arch` are used to construct the path to agent that will be loaded into the target VM.
+
+```java
+public abstract class VirtualMachine {
+  public abstract Properties getSystemProperties() throws IOException;
+  public abstract Properties getAgentProperties() throws IOException;
+}
+```
+
+这两个方法的区别：**`getAgentProperties()`是vm为agent专门维护的属性**。
+
+- `getSystemProperties()`: This method returns the system properties in the target virtual machine. Properties whose key or value is not a `String` are omitted. The method is approximately equivalent to the invocation of the method `System.getProperties()` in the target virtual machine except that properties with a key or value that is not a `String` are not included.
+- `getAgentProperties()`: The target virtual machine can maintain a list of properties on behalf of agents. The manner in which this is done, the names of the properties, and the types of values that are allowed, is implementation specific. Agent properties are typically used to store communication end-points and other agent configuration details.
+
+#### Detach VM
+
+Detach from the virtual machine.
+
+```java
+public abstract class VirtualMachine {
+  public abstract void detach() throws IOException;
+}
+```
+
+#### 其他方法
+
+<u>第一个是 `id()` 方法，它返回 target VM 的进程 ID 值</u>。
+
+```java
+public abstract class VirtualMachine {
+  private final String id;
+
+  public final String id() {
+    return id;
+  }
+}
+```
+
+第二个是 `list()` 方法，它返回一组 `VirtualMachineDescriptor` 对象，描述所有潜在的target VM 对象。
+
+```java
+public abstract class VirtualMachine {
+  public static List<VirtualMachineDescriptor> list() {
+    // ...
+  }
+}
+```
+
+第三个是 `provider()` 方法，它返回一个 `AttachProvider` 对象。
+
+```java
+public abstract class VirtualMachine {
+  private final AttachProvider provider;
+
+  public final AttachProvider provider() {
+    return provider;
+  }
+}
+```
+
+### 3.3 VirtualMachineDescriptor
+
+**A `com.sun.tools.attach.VirtualMachineDescriptor` is a container class used to describe a Java virtual machine.**
+
+```java
+public class VirtualMachineDescriptor {
+  private String id;
+  private String displayName;
+  private AttachProvider provider;
+
+  public String id() {
+    return id;
+  }
+
+  public String displayName() {
+    return displayName;
+  }
+
+  public AttachProvider provider() {
+    return provider;
+  }    
+}
+```
+
+- **an identifier** that identifies a target virtual machine.
+- **a reference** to the `AttachProvider` that should be used when attempting to attach to the virtual machine.
+- The **display name** is typically a human readable string that a tool might display to a user.
+
+`VirtualMachineDescriptor` instances are typically created by invoking the `VirtualMachine.list()` method. This returns the complete list of descriptors to describe the Java virtual machines known to all installed attach providers.
+
+### 3.4 AttachProvider
+
+`com.sun.tools.attach.spi.AttachProvider` 是一个抽象类，它需要一个具体的实现：
+
+```java
+public abstract class AttachProvider {
+  //...
+}
+```
+
+不同平台上的JVM，它对应的具体 `AttachProvider` 实现是不一样的：
+
+- Linux: `sun.tools.attach.LinuxAttachProvider`
+- Windows: `sun.tools.attach.WindowsAttachProvider`
+
+An attach provider implementation is typically tied to a Java virtual machine implementation, version, or even mode of operation. That is, **a specific provider implementation** will typically only be capable of attaching to **a specific Java virtual machine implementation or version**. For example, Sun’s JDK implementation ships with provider implementations that can only attach to Sun’s HotSpot virtual machine.
+
+An attach provider is identified by its `name` and `type`:
+
+- The `name` is typically, but not required to be, a name that corresponds to the VM vendor. The Sun JDK implementation, for example, ships with attach providers that use the name “sun”.
+- The `type` typically corresponds to the attach mechanism. For example, an implementation that uses the Doors inter-process communication mechanism might use the type “doors”.
+
+The purpose of the `name` and `type` is to identify providers in environments where there are multiple providers installed.
+
+### 3.5 总结
+
+本文内容总结如下：
+
+- 第一点，Attach API位于`com.sun.tools.attach`包：
+  - 在Java 8版本，`com.sun.tools.attach` 包位于 `JDK_HOME/lib/tools.jar` 文件。
+  - 在Java 9版本之后，`com.sun.tools.attach` 包位于`jdk.attach` 模块（`JDK_HOME/jmods/jdk.attach.jmod`文件）。
+- 第二点，在 `com.sun.tools.attach` 包当中，重要的类有三个： `VirtualMachine`（核心功能）、 `VirtualMachineDescriptor`（三个属性）和 `AttachProvider`（底层实现）。
+- **第三点，使用`VirtualMachine`类分成三步：**
+  - **第一步，与 target VM 建立连接，获得一个 `VirtualMachine` 对象。**
+  - **第二步，使用 `VirtualMachine` 对象，可以将 Agent Jar 加载到 target VM 上，也可以从 target VM 读取一些属性信息。**
+  - **第三步，与 target VM 断开连接**。
+
+## 4. Dynamic: Attach API示例
+
+### 4.1 VirtualMachine
+
+#### attach and detach
+
+```java
+package sample;
+
+import com.sun.tools.attach.AttachNotSupportedException;
+import com.sun.tools.attach.VirtualMachine;
+
+import java.io.IOException;
+
+public class VMAttach {
+  public static void main(String[] args) throws IOException, AttachNotSupportedException {
+    // 注意：需要修改pid的值
+    String pid = "1234";
+    VirtualMachine vm = VirtualMachine.attach(pid);
+    vm.detach();
+  }
+}
+```
+
+#### loadAgent
+
+```java
+import java.lang.instrument.Instrumentation;
+
+public class DynamicAgent {
+  public static void agentmain(String agentArgs, Instrumentation inst) {
+    Class<?> agentClass = DynamicAgent.class;
+    System.out.println("Agent-Class: " + agentClass.getName());
+    System.out.println("agentArgs: " + agentArgs);
+    System.out.println("Instrumentation: " + inst.getClass().getName());
+    System.out.println("ClassLoader: " + agentClass.getClassLoader());
+    System.out.println("Thread Id: " + Thread.currentThread().getName() + "@" +
+                       Thread.currentThread().getId() + "(" + Thread.currentThread().isDaemon() + ")"
+                      );
+    System.out.println("Can-Redefine-Classes: " + inst.isRedefineClassesSupported());
+    System.out.println("Can-Retransform-Classes: " + inst.isRetransformClassesSupported());
+    System.out.println("Can-Set-Native-Method-Prefix: " + inst.isNativeMethodPrefixSupported());
+    System.out.println("========= ========= =========");
+  }
+}
+```
+
+```java
+package sample;
+
+import com.sun.tools.attach.AgentInitializationException;
+import com.sun.tools.attach.AgentLoadException;
+import com.sun.tools.attach.AttachNotSupportedException;
+import com.sun.tools.attach.VirtualMachine;
+
+import java.io.IOException;
+
+public class VMAttach {
+  public static void main(String[] args) throws IOException, AttachNotSupportedException,
+  AgentLoadException, AgentInitializationException {
+    // 注意：需要修改pid的值
+    String pid = "1234";
+    String agentPath = "D:\\git-repo\\learn-java-agent\\target\\TheAgent.jar";
+    VirtualMachine vm = VirtualMachine.attach(pid);
+    vm.loadAgent(agentPath, "Hello JVM Attach");
+    vm.detach();
+  }
+}
+```
+
+#### getSystemProperties
+
+```java
+package sample;
+
+import com.sun.tools.attach.AttachNotSupportedException;
+import com.sun.tools.attach.VirtualMachine;
+
+import java.io.IOException;
+import java.util.Properties;
+
+public class VMAttach {
+  public static void main(String[] args) throws IOException, AttachNotSupportedException {
+    // 注意：需要修改pid的值
+    String pid = "1234";
+    VirtualMachine vm = VirtualMachine.attach(pid);
+    Properties properties = vm.getSystemProperties();
+    properties.list(System.out);
+    vm.detach();
+  }
+}
+```
+
+Output:
+
+```shell
+-- listing properties --
+java.runtime.name=Java(TM) SE Runtime Environment
+sun.boot.library.path=C:\Program Files\Java\jdk1.8.0_301\jr...
+java.vm.version=25.301-b09
+java.vm.vendor=Oracle Corporation
+java.vendor.url=http://java.oracle.com/
+path.separator=;
+java.vm.name=Java HotSpot(TM) 64-Bit Server VM
+...
+```
+
+#### getAgentProperties
+
+```java
+package sample;
+
+import com.sun.tools.attach.AttachNotSupportedException;
+import com.sun.tools.attach.VirtualMachine;
+
+import java.io.IOException;
+import java.util.Properties;
+
+public class VMAttach {
+  public static void main(String[] args) throws IOException, AttachNotSupportedException {
+    // 注意：需要修改pid的值
+    String pid = "1234";
+    VirtualMachine vm = VirtualMachine.attach(pid);
+    Properties properties = vm.getAgentProperties();
+    properties.list(System.out);
+    vm.detach();
+  }
+}
+```
+
+Output:
+
+```shell
+-- listing properties --
+sun.jvm.args=-javaagent:C:\Program Files\JetBrains...
+sun.jvm.flags=
+sun.java.command=sample.Program
+```
+
+#### list
+
+```java
+import com.sun.tools.attach.AttachNotSupportedException;
+import com.sun.tools.attach.VirtualMachine;
+import com.sun.tools.attach.VirtualMachineDescriptor;
+import com.sun.tools.attach.spi.AttachProvider;
+
+import java.io.IOException;
+import java.util.List;
+
+public class VMAttach {
+  public static void main(String[] args) throws IOException, AttachNotSupportedException {
+    List<VirtualMachineDescriptor> list = VirtualMachine.list();
+
+    for (VirtualMachineDescriptor vmd : list) {
+      String id = vmd.id();
+      String displayName = vmd.displayName();
+      AttachProvider provider = vmd.provider();
+      System.out.println("Id: " + id);
+      System.out.println("Name: " + displayName);
+      System.out.println("Provider: " + provider);
+      System.out.println("=====================");
+    }
+  }
+}
+```
+
+```java
+package sample;
+
+import com.sun.tools.attach.AttachNotSupportedException;
+import com.sun.tools.attach.VirtualMachine;
+import com.sun.tools.attach.VirtualMachineDescriptor;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.Properties;
+
+public class VMAttach {
+  public static void main(String[] args) throws IOException, AttachNotSupportedException {
+    List<VirtualMachineDescriptor> list = VirtualMachine.list();
+
+    String className = "sample.Program";
+    VirtualMachine vm = null;
+    for (VirtualMachineDescriptor item : list) {
+      String displayName = item.displayName();
+      if (displayName != null && displayName.equals(className)) {
+        vm = VirtualMachine.attach(item);
+        break;
+      }
+    }
+
+    if (vm != null) {
+      Properties properties = vm.getSystemProperties();
+      properties.list(System.out);
+      vm.detach();
+    }
+  }
+}
+```
+
+### 4.2 AttachProvider
+
+```java
+import com.sun.tools.attach.VirtualMachine;
+import com.sun.tools.attach.spi.AttachProvider;
+
+public class VMAttach {
+  public static void main(String[] args) throws Exception {
+    // 注意：需要修改pid的值
+    String pid = "1234";
+    VirtualMachine vm = VirtualMachine.attach(pid);
+    AttachProvider provider = vm.provider();
+    String name = provider.name();
+    String type = provider.type();
+    System.out.println("Provider Name: " + name);
+    System.out.println("Provider Type: " + type);
+    System.out.println("Provider Impl: " + provider.getClass());
+  }
+}
+```
+
+Windows 7环境下输出：
+
+```shell
+Provider Name: sun
+Provider Type: windows
+Provider Impl: class sun.tools.attach.WindowsAttachProvider
+```
+
+Ubuntu 20环境下输出：
+
+```shell
+Provider Name: sun
+Provider Type: socket
+Provider Impl: class sun.tools.attach.LinuxAttachProvider
+```
+
+### 4.3 总结
+
+本文主要是对Attach API的内容进行举例。
+
+## 5. 总结
+
+### 5.1 Command Line
+
+进行 Load-Time Instrumentation，需要从命令行启动 Agent Jar，需要使用 `-javagent` 选项：
+
+```shell
+-javaagent:jarpath[=options]
+```
+
+![img](https://lsieun.github.io/assets/images/java/agent/java-agent-command-line-options.png)
+
+在 Load-Time Instrumentation 过程中，会用到 `premain` 方法，我们关注两个问题：
+
+- 第一个问题，`Instrumentation` 是一个接口，它的具体实现是哪个类？回答：`sun.instrument.InstrumentationImpl` 类。
+- 第二个问题，是“谁”调用了 `premain()` 方法的呢？回答：`InstrumentationImpl.loadClassAndStartAgent()` 方法
+
+```java
+public static void premain(String agentArgs, Instrumentation inst)
+```
+
+### 5.2 Attach
+
+进行 Dynmaic Instrumentation，需要用到 Attach API。
+
+Attach API 体现在 `com.sun.tools.attach` 包。
+
+在 `com.sun.tools.attach` 包，最核心的是 `VirtualMachine` 类。
+
+```pseudocode
+                                       ┌─── VirtualMachine.attach(String id)
+                  ┌─── 1. Get VM ──────┤
+                  │                    └─── VirtualMachine.attach(VirtualMachineDescriptor vmd)
+                  │
+                  │                                            ┌─── VirtualMachine.loadAgent(String agent)
+                  │                    ┌─── Load Agent ────────┤
+VirtualMachine ───┤                    │                       └─── VirtualMachine.loadAgent(String agent, String options)
+                  ├─── 2. Use VM ──────┤
+                  │                    │                       ┌─── VirtualMachine.getAgentProperties()
+                  │                    └─── read properties ───┤
+                  │                                            └─── VirtualMachine.getSystemProperties()
+                  │
+                  └─── 3. detach VM ───┼─── VirtualMachine.detach()
+```
+
+# 第三章 Instrumentation API
+
+## 1. Instrumentation API
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
