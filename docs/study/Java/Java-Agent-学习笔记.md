@@ -4538,25 +4538,4488 @@ VirtualMachine ───┤                    │                       └─�
 
 ## 1. Instrumentation API
 
+### 1.1 java.lang.instrument
+
+首先，`java.lang.instrument`包的作用是什么？
+
+- 它定义了一些“规范”，比如 Manifest 当中的 `Premain-Class` 和 `Agent-Class` 属性，再比如 `premain` 和 `agentmain` 方法，这些“规范”是 Agent Jar 必须遵守的。
+- 它定义了一些类和接口，例如 `Instrumentation` 和 `ClassFileTransformer`，这些类和接口允许我们在 Agent Jar 当中实现修改某些类的字节码。
+
+举个形象化的例子。这些“规范”让一个普通的 `.jar` 文件（普通士兵）成为 Agent Jar（禁卫军）； 接着，Agent Jar（禁卫军）就可以在 target JVM（紫禁城）当中对 Application 当中加载的类（平民、官员）进行 instrumentation（巡查守备）任务了。
+
+> 作用
+
+**The mechanism for instrumentation is modification of the byte-codes of methods.** [Link](https://docs.oracle.com/javase/8/docs/api/java/lang/instrument/package-summary.html)
+
+```pseudocode
+instrumentation = modification of the byte-codes of methods
+```
+
+其次，`java.lang.instrument` 是Java 1.5引入的。
+
+> 时间
+
+再者，`java.lang.instrument` 包在哪里？
+
+- 在Java 8版本中，位于`rt.jar`文件
+- 在Java 9版本之后，位于 `java.instrument` 模块（`JDK_HOME/jmods/java.instrument.jmod`）
+
+> 位置
+
+最后，`java.lang.instrument` 包有哪些类呢？
+
+> 有哪些类
+
+```pseudocode
+                        ┌─── ClassDefinition (类)
+                        │
+                        ├─── ClassFileTransformer (接口)
+                        │
+java.lang.instrument ───┼─── Instrumentation (接口)
+                        │
+                        ├─── IllegalClassFormatException (异常)
+                        │
+                        └─── UnmodifiableClassException (异常)
+```
+
+其中，`IllegalClassFormatException` 类和 `UnmodifiableClassException` 类，都是 `Exception` 类的子类，它们表示了某些情况下无法实现的操作，不需要投入很多时间研究。
+
+我们的关注点就是理解：
+
+- `ClassDefinition` 类
+- `ClassFileTransformer` 接口
+- `Instrumentation` 接口
+
+换句话说，理解了这三者，也就是理解了 `java.lang.instrument` 的精髓。
+
+在 Agent Jar 当中，Agent Class 是“名义”上的“老大”，但真正的做事情是借助于 `Instrumentation` 对象去完成的。
+
+打个比方，英国的女王是国家虚位元首，象征性的最高领导者，无实权，但真正上管理国家的是首相。
+
+### 1.2 ClassDefinition
+
+其中，`ClassDefinition` 类是一个非常简单的类，本质上就是对 `Class` 和 `byte[]` 两个字段的封装，很容易就能够掌握。
+
+```java
+package java.lang.instrument;
+
+/**
+ * This class serves as a parameter block to the <code>Instrumentation.redefineClasses</code> method.
+ * Serves to bind the <code>Class</code> that needs redefining together with the new class file bytes.
+ *
+ * @see     java.lang.instrument.Instrumentation#redefineClasses
+ * @since   1.5
+ */
+public final class ClassDefinition {
+  /**
+   *  The class to redefine
+   */
+  private final Class<?> mClass;
+  /**
+   *  The replacement class file bytes
+   */
+  private final byte[] mClassFile;
+}
+```
+
+### 1.3 ClassFileTransformer
+
+An agent provides an implementation of this interface in order to transform class files. The **transformation** occurs before the class is **defined** by the JVM.
+
+#### transform
+
+```java
+public interface ClassFileTransformer {
+  byte[] transform(ClassLoader         loader,
+                   String              className,
+                   Class<?>            classBeingRedefined,
+                   ProtectionDomain    protectionDomain,
+                   byte[]              classfileBuffer)
+    throws IllegalClassFormatException;
+}
+```
+
+Parameters:
+
+- `loader` - the defining loader of the class to be transformed, may be `null` if the **bootstrap loader**
+- `className` - the name of the class in the internal form of fully qualified class and interface names as defined in The Java Virtual Machine Specification. For example, “java/util/List”.
+- `classBeingRedefined` - if this is triggered by a `redefine` or `retransform`, the class being redefined or retransformed; if this is a class load, `null`
+- `protectionDomain` - the protection domain of the class being defined or redefined
+- `classfileBuffer` - the input byte buffer in class file format - **must not be modified**
+
+Returns:
+
+- a well-formed class file buffer (the result of the transform), or **`null` if no transform is performed**.
+
+在 `transform` 方法中，我们重点关注 `className` 和 `classfileBuffer` 两个接收参数，以及返回值，
+
+小总结：
+
+- `loader`: 如果值为 `null`，则表示 bootstrap loader。
+- `className`: 表示 internal class name，例如 `java/util/List`。
+- `classfileBuffer`: 一定不要修改它的原有内容，可以复制一份，在复制的基础上就进行修改。
+- 返回值: 如果返回值为 `null`，则表示没有进行修改。
+
+### 1.4 Instrumentation
+
+> [JAVA进阶之Agent_setnativemethodprefix_purple.taro的博客-CSDN博客](https://blog.csdn.net/zxlyx/article/details/124120795)
+
+在 `java.lang.instrument` 当中，`Instrumentation` 是一个接口：
+
+```java
+/**
+ * This class provides services needed to instrument Java
+ * programming language code.
+ * Instrumentation is the addition of byte-codes to methods for the
+ * purpose of gathering data to be utilized by tools.
+ * Since the changes are purely additive, these tools do not modify
+ * application state or behavior.
+ * Examples of such benign tools include monitoring agents, profilers,
+ * coverage analyzers, and event loggers.
+ *
+ * <P>
+ * There are two ways to obtain an instance of the
+ * <code>Instrumentation</code> interface:
+ *
+ * <ol>
+ *   <li><p> When a JVM is launched in a way that indicates an agent
+ *     class. In that case an <code>Instrumentation</code> instance
+ *     is passed to the <code>premain</code> method of the agent class.
+ *     </p></li>
+ *   <li><p> When a JVM provides a mechanism to start agents sometime
+ *     after the JVM is launched. In that case an <code>Instrumentation</code>
+ *     instance is passed to the <code>agentmain</code> method of the
+ *     agent code. </p> </li>
+ * </ol>
+ * <p>
+ * These mechanisms are described in the
+ * {@linkplain java.lang.instrument package specification}.
+ * <p>
+ * Once an agent acquires an <code>Instrumentation</code> instance,
+ * the agent may call methods on the instance at any time.
+ *
+ * @apiNote This interface is not intended to be implemented outside of
+ * the java.instrument module.
+ *
+ * @since   1.5
+ */
+public interface Instrumentation {
+}
+```
+
+```
+                                                         ┌─── isRedefineClassesSupported()
+                                                         │
+                                     ┌─── ability ───────┼─── isRetransformClassesSupported()
+                                     │                   │
+                   ┌─── Agent Jar ───┤                   └─── isNativeMethodPrefixSupported()
+                   │                 │
+                   │                 │                   ┌─── addTransformer()
+                   │                 └─── transformer ───┤
+                   │                                     └─── removeTransformer()
+                   │
+                   │                                     ┌─── appendToBootstrapClassLoaderSearch()
+                   │                 ┌─── classloader ───┤
+                   │                 │                   └─── appendToSystemClassLoaderSearch()
+Instrumentation ───┤                 │
+                   │                 │                                         ┌─── loading ───┼─── transform
+                   │                 │                                         │
+                   │                 │                   ┌─── status ──────────┤                                  ┌─── getAllLoadedClasses()
+                   │                 │                   │                     │               ┌─── get ──────────┤
+                   │                 │                   │                     │               │                  └─── getInitiatedClasses()
+                   │                 │                   │                     └─── loaded ────┤
+                   │                 │                   │                                     │                  ┌─── isModifiableClass()
+                   │                 ├─── class ─────────┤                                     │                  │
+                   └─── target VM ───┤                   │                                     └─── modifiable ───┼─── redefineClasses()
+                                     │                   │                                                        │
+                                     │                   │                                                        └─── retransformClasses()
+                                     │                   │
+                                     │                   │                     ┌─── isNativeMethodPrefixSupported()
+                                     │                   └─── native method ───┤
+                                     │                                         └─── setNativeMethodPrefix()
+                                     │
+                                     ├─── object ────────┼─── getObjectSize()
+                                     │
+                                     │                   ┌─── isModifiableModule()
+                                     └─── module ────────┤
+                                                         └─── redefineModule()
+```
+
+#### isXxxSupported
+
+读取`META-INF/MANIFEST.MF`文件中的属性信息：
+
+```java
+public interface Instrumentation {
+  boolean isRedefineClassesSupported();
+  boolean isRetransformClassesSupported();
+  boolean isNativeMethodPrefixSupported();
+}
+```
+
+#### transform
+
+##### xxxTransformer
+
+添加和删除 `ClassFileTransformer`：
+
+```java
+public interface Instrumentation {
+  void addTransformer(ClassFileTransformer transformer);
+  void addTransformer(ClassFileTransformer transformer, boolean canRetransform);
+  boolean removeTransformer(ClassFileTransformer transformer);
+}
+```
+
+同时，我们也说明一下三个类之间的关系：
+
+```pseudocode
+Agent Class --> Instrumentation --> ClassFileTransformer
+```
+
+三个类之间更详细的关系如下：
+
+```pseudocode
+               ┌─── premain(String agentArgs, Instrumentation inst)
+Agent Class ───┤
+               └─── agentmain(String agentArgs, Instrumentation inst)
+
+                   ┌─── void addTransformer(ClassFileTransformer transformer, boolean canRetransform)
+Instrumentation ───┤
+                   └─── boolean removeTransformer(ClassFileTransformer transformer)
+```
+
+##### redefineClasses
+
+```java
+public interface Instrumentation {
+  void redefineClasses(ClassDefinition... definitions)
+    throws ClassNotFoundException, UnmodifiableClassException;
+}
+```
+
+##### retransformClasses
+
+```java
+public interface Instrumentation {
+  void retransformClasses(Class<?>... classes) throws UnmodifiableClassException;
+}
+```
+
+#### loader + class + object
+
+##### ClassLoaderSearch
+
+```java
+public interface Instrumentation {
+  // 1.6
+  void appendToSystemClassLoaderSearch(JarFile jarfile);
+  // 1.6
+  void appendToBootstrapClassLoaderSearch(JarFile jarfile);
+}
+```
+
+##### xxxClasses
+
+下面三个方法都与已经加载的 `Class` 相关：
+
+```java
+public interface Instrumentation {
+  Class[] getAllLoadedClasses();
+  Class[] getInitiatedClasses(ClassLoader loader);
+  /**
+   * Primitive classes (for example, java.lang.Integer.TYPE) and array classes are never modifiable.
+   */
+  boolean isModifiableClass(Class<?> theClass);
+}
+```
+
+##### Object
+
+```java
+public interface Instrumentation {
+  long getObjectSize(Object objectToSize);
+}
+```
+
+#### native
+
+```java
+public interface Instrumentation {
+  boolean isNativeMethodPrefixSupported();
+  void setNativeMethodPrefix(ClassFileTransformer transformer, String prefix);
+}
+```
+
+#### module
+
+Java 9引入
+
+```java
+public interface Instrumentation {
+  boolean isModifiableModule(Module module);
+  void redefineModule (Module module,
+                       Set<Module> extraReads,
+                       Map<String, Set<Module>> extraExports,
+                       Map<String, Set<Module>> extraOpens,
+                       Set<Class<?>> extraUses,
+                       Map<Class<?>, List<Class<?>>> extraProvides);
+}
+```
+
+### 1.5 总结
+
+本文内容总结如下：
+
+- 第一点，理解 `java.lang.instrument` 包的主要作用：它让一个普通的 Jar 文件成为一个 Agent Jar。
+- 第二点，在 `java.lang.instrument` 包当中，有三个重要的类型：`ClassDefinition`、`ClassFileTransformer` 和 `Instrumentation`。
+
+## 2. Instrumentation.isXxxSupported()
+
+### 2.1 isXxxSupported()
+
+```java
+public interface Instrumentation {
+    boolean isRedefineClassesSupported();
+    boolean isRetransformClassesSupported();
+    boolean isNativeMethodPrefixSupported();
+}
+```
+
+- `boolean isRedefineClassesSupported()`: Returns whether or not the current JVM configuration supports **redefinition of classes**.
+  - The ability to redefine an already loaded class is an optional capability of a JVM.
+  - Redefinition will only be supported if the `Can-Redefine-Classes` manifest attribute is set to `true` in the agent JAR file and the JVM supports this capability.
+  - During a single instantiation of a single JVM, multiple calls to this method will always return the same answer.
+- `boolean isRetransformClassesSupported()`: Returns whether or not the current JVM configuration supports **retransformation of classes**.
+  - The ability to retransform an already loaded class is an optional capability of a JVM.
+  - Retransformation will only be supported if the `Can-Retransform-Classes` manifest attribute is set to `true` in the agent JAR file and the JVM supports this capability.
+  - During a single instantiation of a single JVM, multiple calls to this method will always return the same answer.
+- `boolean isNativeMethodPrefixSupported()`: Returns whether the current JVM configuration supports **setting a native method prefix**.
+  - The ability to set a native method prefix is an optional capability of a JVM.
+  - Setting a native method prefix will only be supported if the `Can-Set-Native-Method-Prefix` manifest attribute is set to `true` in the agent JAR file and the JVM supports this capability.
+  - During a single instantiation of a single JVM, multiple calls to this method will always return the same answer.
+
+小总结：
+
+- 第一，判断 JVM 是否支持该功能。
+- 第二，判断 Java Agent Jar 内的 `MANIFEST.MF` 文件里的属性是否为 `true`。
+- 第三，在一个 JVM 实例当中，多次调用某个 `isXxxSupported()` 方法，该方法的返回值是不会改变的。
+
+### 2.2 示例
+
+#### LoadTimeAgent.java
+
+```java
+package lsieun.agent;
+
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    System.out.println("Premain-Class: " + LoadTimeAgent.class.getName());
+    System.out.println("Can-Redefine-Classes: " + inst.isRedefineClassesSupported());
+    System.out.println("Can-Retransform-Classes: " + inst.isRetransformClassesSupported());
+    System.out.println("Can-Set-Native-Method-Prefix: " + inst.isNativeMethodPrefixSupported());
+  }
+}
+```
+
+#### 运行
+
+在 `pom.xml` 文件中，`maven-jar-plugin` 处可以设置 `Can-Redefine-Classes`、`Can-Retransform-Classes` 和 `Can-Set-Native-Method-Prefix` 属性。
+
+第一次测试时，将三个属性设置为 `true`：
+
+```xml
+<manifestEntries>
+  <Premain-Class>lsieun.agent.LoadTimeAgent</Premain-Class>
+  <Agent-Class>lsieun.agent.DynamicAgent</Agent-Class>
+  <Can-Redefine-Classes>true</Can-Redefine-Classes>
+  <Can-Retransform-Classes>true</Can-Retransform-Classes>
+  <Can-Set-Native-Method-Prefix>true</Can-Set-Native-Method-Prefix>
+</manifestEntries>
+```
+
+第二次测试时，将三个属性设置为 `false`：
+
+```xml
+<manifestEntries>
+  <Premain-Class>lsieun.agent.LoadTimeAgent</Premain-Class>
+  <Agent-Class>lsieun.agent.DynamicAgent</Agent-Class>
+  <Can-Redefine-Classes>false</Can-Redefine-Classes>
+  <Can-Retransform-Classes>false</Can-Retransform-Classes>
+  <Can-Set-Native-Method-Prefix>false</Can-Set-Native-Method-Prefix>
+</manifestEntries>
+```
+
+每次测试之前，都需要重新生成 `.jar` 文件：
+
+```shell
+mvn clean package
+```
+
+第一次运行，将三个属性设置成 `true`，示例输出：
+
+```
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+Premain-Class: lsieun.agent.LoadTimeAgent
+Can-Redefine-Classes: true
+Can-Retransform-Classes: true
+Can-Set-Native-Method-Prefix: true
+```
+
+第二次运行，将三个属性设置成 `false`，示例输出：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+Premain-Class: lsieun.agent.LoadTimeAgent
+Can-Redefine-Classes: false
+Can-Retransform-Classes: false
+Can-Set-Native-Method-Prefix: false
+```
+
+### 2.3 总结
+
+本文内容总结如下：
+
+- 第一点，判断某一个`isXxxSupported()`方法是否为`true`，需要考虑两个因素：
+  - 判断 JVM 是否支持该功能。
+  - 判断 Agent.jar 内的 `MANIFEST.MF` 文件里的属性是否为 `true`。
+- 第二点，在一个 JVM 实例当中，多次调用某个 `isXxxSupported()` 方法，该方法的返回值是不会改变的。
+
+## 3. Instrumentation.xxxTransformer()
+
+在本文当中，我们关注两个问题：
+
+- `Instrumentation`和`ClassFileTransformer`两者是如何建立联系？
+- `ClassFileTransformer.transform()`方法什么时候调用呢？
+
+### 3.1 添加和删除Transformer
+
+```java
+public interface Instrumentation {
+  void addTransformer(ClassFileTransformer transformer);
+  void addTransformer(ClassFileTransformer transformer, boolean canRetransform);
+  boolean removeTransformer(ClassFileTransformer transformer);
+}
+```
+
+#### addTransformer
+
+在`Instrumentation`当中，定义了两个`addTransformer`方法，但两者本质上一样的：
+
+- 调用`addTransformer(ClassFileTransformer transformer)`方法，相当于调用`addTransformer(transformer, false)`
+
+```java
+public interface Instrumentation {
+  // Since 1.5
+  void addTransformer(ClassFileTransformer transformer);
+  // Since 1.6
+  void addTransformer(ClassFileTransformer transformer, boolean canRetransform);
+}
+```
+
+那么，`addTransformer`方法的`canRetransform`参数起到一个什么样的作用呢？
+
+- 第一点，它影响`transformer`对象**存储的位置**
+- 第二点，它影响`transformer`对象**功能的发挥**
+
+关于`transformer`对象存储的位置，我们可以参考`sun.instrument.InstrumentationImpl`源码当中的实现：
+
+```java
+public class InstrumentationImpl implements Instrumentation {
+  private final TransformerManager mTransformerManager;
+  private TransformerManager mRetransfomableTransformerManager;
+
+  // 以下是经过简化之后的代码
+  public synchronized void addTransformer(ClassFileTransformer transformer, boolean canRetransform) {
+    if (canRetransform) {
+      mRetransfomableTransformerManager.addTransformer(transformer);
+    }
+    else {
+      mTransformerManager.addTransformer(transformer);
+    }
+  }    
+}
+```
+
+- 如果`canRetransform`的值为`true`，我们就将`transformer`对象称为retransformation capable transformer
+- 如果`canRetransform`的值为`false`，我们就将`transformer`对象称为retransformation incapable transformer
+
+小总结：
+
+- 第一点，两个`addTransformer`方法两者本质上是一样的。
+- 第二点，第二个参数`canRetransform`影响第一个参数`transformer`的存储位置。
+
+#### removeTransformer
+
+不管是retransformation capable transformer，还是retransformation incapable transformer，都使用同一个`removeTransformer`方法：
+
+```java
+public interface Instrumentation {
+  boolean removeTransformer(ClassFileTransformer transformer);
+}
+```
+
+同样，我们可以参考`InstrumentationImpl`类当中的实现：
+
+```java
+public class InstrumentationImpl implements Instrumentation {
+  private final TransformerManager mTransformerManager;
+  private TransformerManager mRetransfomableTransformerManager;
+
+  // 以下是经过简化之后的代码
+  public synchronized boolean removeTransformer(ClassFileTransformer transformer) {
+    TransformerManager mgr = findTransformerManager(transformer);
+    if (mgr != null) {
+      mgr.removeTransformer(transformer);
+      return true;
+    }
+    return false;
+  }  
+}
+```
+
+在什么时候对`removeTransformer`方法进行调用呢？有两种情况。
+
+第一种情况，**想处理的`Class`很明确，那就尽量早的调用`removeTransformer`方法，让`ClassFileTransformer`影响的范围最小化**。
+
+```java
+public class DynamicAgent {
+  public static void agentmain(String agentArgs, Instrumentation inst) {
+    System.out.println("Agent-Class: " + DynamicAgent.class.getName());
+    ClassFileTransformer transformer = new ASMTransformer();
+    try {
+      inst.addTransformer(transformer, true);
+      Class<?> targetClass = Class.forName("sample.HelloWorld");
+      inst.retransformClasses(targetClass);
+    } catch (Exception ex) {
+      ex.printStackTrace();
+    }
+    finally {
+      inst.removeTransformer(transformer);
+    }
+  }
+}
+```
+
+第二种情况，想处理的`Class`不明确，可以不调用`removeTransformer`方法。
+
+```java
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    System.out.println("Premain-Class: " + LoadTimeAgent.class.getName());
+    ClassFileTransformer transformer = new InfoTransformer();
+    inst.addTransformer(transformer);
+  }
+}
+```
+
+### 3.2 调用的时机
+
+当我们将`ClassFileTransformer`添加到`Instrumentation`之后，`ClassFileTransformer`类当中的`transform`方法什么时候执行呢？
+
+```java
+public interface ClassFileTransformer {
+  byte[] transform(ClassLoader         loader,
+                   String              className,
+                   Class<?>            classBeingRedefined,
+                   ProtectionDomain    protectionDomain,
+                   byte[]              classfileBuffer)
+    throws IllegalClassFormatException;
+}
+```
+
+**首先，对`ClassFileTransformer.transform()`方法调用的时机有三个：**
+
+- **类加载的时候**
+- **调用`Instrumentation.redefineClasses`方法的时候**
+- **调用`Instrumentation.retransformClasses`方法的时候**
+
+在OpenJDK的源码中，`hotspot/src/share/vm/prims/jvmtiThreadState.hpp`文件定义了一个`JvmtiClassLoadKind`结构：
+
+```c++
+enum JvmtiClassLoadKind {
+  jvmti_class_load_kind_load = 100,
+  jvmti_class_load_kind_retransform,
+  jvmti_class_load_kind_redefine
+};
+```
+
+**接着，来介绍一下redefine和retransform两个概念，它们与类的加载状态有关系：**
+
+- **对于正在加载的类进行修改，它属于define和transform的范围。**
+- **对于已经加载的类进行修改，它属于redefine和retransform的范围。**
+
+对于已经加载的类（loaded class），<u>redefine侧重于以“新”换“旧”，而retransform侧重于对“旧”的事物进行“修补”</u>。
+
+```
+                               ┌─── define: ClassLoader.defineClass
+               ┌─── loading ───┤
+               │               └─── transform
+class state ───┤
+               │               ┌─── redefine: Instrumentation.redefineClasses
+               └─── loaded ────┤
+                               └─── retransform: Instrumentation.retransformClasses
+```
+
+再者，触发的方式不同：
+
+- **load，是类在加载的过程当中，JVM内部机制来自动触发。**
+- **redefine和retransform，是我们自己写代码触发**。
+
+最后，就是不同的时机（load、redefine、retransform）能够接触到的transformer也不相同：
+
+![img](https://lsieun.github.io/assets/images/java/agent/define-redefine-retransform.png)
+
+### 3.3 总结
+
+本文内容总结如下：
+
+- 第一点，介绍了`Instrumentation`添加和移除`ClassFileTransformer`的两个方法。
+- 第二点，介绍了`ClassFileTransformer`被调用的三个时机：load、redefine和retransform。
+
+> [java - Difference between redefine and retransform in javaagent - Stack Overflow](https://stackoverflow.com/questions/19009583/difference-between-redefine-and-retransform-in-javaagent)
+
+## 4. Instrumentation.redefineClasses()
+
+### 4.1 redefine
+
+#### redefineClasses
+
+Redefine the supplied set of classes using the supplied class files.
+
+```java
+public interface Instrumentation {
+  void redefineClasses(ClassDefinition... definitions)
+    throws ClassNotFoundException, UnmodifiableClassException;
+}
+```
+
+This method operates on a set in order to allow interdependent changes to **more than one class** at the same time (a redefinition of class A can require a redefinition of class B).
+
+#### ClassDefinition
+
+##### class info
+
+```java
+public final class ClassDefinition {
+}
+```
+
+##### fields
+
+```java
+public final class ClassDefinition {
+  private final Class<?> mClass;
+  private final byte[] mClassFile;
+}
+```
+
+##### constructor
+
+```java
+public final class ClassDefinition {
+  public ClassDefinition(Class<?> theClass, byte[] theClassFile) {
+    if (theClass == null || theClassFile == null) {
+      throw new NullPointerException();
+    }
+    mClass      = theClass;
+    mClassFile  = theClassFile;
+  }
+}
+```
+
+##### methods
+
+```java
+public final class ClassDefinition {
+  public Class<?> getDefinitionClass() {
+    return mClass;
+  }
+
+  public byte[] getDefinitionClassFile() {
+    return mClassFile;
+  }
+}
+```
+
+### 4.2 示例一：替换Object类
+
+#### StaticInstrumentation
+
+在 `StaticInstrumentation` 类当中，主要是对 `java.lang.Object` 类的 `byte[]` 内容进行修改：让 `toString()` 方法返回 `This is an object.` 字符串。
+
+修改前：
+
+```java
+public class Object {
+  public String toString() {
+    return getClass().getName() + "@" + Integer.toHexString(hashCode());
+  }
+}
+```
+
+修改后：
+
+```java
+public class Object {
+  public String toString() {
+    return "This is an object.";
+  }  
+}
+```
+
+将修改后 `byte[]` 内容保存到工作目录下的 `target/classes/data/java/lang/Object.class` 文件中。
+
+```java
+import lsieun.asm.visitor.*;
+import lsieun.utils.FileUtils;
+import org.objectweb.asm.*;
+
+import java.io.File;
+
+public class StaticInstrumentation {
+  public static void main(String[] args) {
+    Class<?> clazz = Object.class;
+    String user_dir = System.getProperty("user.dir");
+    String filepath = user_dir + File.separator +
+      "target" + File.separator +
+      "classes" + File.separator +
+      "data" + File.separator +
+      clazz.getName().replace(".", "/") + ".class";
+    filepath = filepath.replace(File.separator, "/");
+
+    byte[] bytes = dump(clazz);
+    FileUtils.writeBytes(filepath, bytes);
+    System.out.println("file:///" + filepath);
+  }
+
+  public static byte[] dump(Class<?> clazz) {
+    String className = clazz.getName();
+    byte[] bytes = FileUtils.readClassBytes(className);
+
+    ClassReader cr = new ClassReader(bytes);
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+    ClassVisitor cv = new ToStringVisitor(cw, "This is an object.");
+
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+    return cw.toByteArray();
+  }
+}
+```
+
+#### Application
+
+```java
+package sample;
+
+public class Program {
+  public static void main(String[] args) {
+    Object obj = new Object();
+    System.out.println(obj);
+  }
+}
+```
+
+#### Agent Jar
+
+```java
+package lsieun.agent;
+
+import lsieun.utils.*;
+
+import java.io.InputStream;
+import java.lang.instrument.ClassDefinition;
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，redefine
+    try {
+      Class<?> clazz = Object.class;
+      if (inst.isModifiableClass(clazz)) {
+        InputStream in = LoadTimeAgent.class.getResourceAsStream("/data/java/lang/Object.class");
+        int available = in.available();
+        byte[] bytes = new byte[available];
+        in.read(bytes);
+        ClassDefinition classDefinition = new ClassDefinition(clazz, bytes);
+        inst.redefineClasses(classDefinition);
+      }
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+  }
+}
+```
+
+#### 运行
+
+第一次运行，直接运行 `sample.Program` 类：
+
+```shell
+$ java -cp ./target/classes/ sample.Program
+java.lang.Object@15db9742
+```
+
+第二次运行，加载 `TheAgent.jar` 运行：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Premain-Class: lsieun.agent.LoadTimeAgent
+    (2) agentArgs: null
+    (3) Instrumentation: sun.instrument.InstrumentationImpl@1704856573
+    (4) Can-Redefine-Classes: true
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: main@1(false)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@18b4aac2
+========= ========= ========= SEPARATOR ========= ========= =========
+
+This is an object.
+```
+
+第三次运行，在 `pom.xml` 文件中，将 `Can-Redefine-Classes` 设置成 `false`：
+
+```shell
+<Can-Redefine-Classes>false</Can-Redefine-Classes>
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+Picked up JAVA_TOOL_OPTIONS: -Duser.language=en -Duser.country=US
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Premain-Class: lsieun.agent.LoadTimeAgent
+    (2) agentArgs: null
+    (3) Instrumentation: sun.instrument.InstrumentationImpl@1704856573
+    (4) Can-Redefine-Classes: false
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: main@1(false)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@18b4aac2
+========= ========= ========= SEPARATOR ========= ========= =========
+
+java.lang.UnsupportedOperationException: redefineClasses is not supported in this environment
+        at sun.instrument.InstrumentationImpl.redefineClasses(InstrumentationImpl.java:156)
+        at lsieun.agent.LoadTimeAgent.premain(LoadTimeAgent.java:23)
+        at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+        at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)
+        at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+        at java.lang.reflect.Method.invoke(Method.java:498)
+        at sun.instrument.InstrumentationImpl.loadClassAndStartAgent(InstrumentationImpl.java:386)
+        at sun.instrument.InstrumentationImpl.loadClassAndCallPremain(InstrumentationImpl.java:401)
+java.lang.Object@70dea4e
+```
+
+### 4.3 示例二：Hot Swap
+
+#### Application
+
+##### Program.java
+
+```java
+package sample;
+
+public class Program {
+  public static void main(String[] args) throws Exception {
+    HelloWorld instance = new HelloWorld();
+    for (int i = 1; i < 20; i++) {
+      instance.test(12, 3);
+      System.out.println("intValue: " + HelloWorld.intValue);
+    }
+  }
+}
+```
+
+##### HelloWorld.java
+
+```java
+package sample;
+
+public class HelloWorld {
+  public static int intValue = 20;
+
+  public void test(int a, int b) {
+    System.out.println("a = " + a);
+    System.out.println("b = " + b);
+    try {
+      Thread.sleep(5000);
+    } catch (Exception ignored) {
+    }
+    int c = a * b;
+    System.out.println("a * b = " + c);
+    System.out.println("============");
+    System.out.println();
+  }
+}
+```
+
+#### Agent Jar
+
+##### Agent Class
+
+```java
+import lsieun.thread.HotSwapThread;
+
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    Class<?> agentClass = LoadTimeAgent.class;
+    System.out.println("===>Premain-Class: " + agentClass.getName());
+    System.out.println("ClassLoader: " + agentClass.getClassLoader());
+    System.out.println("Thread Id: " + Thread.currentThread().getName() + "@" + Thread.currentThread().getId());
+    System.out.println("Can-Redefine-Classes: " + inst.isRedefineClassesSupported());
+    System.out.println("Can-Retransform-Classes: " + inst.isRetransformClassesSupported());
+    System.out.println("Can-Set-Native-Method-Prefix: " + inst.isNativeMethodPrefixSupported());
+    System.out.println("========= ========= =========");
+
+    Thread t = new HotSwapThread("hot-swap-thread", inst);
+    t.setDaemon(true);
+    t.start();
+  }
+}
+```
+
+##### HotSwapThread
+
+```java
+import java.io.InputStream;
+import java.lang.instrument.ClassDefinition;
+import java.lang.instrument.Instrumentation;
+import java.nio.file.*;
+import java.util.List;
+
+import static java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY;
+
+public class HotSwapThread extends Thread {
+  private final Instrumentation inst;
+
+  public HotSwapThread(String name, Instrumentation inst) {
+    super(name);
+    this.inst = inst;
+  }
+
+  @Override
+  public void run() {
+    try {
+      FileSystem fs = FileSystems.getDefault();
+      WatchService watchService = fs.newWatchService();
+      // 注意：修改这里的路径信息
+      Path watchPath = fs.getPath("D:\\git-repo\\learn-java-agent\\target\\classes\\sample\\");
+      watchPath.register(watchService, ENTRY_MODIFY);
+      WatchKey changeKey;
+      while ((changeKey = watchService.take()) != null) {
+        // Prevent receiving two separate ENTRY_MODIFY events: file modified and timestamp updated.
+        // Instead, receive one ENTRY_MODIFY event with two counts.
+        Thread.sleep( 50 );
+
+        System.out.println("Thread Id: ===>" + Thread.currentThread().getName() + "@" + Thread.currentThread().getId());
+        List<WatchEvent<?>> watchEvents = changeKey.pollEvents();
+        for (WatchEvent<?> watchEvent : watchEvents) {
+          // Ours are all Path type events:
+          WatchEvent<Path> pathEvent = (WatchEvent<Path>) watchEvent;
+
+          Path path = pathEvent.context();
+          WatchEvent.Kind<Path> eventKind = pathEvent.kind();
+          System.out.println(eventKind + "(" + pathEvent.count() +")" + " for path: " + path);
+          String filepath = path.toFile().getCanonicalPath();
+          if (!filepath.endsWith("HelloWorld.class")) continue;
+
+          Class<?> clazz = Class.forName("sample.HelloWorld");
+          if (inst.isModifiableClass(clazz)) {
+            System.out.println("Before Redefine");
+            InputStream in = clazz.getResourceAsStream("HelloWorld.class");
+            int available = in.available();
+            byte[] bytes = new byte[available];
+            in.read(bytes);
+            ClassDefinition classDefinition = new ClassDefinition(clazz, bytes);
+            inst.redefineClasses(classDefinition);
+            System.out.println("After Redefine");
+          }
+
+        }
+        changeKey.reset(); // Important!
+        System.out.println("Thread Id: <===" + Thread.currentThread().getName() + "@" + Thread.currentThread().getId());
+      }
+    } catch (Exception ex) {
+      ex.printStackTrace();
+    }
+  }
+}
+```
+
+#### Run
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+
+===>Premain-Class: lsieun.agent.LoadTimeAgent
+ClassLoader: sun.misc.Launcher$AppClassLoader@18b4aac2
+Thread Id: main@1
+Can-Redefine-Classes: true
+Can-Retransform-Classes: true
+Can-Set-Native-Method-Prefix: true
+========= ========= =========
+a = 12
+b = 3
+a * b = 36
+============
+
+a = 12
+b = 3
+Thread Id: ===>hot-swap-thread@6
+ENTRY_MODIFY(1) for path: HelloWorld.class
+Before Redefine
+After Redefine
+Thread Id: <===hot-swap-thread@6
+a * b = 36                                               // 注意：这里仍然执行乘法操作
+============
+
+a = 12
+b = 3
+a + b = 15
+============
+
+a = 12
+b = 3
+a + b = 15
+============
+```
+
+在 `Instrumentation.redefineClasses` 方法的API中描述到： <u>If a redefined method has **active stack frames**, those active frames continue to run the bytecodes of the original method. The redefined method will be used on new invokes.</u>
+
+### 4.4 细节之处
+
+- 第一点，`redefineClasses()` 方法是对已经加载的类进行以“新”换“旧”操作。
+- 第二点，**如果某个方法正在执行（active stack frames），修改之后的方法会在下一次执行**。
+- 第三点，**静态初始化（class initialization）不会再次执行，不受 `redefineClasses()` 方法的影响**。
+- 第四点，`redefineClasses()` 方法的功能是有限的，主要集中在对方法体（method body）的修改。
+- 第五点，当`redefineClasses()` 方法出现异常的时候，就相当于“什么都没有发生过”，不会对类产生影响。
+
+#### fix-and-continue
+
+This method is used to **replace** the definition of a class without reference to **the existing class file bytes**, as one might do when recompiling from source for **fix-and-continue** debugging. Where **the existing class file bytes** are to be transformed (for example in bytecode instrumentation) `retransformClasses` should be used.
+
+#### active stack frames
+
+If a redefined method has **active stack frames**, those active frames continue to run the bytecodes of the original method. The redefined method will be used on new invokes.
+
+#### initialization
+
+This method does not cause any initialization except that which would occur under the customary JVM semantics. In other words, redefining a class does not cause its initializers to be run. The values of static variables will remain as they were prior to the call.
+
+#### restrictions
+
+<u>The redefinition may change method bodies, the constant pool and attributes.</u>
+
+<u>The redefinition must not add, remove or rename fields or methods, change the signatures of methods, or change inheritance. These restrictions maybe be lifted in future versions.</u>
+
+#### exception
+
+The class file bytes are not checked, verified and installed until after the transformations have been applied, if the resultant bytes are in error this method will throw an exception.
+
+If this method throws an exception, no classes have been redefined.
+
+### 4.5 总结
+
+本文内容总结如下：
+
+- 第一点，`redefineClasses()` 方法可以对Class进行重新定义。
+- 第二点，`redefineClasses()` 方法的一个使用场景就是fix-and-continue。
+- 第三点，使用`redefineClasses()` 方法需要注意一些细节。
+
+## 5. Instrumentation.retransformClasses()
+
+### 5.1 retransformClasses
+
+Retransform the supplied set of classes.
+
+```java
+public interface Instrumentation {
+  void retransformClasses(Class<?>... classes) throws UnmodifiableClassException;
+}
+```
+
+This method operates on a set in order to allow interdependent changes to **more than one class** at the same time (a retransformation of class A can require a retransformation of class B).
+
+### 5.2 示例一：修改toString方法
+
+#### Application
+
+```java
+package sample;
+
+public class Program {
+  public static void main(String[] args) {
+    Object obj = new Object();
+    System.out.println(obj);
+  }
+}
+```
+
+#### Agent Jar
+
+##### LoadTimeAgent
+
+调用顺序：
+
+- create a transformer
+- add the transformer
+- call retransform
+- remove the transformer
+
+```java
+package lsieun.agent;
+
+import lsieun.instrument.*;
+import lsieun.utils.*;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，指定要修改的类
+    String className = "java.lang.Object";
+
+    // 第三步，使用inst：添加transformer --> retransform --> 移除transformer
+    ClassFileTransformer transformer = new ASMTransformer(className);
+    inst.addTransformer(transformer, true);
+    try {
+      Class<?> clazz = Class.forName(className);
+      boolean isModifiable = inst.isModifiableClass(clazz);
+      if (isModifiable) {
+        inst.retransformClasses(clazz);
+      }
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+    finally {
+      inst.removeTransformer(transformer);
+    }
+  }
+}
+```
+
+##### ASMTransformer
+
+```java
+package lsieun.instrument;
+
+import lsieun.asm.visitor.*;
+import org.objectweb.asm.*;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.IllegalClassFormatException;
+import java.security.ProtectionDomain;
+import java.util.Objects;
+
+public class ASMTransformer implements ClassFileTransformer {
+  private final String internalName;
+
+  public ASMTransformer(String internalName) {
+    Objects.requireNonNull(internalName);
+    this.internalName = internalName.replace(".", "/");
+  }
+
+  @Override
+  public byte[] transform(ClassLoader loader,
+                          String className,
+                          Class<?> classBeingRedefined,
+                          ProtectionDomain protectionDomain,
+                          byte[] classfileBuffer) throws IllegalClassFormatException {
+    if (className.equals(internalName)) {
+      System.out.println("transform class: " + className);
+      ClassReader cr = new ClassReader(classfileBuffer);
+      ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+      ClassVisitor cv = new ToStringVisitor(cw, "This is an object.");
+
+      int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+      cr.accept(cv, parsingOptions);
+
+      return cw.toByteArray();
+    }
+
+    return null;
+  }
+}
+```
+
+#### Run
+
+```shell
+mvn clean package
+```
+
+##### None
+
+```shell
+$ java -cp ./target/classes/ sample.Program
+java.lang.Object@15db9742
+```
+
+##### Load-Time
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+
+This is an object.
+```
+
+##### addTransformer: false
+
+将 `Instrumentation.addTransformer(ClassFileTransformer, boolean)` 的第二个参数设置为 `false`：
+
+```java
+inst.addTransformer(transformer, false);
+```
+
+那么，再次运行：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+
+java.lang.Object@7d4991ad
+```
+
+##### Can-Retransform: false
+
+在 `pom.xml` 文件中，将 `Can-Retransform-Classes` 设置成 `false`：
+
+```xml
+<Can-Retransform-Classes>false</Can-Retransform-Classes>
+```
+
+再次运行，会出现 `UnsupportedOperationException` 异常：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+
+Caused by: java.lang.UnsupportedOperationException: adding retransformable transformers is not supported in this environment
+        at sun.instrument.InstrumentationImpl.addTransformer(InstrumentationImpl.java:88)
+        at lsieun.agent.LoadTimeAgent.premain(LoadTimeAgent.java:20)
+        ... 6 more
+FATAL ERROR in native method: processing of -javaagent failed
+```
+
+### 5.3 示例二：Dump
+
+本示例的目的是将 JVM 当中已经加载的类导出。
+
+#### Agent Jar
+
+##### LoadTimeAgent
+
+```java
+package lsieun.agent;
+
+import lsieun.instrument.*;
+import lsieun.utils.*;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，指定要处理的类
+    String className = "java.lang.Object";
+
+    // 第三步，使用inst：添加transformer --> retransform --> 移除transformer
+    ClassFileTransformer transformer = new DumpTransformer(className);
+    inst.addTransformer(transformer, true);
+    try {
+      Class<?> clazz = Class.forName(className);
+      boolean isModifiable = inst.isModifiableClass(clazz);
+      if (isModifiable) {
+        inst.retransformClasses(clazz);
+      }
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+    finally {
+      inst.removeTransformer(transformer);
+    }
+  }
+}
+```
+
+##### DumpTransformer
+
+```java
+package lsieun.instrument;
+
+import lsieun.utils.DateUtils;
+import lsieun.utils.DumpUtils;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.IllegalClassFormatException;
+import java.security.ProtectionDomain;
+import java.util.Objects;
+
+public class DumpTransformer implements ClassFileTransformer {
+  private final String internalName;
+
+  public DumpTransformer(String internalName) {
+    Objects.requireNonNull(internalName);
+    this.internalName = internalName.replace(".", "/");
+  }
+
+  @Override
+  public byte[] transform(ClassLoader loader,
+                          String className,
+                          Class<?> classBeingRedefined,
+                          ProtectionDomain protectionDomain,
+                          byte[] classfileBuffer) throws IllegalClassFormatException {
+    if (className.equals(internalName)) {
+      String timeStamp = DateUtils.getTimeStamp();
+      String filename = className.replace("/", ".") + "." + timeStamp + ".class";
+      DumpUtils.dump(filename, classfileBuffer);
+    }
+    return null;
+  }
+}
+```
+
+#### Run
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+
+file:///D:\git-repo\learn-java-agent\dump\java.lang.Object.2022.01.28.10.00.01.768.class
+```
+
+### 5.4 示例三：Dump（Regex）
+
+本示例的目的是使用正则表达式（Regular Expression）将 JVM 当中已经加载的一些类导出。
+
+#### Agent Jar
+
+##### DynamicAgent
+
+```java
+package lsieun.agent;
+
+import lsieun.instrument.*;
+import lsieun.utils.*;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.Instrumentation;
+import java.util.ArrayList;
+import java.util.List;
+
+public class DynamicAgent {
+  public static void agentmain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(DynamicAgent.class, "Agent-Class", agentArgs, inst);
+
+    // 第二步，设置正则表达式：agentArgs
+    RegexUtils.setPattern(agentArgs);
+
+    // 第三步，使用inst：进行re-transform操作
+    ClassFileTransformer transformer = new DumpTransformer();
+    inst.addTransformer(transformer, true);
+    try {
+      Class<?>[] classes = inst.getAllLoadedClasses();
+      List<Class<?>> candidates = new ArrayList<>();
+      for (Class<?> c : classes) {
+        String className = c.getName();
+
+        // 这些if判断的目的是：不考虑JDK自带的类
+        if (className.startsWith("java")) continue;
+        if (className.startsWith("javax")) continue;
+        if (className.startsWith("jdk")) continue;
+        if (className.startsWith("sun")) continue;
+        if (className.startsWith("com.sun")) continue;
+        if (className.startsWith("[")) continue;
+
+        boolean isModifiable = inst.isModifiableClass(c);
+        boolean isCandidate = RegexUtils.isCandidate(className);
+
+        System.out.println("Loaded Class: " + className + " - " + isModifiable + ", " + isCandidate);
+        if (isModifiable && isCandidate) {
+          candidates.add(c);
+        }
+      }
+
+      System.out.println("candidates size: " + candidates.size());
+      if (!candidates.isEmpty()) {
+        inst.retransformClasses(candidates.toArray(new Class[0]));
+      }
+    } catch (Exception ex) {
+      ex.printStackTrace();
+    } finally {
+      inst.removeTransformer(transformer);
+    }
+  }
+}
+```
+
+##### DumpTransformer
+
+```java
+package lsieun.instrument;
+
+import lsieun.utils.DateUtils;
+import lsieun.utils.DumpUtils;
+import lsieun.utils.RegexUtils;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.IllegalClassFormatException;
+import java.security.ProtectionDomain;
+
+public class DumpTransformer implements ClassFileTransformer {
+  @Override
+  public byte[] transform(ClassLoader loader,
+                          String className,
+                          Class<?> classBeingRedefined,
+                          ProtectionDomain protectionDomain,
+                          byte[] classfileBuffer) throws IllegalClassFormatException {
+    if (RegexUtils.isCandidate(className)) {
+      String timeStamp = DateUtils.getTimeStamp();
+      String filename = className.replace("/", ".") + "." + timeStamp + ".class";
+      DumpUtils.dump(filename, classfileBuffer);
+    }
+    return null;
+  }
+}
+```
+
+#### Run
+
+在 `run.instrument.DynamicInstrumentation` 类中，传入参数：
+
+```java
+vm.loadAgent(agent, "sample\\..*");
+file:///D:\git-repo\learn-java-agent\dump\sample.HelloWorld.2022.01.28.09.45.51.218.class
+file:///D:\git-repo\learn-java-agent\dump\sample.Program.2022.01.28.09.45.51.223.class
+```
+
+### 5.5 注意事项
+
+- 第一点，**`retransformClasses()` 方法是针对已经加载的类（already loaded classes）**。
+- 第二点，**如果某个方法正在执行（active stack frames），修改之后的方法会在下一次执行**。
+- 第三点，**静态初始化（class initialization）不会再次执行，不受`retransformClasses()`方法的影响**。
+- 第四点，`retransformClasses()` 方法的功能是有限的，主要集中在对方法体（method body）的修改。
+- 第五点，当`retransformClasses()` 方法出现异常的时候，就相当于“什么都没有发生过”，不会对类产生影响。
+
+This function facilitates the instrumentation of **already loaded classes**.
+
+#### active stack frames
+
+If a retransformed method has active stack frames, those active frames continue to run the bytecodes of the original method. The retransformed method will be used on new invokes.
+
+#### initialization
+
+This method does not cause any initialization except that which would occur under the customary JVM semantics. In other words, redefining a class does not cause its initializers to be run. The values of static variables will remain as they were prior to the call.
+
+Instances of the retransformed class are not affected.
+
+#### restrictions
+
+The retransformation may change method bodies, the constant pool and attributes.
+
+The retransformation must not add, remove or rename fields or methods, change the signatures of methods, or change inheritance. These restrictions maybe be lifted in future versions.
+
+#### exception
+
+The class file bytes are not checked, verified and installed until after the transformations have been applied, if the resultant bytes are in error this method will throw an exception.
+
+If this method throws an exception, no classes have been retransformed.
+
+### 5.6 总结
+
+本文内容总结如下：
+
+- 第一点，**`retransformClasses()` 方法的主要作用是针对已经加载的类（already loaded classes）进行转换**。
+- 第二点，`retransformClasses()` 方法的一个特殊用途是将加载类的字节码进行导出。
+- 第三点，在使用`retransformClasses()` 方法的过程中，需要注意一些细节内容。
+
+## 6. redefine VS. retransform
+
+> - [StackOverflow: Difference between redefine and retransform in javaagent](https://stackoverflow.com/questions/19009583/difference-between-redefine-and-retransform-in-javaagent)
+
+**redefine 和 retransform 的共同点之处：两者都是对已经加载的类（already loaded classes）进行修改。**
+
+### 6.1 时间不同
+
+在 `Instrumentation` 类版本演进的过程中，先有 redefine，后有 retransform。
+
+在 Java 1.5 的时候（2004.09），retransform 的概念还没有出现：
+
+```java
+public interface Instrumentation {
+  // Since 1.5
+  boolean isRedefineClassesSupported();
+  // Since 1.5
+  void addTransformer(ClassFileTransformer transformer);
+  // Since 1.5
+  void redefineClasses(ClassDefinition... definitions) throws ClassNotFoundException, UnmodifiableClassException;
+}
+```
+
+到 Java 1.6 的时候（2006.12），才有了 retransform 相关的内容：
+
+```java
+public interface Instrumentation {
+  // Since 1.6
+  boolean isRetransformClassesSupported();
+  // Since 1.6
+  void addTransformer(ClassFileTransformer transformer, boolean canRetransform);
+  // Since 1.6
+  void retransformClasses(Class<?>... classes) throws UnmodifiableClassException;
+}
+```
+
+### 6.2 处理方式不同：替换和修改
+
+- redefine 是进行“替换”
+- retransform 是进行“修改”
+
+The main difference seems to be that when we `redefine` a class, we supply a `byte[]` with the new definition out of the blue, whereas when we `retransform`, we get a `byte[]` containing the current definition via the same API, and we return a modified `byte[]`.
+
+Therefore, to `redefine`, we need to know more about the class. With `retransform` you can do that more directly: just look at the bytecode given, modify it, and return it.
+
+### 6.3 影响范围不同：transformer
+
+redefine 操作会触发：
+
+- retransformation incapable transformer
+- retransformation capable transformer
+
+retransform 操作会触发：
+
+- retransformation capable transformer
+
+![img](https://lsieun.github.io/assets/images/java/agent/define-redefine-retransform.png)
+
+### 6.4 总结
+
+本文内容总结如下：
+
+- 第一点，redefine 和 retransform 的共同之处：两者都是处理已经加载的类（already loaded classes）。
+- 第二点，redefine 和 retransform 的不同之处：出现时间不同、处理方式不同、影响范围不同。
+
+## 7. Instrumentation.xxxClasses()
+
+### 7.1 xxxClasses()
+
+```java
+public interface Instrumentation {
+    Class[] getAllLoadedClasses();
+    Class[] getInitiatedClasses(ClassLoader loader);
+    boolean isModifiableClass(Class<?> theClass);
+}
+```
+
+- `Class[] getAllLoadedClasses()`: Returns an array containing all the classes loaded by the JVM, zero-length if there are none.
+- `Class[] getInitiatedClasses(ClassLoader loader)`: Returns an array of all classes for which `loader` is **an initiating loader**. If the supplied loader is `null`, classes initiated by the **bootstrap class loader** are returned.
+- `boolean isModifiableClass(Class<?> theClass)`: Determines whether a class is modifiable by **retransformation or redefinition**. If a class is modifiable then this method returns `true`. If a class is not modifiable then this method returns `false`.
+  - For a class to be **retransformed**, `isRetransformClassesSupported` must also be `true`. But the value of `isRetransformClassesSupported()` does not influence the value returned by this function.
+  - For a class to be **redefined**, `isRedefineClassesSupported` must also be `true`. But the value of `isRedefineClassesSupported()` does not influence the value returned by this function.
+  - **Primitive classes** (for example, `java.lang.Integer.TYPE`) and **array classes** are never modifiable.
+
+这三个方法都与`java.lang.Class`相关，要么是方法的返回值，要么是方法的参数。
+
+<u>第一个方法，`Class[] getAllLoadedClasses()`的作用就是获取**所有已经加载的类**；功能虽然强大，但是要慎重使用，因为它花费的时间也比较多。</u>
+
+有的时候，我们要找到某个类，就想调用`getAllLoadedClasses()`方法，然后遍历查找，这样的执行效率会比较低。**如果我们明确的知道要找某个类，可以直接使用`Class.forName()`方法**。
+
+第二个方法，`Class[] getInitiatedClasses(ClassLoader loader)`的作用是获取由某一个initiating class loader已经加载的类。
+
+什么是initiating class loader和defining class loader呢？
+
+In Java terminology, a class loader that is asked to load a type, but returns a type loaded by some other class loader, is called an **initiating class loader** of that type. The class loader that actually defines the type is called the **defining class loader** for the type.
+
+第三个方法，`boolean isModifiableClass(Class<?> theClass)`的作用是判断某一个Class是否可以被修改（modifiable）。
+
+**要对一个已经加载的类进行修改，需要考虑四个因素：**
+
+- **第一，JVM是否支持？**
+- **第二，Agent Jar是否支持？在`MANIFEST.MF`文件中，是否将`Can-Redefine-Classes`和`Can-Retransform-Classes`设置为`true`？**
+- **第三，`Instrumentation`和`ClassFileTransformer`是否支持？是否将`addTransformer(ClassFileTransformer transformer, boolean canRetransform)`的`canRetransform`参数设置为`true`？**
+- **第四，当前的Class是否为可修改的？`boolean isModifiableClass(Class<?> theClass)`是否返回`true`？**
+
+<u>需要注意的是，**Primitive classes**和**array classes**是不能被修改的</u>。
+
+### 7.2 示例一：All Loaded Class和Modifiable
+
+#### LoadTimeAgent.java
+
+```java
+package lsieun.agent;
+
+import lsieun.utils.PrintUtils;
+
+import java.lang.instrument.Instrumentation;
+import java.util.ArrayList;
+import java.util.List;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，获取所有加载的类
+    Class<?>[] allLoadedClasses = inst.getAllLoadedClasses();
+
+    // 第三步，分成两组
+    List<String> modifiableClassList = new ArrayList<>();
+    List<String> notModifiableClassList = new ArrayList<>();
+    for (Class<?> clazz : allLoadedClasses) {
+      boolean isModifiable = inst.isModifiableClass(clazz);
+      String className = clazz.getName();
+      if (isModifiable) {
+        modifiableClassList.add(className);
+      }
+      else {
+        notModifiableClassList.add(className);
+      }
+    }
+
+    // 第四步，输出
+    System.out.println("Modifiable Classes:");
+    for (String item : modifiableClassList) {
+      System.out.println("    " + item);
+    }
+    System.out.println("Not Modifiable Classes:");
+    for (String item : notModifiableClassList) {
+      System.out.println("    " + item);
+    }
+  }
+}
+```
+
+#### 运行
+
+在使用`Instrumentation.isModifiableClass(Class<?> theClass)`判断时， 除了**原始类型**和**数组类型**（例如，`[Ljava.lang.Object;`和`[B`等）返回`false`值；其它的类型（例如，`java.lang.Object`）都会返回`true`值。 这也就意味着我们可以对大部分的Class进行retransform和redefine操作。
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Premain-Class: lsieun.agent.LoadTimeAgent
+    (2) agentArgs: null
+    (3) Instrumentation: sun.instrument.InstrumentationImpl@1704856573
+    (4) Can-Redefine-Classes: true
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: main@1(false)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@18b4aac2
+========= ========= ========= SEPARATOR ========= ========= =========
+
+Modifiable Classes:
+    lsieun.utils.PrintUtils    // 自己写的类，是可以被修改的
+    java.lang.Object           // JDK内部的类，也是可以被修改的
+    ...
+Not Modifiable Classes:
+    ...
+    [[C
+    [Ljava.lang.Object;
+    [Ljava.lang.Long;          // 数组类型，是不可以被修改的
+    [J
+    [I
+    [S
+    [B
+    [D
+    [F
+    [C
+    [Z
+```
+
+### 7.3 示例二：initiating class loader
+
+这个示例主要是为了验证一下：System ClassLoader是不是`java.lang.StrictMath`类的initiating class loader？
+
+```java
+package lsieun.agent;
+
+import lsieun.utils.PrintUtils;
+
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，加载一个java.lang.StrictMath类
+    {
+      Class<StrictMath> clazz = StrictMath.class;
+      System.out.println("Load Class: " + clazz.getName());
+      System.out.println("==============================");
+    }
+
+    // 第三步，查看加载的类
+    ClassLoader systemClassLoader = ClassLoader.getSystemClassLoader();
+    Class<?>[] initiatedClasses = inst.getInitiatedClasses(systemClassLoader);
+    if (initiatedClasses != null) {
+      for (Class<?> clazz : initiatedClasses) {
+        String message = String.format("%s: %s", clazz.getName(), clazz.getClassLoader());
+        System.out.println(message);
+      }
+    }
+  }
+}
+```
+
+### 7.4 示例三：尝试修改 int.class
+
+本示例目的：当我们尝试修改不能修改的类时，会出现`UnmodifiableClassException`异常。
+
+```java
+package lsieun.agent;
+
+import lsieun.utils.*;
+
+import java.lang.instrument.Instrumentation;
+import java.lang.instrument.UnmodifiableClassException;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) throws UnmodifiableClassException {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，使用inst
+    Class<?> clazz = int.class; // 或 String[].class;
+    boolean isModifiable = inst.isModifiableClass(clazz);
+    System.out.println(isModifiable);
+    inst.retransformClasses(clazz);
+  }
+}
+```
+
+输出结果：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+
+false
+Exception in thread "main" java.lang.reflect.InvocationTargetException
+        at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+        at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)
+        at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+        at java.lang.reflect.Method.invoke(Method.java:498)
+        at sun.instrument.InstrumentationImpl.loadClassAndStartAgent(InstrumentationImpl.java:386)
+        at sun.instrument.InstrumentationImpl.loadClassAndCallPremain(InstrumentationImpl.java:401)
+Caused by: java.lang.instrument.UnmodifiableClassException
+        at sun.instrument.InstrumentationImpl.retransformClasses0(Native Method)
+        at sun.instrument.InstrumentationImpl.retransformClasses(InstrumentationImpl.java:144)
+        at lsieun.agent.LoadTimeAgent.premain(LoadTimeAgent.java:17)
+        ... 6 more
+FATAL ERROR in native method: processing of -javaagent failed
+```
+
+### 7.5 总结
+
+本文内容总结如下：
+
+- 第一点，`getAllLoadedClasses()`方法是获取所有已经加载的类；功能虽然强大，但是要慎重使用。如果知道类的名字，使用`Class.forName()`是更好的选择。
+- 第二点，`getInitiatedClasses(ClassLoader loader)`方法是加载由某个class loader加载的类。注意区分initiating class loader和defining class loader两个概念。
+- 第三点，`isModifiableClass(Class<?> theClass)`是判断一个Class是否可以被修改，这是进行redefine和retransform的前提。同时，要注意**Primitive classes**和**array classes**是不能被修改的。
+
+## 8. Instrumentation.getObjectSize()
+
+### 8.1 getObjectSize
+
+```java
+public interface Instrumentation {
+  long getObjectSize(Object objectToSize);
+}
+```
+
+Returns an implementation-specific approximation of the amount of storage consumed by the specified object. The result may include some or all of the object’s **overhead**, and thus is useful for comparison within an implementation but not between implementations. The estimate may change during a single invocation of the JVM.
+
+<u>Note that the `getObjectSize()` method does not include the memory used by other objects referenced by the object passed in</u>. For example, if Object A has a reference to Object B, then Object A’s reported memory usage will include only the bytes needed for the reference to Object B (usually 4 bytes), not the actual object.
+
+小总结
+
+- 第一，调用`getObjectSize(Object objectToSize)`方法后，得到的是一个粗略的对象大小，不同的虚拟机实现可能是不同的。
+- 第二，调用`getObjectSize(Object objectToSize)`方法只是返回传入对象的大小，并不包含它关联的对象大小（例如，字段指向另一个对象）。
+
+### 8.2 示例一：获取对象大小
+
+#### Application
+
+```java
+package sample;
+
+import lsieun.agent.LoadTimeAgent;
+
+import java.lang.instrument.Instrumentation;
+
+public class Program {
+  public static void printInstrumentationSize(final Object obj) {
+    Class<?> clazz = obj.getClass();
+    Instrumentation inst = LoadTimeAgent.getInstrumentation();
+    long size = inst.getObjectSize(obj);
+    String message = String.format("Object of type %s has size of %s bytes.", clazz, size);
+    System.out.println(message);
+  }
+
+  public static void main(String[] args) throws Exception {
+    // 第一组
+    Object obj = new Object();
+    final StringBuilder sb = new StringBuilder();
+
+    // 第二组
+    String emptyString = "";
+    String noneEmptyString = "ToBeOrNotToBeThatIsTheQuestion";
+
+    // 第三组
+    String[] strArray10 = new String[10];
+    String[] strArray20 = new String[20];
+
+    printInstrumentationSize(obj);
+    printInstrumentationSize(sb);
+    printInstrumentationSize(emptyString);
+    printInstrumentationSize(noneEmptyString);
+    printInstrumentationSize(strArray10);
+    printInstrumentationSize(strArray20);
+  }
+}
+```
+
+#### Agent Jar
+
+```java
+package lsieun.agent;
+
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  private static volatile Instrumentation globalInstrumentation;
+
+  public static void premain(String agentArgs, Instrumentation inst) {
+    globalInstrumentation = inst;
+  }
+
+  public static void agentmain(String agentArgs, Instrumentation inst) {
+    globalInstrumentation = inst;
+  }
+
+  public static Instrumentation getInstrumentation() {
+    if (globalInstrumentation == null) {
+      throw new IllegalStateException("Agent not initialized.");
+    }
+    return globalInstrumentation;
+  }
+}
+```
+
+#### Run
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+
+Object of type class java.lang.Object has size of 16 bytes.
+Object of type class java.lang.StringBuilder has size of 24 bytes.
+Object of type class java.lang.String has size of 24 bytes.
+Object of type class java.lang.String has size of 24 bytes.
+Object of type class [Ljava.lang.String; has size of 56 bytes.
+Object of type class [Ljava.lang.String; has size of 96 bytes.
+```
+
+### 8.3 示例二：获取对象大小（深度）
+
+Calculating “deep” memory usage of an object
+
+Usually it is more interesting to query the **“deep” memory usage** of an object, which includes “subobjects” (objects referred to by a given object).
+
+#### Application
+
+```java
+package sample;
+
+import lsieun.agent.LoadTimeAgent;
+import lsieun.utils.MemoryUtils;
+
+import java.lang.instrument.Instrumentation;
+
+public class Program {
+  public static void printInstrumentationSize(final Object obj) {
+    Class<?> clazz = obj.getClass();
+    Instrumentation inst = LoadTimeAgent.getInstrumentation();
+
+    MemoryUtils.setInstrumentation(inst);
+    long size = MemoryUtils.deepMemoryUsageOf(obj);
+
+    String message = String.format("Object of type %s has size of %s bytes.", clazz, size);
+    System.out.println(message);
+  }
+
+  public static void main(String[] args) throws Exception {
+    // 第一组
+    Object obj = new Object();
+    final StringBuilder sb = new StringBuilder();
+
+    // 第二组
+    String emptyString = "";
+    String noneEmptyString = "ToBeOrNotToBeThatIsTheQuestion";
+
+    // 第三组
+    String[] strArray10 = new String[10];
+    String[] strArray20 = new String[20];
+
+    printInstrumentationSize(obj);
+    printInstrumentationSize(sb);
+    printInstrumentationSize(emptyString);
+    printInstrumentationSize(noneEmptyString);
+    printInstrumentationSize(strArray10);
+    printInstrumentationSize(strArray20);
+  }
+}
+```
+
+#### Agent Jar
+
+这部分代码来参考自[Classmexer agent](https://www.javamex.com/classmexer/)。
+
+```java
+package lsieun.utils;
+
+public enum VisibilityFilter {
+  ALL, PRIVATE_ONLY, NON_PUBLIC, NONE;
+}
+```
+
+```pseudocode
+             ┌─── Primitive Type
+             │
+             │                                        ┌─── static field
+             │                                        │
+Java Type ───┤                      ┌─── Class ───────┤                        ┌─── public
+             │                      │                 │                        │
+             │                      │                 │                        ├─── protected
+             │                      │                 └─── non-static field ───┤
+             │                      │                                          ├─── package
+             └─── Reference Type ───┤                                          │
+                                    │                                          └─── private
+                                    │
+                                    ├─── Interface
+                                    │
+                                    └─── Array
+```
+
+```java
+package lsieun.utils;
+
+import java.lang.instrument.Instrumentation;
+import java.lang.reflect.Field;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.Stack;
+
+public class MemoryUtils {
+  private static final int ACC_PUBLIC    = 0x0001; // class, field, method
+  private static final int ACC_PRIVATE   = 0x0002; // class, field, method
+  private static final int ACC_PROTECTED = 0x0004; // class, field, method
+  private static final int ACC_STATIC    = 0x0008; // field, method
+
+  private static Instrumentation inst;
+
+  public static void setInstrumentation(Instrumentation inst) {
+    MemoryUtils.inst = inst;
+  }
+
+  public static Instrumentation getInstrumentation() {
+    return inst;
+  }
+
+  public static long memoryUsageOf(Object obj) {
+    return getInstrumentation().getObjectSize(obj);
+  }
+
+  public static long deepMemoryUsageOf(Object obj) {
+    return deepMemoryUsageOf(obj, VisibilityFilter.NON_PUBLIC);
+  }
+
+  public static long deepMemoryUsageOf(Object obj, VisibilityFilter referenceFilter) {
+    return deepMemoryUsageOf0(getInstrumentation(), new HashSet<>(), obj, referenceFilter);
+  }
+
+  public static long deepMemoryUsageOfAll(Collection<?> coll) {
+    return deepMemoryUsageOfAll(coll, VisibilityFilter.NON_PUBLIC);
+  }
+
+  public static long deepMemoryUsageOfAll(Collection<?> coll, VisibilityFilter referenceFilter) {
+    Instrumentation inst = getInstrumentation();
+    long total = 0L;
+    Set<Integer> counted = new HashSet<>(coll.size() * 4);
+    for (Object obj : coll) {
+      total += deepMemoryUsageOf0(inst, counted, obj, referenceFilter);
+    }
+    return total;
+  }
+
+  private static long deepMemoryUsageOf0(Instrumentation instrumentation, Set<Integer> counted, Object obj, VisibilityFilter filter) {
+    Stack<Object> stack = new Stack<>();
+    stack.push(obj);
+    long total = 0L;
+    while (!stack.isEmpty()) {
+      Object item = stack.pop();
+      // 计算对象的hash值是为了避免同一个对象重复计算多次
+      if (counted.add(System.identityHashCode(item))) {
+        long size = instrumentation.getObjectSize(item);
+        total += size;
+        Class<?> clazz = item.getClass();
+
+        // 如果是数组类型，则要计算每一个元素的大小
+        Class<?> compType = clazz.getComponentType();
+        if (compType != null && !compType.isPrimitive()) {
+          Object[] array = (Object[]) item;
+          for (Object element : array) {
+            if (element != null) {
+              stack.push(element);
+            }
+          }
+        }
+
+        // 递归查找类里面定义的具体字段值大小
+        while (clazz != null) {
+          Field[] fields = clazz.getDeclaredFields();
+          for (Field f : fields) {
+            int modifiers = f.getModifiers();
+            if ((modifiers & ACC_STATIC) == 0 && isOf(filter, modifiers)) {
+              Class<?> fieldClass = f.getType();
+              if (!fieldClass.isPrimitive()) {
+                if (!f.isAccessible()) {
+                  f.setAccessible(true);
+                }
+                try {
+                  Object subObj = f.get(item);
+                  if (subObj != null) {
+                    stack.push(subObj);
+                  }
+                } catch (IllegalAccessException illAcc) {
+                  throw new InternalError("Couldn't read " + f);
+                }
+              }
+            }
+          }
+          clazz = clazz.getSuperclass();
+        }
+      }
+    }
+    return total;
+  }
+
+  private static boolean isOf(VisibilityFilter f, int modifiers) {
+    switch (f) {
+      case NONE:
+        return false;
+      case PRIVATE_ONLY:
+        return ((modifiers & ACC_PRIVATE) != 0);
+      case NON_PUBLIC:
+        return ((modifiers & ACC_PUBLIC) == 0);
+      case ALL:
+        return true;
+    }
+    throw new IllegalArgumentException("Illegal filter " + modifiers);
+  }
+}
+```
+
+#### Run
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+Object of type class java.lang.Object has size of 16 bytes.
+Object of type class java.lang.StringBuilder has size of 72 bytes.
+Object of type class java.lang.String has size of 40 bytes.
+Object of type class java.lang.String has size of 104 bytes.
+Object of type class [Ljava.lang.String; has size of 56 bytes.
+Object of type class [Ljava.lang.String; has size of 96 bytes.
+```
+
+### 8.4 总结
+
+本文内容总结如下：
+
+- 第一点，调用`getObjectSize(Object objectToSize)`方法返回的是一个对象占用的空间大小，是一个粗略值，不一定十分准确。
+- 第二点，如何计算一个对象的”deep” memory usage。
+
+## 9. Instrumentation.appendToXxxClassLoaderSearch()
+
+### 9.1 ClassLoaderSearch
+
+```java
+public interface Instrumentation {
+  // 1.6
+  void appendToBootstrapClassLoaderSearch(JarFile jarfile);
+  // 1.6
+  void appendToSystemClassLoaderSearch(JarFile jarfile);
+}
+```
+
+- `void appendToBootstrapClassLoaderSearch(JarFile jarfile)`: Specifies a JAR file with instrumentation classes to be defined by the **bootstrap class loader**.
+  - When the virtual machine’s built-in class loader, known as the “bootstrap class loader”, unsuccessfully searches for a class, the entries in the JAR file will be searched as well.
+  - This method may be used **multiple times** to add multiple JAR files to be searched in the order that this method was invoked.
+  - The agent should take care to ensure that the JAR does not contain any classes or resources other than those to be defined by the bootstrap class loader for the purpose of instrumentation. Failure to observe this warning could result in unexpected behavior that is difficult to diagnose.
+- `void appendToSystemClassLoaderSearch(JarFile jarfile)`: Specifies a JAR file with instrumentation classes to be defined by the **system class loader**.
+  - When the system class loader for delegation unsuccessfully searches for a class, the entries in the JarFile will be searched as well.
+  - This method may be used **multiple times** to add multiple JAR files to be searched in the order that this method was invoked.
+  - The agent should take care to ensure that the JAR does not contain any classes or resources other than those to be defined by the system class loader for the purpose of instrumentation. Failure to observe this warning could result in unexpected behavior that is difficult to diagnose (see appendToBootstrapClassLoaderSearch).
+  - <u>This method does not change the value of `java.class.path` system property</u>.
+
+这两个方法很相似，都是将`JarFile`添加到class path当中，不同的地方在于：一个是添加到bootstrap classloader，另一个是添加到system classloader。
+
+这两个方法的共同点，还体现在：
+
+- 方法可以调用多次，来添加多个`JarFile`。
+- 使用时候要注意，只添加必要的`JarFile`；否则，可能会造成无法预料的问题。
+
+### 9.2 示例一：Class Path
+
+本示例的目的：看看这两个方法对class path有什么影响。
+
+#### Application
+
+##### 版本一
+
+第一个版本，通过`URLClassLoader.getURLs()`来获取class path
+
+```java
+package sample;
+
+import lsieun.utils.PrintUtils;
+
+public class Program {
+  public static void main(String[] args) {
+    PrintUtils.printBootstrapClassPath();
+    PrintUtils.printExtensionClassPath();
+    PrintUtils.printApplicationClassPath();
+  }
+}
+```
+
+##### 版本二
+
+第二个版本，通过读取属性（例如，`java.class.path`）来获取class path
+
+```java
+package sample;
+
+import lsieun.utils.ClassPathType;
+import lsieun.utils.PrintUtils;
+
+public class Program {
+  public static void main(String[] args) {
+    PrintUtils.printClassPath(ClassPathType.SUN_BOOT_CLASS_PATH);
+    PrintUtils.printClassPath(ClassPathType.JAVA_EXT_DIRS);
+    PrintUtils.printClassPath(ClassPathType.JAVA_CLASS_PATH);
+  }
+}
+```
+
+#### Agent Jar
+
+```java
+import lsieun.utils.ArgUtils;
+import lsieun.utils.JarUtils;
+import lsieun.utils.PrintUtils;
+
+import java.io.IOException;
+import java.lang.instrument.Instrumentation;
+import java.util.jar.JarFile;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) throws IOException {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，添加Class Search Path
+    String jarPath = JarUtils.getToolsJarPath();
+    JarFile jarFile = new JarFile(jarPath);
+    String append = ArgUtils.parseAgentArgs(agentArgs, "append");
+    if ("app".equals(append)) {
+      inst.appendToSystemClassLoaderSearch(jarFile);
+      System.out.println("Append to Application Class Path: " + jarPath);
+    }
+    else if ("boot".equals(append)) {
+      inst.appendToBootstrapClassLoaderSearch(jarFile);
+      System.out.println("Append to Bootstrap Class Path: " + jarPath);
+    }
+    else {
+      System.out.println("No Append: " + jarPath);
+    }
 
 
+    // 第三步，加载Class
+    String className = ArgUtils.parseAgentArgs(agentArgs, "class");
+    if (className != null) {
+      System.out.println("try to load class: " + className);
+      try {
+        Class<?> clazz = Class.forName(className);
+        ClassLoader loader = clazz.getClassLoader();
+        String message = String.format("load class %s from %s", clazz.getName(), loader);
+        System.out.println(message);
+      } catch (ClassNotFoundException e) {
+        System.out.println("load class failed: " + className);
+        e.printStackTrace();
+      }
+    }
+  }
+}
+```
 
+#### Run
 
+##### None
 
+```shell
+$ java -cp ./target/classes/ sample.Program
+Picked up JAVA_TOOL_OPTIONS: -Duser.language=en -Duser.country=US
+=========Bootstrap ClassPath=========
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/resources.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/rt.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/sunrsasign.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/jsse.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/jce.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/charsets.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/jfr.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/classes
 
+=========Extension ClassPath=========
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/ext/access-bridge-64.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/ext/cldrdata.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/ext/dnsns.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/ext/jaccess.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/ext/jfxrt.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/ext/localedata.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/ext/nashorn.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/ext/sunec.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/ext/sunjce_provider.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/ext/sunmscapi.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/ext/sunpkcs11.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/ext/zipfs.jar
 
+=========Application ClassPath=========
+--->file:/D:/git-repo/learn-java-agent/target/classes/
+```
 
+##### Load-Time
 
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Premain-Class: lsieun.agent.LoadTimeAgent
+    (2) agentArgs: null
+    (3) Instrumentation: sun.instrument.InstrumentationImpl
+    (4) Can-Redefine-Classes: true
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: main@1(false)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@18b4aac2
+========= ========= ========= SEPARATOR ========= ========= =========
 
+No Append: C:\Program Files\Java\jdk1.8.0_301\lib\tools.jar
+=========Bootstrap ClassPath=========
+......
 
+=========Extension ClassPath=========
+......
 
+=========Application ClassPath=========
+--->file:/D:/git-repo/learn-java-agent/target/classes/
+--->file:/D:/git-repo/learn-java-agent/target/TheAgent.jar         // 注意，这里是新添加的内容
+```
 
+##### Class-Path
 
+在`TheAgent.jar`的`META-INF/MANIFEST.MF`文件中，有`Class-Path`属性：
 
+```shell
+Class-Path: lib/asm-9.2.jar lib/asm-util-9.2.jar lib/asm-commons-9.2.jar
+ lib/asm-tree-9.2.jar lib/asm-analysis-9.2.jar
+```
 
+```shell
+class=org.objectweb.asm.Opcodes
+```
 
+再次运行时，添加`class:org.objectweb.asm.Opcodes`选项：
 
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar=class=org.objectweb.asm.Opcodes sample.Program
+Picked up JAVA_TOOL_OPTIONS: -Duser.language=en -Duser.country=US
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Premain-Class: lsieun.agent.LoadTimeAgent
+    (2) agentArgs: class=org.objectweb.asm.Opcodes
+    (3) Instrumentation: sun.instrument.InstrumentationImpl
+    (4) Can-Redefine-Classes: true
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: main@1(false)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@18b4aac2
+========= ========= ========= SEPARATOR ========= ========= =========
 
+No Append: C:\Program Files\Java\jdk1.8.0_301\lib\tools.jar
+try to load class: org.objectweb.asm.Opcodes
+load class org.objectweb.asm.Opcodes from sun.misc.Launcher$AppClassLoader@18b4aac2    // 注意，Opcodes类是从Class-Path中加载到的
+=========Bootstrap ClassPath=========
+......
+
+=========Extension ClassPath=========
+......
+
+=========Application ClassPath=========
+--->file:/D:/git-repo/learn-java-agent/target/classes/
+--->file:/D:/git-repo/learn-java-agent/target/TheAgent.jar
+```
+
+##### SystemCLSearch
+
+测试目标：
+
+- 将`tools.jar`文件添加到System ClassLoader的搜索范围
+- 尝试加载`com.sun.tools.attach.VirtualMachine`类，该类位于`tools.jar`文件内
+
+```shell
+append=app,class=com.sun.tools.attach.VirtualMachine
+```
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar=append=app,class=com.sun.tools.attach.VirtualMachine sample.Program
+Picked up JAVA_TOOL_OPTIONS: -Duser.language=en -Duser.country=US
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Premain-Class: lsieun.agent.LoadTimeAgent
+    (2) agentArgs: append=app,class=com.sun.tools.attach.VirtualMachine
+    (3) Instrumentation: sun.instrument.InstrumentationImpl
+    (4) Can-Redefine-Classes: true
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: main@1(false)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@18b4aac2
+========= ========= ========= SEPARATOR ========= ========= =========
+
+Append to Application Class Path: C:\Program Files\Java\jdk1.8.0_301\lib\tools.jar
+try to load class: com.sun.tools.attach.VirtualMachine
+load class com.sun.tools.attach.VirtualMachine from sun.misc.Launcher$AppClassLoader@18b4aac2    // 注意，这里是由AppClassLoader加载
+=========Bootstrap ClassPath=========
+......
+
+=========Extension ClassPath=========
+......
+
+=========Application ClassPath=========
+--->file:/D:/git-repo/learn-java-agent/target/classes/
+--->file:/D:/git-repo/learn-java-agent/target/TheAgent.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/lib/tools.jar    // 注意，这里是tools.jar文件
+```
+
+##### BootstrapCLSearch
+
+测试目标：
+
+- 将`tools.jar`文件添加到Bootstrap ClassLoader的搜索范围
+- 尝试加载`com.sun.tools.attach.VirtualMachine`类，该类位于`tools.jar`文件内
+
+```shell
+append=boot,class=com.sun.tools.attach.VirtualMachine
+```
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar=append=boot,class=com.sun.tools.attach.VirtualMachine sample.Program
+Picked up JAVA_TOOL_OPTIONS: -Duser.language=en -Duser.country=US
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Premain-Class: lsieun.agent.LoadTimeAgent
+    (2) agentArgs: append=boot,class=com.sun.tools.attach.VirtualMachine
+    (3) Instrumentation: sun.instrument.InstrumentationImpl
+    (4) Can-Redefine-Classes: true
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: main@1(false)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@18b4aac2
+========= ========= ========= SEPARATOR ========= ========= =========
+
+Append to Bootstrap Class Path: C:\Program Files\Java\jdk1.8.0_301\lib\tools.jar
+try to load class: com.sun.tools.attach.VirtualMachine
+load class com.sun.tools.attach.VirtualMachine from null    // 注意，这里是由Bootstrap ClassLoader加载
+=========Bootstrap ClassPath=========
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/resources.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/rt.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/sunrsasign.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/jsse.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/jce.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/charsets.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/lib/jfr.jar
+--->file:/C:/Program%20Files/Java/jdk1.8.0_301/jre/classes    // 注意，并没有出现tools.jar
+
+=========Extension ClassPath=========
+......
+
+=========Application ClassPath=========
+--->file:/D:/git-repo/learn-java-agent/target/classes/
+--->file:/D:/git-repo/learn-java-agent/target/TheAgent.jar
+```
+
+### 9.3 示例二：Bootstrap Search
+
+本示例是介绍一种应用场景：JDK的内部类如何调用我们自己写的类。
+
+`StrictMath`修改之前的代码：
+
+```java
+public final class StrictMath {
+  public static int addExact(int x, int y) {
+    return Math.addExact(x, y);
+  }
+}
+```
+
+`StrictMath`第一次修改：（正常）
+
+```java
+public final class StrictMath {
+  public static int addExact(int var0, int var1) {
+    System.out.println("Method Enter: java/lang/StrictMath.addExact(II)I");
+    return Math.addExact(var0, var1);
+  }
+}
+```
+
+`StrictMath`第二次修改：（出错）
+
+```java
+public final class StrictMath {
+  public static int addExact(int var0, int var1) {
+    ParameterUtils.printText("Method Enter: java/lang/StrictMath.addExact(II)I");
+    return Math.addExact(var0, var1);
+  }
+}
+```
+
+#### Application
+
+```java
+package sample;
+
+public class Program {
+  public static void main(String[] args) {
+    int sum = StrictMath.addExact(10, 20);
+    System.out.println(sum);
+  }
+}
+```
+
+#### Agent Jar
+
+##### LoadTimeAgent
+
+```java
+package lsieun.agent;
+
+import lsieun.instrument.*;
+import lsieun.utils.*;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，指定要修改的类
+    String className = "java.lang.StrictMath";
+
+    // 第三步，使用inst：添加transformer
+    ClassFileTransformer transformer = new ASMTransformer(className);
+    inst.addTransformer(transformer, false);
+  }
+}
+```
+
+##### ASMTransformer
+
+```java
+package lsieun.instrument;
+
+import lsieun.asm.visitor.*;
+import org.objectweb.asm.*;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.IllegalClassFormatException;
+import java.security.ProtectionDomain;
+import java.util.Objects;
+
+public class ASMTransformer implements ClassFileTransformer {
+  private final String internalName;
+
+  public ASMTransformer(String internalName) {
+    Objects.requireNonNull(internalName);
+    this.internalName = internalName.replace(".", "/");
+  }
+
+  @Override
+  public byte[] transform(ClassLoader loader,
+                          String className,
+                          Class<?> classBeingRedefined,
+                          ProtectionDomain protectionDomain,
+                          byte[] classfileBuffer) throws IllegalClassFormatException {
+    if (className.equals(internalName)) {
+      System.out.println("transform class: " + className);
+      ClassReader cr = new ClassReader(classfileBuffer);
+      ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+      ClassVisitor cv = new MethodEnterVisitor(cw);
+
+      int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+      cr.accept(cv, parsingOptions);
+
+      return cw.toByteArray();
+    }
+
+    return null;
+  }
+}
+```
+
+##### MethodEnterVisitor
+
+```java
+import lsieun.cst.Const;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+
+public class MethodEnterVisitor extends ClassVisitor {
+  private String owner;
+
+  public MethodEnterVisitor(ClassVisitor classVisitor) {
+    super(Const.ASM_VERSION, classVisitor);
+  }
+
+  @Override
+  public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    super.visit(version, access, name, signature, superName, interfaces);
+    this.owner = name;
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null && !"<init>".equals(name) && !"<clinit>".equals(name)) {
+      boolean isAbstractMethod = (access & Opcodes.ACC_ABSTRACT) == Opcodes.ACC_ABSTRACT;
+      boolean isNativeMethod = (access & Opcodes.ACC_NATIVE) == Opcodes.ACC_NATIVE;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodEnterAdapter(mv, owner, name, descriptor);
+      }
+    }
+    return mv;
+  }
+
+  private static class MethodEnterAdapter extends MethodVisitor {
+    private final String owner;
+    private final String methodName;
+    private final String methodDesc;
+
+    public MethodEnterAdapter(MethodVisitor methodVisitor, String owner, String methodName, String methodDesc) {
+      super(Const.ASM_VERSION, methodVisitor);
+      this.owner = owner;
+      this.methodName = methodName;
+      this.methodDesc = methodDesc;
+    }
+
+    @Override
+    public void visitCode() {
+      // 首先，处理自己的代码逻辑
+      String message = String.format("Method Enter: %s.%s%s", owner, methodName, methodDesc);
+      // (1) 引用自定义的类
+      //            super.visitLdcInsn(message);
+      //            super.visitMethodInsn(Opcodes.INVOKESTATIC, "lsieun/utils/ParameterUtils", "printText", "(Ljava/lang/String;)V", false);
+
+      // (2) 引用JDK的内部类
+      super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      super.visitLdcInsn(message);
+      super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+
+      // 其次，调用父类的方法实现
+      super.visitCode();
+    }
+  }
+}
+```
+
+#### 出现问题
+
+当我们使用`MethodEnterAdapter`类当中第(2)种方式时，不会出现错误；但是，当我们使用第(1)种方式时，就会出现`NoClassDefFoundError`错误：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Premain-Class: lsieun.agent.LoadTimeAgent
+    (2) agentArgs: null
+    (3) Instrumentation: sun.instrument.InstrumentationImpl@1704856573
+    (4) Can-Redefine-Classes: true
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: main@1(false)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@18b4aac2
+========= ========= ========= SEPARATOR ========= ========= =========
+
+transform class: java/lang/StrictMath
+Exception in thread "main" java.lang.NoClassDefFoundError: lsieun/utils/ParameterUtils
+        at java.lang.StrictMath.addExact(Unknown Source)
+        at sample.Program.main(Program.java:5)
+```
+
+#### 解决问题
+
+那么，如何解决这个问题呢？
+
+首先，我们可以将`lsieun.utils.ParameterUtils`放到一个`.jar`文件当中，取名为`lsieun-utils.jar`：
+
+```shell
+jar -cvf lsieun-utils.jar lsieun/utils/ParameterUtils.class
+```
+
+第一种解决方式，我们在代码当中调用`Instrumentation.appendToBootstrapClassLoaderSearch()`方法来加载`lsieun-utils.jar`：
+
+```java
+import lsieun.instrument.*;
+import lsieun.utils.*;
+
+import java.io.IOException;
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.Instrumentation;
+import java.util.jar.JarFile;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) throws IOException {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，指定要修改的类
+    String className = "java.lang.StrictMath";
+
+    // 第三步，使用inst：添加transformer
+    ClassFileTransformer transformer = new ASMTransformer(className);
+    inst.addTransformer(transformer, false);
+
+    // 第四步，添加jar包
+    String jarPath = "D:\\git-repo\\learn-java-agent\\target\\lsieun-utils.jar";
+    JarFile jarFile = new JarFile(jarPath);
+    inst.appendToBootstrapClassLoaderSearch(jarFile);
+  }
+}
+```
+
+第二种解决方式，在`MANIFEST.MF`文件中添加`Boot-Class-Path`属性：
+
+```xml
+<Boot-Class-Path>lsieun-utils.jar</Boot-Class-Path>
+```
+
+### 9.4 总结
+
+本文内容总结如下：
+
+- 第一点，这两个方法的本质就是“请求支援”。当前的Agent Jar没有办法实现某种功能，因此请求外来的`JarFile`来协助。
+- 第二点，示例一是演示两个方法对于class path的影响。
+- 第三点，示例二是介绍了一种使用`void appendToBootstrapClassLoaderSearch(JarFile jarfile)`的场景：JDK的内部类如何调用我们自己写的类。
+
+## 10. Instrumentation.redefineModule()
+
+### 10.1 redefineModule
+
+```java
+public interface Instrumentation {
+  boolean isModifiableModule(Module module);
+  void redefineModule (Module module,
+                       Set<Module> extraReads,
+                       Map<String, Set<Module>> extraExports,
+                       Map<String, Set<Module>> extraOpens,
+                       Set<Class<?>> extraUses,
+                       Map<Class<?>, List<Class<?>>> extraProvides);
+}
+```
+
+- `isModifiableModule`: Tests whether a module can be modified with `redefineModule`.
+- `redefineModule`: Redefine a module to expand the set of modules that it reads, the set of packages that it exports or opens, or the services that it uses or provides.
+
+### 10.2 示例
+
+#### Application
+
+```java
+package sample;
+
+import java.lang.instrument.Instrumentation;
+
+public class Program {
+  public static void main(String[] args) {
+    Module baseModule = Object.class.getModule();
+    Module instrumentModule = Instrumentation.class.getModule();
+
+    boolean canRead = baseModule.canRead(instrumentModule);
+    String message = String.format("%s can read %s: %s", baseModule.getName(), instrumentModule.getName(), canRead);
+    System.out.println(message);
+  }
+}
+```
+
+#### Agent Jar
+
+```java
+package lsieun.agent;
+
+import java.lang.instrument.Instrumentation;
+import java.util.Map;
+import java.util.Set;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息
+    System.out.println("Premain-Class: " + LoadTimeAgent.class.getName());
+    System.out.println("Can-Redefine-Classes: " + inst.isRedefineClassesSupported());
+    System.out.println("Can-Retransform-Classes: " + inst.isRetransformClassesSupported());
+    System.out.println("Can-Set-Native-Method-Prefix: " + inst.isNativeMethodPrefixSupported());
+    System.out.println("========= ========= =========");
+
+    // 第二步，判断一个module是否可以读取另一个module
+    Module baseModule = Object.class.getModule();
+    Module instrumentModule = Instrumentation.class.getModule();
+    boolean canRead = baseModule.canRead(instrumentModule);
+
+    // 第三步，使用inst：修改module权限
+    if (!canRead && inst.isModifiableModule(baseModule)) {
+      Set<Module> extraReads = Set.of(instrumentModule);
+      inst.redefineModule(baseModule, extraReads, Map.of(), Map.of(), Set.of(), Map.of());
+    }
+  }
+}
+```
+
+#### Run
+
+##### None
+
+```shell
+$ java -cp ./target/classes/ sample.Program
+java.base can read java.instrument: false
+```
+
+##### Load-Time
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+Premain-Class: lsieun.agent.LoadTimeAgent
+Can-Redefine-Classes: true
+Can-Retransform-Classes: true
+Can-Set-Native-Method-Prefix: true
+========= ========= =========
+java.base can read java.instrument: true
+```
+
+### 10.3 总结
+
+本文内容总结如下：
+
+- 第一点， `redefineModule` 方法的作用是对 module 的访问权限进行修改，该方法是在 Java 9 引入的。
+
+## 11. Instrumentation.redefineModule()
+
+### 11.1 redefineModule
+
+```java
+public interface Instrumentation {
+  boolean isModifiableModule(Module module);
+  void redefineModule (Module module,
+                       Set<Module> extraReads,
+                       Map<String, Set<Module>> extraExports,
+                       Map<String, Set<Module>> extraOpens,
+                       Set<Class<?>> extraUses,
+                       Map<Class<?>, List<Class<?>>> extraProvides);
+}
+```
+
+- `isModifiableModule`: Tests whether a module can be modified with `redefineModule`.
+- `redefineModule`: Redefine a module to expand the set of modules that it reads, the set of packages that it exports or opens, or the services that it uses or provides.
+
+### 11.2 示例
+
+#### Application
+
+```java
+package sample;
+
+import java.lang.instrument.Instrumentation;
+
+public class Program {
+  public static void main(String[] args) {
+    Module baseModule = Object.class.getModule();
+    Module instrumentModule = Instrumentation.class.getModule();
+
+    boolean canRead = baseModule.canRead(instrumentModule);
+    String message = String.format("%s can read %s: %s", baseModule.getName(), instrumentModule.getName(), canRead);
+    System.out.println(message);
+  }
+}
+```
+
+#### Agent Jar
+
+```java
+package lsieun.agent;
+
+import java.lang.instrument.Instrumentation;
+import java.util.Map;
+import java.util.Set;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息
+    System.out.println("Premain-Class: " + LoadTimeAgent.class.getName());
+    System.out.println("Can-Redefine-Classes: " + inst.isRedefineClassesSupported());
+    System.out.println("Can-Retransform-Classes: " + inst.isRetransformClassesSupported());
+    System.out.println("Can-Set-Native-Method-Prefix: " + inst.isNativeMethodPrefixSupported());
+    System.out.println("========= ========= =========");
+
+    // 第二步，判断一个module是否可以读取另一个module
+    Module baseModule = Object.class.getModule();
+    Module instrumentModule = Instrumentation.class.getModule();
+    boolean canRead = baseModule.canRead(instrumentModule);
+
+    // 第三步，使用inst：修改module权限
+    if (!canRead && inst.isModifiableModule(baseModule)) {
+      Set<Module> extraReads = Set.of(instrumentModule);
+      inst.redefineModule(baseModule, extraReads, Map.of(), Map.of(), Set.of(), Map.of());
+    }
+  }
+}
+```
+
+#### Run
+
+##### None
+
+```shell
+$ java -cp ./target/classes/ sample.Program
+java.base can read java.instrument: false
+```
+
+##### Load-Time
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+Premain-Class: lsieun.agent.LoadTimeAgent
+Can-Redefine-Classes: true
+Can-Retransform-Classes: true
+Can-Set-Native-Method-Prefix: true
+========= ========= =========
+java.base can read java.instrument: true
+```
+
+### 11.3 总结
+
+本文内容总结如下：
+
+- 第一点， `redefineModule` 方法的作用是对 module 的访问权限进行修改，该方法是在 Java 9 引入的。
+
+## 12. InstrumentationImpl
+
+在本文当中，我们的关注点在于`InstrumentationImpl`、transformer和`TransformerManager`三者的关系。
+
+### 12.1 InstrumentationImpl
+
+#### class info
+
+`sun.instrument.InstrumentationImpl`实现了`java.lang.instrument.Instrumentation`接口：
+
+```java
+public class InstrumentationImpl implements Instrumentation {
+}
+```
+
+#### fields
+
+```java
+public class InstrumentationImpl implements Instrumentation {
+  private final TransformerManager mTransformerManager;
+  private TransformerManager mRetransfomableTransformerManager;
+
+  // ...
+}
+```
+
+#### constructor
+
+```java
+public class InstrumentationImpl implements Instrumentation {
+  private InstrumentationImpl(long nativeAgent,
+                              boolean environmentSupportsRedefineClasses,
+                              boolean environmentSupportsNativeMethodPrefix) {
+    mTransformerManager = new TransformerManager(false);
+    mRetransfomableTransformerManager = null;
+
+    // ...
+  }
+}
+```
+
+#### xxxTransformer
+
+##### addTransformer
+
+```java
+public class InstrumentationImpl implements Instrumentation {
+  public void addTransformer(ClassFileTransformer transformer) {
+    addTransformer(transformer, false);
+  }
+
+  public synchronized void addTransformer(ClassFileTransformer transformer, boolean canRetransform) {
+    if (transformer == null) {
+      throw new NullPointerException("null passed as 'transformer' in addTransformer");
+    }
+    if (canRetransform) {
+      if (!isRetransformClassesSupported()) {
+        throw new UnsupportedOperationException("adding retransformable transformers is not supported in this environment");
+      }
+      if (mRetransfomableTransformerManager == null) {
+        mRetransfomableTransformerManager = new TransformerManager(true);
+      }
+      mRetransfomableTransformerManager.addTransformer(transformer);
+      if (mRetransfomableTransformerManager.getTransformerCount() == 1) {
+        setHasRetransformableTransformers(mNativeAgent, true);
+      }
+    }
+    else {
+      mTransformerManager.addTransformer(transformer);
+    }
+  }
+}
+```
+
+##### removeTransformer
+
+```java
+public class InstrumentationImpl implements Instrumentation {
+  public synchronized boolean removeTransformer(ClassFileTransformer transformer) {
+    if (transformer == null) {
+      throw new NullPointerException("null passed as 'transformer' in removeTransformer");
+    }
+    TransformerManager mgr = findTransformerManager(transformer);
+    if (mgr != null) {
+      mgr.removeTransformer(transformer);
+      if (mgr.isRetransformable() && mgr.getTransformerCount() == 0) {
+        setHasRetransformableTransformers(mNativeAgent, false);
+      }
+      return true;
+    }
+    return false;
+  }
+}
+```
+
+##### findTransformerManager
+
+```java
+public class InstrumentationImpl implements Instrumentation {
+  private TransformerManager findTransformerManager(ClassFileTransformer transformer) {
+    if (mTransformerManager.includesTransformer(transformer)) {
+      return mTransformerManager;
+    }
+    if (mRetransfomableTransformerManager != null &&
+        mRetransfomableTransformerManager.includesTransformer(transformer)) {
+      return mRetransfomableTransformerManager;
+    }
+    return null;
+  }
+}
+```
+
+#### transform
+
+```java
+public class InstrumentationImpl implements Instrumentation {
+  private byte[] transform(ClassLoader loader,
+                           String classname,
+                           Class<?> classBeingRedefined,
+                           ProtectionDomain protectionDomain,
+                           byte[] classfileBuffer,
+                           boolean isRetransformer) {
+    TransformerManager mgr = isRetransformer ? mRetransfomableTransformerManager : mTransformerManager;
+    if (mgr == null) {
+      return null; // no manager, no transform
+    }
+    else {
+      return mgr.transform(loader, classname, classBeingRedefined, protectionDomain, classfileBuffer);
+    }
+  }
+}
+```
+
+### 12.2 TransformerInfo
+
+```java
+private class TransformerInfo {
+  final ClassFileTransformer mTransformer;
+  String mPrefix;
+
+  TransformerInfo(ClassFileTransformer transformer) {
+    mTransformer = transformer;
+    mPrefix = null;
+  }
+
+  ClassFileTransformer transformer() {
+    return mTransformer;
+  }
+
+  String getPrefix() {
+    return mPrefix;
+  }
+
+  void setPrefix(String prefix) {
+    mPrefix = prefix;
+  }
+}
+```
+
+### 12.3 TransformerManager
+
+#### class info
+
+```java
+/**
+ * Support class for the InstrumentationImpl. Manages the list of registered transformers.
+ * Keeps everything in the right order, deals with sync of the list,
+ * and actually does the calling of the transformers.
+ */
+public class TransformerManager {
+}
+```
+
+#### fields
+
+```java
+public class TransformerManager {
+  private TransformerInfo[] mTransformerList;
+  private boolean mIsRetransformable;
+}
+```
+
+#### constructor
+
+```java
+public class TransformerManager {
+  TransformerManager(boolean isRetransformable) {
+    mTransformerList = new TransformerInfo[0];
+    mIsRetransformable = isRetransformable;
+  }
+}
+```
+
+#### xxxTransformer
+
+##### addTransformer
+
+```java
+public class TransformerManager {
+  public synchronized void addTransformer(ClassFileTransformer transformer) {
+    TransformerInfo[] oldList = mTransformerList;
+    TransformerInfo[] newList = new TransformerInfo[oldList.length + 1];
+    System.arraycopy(oldList, 0, newList, 0, oldList.length);
+    newList[oldList.length] = new TransformerInfo(transformer);
+    mTransformerList = newList;
+  }
+}
+```
+
+##### removeTransformer
+
+```java
+public class TransformerManager {
+  public synchronized boolean removeTransformer(ClassFileTransformer transformer) {
+    boolean found = false;
+    TransformerInfo[] oldList = mTransformerList;
+    int oldLength = oldList.length;
+    int newLength = oldLength - 1;
+
+    // look for it in the list, starting at the last added, and remember
+    // where it was if we found it
+    int matchingIndex = 0;
+    for (int x = oldLength - 1; x >= 0; x--) {
+      if (oldList[x].transformer() == transformer) {
+        found = true;
+        matchingIndex = x;
+        break;
+      }
+    }
+
+    // make a copy of the array without the matching element
+    if (found) {
+      TransformerInfo[] newList = new TransformerInfo[newLength];
+
+      // copy up to but not including the match
+      if (matchingIndex > 0) {
+        System.arraycopy(oldList, 0, newList, 0, matchingIndex);
+      }
+
+      // if there is anything after the match, copy it as well
+      if (matchingIndex < (newLength)) {
+        System.arraycopy(oldList, matchingIndex + 1, newList, matchingIndex, (newLength) - matchingIndex);
+      }
+      mTransformerList = newList;
+    }
+    return found;
+  }
+}
+```
+
+##### includesTransformer
+
+```java
+public class TransformerManager {
+  synchronized boolean includesTransformer(ClassFileTransformer transformer) {
+    for (TransformerInfo info : mTransformerList) {
+      if (info.transformer() == transformer) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+```
+
+#### transform
+
+```java
+public class TransformerManager {
+  public byte[] transform(ClassLoader loader,
+                          String classname,
+                          Class<?> classBeingRedefined,
+                          ProtectionDomain protectionDomain,
+                          byte[] classfileBuffer) {
+    boolean someoneTouchedTheBytecode = false;
+
+    TransformerInfo[] transformerList = getSnapshotTransformerList();
+
+    byte[] bufferToUse = classfileBuffer;
+
+    // order matters, gotta run 'em in the order they were added
+    for (int x = 0; x < transformerList.length; x++) {
+      TransformerInfo transformerInfo = transformerList[x];
+      ClassFileTransformer transformer = transformerInfo.transformer();
+      byte[] transformedBytes = null;
+
+      try {
+        transformedBytes = transformer.transform(loader, classname, classBeingRedefined, protectionDomain, bufferToUse);
+      } catch (Throwable t) {
+        // don't let any one transformer mess it up for the others.
+        // This is where we need to put some logging. What should go here? FIXME
+      }
+
+      if (transformedBytes != null) {
+        someoneTouchedTheBytecode = true;
+        bufferToUse = transformedBytes;
+      }
+    }
+
+    // if someone modified it, return the modified buffer.
+    // otherwise return null to mean "no transforms occurred"
+    byte[] result;
+    if (someoneTouchedTheBytecode) {
+      result = bufferToUse;
+    }
+    else {
+      result = null;
+    }
+
+    return result;
+  }
+}
+```
+
+### 12.4 总结
+
+本文内容总结如下：
+
+- 第一点，在`InstrumentationImpl`当中，transformer会根据是否具体retransform能力而分开存储。
+- 第二点，在`TransformerManager`当中，重点关注`transform`方法的处理逻辑。
+
+## 13. ClassFileTransformer
+
+### 13.1 如何实现 Transformer
+
+An agent provides an implementation of `ClassFileTransformer` interface in order to transform class files.
+
+```java
+public interface ClassFileTransformer {
+  byte[] transform(ClassLoader         loader,
+                   String              className,
+                   Class<?>            classBeingRedefined,
+                   ProtectionDomain    protectionDomain,
+                   byte[]              classfileBuffer)
+    throws IllegalClassFormatException;
+}
+```
+
+如果我们实现了 `ClassFileTransformer` 接口，就可以对某一个 class file（`classfileBuffer`）进行处理，一般要考虑两个问题：
+
+- 首先，有哪些类可以不处理？
+- 其次，如何来对 `classfileBuffer` 进行处理
+
+#### 有哪些类可以不处理
+
+在实现 `ClassFileTransformer.transform()` 方法时，我们要考虑一下哪些类不需要处理，让“影响范围”最小化：
+
+- 第一， primitive type（原始类型，例如 `int`）和 array（数组）不处理。（因为本来原始类型和数组类型就不允许redefine和retransform）
+- 第二，JDK 的内置类或第三方类库当中的 `.class` 文件，一般情况下不修改，特殊情况下才进行修改。
+- 第三，自己写的 Agent Jar 当中的类
+
+注意：对于 primitive type（例如， `int` ）和 array 的判断是多余的。 当使用 `Instrumentation.isModifiableClass()` 对 `int.class` 和 `String[].class` 进行判断时，都会返回 `false` 值。 如果对 `int.class` 和 `String[].class` 进行 `Instrumentation.retransformClasses()` 操作，会出现 `UnmodifiableClassException` 异常。
+
+写法一：（逻辑清晰）
+
+```java
+package lsieun.instrument;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.IllegalClassFormatException;
+import java.security.ProtectionDomain;
+
+public class FilterTransformer implements ClassFileTransformer {
+  @Override
+  public byte[] transform(ClassLoader loader,
+                          String className,
+                          Class<?> classBeingRedefined,
+                          ProtectionDomain protectionDomain,
+                          byte[] classfileBuffer) throws IllegalClassFormatException {
+
+    // 第一，数组，不处理
+    if (className.startsWith("[")) return null;
+
+    // 第二，JDK的内置类，不处理
+    if (className.startsWith("java/")) return null;
+    if (className.startsWith("javax/")) return null;
+    if (className.startsWith("jdk/")) return null;
+    if (className.startsWith("com/sun/")) return null;
+    if (className.startsWith("sun/")) return null;
+    if (className.startsWith("org/")) return null;
+
+    // 第三，自己写的类，不处理
+    if (className.startsWith("lsieun")) return null;
+
+    // TODO: 使用字节码类库对classfileBuffer进行转换
+
+    // 如果不修改，则返回null值
+    return null;
+  }
+}
+```
+
+写法二：（代码简洁）
+
+```java
+package lsieun.instrument;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.IllegalClassFormatException;
+import java.security.ProtectionDomain;
+import java.util.Arrays;
+import java.util.List;
+
+public class FilterTransformer implements ClassFileTransformer {
+  public static final List<String> ignoredPackages = Arrays.asList("[", "com/", "com/sun/", "java/", "javax/", "jdk/", "lsieun/", "org/", "sun/");
+
+  @Override
+  public byte[] transform(ClassLoader loader,
+                          String className,
+                          Class<?> classBeingRedefined,
+                          ProtectionDomain protectionDomain,
+                          byte[] classfileBuffer) throws IllegalClassFormatException {
+    // 有些类，不处理
+    if (className == null) return null;
+    for (String name : ignoredPackages) {
+      if (className.startsWith(name)) {
+        return null;
+      }
+    }
+
+    // TODO: 使用字节码类库对classfileBuffer进行转换
+
+    // 如果不修改，则返回null值
+    return null;
+  }
+}
+```
+
+另外，如果我们不想对 bootstrap classloader 加载的类进行修改，也可以判断 `loader` 是否为 `null`。
+
+再有一点，Lambda表达式生成的类要慎重处理。 在[Alibaba Arthas](https://github.com/alibaba/arthas)当中对 Lambda 表达式生成的类进行了“忽略”处理：
+
+```java
+public class ClassUtils {
+  public static boolean isLambdaClass(Class<?> clazz) {
+    return clazz.getName().contains("$$Lambda$");
+  }
+}
+```
+
+下面是对`ClassUtils.isLambdaClass()`方法的使用示例：
+
+```java
+public class InstrumentationUtils {
+  public static void retransformClasses(Instrumentation inst, ClassFileTransformer transformer, Set<Class<?>> classes) {
+    try {
+      inst.addTransformer(transformer, true);
+
+      for (Class<?> clazz : classes) {
+        if (ClassUtils.isLambdaClass(clazz)) {
+          logger.info("ignore lambda class: {}, because jdk do not support retransform lambda class: https://github.com/alibaba/arthas/issues/1512.",
+                      clazz.getName());
+          continue;
+        }
+        try {
+          inst.retransformClasses(clazz);
+        } catch (Throwable e) {
+          String errorMsg = "retransformClasses class error, name: " + clazz.getName();
+          logger.error(errorMsg, e);
+        }
+      }
+    } finally {
+      inst.removeTransformer(transformer);
+    }
+  }
+}
+```
+
+在 `InnerClassLambdaMetafactory` 类的构造方法中，有如下代码：
+
+```java
+lambdaClassName = targetClass.getName().replace('.', '/') + "$$Lambda$" + counter.incrementAndGet();
+```
+
+还有一种情况，我们明确知道要处理的是哪一个类：
+
+```java
+package lsieun.instrument;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.IllegalClassFormatException;
+import java.security.ProtectionDomain;
+import java.util.Objects;
+
+public class FilterTransformer implements ClassFileTransformer {
+  private final String internalName;
+
+  public FilterTransformer(String internalName) {
+    Objects.requireNonNull(internalName);
+    this.internalName = internalName.replace(".", "/");
+  }
+
+  @Override
+  public byte[] transform(ClassLoader loader,
+                          String className,
+                          Class<?> classBeingRedefined,
+                          ProtectionDomain protectionDomain,
+                          byte[] classfileBuffer) throws IllegalClassFormatException {
+    if (className.equals(internalName)) {
+      // TODO: 使用字节码类库对classfileBuffer进行转换
+    }
+
+    // 如果不修改，则返回null值
+    return null;
+  }
+}
+```
+
+#### 如何来处理classfileBuffer
+
+处理`ClassFileTransformer.transform()`方法中的`byte[] classfileBuffer`参数，一般要借助于第三方的操作字节码的类库，例如[ASM](https://asm.ow2.io/)、[ByteBuddy](https://bytebuddy.net/)和[Javassist](https://www.javassist.org/)。
+
+#### 返回值
+
+If the implementing method determines that no transformations are needed, it should return `null`.
+
+Otherwise, it should create a new `byte[]` array, copy the input `classfileBuffer` into it, along with all desired transformations, and return the new array.
+
+<u>The input `classfileBuffer` must not be modified.</u>
+
+小总结：
+
+- 第一，无论是否要进行transform操作，一定不要修改 `classfileBuffer` 的内容。
+- 第二，如果不进行transform操作，则直接返回 `null` 就可以了。
+- 第三，如果进行transform操作，则可以复制 `classfileBuffer` 内容后进行修改，再返回。
+
+#### Lambda
+
+在Java 8版本当中，我们可以将 `ClassFileTransformer` 接口用 Lambda 表达式提供实现，因为它有一个抽象的 `transform` 方法； 但是，到了Java 9之后，`ClassFileTransformer` 接口就不能再用 Lambda 表达式了，因为它有两个`default` 实现的 `transform` 方法。
+
+我的个人理解：
+
+- 对于一个简单的功能，将 `ClassFileTransformer` 接口写成 Lambda 表达式的形式，会方便一些；
+- 对于一个复杂的功能，我更愿意把 `ClassFileTransformer` 写成一个具体的实现类，作为一个单独的文件存在。
+
+```java
+package lsieun.agent;
+
+import lsieun.utils.*;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，使用inst：添加transformer
+    ClassFileTransformer transformer = (loader, className, classBeingRedefined, protectionDomain, classfileBuffer) -> {
+      return null;
+    };
+    inst.addTransformer(transformer, false);
+  }
+}
+```
+
+### 13.2 示例一：不排除自己写的类
+
+#### Agent Jar
+
+##### LoadTimeAgent
+
+```java
+package lsieun.agent;
+
+import lsieun.instrument.*;
+import lsieun.utils.*;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，使用inst：添加transformer
+    ClassFileTransformer transformer = new FilterTransformer();
+    inst.addTransformer(transformer, false);
+  }
+}
+```
+
+##### FilterTransformer
+
+```java
+package lsieun.instrument;
+
+import lsieun.asm.visitor.*;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.IllegalClassFormatException;
+import java.security.ProtectionDomain;
+
+public class FilterTransformer implements ClassFileTransformer {
+  @Override
+  public byte[] transform(ClassLoader loader,
+                          String className,
+                          Class<?> classBeingRedefined,
+                          ProtectionDomain protectionDomain,
+                          byte[] classfileBuffer) throws IllegalClassFormatException {
+    // 第一，数组，不处理
+    if (className.startsWith("[")) return null;
+
+    // 第二，JDK的内置类，不处理
+    if (className.startsWith("java")) return null;
+    if (className.startsWith("javax")) return null;
+    if (className.startsWith("jdk")) return null;
+    if (className.startsWith("com/sun")) return null;
+    if (className.startsWith("sun")) return null;
+    if (className.startsWith("org")) return null;
+
+    // 使用ASM进行转换
+    System.out.println("transform class: " + className);
+    ClassReader cr = new ClassReader(classfileBuffer);
+    ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
+    ClassVisitor cv = new MethodEnterVisitor(cw);
+
+    int parsingOptions = ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES;
+    cr.accept(cv, parsingOptions);
+
+    return cw.toByteArray();
+  }
+}
+```
+
+##### MethodEnterVisitor
+
+```java
+package lsieun.asm.visitor;
+
+import lsieun.cst.Const;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+
+public class MethodEnterVisitor extends ClassVisitor {
+  private String owner;
+
+  public MethodEnterVisitor(ClassVisitor classVisitor) {
+    super(Const.ASM_VERSION, classVisitor);
+  }
+
+  @Override
+  public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+    super.visit(version, access, name, signature, superName, interfaces);
+    this.owner = name;
+  }
+
+  @Override
+  public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+    if (mv != null && !"<init>".equals(name) && !"<clinit>".equals(name)) {
+      boolean isAbstractMethod = (access & Opcodes.ACC_ABSTRACT) == Opcodes.ACC_ABSTRACT;
+      boolean isNativeMethod = (access & Opcodes.ACC_NATIVE) == Opcodes.ACC_NATIVE;
+      if (!isAbstractMethod && !isNativeMethod) {
+        mv = new MethodEnterAdapter(mv, owner, name, descriptor);
+      }
+    }
+    return mv;
+  }
+
+  private static class MethodEnterAdapter extends MethodVisitor {
+    private final String owner;
+    private final String methodName;
+    private final String methodDesc;
+
+    public MethodEnterAdapter(MethodVisitor methodVisitor, String owner, String methodName, String methodDesc) {
+      super(Const.ASM_VERSION, methodVisitor);
+      this.owner = owner;
+      this.methodName = methodName;
+      this.methodDesc = methodDesc;
+    }
+
+    @Override
+    public void visitCode() {
+      // 首先，处理自己的代码逻辑
+      String message = String.format("Method Enter: %s.%s%s", owner, methodName, methodDesc);
+      // (1) 引用自定义的类
+      super.visitLdcInsn(message);
+      super.visitMethodInsn(Opcodes.INVOKESTATIC, "lsieun/utils/ParameterUtils", "printText", "(Ljava/lang/String;)V", false);
+
+      // (2) 引用JDK的内部类
+      //            super.visitFieldInsn(Opcodes.GETSTATIC, "java/lang/System", "out", "Ljava/io/PrintStream;");
+      //            super.visitLdcInsn(message);
+      //            super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/io/PrintStream", "println", "(Ljava/lang/String;)V", false);
+
+      // 其次，调用父类的方法实现
+      super.visitCode();
+    }
+  }
+}
+```
+
+#### Run
+
+当我们运行的时候，会出现 `StackOverflowError` 错误：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+
+transform class: sample/Program
+transform class: lsieun/utils/ParameterUtils
+Exception in thread "main" java.lang.StackOverflowError
+        at lsieun.utils.ParameterUtils.printText(Unknown Source)
+        at lsieun.utils.ParameterUtils.printText(Unknown Source)
+        at lsieun.utils.ParameterUtils.printText(Unknown Source)
+        ...
+```
+
+分析原因：`ParameterUtils` 类当中的 `printText` 对自身进行了调用，进入无尽循环的状态。
+
+```java
+public class ParameterUtils {
+  public static void printText(String var0) {
+    printText("Method Enter: lsieun/utils/ParameterUtils.printText(Ljava/lang/String;)V");
+    System.out.println(var0);
+  }
+}
+```
+
+### 13.3 一个Transformer
+
+#### Transformer的分类
+
+There are two kinds of transformers, determined by the `canRetransform` parameter of `Instrumentation.addTransformer(ClassFileTransformer,boolean)`:
+
+- **retransformation capable transformers** that were added with `canRetransform` as `true`
+- **retransformation incapable transformers** that were added with `canRetransform` as `false` or where added with `Instrumentation.addTransformer(ClassFileTransformer)`
+
+```java
+public interface Instrumentation {
+  void addTransformer(ClassFileTransformer transformer);
+  void addTransformer(ClassFileTransformer transformer, boolean canRetransform);
+}
+```
+
+#### 调用时机
+
+- <u>Once a transformer has been registered with `addTransformer`, the transformer will be called for **every new class definition** and **every class redefinition**.</u>
+- **Retransformation capable transformers** will also be called on **every class retransformation**.
+
+![img](https://lsieun.github.io/assets/images/java/agent/define-redefine-retransform.png)
+
+- The request for a **new class definition** is made with `ClassLoader.defineClass` or its native equivalents.
+- The request for a **class redefinition** is made with `Instrumentation.redefineClasses` or its native equivalents.
+- The request for a **class retransformation** is made with `Instrumentation.retransformClasses` or its native equivalents.
+
+```pseudocode
+                               ┌─── define: ClassLoader.defineClass
+               ┌─── loading ───┤
+               │               └─── transform
+class state ───┤
+               │               ┌─── redefine: Instrumentation.redefineClasses
+               └─── loaded ────┤
+                               └─── retransform: Instrumentation.retransformClasses
+```
+
+在OpenJDK的源码中，`hotspot/src/share/vm/prims/jvmtiThreadState.hpp`文件定义了一个`JvmtiClassLoadKind`结构：
+
+```c++
+enum JvmtiClassLoadKind {
+  jvmti_class_load_kind_load = 100,
+  jvmti_class_load_kind_retransform,
+  jvmti_class_load_kind_redefine
+};
+```
+
+### 13.4 多个Transformer
+
+#### 串联执行
+
+When there are **multiple transformers**, transformations are composed by chaining the `transform` calls. That is, the byte array returned by one call to `transform` becomes the input (via the `classfileBuffer` parameter) to the next call.
+
+**Transformations are applied in the following order:**
+
+- **Retransformation incapable transformers**
+- **Retransformation incapable native transformers**
+- **Retransformation capable transformers**
+- **Retransformation capable native transformers**
+
+<u>For **retransformations**, the **retransformation incapable transformers** are not called, instead the result of the previous transformation is reused. In all other cases, this method is called. Within each of these groupings, transformers are called in the order registered. Native transformers are provided by the `ClassFileLoadHook` event in the Java Virtual Machine Tool Interface.</u>
+
+JVM会去调用`InstrumentationImpl.transform()`方法，会再进一步调用`TransformerManager.transform()`方法：
+
+```java
+public class InstrumentationImpl implements Instrumentation {
+  // WARNING: the native code knows the name & signature of this method
+  private byte[] transform(ClassLoader loader,
+                           String classname,
+                           Class<?> classBeingRedefined,
+                           ProtectionDomain protectionDomain,
+                           byte[] classfileBuffer,
+                           boolean isRetransformer) {
+    TransformerManager mgr = isRetransformer ? mRetransfomableTransformerManager : mTransformerManager;
+    if (mgr == null) {
+      return null; // no manager, no transform
+    }
+    else {
+      return mgr.transform(loader, classname, classBeingRedefined, protectionDomain, classfileBuffer);
+    }
+  }
+}
+```
+
+在`TransformerManager.transform()`方法中，我们重点关注`someoneTouchedTheBytecode`和`bufferToUse`两个局部变量：
+
+```java
+public class TransformerManager {
+  public byte[] transform(ClassLoader loader,
+                          String classname,
+                          Class<?> classBeingRedefined,
+                          ProtectionDomain protectionDomain,
+                          byte[] classfileBuffer) {
+    boolean someoneTouchedTheBytecode = false;
+
+    TransformerInfo[] transformerList = getSnapshotTransformerList();
+
+    byte[] bufferToUse = classfileBuffer;
+
+    // order matters, gotta run 'em in the order they were added
+    for (int x = 0; x < transformerList.length; x++) {
+      TransformerInfo transformerInfo = transformerList[x];
+      ClassFileTransformer transformer = transformerInfo.transformer();
+      byte[] transformedBytes = null;
+
+      try {
+        transformedBytes = transformer.transform(loader, classname, classBeingRedefined, protectionDomain, bufferToUse);
+      } catch (Throwable t) {
+        // don't let any one transformer mess it up for the others.
+        // This is where we need to put some logging. What should go here? FIXME
+      }
+
+      if (transformedBytes != null) {
+        someoneTouchedTheBytecode = true;
+        bufferToUse = transformedBytes;
+      }
+    }
+
+    // if someone modified it, return the modified buffer.
+    // otherwise return null to mean "no transforms occurred"
+    byte[] result;
+    if (someoneTouchedTheBytecode) {
+      result = bufferToUse;
+    }
+    else {
+      result = null;
+    }
+
+    return result;
+  }    
+}
+```
+
+If the transformer throws an exception (which it doesn’t catch), subsequent transformers will still be called and the load, redefine or retransform will still be attempted. **Thus, throwing an exception has the same effect as returning `null`.**
+
+小总结：
+
+- 第一，在多个transformer当中，任何一个transform抛出任何异常，则相当于该transformer返回了`null`值。
+- 第二，在多个transformer当中，某一个transform抛出任何异常，并不会影响后续transformer的执行。
+
+#### First Input
+
+The input (via the `classfileBuffer` parameter) to the first transformer is:
+
+- for **new class definition**, the bytes passed to `ClassLoader.defineClass`
+- for **class redefinition**, `definitions.getDefinitionClassFile()` where `definitions` is the parameter to `Instrumentation.redefineClasses`
+- for **class retransformation**, the bytes passed to the **new class definition** or, **if redefined, the last redefinition**, with all transformations made by **retransformation incapable transformers** reapplied automatically and unaltered
+
+![img](https://lsieun.github.io/assets/images/java/agent/define-redefine-retransform.png)
+
+在OpenJDK的源码中，`hotspot/src/share/vm/prims/jvmtiExport.cpp`文件有如下代码：
+
+```c++
+void post_all_envs() {
+  if (_load_kind != jvmti_class_load_kind_retransform) {
+    // for class load and redefine,
+    // call the non-retransformable agents
+    JvmtiEnvIterator it;
+    for (JvmtiEnv* env = it.first(); env != NULL; env = it.next(env)) {
+      if (!env->is_retransformable() && env->is_enabled(JVMTI_EVENT_CLASS_FILE_LOAD_HOOK)) {
+        // non-retransformable agents cannot retransform back,
+        // so no need to cache the original class file bytes
+        post_to_env(env, false);
+      }
+    }
+  }
+  JvmtiEnvIterator it;
+  for (JvmtiEnv* env = it.first(); env != NULL; env = it.next(env)) {
+    // retransformable agents get all events
+    if (env->is_retransformable() && env->is_enabled(JVMTI_EVENT_CLASS_FILE_LOAD_HOOK)) {
+      // retransformable agents need to cache the original class file bytes
+      // if changes are made via the ClassFileLoadHook
+      post_to_env(env, true);
+    }
+  }
+}
+
+void post_to_env(JvmtiEnv* env, bool caching_needed) {
+  unsigned char *new_data = NULL;
+  jint new_len = 0;
+
+  JvmtiClassFileLoadEventMark jem(_thread, _h_name, _class_loader,
+                                  _h_protection_domain,
+                                  _h_class_being_redefined);
+  JvmtiJavaThreadEventTransition jet(_thread);
+  JNIEnv* jni_env =  (JvmtiEnv::get_phase() == JVMTI_PHASE_PRIMORDIAL) ? NULL : jem.jni_env();
+  jvmtiEventClassFileLoadHook callback = env->callbacks()->ClassFileLoadHook;
+  if (callback != NULL) {
+    (*callback)(env->jvmti_external(), jni_env,
+                jem.class_being_redefined(),
+                jem.jloader(), jem.class_name(),
+                jem.protection_domain(),
+                _curr_len, _curr_data,
+                &new_len, &new_data);
+  }
+  if (new_data != NULL) {
+    // this agent has modified class data.
+    if (caching_needed && *_cached_class_file_ptr == NULL) {
+      // data has been changed by the new retransformable agent
+      // and it hasn't already been cached, cache it
+      JvmtiCachedClassFileData *p;
+      p = (JvmtiCachedClassFileData *)os::malloc(
+        offset_of(JvmtiCachedClassFileData, data) + _curr_len, mtInternal);
+
+      p->length = _curr_len;
+      memcpy(p->data, _curr_data, _curr_len);
+      *_cached_class_file_ptr = p;
+    }
+
+    if (_curr_data != *_data_ptr) {
+      // curr_data is previous agent modified class data.
+      // And this has been changed by the new agent so
+      // we can delete it now.
+      _curr_env->Deallocate(_curr_data);
+    }
+
+    // Class file data has changed by the current agent.
+    _curr_data = new_data;
+    _curr_len = new_len;
+    // Save the current agent env we need this to deallocate the
+    // memory allocated by this agent.
+    _curr_env = env;
+  }
+}
+```
+
+### 13.5 示例二：First Input
+
+#### Agent Jar
+
+##### LoadTimeAgent
+
+```java
+package lsieun.agent;
+
+import lsieun.asm.visitor.MethodInfo;
+import lsieun.instrument.*;
+import lsieun.utils.*;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.Instrumentation;
+import java.util.EnumSet;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，指定要处理的类
+    String className = "sample.HelloWorld";
+
+    // 第三步，使用inst：添加incapable transformer
+    ClassFileTransformer transformer1 = new VersatileTransformer(className, EnumSet.of(MethodInfo.PARAMETER_VALUES));
+    ClassFileTransformer transformer2 = new VersatileTransformer(className, EnumSet.of(MethodInfo.NAME_AND_DESC));
+    inst.addTransformer(transformer1, false);
+    inst.addTransformer(transformer2, false);
+
+    // 第四步，使用inst：添加capable transformer
+    ClassFileTransformer transformer3 = new VersatileTransformer(className, EnumSet.of(MethodInfo.THREAD_INFO));
+    inst.addTransformer(transformer3, true);
+    ClassFileTransformer transformer4 = new VersatileTransformer(className, EnumSet.of(MethodInfo.CLASSLOADER));
+    inst.addTransformer(transformer4, true);
+    ClassFileTransformer transformer5 = new DumpTransformer(className);
+    inst.addTransformer(transformer5, true);
+
+    // 第五步，加载目标类 define
+    try {
+      System.out.println("load class: " + className);
+      Class<?> clazz = Class.forName(className);
+      System.out.println("load success");
+    } catch (ClassNotFoundException e) {
+      System.out.println("load failed");
+      e.printStackTrace();
+    }
+
+    // 第六步，使用inst：移除transformer
+    inst.removeTransformer(transformer3);
+  }
+}
+```
+
+##### DynamicAgent
+
+```java
+package lsieun.agent;
+
+import lsieun.utils.*;
+
+import java.io.InputStream;
+import java.lang.instrument.ClassDefinition;
+import java.lang.instrument.Instrumentation;
+
+public class DynamicAgent {
+  public static void agentmain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(DynamicAgent.class, "Agent-Class", agentArgs, inst);
+
+    // 第二步，指定要处理的类
+    String className = "sample.HelloWorld";
+
+    // 第三步，使用inst：进行redefine操作
+    try {
+      Class<?> clazz = Class.forName(className);
+      if (inst.isModifiableClass(clazz)) {
+        InputStream in = LoadTimeAgent.class.getResourceAsStream("/sample/HelloWorld.class");
+        int available = in.available();
+        byte[] bytes = new byte[available];
+        in.read(bytes);
+        ClassDefinition classDefinition = new ClassDefinition(clazz, bytes);
+        inst.redefineClasses(classDefinition);
+      }
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+
+    // 第三步，使用inst：进行re-transform操作
+    try {
+      Class<?> clazz = Class.forName(className);
+      if (inst.isModifiableClass(clazz)) {
+        inst.retransformClasses(clazz);
+      }
+    } catch (Exception ex) {
+      ex.printStackTrace();
+    }
+  }
+}
+```
+
+#### Run
+
+##### define
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+
+load class: sample.HelloWorld
+transform class: sample/HelloWorld with [PARAMETER_VALUES]
+---> sample/HelloWorld.add:(II)I
+---> sample/HelloWorld.sub:(II)I
+transform class: sample/HelloWorld with [NAME_AND_DESC]
+---> sample/HelloWorld.add:(II)I
+---> sample/HelloWorld.sub:(II)I
+load success
+transform class: sample/HelloWorld with [THREAD_INFO]
+---> sample/HelloWorld.add:(II)I
+---> sample/HelloWorld.sub:(II)I
+transform class: sample/HelloWorld with [CLASSLOADER]
+---> sample/HelloWorld.add:(II)I
+---> sample/HelloWorld.sub:(II)I
+```
+
+##### redefine
+
+```shell
+transform class: sample/HelloWorld with [PARAMETER_VALUES]
+---> sample/HelloWorld.add:(II)I
+---> sample/HelloWorld.sub:(II)I
+transform class: sample/HelloWorld with [NAME_AND_DESC]
+---> sample/HelloWorld.add:(II)I
+---> sample/HelloWorld.sub:(II)I
+transform class: sample/HelloWorld with [CLASSLOADER]
+---> sample/HelloWorld.add:(II)I
+---> sample/HelloWorld.sub:(II)I
+```
+
+##### retransform
+
+```shell
+transform class: sample/HelloWorld with [CLASSLOADER]
+---> sample/HelloWorld.add:(II)I
+---> sample/HelloWorld.sub:(II)I
+```
+
+### 13.6 总结
+
+本文内容总结如下：
+
+- 第一点，如何实现`ClassFileTransformer`接口，应考虑哪些事情。
+- 第二点，一个transformer关注的内容有两个：
+  - Transformer的分类：retransform capable transformer和retransform incapable transformer
+  - **Transformer被JVM调用的三个时机：define、redefine和retransform**
+- 第三点，多个transformer关注的内容也有两个：
+  - 在多个transformer的情况下，它们的前后调用关系：串联执行，前面的transformer输出，成为后面transformer的输入；遇到transformer异常，相当于返回`null`值，不影响后续transformer执行。
+  - 在多个transformer的情况下，第一个transformer接收到`classfileBuffer`到底是什么呢？在三种不同的时机下，它的值是不同的。
+
+## 14. All In One Examples
+
+### 14.1 Application
+
+#### Program
+
+```java
+package sample;
+
+import java.lang.management.ManagementFactory;
+import java.util.Random;
+import java.util.concurrent.TimeUnit;
+
+public class Program {
+  public static void main(String[] args) throws Exception {
+    // 第一步，打印进程ID
+    String nameOfRunningVM = ManagementFactory.getRuntimeMXBean().getName();
+    System.out.println(nameOfRunningVM);
+
+    // 第二步，倒计时退出
+    int count = 600;
+    for (int i = 0; i < count; i++) {
+      String info = String.format("|%03d| %s remains %03d seconds", i, nameOfRunningVM, (count - i));
+      System.out.println(info);
+
+      Random rand = new Random(System.currentTimeMillis());
+      int a = rand.nextInt(10);
+      int b = rand.nextInt(10);
+      boolean flag = rand.nextBoolean();
+      String message;
+      if (flag) {
+        message = String.format("a + b = %d", HelloWorld.add(a, b));
+      }
+      else {
+        message = String.format("a - b = %d", HelloWorld.sub(a, b));
+      }
+      System.out.println(message);
+
+      TimeUnit.SECONDS.sleep(1);
+    }
+  }
+}
+```
+
+#### HelloWorld
+
+```java
+package sample;
+
+public class HelloWorld extends Object implements Cloneable {
+  public int intValue;
+  public String strValue;
+
+  public static int add(int a, int b) {
+    return a + b;
+  }
+
+  public static int sub(int a, int b) {
+    return a - b;
+  }
+
+  @Override
+  public Object clone() throws CloneNotSupportedException {
+    return super.clone();
+  }
+}
+```
+
+### 14.2 Agent Jar
+
+#### define
+
+加载某个类时（define时），即对该类做修改
+
+```java
+package lsieun.agent;
+
+import lsieun.instrument.*;
+import lsieun.utils.*;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，指定要修改的类
+    String className = "sample.HelloWorld";
+
+    // 第三步，使用inst：添加transformer
+    ClassFileTransformer transformer = new ASMTransformer(className);
+    inst.addTransformer(transformer, false);
+  }
+}
+```
+
+#### redefine
+
+某个类已经加载后（预先调用了`Class.forName(className)`），再告知JVM用新的字节码数据`byte[]`替换该类（redefine）
+
+```java
+package lsieun.agent;
+
+import lsieun.instrument.*;
+import lsieun.utils.*;
+
+import java.io.InputStream;
+import java.lang.instrument.ClassDefinition;
+import java.lang.instrument.Instrumentation;
+
+public class DynamicAgent {
+  public static void agentmain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(DynamicAgent.class, "Agent-Class", agentArgs, inst);
+
+    // 第二步，指定要修改的类
+    String className = "sample.HelloWorld";
+
+    // 第三步，使用inst：进行redefine操作
+    // ClassFileTransformer transformer = new StackTraceTransformer(className);
+    // inst.addTransformer(transformer, true);
+    try {
+      Class<?> clazz = Class.forName(className);
+      if (inst.isModifiableClass(clazz)) {
+        String item = String.format("/%s.class", className.replace(".", "/"));
+        System.out.println(item);
+        InputStream in = LoadTimeAgent.class.getResourceAsStream(item);
+        int available = in.available();
+        byte[] bytes = new byte[available];
+        in.read(bytes);
+        ClassDefinition classDefinition = new ClassDefinition(clazz, bytes);
+        inst.redefineClasses(classDefinition);
+      }
+    } catch (Exception ex) {
+      ex.printStackTrace();
+    }
+  }
+}
+```
+
+#### retransform
+
+某个类已经加载后（预先调用了`Class.forName(className)`），在该类原先字节码`byte[]`基础上，对该类继续做修改
+
+```java
+package lsieun.agent;
+
+import lsieun.instrument.*;
+import lsieun.utils.*;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.Instrumentation;
+
+public class DynamicAgent {
+  public static void agentmain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(DynamicAgent.class, "Agent-Class", agentArgs, inst);
+
+    // 第二步，指定要修改的类
+    String className = "sample.HelloWorld";
+
+    // 第三步，使用inst：进行re-transform操作
+    ClassFileTransformer transformer = new ASMTransformer(className);
+    inst.addTransformer(transformer, true);
+    try {
+      Class<?> clazz = Class.forName(className);
+      if (inst.isModifiableClass(clazz)) {
+        inst.retransformClasses(clazz);
+      }
+    } catch (Exception ex) {
+      ex.printStackTrace();
+    } finally {
+      inst.removeTransformer(transformer);
+    }
+  }
+}
+```
+
+### 14.3 Run
+
+可以看出来redefine和retransform还是比较有局限性的
+
+|                    | define | redefine | retransform |
+| ------------------ | ------ | -------- | ----------- |
+| Interface Add      | OK     | NO       | NO          |
+| Field Add          | OK     | NO       | NO          |
+| Method Add         | OK     | NO       | NO          |
+| Method Remove      | OK     | NO       | NO          |
+| Method Body Modify | OK     | OK       | OK          |
+
+#### Interface Add
+
+在 `ASMTransformer` 当中，修改代码：
+
+```java
+ClassVisitor cv = new AddInterfaceVisitor(cw, "java/io/Serializable");
+```
+
+在 define 的情况下，正常运行；在 redefine 和 retransform 的情况下，则出现 `UnsupportedOperationException` 异常：
+
+```shell
+java.lang.UnsupportedOperationException: class redefinition failed: attempted to change superclass or interfaces
+```
+
+#### Field Add
+
+在 `ASMTransformer` 当中，修改代码：
+
+```java
+ClassVisitor cv = new AddFiledVisitor(cw, Opcodes.ACC_PUBLIC, "objValue", "Ljava/lang/Object;");
+```
+
+在define的情况下，正常运行；在redefine和retransform的情况下，则出现 `UnsupportedOperationException` 异常：
+
+```shell
+java.lang.UnsupportedOperationException: class redefinition failed: attempted to change the schema (add/remove fields)
+```
+
+#### Method Add
+
+在 `ASMTransformer` 当中，修改代码：
+
+```java
+ClassVisitor cv = new AddMethodVisitor(cw, Opcodes.ACC_PUBLIC, "mul", "(II)I", null, null) {
+  @Override
+  protected void generateMethodBody(MethodVisitor mv) {
+    mv.visitCode();
+    mv.visitVarInsn(Opcodes.ILOAD, 1);
+    mv.visitVarInsn(Opcodes.ILOAD, 2);
+    mv.visitInsn(Opcodes.IMUL);
+    mv.visitInsn(Opcodes.IRETURN);
+    mv.visitMaxs(2, 3);
+    mv.visitEnd();
+  }
+};
+```
+
+在define的情况下，正常运行；在redefine和retransform的情况下，则出现 `UnsupportedOperationException` 异常：
+
+```shell
+java.lang.UnsupportedOperationException: class redefinition failed: attempted to add a method
+```
+
+#### Method Remove
+
+在 `ASMTransformer` 当中，修改代码：
+
+```java
+ClassVisitor cv = new RemoveMethodVisitor(cw, "sub", "(II)I");
+```
+
+在define的情况下，正常运行；在redefine和retransform的情况下，则出现 `UnsupportedOperationException` 异常：
+
+```shell
+java.lang.UnsupportedOperationException: class redefinition failed: attempted to delete a method
+```
+
+#### Method Body Modify
+
+在 `ASMTransformer` 当中，修改代码：
+
+```java
+ClassVisitor cv = new PrintMethodParameterVisitor(cw);
+```
+
+在define的情况下，正常运行；在redefine和retransform的情况下，也正常运行。
+
+#### Stack Trace
+
+> [利用ClassLoader#defineClass动态加载字节码_classloader defineclass_Thunderclap_的博客-CSDN博客](https://blog.csdn.net/Thunderclap_/article/details/128914911)
+>
+> [Java中的ClasLoader之自定义ClassLoader (baidu.com)](https://baijiahao.baidu.com/s?id=1698071570748924792&wfr=spider&for=pc)
+>
+> [假笨说-谨防JDK8重复类定义造成的内存泄漏 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/440073760)
+>
+> [类加载时JVM在搞什么？JVM源码分析+OOP-KLASS模型分析_躺平程序猿的博客-CSDN博客](https://blog.csdn.net/yangxiaofei_java/article/details/118469738) <= 推荐阅读
+>
+> [类加载器一篇足以 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/520521579) <= 推荐阅读
+>
+> 类加载机制的基本特征
+>
+> - 双亲委派模型。但是不是所有类加载都遵守这个模型，有时候，启动类加载器所加载的类型，是可能需要加载用户代码的比如SIP机制，具体如JDBC的驱动发现等，在这种情况下就不会用双亲委派模型去加载了，而是利用线程上下文类加载器去打破它（默认的线程上下文类加载器就是系统类加载器）。
+> - 可见性，子类加载器可以访问父类加载器加载的类型，但是反过来是不被允许的
+> - 单一性，由于父加载器加载的类对于子类加载器是可见的，所以父加载器中加载过的类型，就不会再子加载器中重复加载。但是类加载器"邻居"间（MyClassloader的两个实例），同一类型可以被多次加载，因为互相并不可见。
+
+将 `ASMTransformer` 类替换成 `StackTraceTransformer` 类。
+
+在 define 情况，从下面的输出结果可以看到是 `ClassLoader.defineClass()` 方法触发的：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+
+java.lang.Exception: Exception From lsieun.instrument.StackTraceTransformer
+        at lsieun.instrument.StackTraceTransformer.transform(StackTraceTransformer.java:23)
+        at sun.instrument.TransformerManager.transform(TransformerManager.java:188)
+        at sun.instrument.InstrumentationImpl.transform(InstrumentationImpl.java:428)
+        at java.lang.ClassLoader.defineClass1(Native Method)
+        at java.lang.ClassLoader.defineClass(ClassLoader.java:756)
+        at java.security.SecureClassLoader.defineClass(SecureClassLoader.java:142)
+        at java.net.URLClassLoader.defineClass(URLClassLoader.java:468)
+        at java.net.URLClassLoader.access$100(URLClassLoader.java:74)
+        at java.net.URLClassLoader$1.run(URLClassLoader.java:369)
+        at java.net.URLClassLoader$1.run(URLClassLoader.java:363)
+        at java.security.AccessController.doPrivileged(Native Method)
+        at java.net.URLClassLoader.findClass(URLClassLoader.java:362)
+        at java.lang.ClassLoader.loadClass(ClassLoader.java:418)
+        at sun.misc.Launcher$AppClassLoader.loadClass(Launcher.java:355)
+        at java.lang.ClassLoader.loadClass(ClassLoader.java:351)
+        at sample.Program.main(Program.java:25)
+```
+
+在 redefine 情况，从下面的输出结果可以看到是 `InstrumentationImpl.redefineClasses()` 方法触发的：
+
+```shell
+java.lang.Exception: Exception From lsieun.instrument.StackTraceTransformer
+        at lsieun.instrument.StackTraceTransformer.transform(StackTraceTransformer.java:23)
+        at sun.instrument.TransformerManager.transform(TransformerManager.java:188)
+        at sun.instrument.InstrumentationImpl.transform(InstrumentationImpl.java:428)
+        at sun.instrument.InstrumentationImpl.redefineClasses0(Native Method)
+        at sun.instrument.InstrumentationImpl.redefineClasses(InstrumentationImpl.java:170)
+        at lsieun.agent.DynamicAgent.agentmain(DynamicAgent.java:32)
+        at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+        at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)
+        at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+        at java.lang.reflect.Method.invoke(Method.java:498)
+        at sun.instrument.InstrumentationImpl.loadClassAndStartAgent(InstrumentationImpl.java:386)
+        at sun.instrument.InstrumentationImpl.loadClassAndCallAgentmain(InstrumentationImpl.java:411)
+```
+
+在 retransform 情况，从下面的输出结果可以看到是 `InstrumentationImpl.retransformClasses()` 方法触发的：
+
+```shell
+java.lang.Exception: Exception From lsieun.instrument.StackTraceTransformer
+        at lsieun.instrument.StackTraceTransformer.transform(StackTraceTransformer.java:23)
+        at sun.instrument.TransformerManager.transform(TransformerManager.java:188)
+        at sun.instrument.InstrumentationImpl.transform(InstrumentationImpl.java:428)
+        at sun.instrument.InstrumentationImpl.retransformClasses0(Native Method)
+        at sun.instrument.InstrumentationImpl.retransformClasses(InstrumentationImpl.java:144)
+        at lsieun.agent.DynamicAgent.agentmain(DynamicAgent.java:42)
+        at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+        at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)
+        at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+        at java.lang.reflect.Method.invoke(Method.java:498)
+        at sun.instrument.InstrumentationImpl.loadClassAndStartAgent(InstrumentationImpl.java:386)
+        at sun.instrument.InstrumentationImpl.loadClassAndCallAgentmain(InstrumentationImpl.java:411)
+```
+
+## 15. 总结
+
+### 15.1 两种启动方式
+
+进行 Load-Time Instrumentation，需要从命令行启动 Java Agent 需要使用 `-javagent` 选项：
+
+```shell
+-javaagent:jarpath[=options]
+```
+
+进行 Dynamic Instrumentation ，需要使用到 JVM 的 Attach 机制。
+
+### 15.2 Agent Jar的三个组成部分
+
+在 Agent Jar 当中有三个主要组成部分：
+
+![Agent Jar中的三个组成部分](https://lsieun.github.io/assets/images/java/agent/agent-jar-three-components.png)
+
+在 Manifest 文件中，与 Java Agent 相关的属性有7个：
+
+```pseudocode
+                                       ┌─── Premain-Class
+                       ┌─── Basic ─────┤
+                       │               └─── Agent-Class
+                       │
+                       │               ┌─── Can-Redefine-Classes
+                       │               │
+Manifest Attributes ───┼─── Ability ───┼─── Can-Retransform-Classes
+                       │               │
+                       │               └─── Can-Set-Native-Method-Prefix
+                       │
+                       │               ┌─── Boot-Class-Path
+                       └─── Special ───┤
+                                       └─── Launcher-Agent-Class
+```
+
+在 Agent Class 当中，可以定义 `premain` 和 `agentmain` 方法：
+
+```java
+public static void premain(String agentArgs, Instrumentation inst);
+
+public static void agentmain(String agentArgs, Instrumentation inst);
+```
+
+### 15.3 Instrumentation API
+
+在 `java.lang.instrument` 最重要的三个类型：
+
+```pseudocode
+                        ┌─── Instrumentation (接口)
+                        │
+java.lang.instrument ───┼─── ClassFileTransformer (接口)
+                        │
+                        └─── ClassDefinition (类)
+```
+
+其中，`Instrumentation` 接口的方法可以分成不同的类别：
+
+```pseudocode
+                                                         ┌─── isRedefineClassesSupported()
+                                                         │
+                                     ┌─── ability ───────┼─── isRetransformClassesSupported()
+                                     │                   │
+                   ┌─── Agent Jar ───┤                   └─── isNativeMethodPrefixSupported()
+                   │                 │
+                   │                 │                   ┌─── addTransformer()
+                   │                 └─── transformer ───┤
+                   │                                     └─── removeTransformer()
+                   │
+                   │                                     ┌─── appendToBootstrapClassLoaderSearch()
+                   │                 ┌─── classloader ───┤
+                   │                 │                   └─── appendToSystemClassLoaderSearch()
+Instrumentation ───┤                 │
+                   │                 │                                         ┌─── loading ───┼─── transform
+                   │                 │                                         │
+                   │                 │                   ┌─── status ──────────┤                                  ┌─── getAllLoadedClasses()
+                   │                 │                   │                     │               ┌─── get ──────────┤
+                   │                 │                   │                     │               │                  └─── getInitiatedClasses()
+                   │                 │                   │                     └─── loaded ────┤
+                   │                 │                   │                                     │                  ┌─── isModifiableClass()
+                   │                 ├─── class ─────────┤                                     │                  │
+                   └─── target VM ───┤                   │                                     └─── modifiable ───┼─── redefineClasses()
+                                     │                   │                                                        │
+                                     │                   │                                                        └─── retransformClasses()
+                                     │                   │
+                                     │                   │                     ┌─── isNativeMethodPrefixSupported()
+                                     │                   └─── native method ───┤
+                                     │                                         └─── setNativeMethodPrefix()
+                                     │
+                                     ├─── object ────────┼─── getObjectSize()
+                                     │
+                                     │                   ┌─── isModifiableModule()
+                                     └─── module ────────┤
+                                                         └─── redefineModule()
+```
+
+我们可以实现 `ClassFileTransformer` 接口中的 `transform()` 方法可以对具体的 ClassFile 进行转换：
+
+```java
+public interface ClassFileTransformer {
+  byte[] transform(ClassLoader         loader,
+                   String              className,
+                   Class<?>            classBeingRedefined,
+                   ProtectionDomain    protectionDomain,
+                   byte[]              classfileBuffer)
+    throws IllegalClassFormatException;
+}
+```
+
+那么，`ClassFileTransformer.transform` 方法会在什么时候被调用呢？
+
+```pseudocode
+                               ┌─── define: ClassLoader.defineClass
+               ┌─── loading ───┤
+               │               └─── transform
+class state ───┤
+               │               ┌─── redefine: Instrumentation.redefineClasses
+               └─── loaded ────┤
+                               └─── retransform: Instrumentation.retransformClasses
+```
+
+在 define、redefine 和 retransform 的情况下，会触发哪些 transformer：
+
+![img](https://lsieun.github.io/assets/images/java/agent/define-redefine-retransform.png)
+
+# 第四章 应用与技巧
+
+## 1. Load-Time VS. Dynamic Agent
 
 
 
@@ -4595,4 +9058,10 @@ VirtualMachine ───┤                    │                       └─�
 # 其他相关资料
 
 > [JEP 451: Prepare to Disallow the Dynamic Loading of Agents (openjdk.org)](https://openjdk.org/jeps/451)
+>
+> [StackOverflow: Difference between redefine and retransform in javaagent](https://stackoverflow.com/questions/19009583/difference-between-redefine-and-retransform-in-javaagent) <= 推荐阅读
+>
+> [类加载器一篇足以 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/520521579) <= 推荐阅读
+>
+> [类加载时JVM在搞什么？JVM源码分析+OOP-KLASS模型分析_躺平程序猿的博客-CSDN博客](https://blog.csdn.net/yangxiaofei_java/article/details/118469738) <= 推荐阅读
 
