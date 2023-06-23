@@ -9021,39 +9021,2247 @@ class state ───┤
 
 ## 1. Load-Time VS. Dynamic Agent
 
+### 1.1 虚拟机数量
+
+Load-Time Instrumentation只涉及到一个虚拟机：
+
+![img](https://lsieun.github.io/assets/images/java/agent/virtual-machine-of-load-time-instrumentation.png)
+
+Dynamic Instrumentation涉及到两个虚拟机：
+
+![img](https://lsieun.github.io/assets/images/java/agent/virtual-machine-of-dynamic-instrumentation.png)
+
+### 1.2 时机不同
+
+在进行Load-Time Instrumentation时，会执行Agent Jar当中的`premain()`方法；`premain()`方法是先于`main()`方法执行，此时Application当中使用的**大多数类还没有被加载**。
+
+在进行Dynamic Instrumentation时，会执行Agent Jar当中的`agentmain()`方法；而`agentmain()`方法是往往是在`main()`方法之后执行，此时Application当中使用的**大多数类已经被加载**。
+
+### 1.3 能力不同
+
+**Load-Time Instrumentation可以做很多事情：添加和删除字段、添加和删除方法等**。
+
+Dynamic Instrumentation做的事情比较有限，大多集中在对于方法体的修改。
+
+> 个人理解，Load-Time Instrumentation基本都是在类第一次被加载前就做修改，即属于define的步骤，而不是第N次类加载(N>1)的redefine和retransform，所以JVM允许更大幅度的修改。这时候修改，某种意义上就和临时改java源代码重新生成class文件一样，毕竟不管怎么修改，这里最后修改的class文件(byte[])都是头一次实际被JVM加载成java类(元空间Klass类对象，堆空间Class类对象)
+>
+> [类加载时JVM在搞什么？JVM源码分析+OOP-KLASS模型分析_躺平程序猿的博客-CSDN博客](https://blog.csdn.net/yangxiaofei_java/article/details/118469738)
+
+### 1.4 线程不同
+
+Load-Time Instrumentation是运行在`main`线程里：
+
+```shell
+Thread Id: main@1(false)
+```
+
+```java
+package lsieun.agent;
+
+import lsieun.utils.*;
+
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+  }
+}
+```
+
+**Dynamic Instrumentation是运行在`Attach Listener`线程里**：
+
+```shell
+Thread Id: Attach Listener@5(true)
+```
+
+```java
+package lsieun.agent;
+
+import lsieun.utils.*;
+
+import java.lang.instrument.Instrumentation;
+
+public class DynamicAgent {
+  public static void agentmain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(DynamicAgent.class, "Agent-Class", agentArgs, inst);
+  }
+}
+```
+
+### 1.5 Exception处理
+
+在处理Exception的时候，Load-Time Instrumentation和Dynamic Instrumentation有差异： [Link](https://docs.oracle.com/javase/8/docs/api/java/lang/instrument/package-summary.html)
+
+- 当Load-Time Instrumentation时，出现异常，会报告错误信息，并且停止执行，退出虚拟机。（毕竟premain在main之前执行）
+- 当Dynamic Instrumentation时，出现异常，会报告错误信息，但是不会停止虚拟机，而是继续执行。（毕竟agentmain在main之后执行）
+
+在Load-Time Instrumentation过程中，遇到异常：
+
+- If the agent cannot be resolved (for example, because the agent class cannot be loaded, or because the agent class does not have an appropriate `premain` method), **the JVM will abort**.
+- If a `premain` method throws an uncaught exception, **the JVM will abort**.
+
+在Dynamic Instrumentation过程中，遇到异常：
+
+- If the agent cannot be started (for example, because the agent class cannot be loaded, or because the agent class does not have a conformant `agentmain` method), **the JVM will not abort**.
+- If the `agentmain` method throws an uncaught exception, **it will be ignored**.
+
+#### Agent Class不存在
+
+##### Load-Time Agent
+
+在`pom.xml`中，修改`Premain-Class`属性，指向一个不存在的Agent Class：
+
+```xml
+<Premain-Class>lsieun.agent.NonExistentAgent</Premain-Class>
+```
+
+会出现`ClassNotFoundException`异常：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+Exception in thread "main" java.lang.ClassNotFoundException: lsieun.agent.NonExistentAgent
+        at java.net.URLClassLoader.findClass(URLClassLoader.java:382)
+        at java.lang.ClassLoader.loadClass(ClassLoader.java:418)
+        at sun.misc.Launcher$AppClassLoader.loadClass(Launcher.java:355)
+        at java.lang.ClassLoader.loadClass(ClassLoader.java:351)
+        at sun.instrument.InstrumentationImpl.loadClassAndStartAgent(InstrumentationImpl.java:304)
+        at sun.instrument.InstrumentationImpl.loadClassAndCallPremain(InstrumentationImpl.java:401)
+FATAL ERROR in native method: processing of -javaagent failed
+```
+
+##### Dynamic Agent
+
+在`pom.xml`中，修改`Agent-Class`属性，指向一个不存在的Agent Class：
+
+```xml
+<Agent-Class>lsieun.agent.NonExistentAgent</Agent-Class>
+```
+
+会出现`ClassNotFoundException`异常：
+
+```shell
+Exception in thread "Attach Listener" java.lang.ClassNotFoundException: lsieun.agent.NonExistentAgent
+	at java.net.URLClassLoader.findClass(URLClassLoader.java:382)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:418)
+	at sun.misc.Launcher$AppClassLoader.loadClass(Launcher.java:355)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:351)
+	at sun.instrument.InstrumentationImpl.loadClassAndStartAgent(InstrumentationImpl.java:304)
+	at sun.instrument.InstrumentationImpl.loadClassAndCallAgentmain(InstrumentationImpl.java:411)
+Agent failed to start!
+```
+
+#### incompatible xxx-main
+
+##### Load-Time Agent
+
+如果`premain`方法不符合规范：
+
+```java
+public class LoadTimeAgent {
+  public static void premain() {
+    // do nothing
+  }
+}
+```
+
+会出现`NoSuchMethodException`异常：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+Exception in thread "main" java.lang.NoSuchMethodException: lsieun.agent.LoadTimeAgent.premain(java.lang.String, java.lang.instrument.Instrumentation)
+        at java.lang.Class.getDeclaredMethod(Class.java:2130)
+        at sun.instrument.InstrumentationImpl.loadClassAndStartAgent(InstrumentationImpl.java:327)
+        at sun.instrument.InstrumentationImpl.loadClassAndCallPremain(InstrumentationImpl.java:401)
+FATAL ERROR in native method: processing of -javaagent failed
+```
+
+##### Dynamic Agent
+
+如果`agentmain`方法不符合规范：
+
+```java
+public class DynamicAgent {
+  public static void agentmain() {
+    // do nothing
+  }
+}
+```
+
+会出现`NoSuchMethodException`异常：
+
+```shell
+Exception in thread "Attach Listener" java.lang.NoSuchMethodException: lsieun.agent.DynamicAgent.agentmain(java.lang.String, java.lang.instrument.Instrumentation)
+	at java.lang.Class.getDeclaredMethod(Class.java:2130)
+	at sun.instrument.InstrumentationImpl.loadClassAndStartAgent(InstrumentationImpl.java:327)
+	at sun.instrument.InstrumentationImpl.loadClassAndCallAgentmain(InstrumentationImpl.java:411)
+Agent failed to start!
+```
+
+#### 抛出异常
+
+##### Load-Time Agent
+
+```java
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    throw new RuntimeException("exception from LoadTimeAgent");
+  }
+}
+```
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+Exception in thread "main" java.lang.reflect.InvocationTargetException
+        at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+        at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)
+        at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+        at java.lang.reflect.Method.invoke(Method.java:498)
+        at sun.instrument.InstrumentationImpl.loadClassAndStartAgent(InstrumentationImpl.java:386)
+        at sun.instrument.InstrumentationImpl.loadClassAndCallPremain(InstrumentationImpl.java:401)
+Caused by: java.lang.RuntimeException: exception from LoadTimeAgent
+        at lsieun.agent.LoadTimeAgent.premain(LoadTimeAgent.java:7)
+        ... 6 more
+FATAL ERROR in native method: processing of -javaagent failed
+```
+
+##### Dynamic Agent
+
+```java
+import java.lang.instrument.Instrumentation;
+
+public class DynamicAgent {
+  public static void agentmain(String agentArgs, Instrumentation inst) {
+    throw new RuntimeException("exception from DynamicAgent");
+  }
+}
+```
+
+```shell
+Exception in thread "Attach Listener" java.lang.reflect.InvocationTargetException
+	at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)
+	at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.lang.reflect.Method.invoke(Method.java:498)
+	at sun.instrument.InstrumentationImpl.loadClassAndStartAgent(InstrumentationImpl.java:386)
+	at sun.instrument.InstrumentationImpl.loadClassAndCallAgentmain(InstrumentationImpl.java:411)
+Caused by: java.lang.RuntimeException: exception from DynamicAgent
+	at lsieun.agent.DynamicAgent.agentmain(DynamicAgent.java:7)
+	... 6 more
+Agent failed to start!
+```
+
+### 1.6 总结
+
+本文内容总结如下：
+
+- 第一点，虚拟机的数量不同。
+- 第二点，时机不同和能力不同。
+- 第三点，线程不同。
+- 第四点，处理异常的方式不同。
+
+## 2. None Instrumentation
+
+### 2.1 设置Property
+
+有的时候，需要在命令行设置一些属性信息；当属性信息比较多的时候，命令行的内容就特别长。我们可以使用一个Agent Jar来设置这些属性信息。
+
+#### Application
+
+```java
+package sample;
+
+public class Program {
+  public static void main(String[] args) {
+    String username = System.getProperty("lsieun.agent.username");
+    String password = System.getProperty("lsieun.agent.password");
+    System.out.println(username);
+    System.out.println(password);
+  }
+}
+```
+
+#### Agent Jar
+
+```java
+package lsieun.agent;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs) {
+    System.setProperty("lsieun.agent.username", "tomcat");
+    System.setProperty("lsieun.agent.password", "123456");
+  }
+}
+```
+
+#### Run
+
+第一次运行：
+
+```shell
+$ java -cp ./target/classes/ sample.Program
+
+null
+null
+```
+
+第二次运行：
+
+```shell
+$ java -cp ./target/classes/ -Dlsieun.agent.username=jerry -Dlsieun.agent.password=12345 sample.Program
+
+jerry
+12345
+```
+
+第三次运行：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+
+tomcat
+123456
+```
+
+### 2.2 不打印信息
+
+有的时候，程序当中有许多打印语句，但是我们并不想让它们输出。
+
+#### Application
+
+```java
+package sample;
+
+import java.lang.management.ManagementFactory;
+import java.util.concurrent.TimeUnit;
+
+public class Program {
+  public static void main(String[] args) throws Exception {
+    // 第一步，打印进程ID
+    String nameOfRunningVM = ManagementFactory.getRuntimeMXBean().getName();
+    System.out.println(nameOfRunningVM);
+
+    // 第二步，倒计时退出
+    int count = 600;
+    for (int i = 0; i < count; i++) {
+      String info = String.format("|%03d| %s remains %03d seconds", i, nameOfRunningVM, (count - i));
+      System.out.println(info);
+
+      TimeUnit.SECONDS.sleep(1);
+    }
+  }
+}
+```
+
+#### Agent Jar
+
+```java
+package lsieun.agent;
+
+import java.io.PrintStream;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs) {
+    System.setOut(new PrintStream(System.out) {
+      @Override
+      public void println(String x) {
+        // super.println("What are you doing: " + x);
+      }
+    });
+  }
+}
+```
+
+#### Run
+
+第一次运行：
+
+```shell
+$ java -cp ./target/classes/ sample.Program
+
+8472@LenovoWin7
+|000| 8472@LenovoWin7 remains 600 seconds
+|001| 8472@LenovoWin7 remains 599 seconds
+```
+
+第二次运行：（没有输出内容）
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+```
+
+第三次运行：（取消注释）
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/TheAgent.jar sample.Program
+
+What are you doing: 9072@LenovoWin7
+What are you doing: |000| 9072@LenovoWin7 remains 600 seconds
+What are you doing: |001| 9072@LenovoWin7 remains 599 seconds
+```
+
+## 3. Multiple Agents
+
+### 3.1 Multiple Agents
+
+#### Load-Time
+
+The `-javaagent` switch may be used multiple times on the same command-line, thus creating **multiple agents**. More than one agent may use the same jarpath. [Link](https://docs.oracle.com/javase/8/docs/api/java/lang/instrument/package-summary.html)
+
+```shell
+-javaagent:jarpath[=options]
+```
+
+#### Dynamic
+
+在[java.lang.instrument API](https://docs.oracle.com/javase/8/docs/api/java/lang/instrument/package-summary.html)文档中， 并没有明确提到使用多个Dynamic Agent，但是我们可以进行测试。
+
+#### 顺序执行
+
+当有多个Agent Jar时，它们是按先后顺序执行，还是以某种随机、不固定的方式执行呢？
+
+不管是Load-Time Instrumentation，还是Dynamic Instrumentation，多个Agent Jar是按照加载的先后顺序执行。
+
+After the Java Virtual Machine (JVM) has initialized, each `premain` method will be called in the order the agents were specified, then the real application `main` method will be called.
+
+Each `premain` method must return in order for the startup sequence to proceed.
+
+### 3.2 不同视角
+
+#### ClassLoader视角
+
+##### Load-Time
+
+The agent class will be loaded by the **system class loader**. This is the class loader which typically loads the class containing the application `main` method. The `premain` methods will be run under the same security and classloader rules as the application `main` method.
+
+There are no modeling restrictions on what the agent `premain` method may do. Anything application `main` can do, including **creating threads**, is legal from `premain`.
+
+##### Dynamic
+
+The agent JAR is appended to the **system class path**. This is the class loader that typically loads the class containing the application `main` method. The agent class is loaded and the JVM attempts to invoke the `agentmain` method.
+
+#### Thread视角
+
+在Load-Time Instrumentation情况下，多个Agent Class运行在`main`线程当中。
+
+在Dynamic Instrumentation情况下，多个Agent Class运行在`Attach Listener`线程当中。
+
+**如果某一个Agent Jar的`premain()`或`agentmain()`方法不退出，后续的Agent Jar执行不了**。
+
+#### Instrumentation实例
+
+**JVM加载每一个的Agent Jar都有一个属于自己的`Instrumentation`实例。每一个`Instrumentation`实例管理自己的`ClassFileTransformer`**。
+
+![img](https://lsieun.github.io/assets/images/java/agent/multi-agent-jar.png)
+
+### 3.3 示例：多个Agent Jar
+
+#### Application
+
+```java
+package sample;
+
+import java.lang.management.ManagementFactory;
+import java.util.concurrent.TimeUnit;
+
+public class Program {
+  public static void main(String[] args) throws Exception {
+    // 第一步，打印进程ID
+    String nameOfRunningVM = ManagementFactory.getRuntimeMXBean().getName();
+    System.out.println(nameOfRunningVM);
+
+    // 第二步，倒计时退出
+    int count = 600;
+    for (int i = 0; i < count; i++) {
+      TimeUnit.SECONDS.sleep(1);
+    }
+  }
+}
+```
+
+#### Agent Jar
+
+如果手工的生成一个一个的Agent Jar文件，会比较麻烦一些。 那么，我们可以写一个类的“模板”，然后借助于ASM修改类的名字，然后生成多个Agent Jar文件。
+
+```java
+package lsieun.agent;
+
+import lsieun.utils.PrintUtils;
+
+import java.lang.instrument.Instrumentation;
+import java.util.concurrent.TimeUnit;
+
+public class TemplateAgent {
+  public static void premain(String agentArgs, Instrumentation inst) throws InterruptedException {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(TemplateAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，睡10秒钟
+    for (int i = 0; i < 10; i++) {
+      String message = String.format("%s: %03d", TemplateAgent.class.getSimpleName(), i);
+      System.out.println(message);
+      TimeUnit.SECONDS.sleep(1);
+    }
+  }
+
+  public static void agentmain(String agentArgs, Instrumentation inst) throws InterruptedException {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(TemplateAgent.class, "Agent-Class", agentArgs, inst);
+
+    // 第二步，睡30秒钟
+    for (int i = 0; i < 30; i++) {
+      String message = String.format("%s: %03d", TemplateAgent.class.getSimpleName(), i);
+      System.out.println(message);
+      TimeUnit.SECONDS.sleep(1);
+    }
+  }
+}
+```
+
+#### Run
+
+##### Load-Time
+
+```
+$ java -cp ./target/classes -javaagent:./target/TemplateAgent001.jar -javaagent:./target/TemplateAgent002.jar sample.Program
+
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Premain-Class: lsieun.agent.TemplateAgent001
+    (2) agentArgs: null
+    (3) Instrumentation: sun.instrument.InstrumentationImpl@1550089733
+    (4) Can-Redefine-Classes: true
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: main@1(false)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@18b4aac2
+========= ========= ========= SEPARATOR ========= ========= =========
+
+TemplateAgent001: 000
+TemplateAgent001: 001
+...
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Premain-Class: lsieun.agent.TemplateAgent002
+    (2) agentArgs: null
+    (3) Instrumentation: sun.instrument.InstrumentationImpl@2101973421
+    (4) Can-Redefine-Classes: true
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: main@1(false)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@18b4aac2
+========= ========= ========= SEPARATOR ========= ========= =========
+
+TemplateAgent002: 000
+TemplateAgent002: 001
+...
+```
+
+##### Dynamic
+
+```
+java -cp "${JAVA_HOME}/lib/tools.jar"\;./target/classes run.instrument.DynamicInstrumentation ./target/TemplateAgent001.jar
+java -cp "${JAVA_HOME}/lib/tools.jar"\;./target/classes run.instrument.DynamicInstrumentation ./target/TemplateAgent002.jar
+java -cp "${JAVA_HOME}/lib/tools.jar"\;./target/classes run.instrument.DynamicInstrumentation ./target/TemplateAgent003.jar
+```
+
+```
+$ java -cp ./target/classes/ sample.Program
+...
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Agent-Class: lsieun.agent.TemplateAgent001
+    (2) agentArgs: null
+    (3) Instrumentation: sun.instrument.InstrumentationImpl@1582797393
+    (4) Can-Redefine-Classes: true
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: Attach Listener@5(true)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@73d16e93
+========= ========= ========= SEPARATOR ========= ========= =========
+
+TemplateAgent001: 000
+TemplateAgent001: 001
+...
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Agent-Class: lsieun.agent.TemplateAgent002
+    (2) agentArgs: null
+    (3) Instrumentation: sun.instrument.InstrumentationImpl@1760363924
+    (4) Can-Redefine-Classes: true
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: Attach Listener@5(true)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@73d16e93
+========= ========= ========= SEPARATOR ========= ========= =========
+
+TemplateAgent002: 000
+TemplateAgent002: 001
+...
+```
+
+### 3.4 总结
+
+本文内容总结如下：
+
+- 第一点，**不管是Load-Time Instrumentation情况，还是Dynamic Instrumentation的情况，多个Agent Jar可以一起使用的，它们按照加载的先后顺序执行**。
+- 第二点，从不同的视角来理解多个Agent Jar的运行
+  - 从ClassLoader的视角来说，它们都是使用system classloader加载。
+  - 从Thread的视角来说，Load-Time Agent Class运行在`main`线程里，Dynamic Agent Class运行在`Attach Listener`线程里。
+  - **从Instrumentation实例的视角来说，JVM对于每一个加载的Agent Jar都有一个属于自己的`Instrumentation`实例**。
+
+## 4. Multiple Agents: Sandwich
+
+### 4.1 三明治
+
+在数学的概念当中，有一个迫敛定理或三明治定理（英文：Squeeze Theorem、Sandwich Theorem），可以帮助我们确定某一点的函数值到底是多少：
+
+![img](https://lsieun.github.io/assets/images/java/agent/sandwich-theorem.png)
+
+这种“三明治”思路可以应用到Multiple Agents当中，这样我们就可以检测某一个Agent Jar修改了什么内容。
+
+但是，需要注意的一点是：属于同一组的transformer才能进行这种“三明治”操作
+
+- 同属于retransformation incapable transformer（define 或 redefine使用），
+- 同属于retransformation capable transformer（define或redefine时经历到，retransform使用）。
+
+### 4.2 示例
+
+#### Agent Jar 1
+
+##### LoadTimeAgent
+
+```java
+package lsieun.agent;
+
+import lsieun.instrument.*;
+import lsieun.utils.*;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.Instrumentation;
+
+public class LoadTimeAgent {
+  public static void premain(String agentArgs, Instrumentation inst) {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(LoadTimeAgent.class, "Premain-Class", agentArgs, inst);
+
+    // 第二步，解析参数：agentArgs
+    boolean flag = Boolean.parseBoolean(agentArgs);
+
+    // 第三步，使用inst：添加transformer
+    ClassFileTransformer transformer = new SandwichTransformer(flag);
+    inst.addTransformer(transformer, false);
+  }
+}
+```
+
+##### SandwichTransformer
+
+```java
+package lsieun.instrument;
+
+import lsieun.utils.DateUtils;
+import lsieun.utils.DumpUtils;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.IllegalClassFormatException;
+import java.security.ProtectionDomain;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+
+public class SandwichTransformer implements ClassFileTransformer {
+  private final boolean compare;
+
+  public SandwichTransformer(boolean compare) {
+    this.compare = compare;
+  }
+
+  @Override
+  public byte[] transform(ClassLoader loader,
+                          String className,
+                          Class<?> classBeingRedefined,
+                          ProtectionDomain protectionDomain,
+                          byte[] classfileBuffer) throws IllegalClassFormatException {
+    if (!compare) {
+      addClass(className, classfileBuffer);
+    }
+    else {
+      compareClass(className, classfileBuffer);
+    }
+    return null;
+  }
 
 
+  private static final Map<String, byte[]> map = new HashMap<>();
 
+  private static void addClass(String className, byte[] bytes) {
+    map.put(className, bytes);
+  }
 
+  private static void compareClass(String className, byte[] bytes) {
+    byte[] origin_bytes = map.get(className);
+    if (origin_bytes == null) return;
+    boolean isEqual = Arrays.equals(origin_bytes, bytes);
+    if (isEqual) {
+      map.remove(className);
+      return;
+    }
 
+    String newName = className.replace('/', '.');
+    String dateStr = DateUtils.getTimeStamp();
+    String filenameA = String.format("%s.%s.%s.class", newName, dateStr, "A");
+    String filenameB = String.format("%s.%s.%s.class", newName, dateStr, "B");
+    DumpUtils.dump(filenameA, origin_bytes);
+    DumpUtils.dump(filenameB, bytes);
+    System.out.println("Diff: " + filenameA);
+    System.out.println("Diff: " + filenameB);
+  }
+}
+```
 
+#### Agent Jar 2
 
+##### TemplateAgent
 
+```java
+package lsieun.agent;
 
+import lsieun.utils.PrintUtils;
+import lsieun.utils.TransformerUtils;
 
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.Instrumentation;
 
+public class TemplateAgent {
+  public static void premain(String agentArgs, Instrumentation inst) throws InterruptedException {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(TemplateAgent.class, "Premain-Class", agentArgs, inst);
 
+    // 第二步，指明要处理的类
+    TransformerUtils.internalName = "sample/HelloWorld";
 
+    // 第三步，使用inst：添加transformer
+    ClassFileTransformer transformer = TransformerUtils::enterMethod;
+    inst.addTransformer(transformer, false);
+  }
 
+  public static void agentmain(String agentArgs, Instrumentation inst) throws InterruptedException {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(TemplateAgent.class, "Agent-Class", agentArgs, inst);
+  }
+}
+```
 
+#### Run
 
+```shell
+$ java -cp ./target/classes/ \
+  -javaagent:./target/TheAgent.jar=false \
+  -javaagent:./target/TemplateAgent001.jar \
+  -javaagent:./target/TheAgent.jar=true \
+  sample.Program
+  
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Premain-Class: lsieun.agent.LoadTimeAgent
+    (2) agentArgs: false
+    (3) Instrumentation: sun.instrument.InstrumentationImpl@1704856573
+    (4) Can-Redefine-Classes: true
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: main@1(false)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@18b4aac2
+========= ========= ========= SEPARATOR ========= ========= =========
 
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Premain-Class: lsieun.agent.TemplateAgent001
+    (2) agentArgs: null
+    (3) Instrumentation: sun.instrument.InstrumentationImpl@21685669
+    (4) Can-Redefine-Classes: true
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: main@1(false)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@18b4aac2
+========= ========= ========= SEPARATOR ========= ========= =========
 
+========= ========= ========= SEPARATOR ========= ========= =========
+Agent Class Info:
+    (1) Premain-Class: lsieun.agent.LoadTimeAgent
+    (2) agentArgs: true
+    (3) Instrumentation: sun.instrument.InstrumentationImpl@764977973
+    (4) Can-Redefine-Classes: true
+    (5) Can-Retransform-Classes: true
+    (6) Can-Set-Native-Method-Prefix: true
+    (7) Thread Id: main@1(false)
+    (8) ClassLoader: sun.misc.Launcher$AppClassLoader@18b4aac2
+========= ========= ========= SEPARATOR ========= ========= =========
 
+10012@LenovoWin7
+|000| 10012@LenovoWin7 remains 600 seconds
+transform class: sample/HelloWorld
+file:///D:\git-repo\learn-java-agent\dump\sample.HelloWorld.2022.02.03.04.14.09.089.A.class
+file:///D:\git-repo\learn-java-agent\dump\sample.HelloWorld.2022.02.03.04.14.09.089.B.class
+```
 
+### 4.3 总结
 
+本文内容总结如下：
 
+- 第一点，通过“三明治”的方式，我们可以检测某一个Agent Jar做了哪些修改。
+- 第二点，使用“三明治”的方式，要注意transformer属于同一组当中。
 
+## 5. Self Attach
 
+有些情况下，我们想在当前的JVM当中获得一个`Instrumentation`实例。
 
+### 5.1 获取VM PID
 
+#### Pre Java 9
 
+代码片段：
 
+```java
+String jvmName = ManagementFactory.getRuntimeMXBean().getName();
+String jvmPid = jvmName.substring(0, jvmName.indexOf('@'));
+```
 
+完整代码：
 
+```java
+import java.lang.management.ManagementFactory;
 
+public class HelloWorld {
+  public static void main(String[] args) {
+    String jvmName = ManagementFactory.getRuntimeMXBean().getName();
+    String jvmPid = jvmName.substring(0, jvmName.indexOf('@'));
+    System.out.println(jvmName);
+    System.out.println(jvmPid);
+  }
+}
+```
 
+运行结果：
 
+```shell
+5452@LenovoWin7
+5452
+```
+
+#### Java 9
+
+In Java 9 the `java.lang.ProcessHandle` can be used:
+
+```java
+long pid = ProcessHandle.current().pid();
+import java.lang.management.ManagementFactory;
+
+public class HelloWorld {
+  public static void main(String[] args) {
+    String jvmName = ManagementFactory.getRuntimeMXBean().getName();
+    String jvmPid = jvmName.substring(0, jvmName.indexOf('@'));
+    System.out.println(jvmName);
+    System.out.println(jvmPid);
+
+    long pid = ProcessHandle.current().pid();
+    System.out.println(pid);
+  }
+}
+```
+
+Output:
+
+```shell
+9836@LenovoWin7
+9836
+9836
+```
+
+### 5.2 示例
+
+#### Application
+
+```java
+package sample;
+
+import lsieun.agent.SelfAttachAgent;
+
+import java.lang.instrument.Instrumentation;
+
+public class Program {
+  public static void main(String[] args) throws Exception {
+    Instrumentation inst = SelfAttachAgent.getInstrumentation();
+    System.out.println(inst);
+  }
+}
+```
+
+#### SelfAttachAgent
+
+```java
+package lsieun.agent;
+
+import com.sun.tools.attach.VirtualMachine;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.lang.instrument.Instrumentation;
+import java.lang.management.ManagementFactory;
+import java.util.jar.Attributes;
+import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
+
+public class SelfAttachAgent {
+  private static volatile Instrumentation globalInstrumentation;
+
+  public static void premain(String agentArgs, Instrumentation inst) {
+    globalInstrumentation = inst;
+  }
+
+  public static void agentmain(String agentArgs, Instrumentation inst) {
+    globalInstrumentation = inst;
+  }
+
+  public static Instrumentation getInstrumentation() {
+    if (globalInstrumentation == null) {
+      loadAgent();
+    }
+    return globalInstrumentation;
+  }
+
+  public static void loadAgent() {
+    String nameOfRunningVM = ManagementFactory.getRuntimeMXBean().getName();
+    int index = nameOfRunningVM.indexOf('@');
+    String pid = nameOfRunningVM.substring(0, index);
+
+    VirtualMachine vm = null;
+    try {
+      String jarPath = createTempJarFile().getPath();
+      System.out.println(jarPath);
+
+      vm = VirtualMachine.attach(pid);
+      vm.loadAgent(jarPath, "");
+
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    } finally {
+      if (vm != null) {
+        try {
+          vm.detach();
+        } catch (IOException ignored) {
+        }
+      }
+    }
+  }
+
+  public static File createTempJarFile() throws IOException {
+    File jar = File.createTempFile("agent", ".jar");
+    jar.deleteOnExit();
+    createJarFile(jar);
+    return jar;
+  }
+
+  private static void createJarFile(File jar) throws IOException {
+    String className = SelfAttachAgent.class.getName();
+
+    Manifest manifest = new Manifest();
+    Attributes attrs = manifest.getMainAttributes();
+    attrs.put(Attributes.Name.MANIFEST_VERSION, "1.0");
+    attrs.put(new Attributes.Name("Premain-Class"), className);
+    attrs.put(new Attributes.Name("Agent-Class"), className);
+    attrs.put(new Attributes.Name("Can-Retransform-Classes"), "true");
+    attrs.put(new Attributes.Name("Can-Redefine-Classes"), "true");
+
+    JarOutputStream jos = new JarOutputStream(new FileOutputStream(jar), manifest);
+    jos.flush();
+    jos.close();
+  }
+}
+```
+
+#### Run
+
+##### Java 8
+
+```shell
+$ java -cp "${JAVA_HOME}/lib/tools.jar"\;./target/classes/ sample.Program
+
+7704
+C:\Users\liusen\AppData\Local\Temp\agent3349937074235412866.jar
+sun.instrument.InstrumentationImpl@65b54208
+```
+
+##### Java 9
+
+```
+$ java -cp ./target/classes/ sample.Program
+
+Caused by: java.io.IOException: Can not attach to current VM
+```
+
+**Attach API cannot be used to attach to the current VM by default** [Link](https://www.oracle.com/java/technologies/javase/9-notes.html)
+
+The implementation of Attach API has changed in JDK 9 to disallow attaching to the current VM by default. This change should have no impact on tools that use the Attach API to attach to a running VM. It may impact libraries that misuse this API as a way to get at the `java.lang.instrument` API. The system property `jdk.attach.allowAttachSelf` may be set on the command line to mitigate any compatibility with this change.
+
+Note: since JDK 9 attaching to current process requires setting the system property:
+
+```
+-Djdk.attach.allowAttachSelf=true
+$ java -Djdk.attach.allowAttachSelf=true -cp ./target/classes/ sample.Program
+```
+
+Java 9 adds the `Launcher-Agent-Class` attribute which can be used on executable JAR files to start an agent before the main class is loaded.
+
+### 5.3 总结
+
+本文内容总结如下：
+
+- 第一点，如何获取当前VM的PID值。
+- 第二点，在Java 9的情况下，默认不允许attach到当前VM，解决方式是将`jdk.attach.allowAttachSelf`属性设置成`true`。
+
+## 6. JMX: JMXConnectorServer和JMXConnector
+
+JMX是Java Management Extension的缩写。在本文当中，我们对JMX进行一个简单的介绍，目的是为后续内容做一个铺垫。
+
+### 6.1 JMX介绍
+
+> [JMX_百度百科 (baidu.com)](https://baike.baidu.com/item/JMX/2829357?fr=aladdin)
+>
+> JMX（[Java](https://baike.baidu.com/item/Java/85979?fromModule=lemma_inlink) Management Extensions，即[Java管理扩展](https://baike.baidu.com/item/Java管理扩展/18428506?fromModule=lemma_inlink)）是一个为[应用程序](https://baike.baidu.com/item/应用程序/5985445?fromModule=lemma_inlink)、设备、系统等植入[管理功能](https://baike.baidu.com/item/管理功能/3277338?fromModule=lemma_inlink)的框架。JMX可以跨越一系列异构操作系统平台、[系统体系结构](https://baike.baidu.com/item/系统体系结构/6842760?fromModule=lemma_inlink)和[网络传输协议](https://baike.baidu.com/item/网络传输协议/332131?fromModule=lemma_inlink)，灵活的开发[无缝集成](https://baike.baidu.com/item/无缝集成/5135178?fromModule=lemma_inlink)的系统、网络和[服务管理](https://baike.baidu.com/item/服务管理/7543685?fromModule=lemma_inlink)应用。
+
+如果两个JVM，当它们使用JMX进行沟通时，可以简单的描述成下图：
+
+![img](https://lsieun.github.io/assets/images/java/jmx/jmx-mbean-server-connector.png)
+
+#### MBean
+
+要理解MBean，我们需要把握住两个核心概念：resouce和MBean。两者的关系是，先有resouce，后有MBean。
+
+##### Resource和MBean
+
+首先，我们说第一个概念：resource。其实，一个事物是不是resouce（资源），是一个非常主观的判断。比如说，地上有一块石头，我们会觉得它是一个无用的事物；换一个场景，有一天需要盖房子，石头就成了盖房子的有用资源。
+
+在编程的语言环境当中，resource也是一个模糊的概念，可以体现在不同的层面上：
+
+- 可能是Class层面，例如，类里的一个字段，它记录了某个方法被调用的次数
+- 可能是Application层面，例如，在线用户的数量
+- 可能是JVM层面，例如：线程信息、垃圾回收信息
+- 可能是硬件层面，例如：CPU的能力、磁盘空间的大小
+
+**JMX的一个主要目标就是对resource（资源）进行management（管理）和monitor（监控），它要把一个我们关心的事物（resouce）给转换成manageable resource。**
+
+A **resource** is any entity in the system that needs to be monitored and/or controlled by a management application; resources that can be monitored and controlled are called **manageable**.
+
+接着，我们来说第二个概念：MBean。MBean是managed bean的缩写，它就代表manageable resource本身，或者是对manageable resource的进一步封装， 它就是manageable resource在JMX架构当中所对应的一个“术语”或标准化之后的“概念”。
+
+<u>An MBean is an application or system resource that has been instrumented to be manageable through JMX.</u>
+
+- Application components designed with their *management interface* in mind can typically be written as *MBeans*.
+- *MBeans* can be used as *wrappers* for legacy code without a management interface or as *proxies* for code with a legacy management interface.
+
+##### Standard MBean
+
+在JMX当中，MBean有不同的类型：
+
+- Standard MBean
+- Dynamic MBean
+- Open MBean
+- Model MBean
+
+在这里，我们只关注Standard MBean。在JMX当中，Standard MBean有一些要求，需要我们在编写代码的过程当中遵守：
+
+- 类名层面。比如说，有一个`SmartChild`类，它就是我们关心的resource，它必须实现一个接口（management interface），这个接口的名字必须是`SmartChildMBean`。 也就是，在原来`SmartChild`类名的基础上，再加上`MBean`后缀。
+- 构造方法层面。比如说，`SmartChild`类必须有一个**public constructor**。
+- Attributes层面，或者Getter和Setter层面。
+  - 比如，getter方法不能接收参数，`int getAge()`是合理的，而`int getAge(String name)`是不合理的。
+  - 比如说，setter方法只能接收一个参数，`void setAge(int age)`是合理的，而`void setAge(int age, String name)`是不合理的。
+- Operations。在MBean当中，排除Attributes之外的方法，就属于Operations操作。
+
+```pseudocode
+                                                           ┌─── getter
+                                         ┌─── attribute ───┤
+                  ┌─── Java interface ───┤                 └─── setter
+                  │                      └─── operation
+Standard MBean ───┤
+                  │
+                  └─── Java class
+```
+
+------
+
+For any resource class `XYZ` that is to be instrumented as a standard MBean, a Java interface called `XYZMBean` must be defined, and it must be implemented by `XYZ`. Note that the `MBean` suffix is case-sensitive: `Mbean` is incorrect, as is `mBean` or `mbean`.
+
+A standard MBean is defined by writing a Java interface called `SomethingMBean` and a Java class called `Something` that implements that interface. Every method in the interface defines either an **attribute** or an **operation** in the MBean. By default, every method defines an operation. Attributes and operations are methods that follow certain design patterns. A **standard MBean** is composed of **an MBean interface** and **a class**. [Link](https://docs.oracle.com/javase/tutorial/jmx/mbeans/standard.html)
+
+- The MBean interface lists the methods for all exposed attributes and operations.
+- The class implements this interface and provides the functionality of the instrumented resource.
+
+Management **attributes** are named characteristics of an MBean. With Standard MBeans, attributes are defined in the MBean interface via the use of **naming conventions** in the interface methods. There are three kinds of attributes, read-only, write-only, and read-write attributes. [Link](https://www.informit.com/articles/article.aspx?p=27842&seqNum=3)
+
+Management **operations** for Standard MBeans include all the methods declared in the MBean interface that are not recognized as being either a read or write method to an attribute. The operations don’t have to follow any specific naming rules as long as they do not intervene with the management attribute naming conventions.
+
+#### MBeanServer
+
+在JMX当中，`MBeanServer`表示managed bean server。
+
+在某一个`MBean`对象创建好之后，需要将`MBean`对象注册到`MBeanServer`当中，分成两个步骤：
+
+- 第一步，创建`MBeanServer`对象
+- 第二步，将`MBean`对象注册到`MBeanServer`上
+
+##### 创建MBeanServer
+
+在这里，我们介绍两种创建MBeanServer对象的方式。
+
+```pseudocode
+               ┌─── MBeanServerFactory.createMBeanServer()
+MBeanServer ───┤
+               └─── ManagementFactory.getPlatformMBeanServer()
+```
+
+第一种方式：借助于`javax.management.MBeanServerFactory`类的`createMBeanServer()`方法：
+
+```java
+MBeanServer beanServer = MBeanServerFactory.createMBeanServer();
+```
+
+第二种方式：借助于`java.lang.management.ManagementFactory`类的`getPlatformMBeanServer()`方法：
+
+```java
+MBeanServer platformMBeanServer = ManagementFactory.getPlatformMBeanServer();
+```
+
+**两种方式相比较，推荐使用`ManagementFactory.getPlatformMBeanServer()`**。
+
+- The **platform MBean server** was introduced in Java SE 5.0, and is an MBean server that is built into the Java Virtual Machine (Java VM).
+- The **platform MBean server** can be shared by all managed components that are running in the Java VM.
+- However, there is generally no need for more than one MBean server, so **using the platform MBean server is recommended.**
+
+##### 注册MBean
+
+注册`MBean`对象，需要使用`MBeanServer`类的`registerMBean(Object object, ObjectName name)`方法：
+
+```java
+SmartChild bean = new SmartChild("Tom", 10);
+ObjectName objectName = new ObjectName(Const.SMART_CHILD_BEAN);
+beanServer.registerMBean(bean, objectName);
+```
+
+其中，`Const.SMART_CHILD_BEAN`的值为`lsieun.management.bean:type=child,name=SmartChild`。
+
+在注册MBean的时候，需要指定唯一的**object name**：
+
+```pseudocode
+                               ┌─── MBean
+MBeanServer.registerMBean() ───┤
+                               └─── ObjectName
+```
+
+Each `ObjectName` contains a string made up of two components: the **domain name** and the **key property list**.
+The combination of **domain name** and **key property list** must be unique for any given MBean and has the format:
+
+```pseudocode
+domain-name:key1=value1[,key2=value2,...,keyN=valueN]
+```
+
+在`java.lang.management.ManagementFactory`类的文档注释中，有如下示例：
+
+| Management Interface    | ObjectName                       |
+| ----------------------- | -------------------------------- |
+| `ClassLoadingMXBean`    | `java.lang:type=ClassLoading`    |
+| `MemoryMXBean`          | `java.lang:type=Memory`          |
+| `ThreadMXBean`          | `java.lang:type=Threading`       |
+| `RuntimeMXBean`         | `java.lang:type=Runtime`         |
+| `OperatingSystemMXBean` | `java.lang:type=OperatingSystem` |
+| `PlatformLoggingMXBean` | `java.util.logging:type=Logging` |
+
+#### Connector
+
+A connector consists of a **connector client** and a **connector server**.
+
+- A **connector server** is attached to an **MBean server** and listens for connection requests from clients. **A given connector server may establish many concurrent connections with different clients.**
+- A **connector client** is responsible for establishing a connection with the **connector server**.
+
+<u>A **connector client** will usually be in a different Java Virtual Machine (Java VM) from the connector server, and will often be running on a different machine.</u>
+
+A **connector server** usually has **an address**, used to establish connections between connector clients and the connector server.
+
+##### Connector Server
+
+创建`JMXConnectorServer`对象，我们可以可以借助于`javax.management.remote.JMXConnectorServerFactory`类的`newJMXConnectorServer()`方法：
+
+```java
+JMXServiceURL serviceURL = new JMXServiceURL("rmi", "127.0.0.1", 9876);
+JMXConnectorServer connectorServer = JMXConnectorServerFactory.newJMXConnectorServer(serviceURL, null, beanServer);
+```
+
+在创建`JMXConnectorServer`对象时，我们用到了`JMXServiceURL`类，如果打印一下`serviceURL`变量，会输出以下结果：
+
+```shell
+service:jmx:rmi://127.0.0.1:9876
+```
+
+一个更通用的表达形式如下：
+
+```shell
+service:jmx:protocol://host[:port][url-path]
+```
+
+**在创建`JMXConnectorServer`对象完成之后，它处于“未激活”状态**：
+
+```java
+boolean status = connectorServer.isActive();
+System.out.println(status); // false
+```
+
+**当我们调用`start()`方法后，它才开始监听connector client的连接请求，并进入“激活”状态**：
+
+```java
+connectorServer.start();
+```
+
+当监听开始之后，我们可以调用`getAddress()`方法来获取connector client可以连接到connector server的服务地址：
+
+```java
+JMXServiceURL connectorServerAddress = connectorServer.getAddress();
+```
+
+示例如下：
+
+```shell
+service:jmx:rmi://127.0.0.1:9876/stub/rO0ABX...
+```
+
+**当我们调用`stop()`方法后，它停止监听connector client的连接请求，并进入“未激活”状态**：
+
+```java
+connectorServer.stop();
+```
+
+##### Connector Client
+
+现在connector server端已经准备好了，接下来就是connector client端要做的事情了。 从API的角度来说，`JMXConnector`类就是connector client。
+
+要创建`JMXConnector`类的实例，我们可以借助于`javax.management.remote.JMXConnectorFactory`类的`connect()`方法：
+
+```java
+JMXServiceURL address = new JMXServiceURL(connectorAddress);
+JMXConnector connector = JMXConnectorFactory.connect(address);
+```
+
+然后，我们再利用`JMXConnector`类的`getMBeanServerConnection()`方法来获取一个`MBeanServerConnection`对象：
+
+```java
+MBeanServerConnection beanServerConnection = connector.getMBeanServerConnection();
+```
+
+有了`MBeanServerConnection`对象之后，就可以与`MBeanServer`对象进行交互了：
+
+```java
+ObjectName objectName = new ObjectName(Const.SMART_CHILD_BEAN);
+MBeanInfo beanInfo = beanServerConnection.getMBeanInfo(objectName);
+```
+
+值得一提的是，`MBeanServer`本身是一个接口，它继承自`MBeanServerConnection`接口。
+
+```pseudocode
+    MBeanServer         MBeanServerConnection
+------------------------------------------------
+  connector server        connector client
+```
+
+### 6.2 JMX示例
+
+#### MBean
+
+```java
+package lsieun.management.bean;
+
+public interface SmartChildMBean {
+  String getName();
+  void setName(String name);
+
+  int getAge();
+  void setAge(int age);
+
+  void study(String subject);
+}
+```
+
+```java
+package lsieun.management.bean;
+
+public class SmartChild implements SmartChildMBean {
+  private String name;
+  private int age;
+
+  public SmartChild(String name, int age) {
+    this.name = name;
+    this.age = age;
+  }
+
+  @Override
+  public String getName() {
+    return name;
+  }
+
+  @Override
+  public void setName(String name) {
+    this.name = name;
+  }
+
+  @Override
+  public int getAge() {
+    return age;
+  }
+
+  @Override
+  public void setAge(int age) {
+    this.age = age;
+  }
+
+  @Override
+  public void study(String subject) {
+    String message = String.format("%s (%d) is studying %s.", name, age, subject);
+    System.out.println(message);
+  }
+}
+```
+
+#### Server
+
+```java
+package run.jmx;
+
+import lsieun.cst.Const;
+import lsieun.management.bean.SmartChild;
+
+import javax.management.MBeanServer;
+import javax.management.MBeanServerFactory;
+import javax.management.ObjectName;
+import javax.management.remote.JMXConnectorServer;
+import javax.management.remote.JMXConnectorServerFactory;
+import javax.management.remote.JMXServiceURL;
+import java.util.concurrent.TimeUnit;
+
+public class JMXServer {
+  public static void main(String[] args) throws Exception {
+    // 第一步，创建MBeanServer
+    MBeanServer beanServer = MBeanServerFactory.createMBeanServer();
+
+    // 第二步，注册MBean
+    SmartChild bean = new SmartChild("Tom", 10);
+    ObjectName objectName = new ObjectName(Const.SMART_CHILD_BEAN);
+    beanServer.registerMBean(bean, objectName);
+
+    // 第三步，创建Connector Server
+    JMXServiceURL serviceURL = new JMXServiceURL("rmi", "127.0.0.1", 9876);
+    JMXConnectorServer connectorServer = JMXConnectorServerFactory.newJMXConnectorServer(serviceURL, null, beanServer);
+
+    // 第四步，开启Connector Server监听
+    connectorServer.start();
+    JMXServiceURL connectorServerAddress = connectorServer.getAddress();
+    System.out.println(connectorServerAddress);
+
+    // 休息5分钟
+    TimeUnit.MINUTES.sleep(5);
+
+    // 第五步，关闭Connector Server监听
+    connectorServer.stop();
+  }
+}
+```
+
+####  Client
+
+```java
+package run.jmx;
+
+import lsieun.cst.Const;
+
+import javax.management.MBeanServerConnection;
+import javax.management.ObjectName;
+import javax.management.remote.JMXConnector;
+import javax.management.remote.JMXConnectorFactory;
+import javax.management.remote.JMXServiceURL;
+
+public class JMXClient {
+  public static void main(String[] args) throws Exception {
+    // 第一步，创建Connector Client
+    String connectorAddress = "service:jmx:rmi://127.0.0.1:9876/stub/rO0AB...";
+    JMXServiceURL address = new JMXServiceURL(connectorAddress);
+    JMXConnector connector = JMXConnectorFactory.connect(address);
+
+    // 第二步，获取MBeanServerConnection对象
+    MBeanServerConnection beanServerConnection = connector.getMBeanServerConnection();
+
+    // 第三步，向MBean Server发送请求
+    ObjectName objectName = new ObjectName(Const.SMART_CHILD_BEAN);
+    String[] array = new String[]{"Chinese", "Math", "English"};
+    for (String item : array) {
+      beanServerConnection.invoke(objectName, "study", new Object[]{item}, new String[]{String.class.getName()});
+    }
+
+    // 第四步，关闭Connector Client
+    connector.close();
+  }
+}
+```
+
+### 6.3 总结
+
+本文内容总结如下：
+
+- 第一点，理解两个JVM使用JMX进行沟通的整体思路和相关概念。
+- 第二点，介绍JMX的目的是为了结合Java Agent和JMX一起使用。
+
+## 7. JMX: management-agent.jar
+
+### 7.1 Pre Java 9
+
+#### management-agent.jar
+
+<u>A JMX client uses the Attach API to dynamically attach to a target virtual machine and load the JMX agent</u> (if it is not already loaded) from the `management-agent.jar` file, which is located in the `lib` subdirectory of the target virtual machine’s JRE home directory.
+
+```shell
+JRE_HOME/lib/management-agent.jar
+```
+
+其中，只有一个`META-INF/MANIFEST.MF`文件，内容如下：
+
+```txt
+Manifest-Version: 1.0
+Created-By: 1.7.0_291 (Oracle Corporation)
+Agent-Class: sun.management.Agent
+Premain-Class: sun.management.Agent
+
+```
+
+在`sun.management.Agent`类当中，定义了`LOCAL_CONNECTOR_ADDRESS_PROP`静态字段：
+
+```java
+public class Agent {
+  private static final String LOCAL_CONNECTOR_ADDRESS_PROP = "com.sun.management.jmxremote.localConnectorAddress";
+
+  private static synchronized void startLocalManagementAgent() {
+    Properties agentProps = VMSupport.getAgentProperties();
+
+    // start local connector if not started
+    if (agentProps.get(LOCAL_CONNECTOR_ADDRESS_PROP) == null) {
+      JMXConnectorServer cs = ConnectorBootstrap.startLocalConnectorServer();
+      String address = cs.getAddress().toString();
+      // Add the local connector address to the agent properties
+      agentProps.put(LOCAL_CONNECTOR_ADDRESS_PROP, address);
+
+      try {
+        // export the address to the instrumentation buffer
+        ConnectorAddressLink.export(address);
+      } catch (Exception x) {
+        // Connector server started but unable to export address
+        // to instrumentation buffer - non-fatal error.
+        warning(EXPORT_ADDRESS_FAILED, x.getMessage());
+      }
+    }
+  }
+}
+```
+
+#### Application
+
+```java
+package sample;
+
+import java.lang.management.ManagementFactory;
+import java.util.concurrent.TimeUnit;
+
+public class Program {
+  public static void main(String[] args) throws Exception {
+    // 第一步，打印进程ID
+    String nameOfRunningVM = ManagementFactory.getRuntimeMXBean().getName();
+    System.out.println(nameOfRunningVM);
+
+    // 第二步，倒计时退出
+    int count = 600;
+    for (int i = 0; i < count; i++) {
+      String info = String.format("|%03d| %s remains %03d seconds", i, nameOfRunningVM, (count - i));
+      System.out.println(info);
+
+      TimeUnit.SECONDS.sleep(1);
+    }
+  }
+}
+```
+
+#### Attach
+
+```java
+package run;
+
+import com.sun.tools.attach.VirtualMachine;
+import com.sun.tools.attach.VirtualMachineDescriptor;
+import lsieun.utils.JarUtils;
+
+import javax.management.MBeanServerConnection;
+import javax.management.remote.JMXConnector;
+import javax.management.remote.JMXConnectorFactory;
+import javax.management.remote.JMXServiceURL;
+import java.lang.management.ManagementFactory;
+import java.lang.management.RuntimeMXBean;
+import java.util.List;
+
+public class VMAttach {
+  static final String LOCAL_CONNECTOR_ADDRESS_PROP = "com.sun.management.jmxremote.localConnectorAddress";
+
+  public static void main(String[] args) throws Exception {
+    // 第一步，准备参数
+    String displayName = "sample.Program";
+
+    // 第二步，使用Attach机制，加载management-agent.jar文件，来启动JMX
+    String pid = findPID(displayName);
+    VirtualMachine vm = VirtualMachine.attach(pid);
+    String connectorAddress = vm.getAgentProperties().getProperty(LOCAL_CONNECTOR_ADDRESS_PROP);
+    if (connectorAddress == null) {
+      String javaHome = vm.getSystemProperties().getProperty("java.home");
+      String agent = JarUtils.getJDKJarPath(javaHome, "management-agent.jar");
+      vm.loadAgent(agent);
+      connectorAddress = vm.getAgentProperties().getProperty(LOCAL_CONNECTOR_ADDRESS_PROP);
+      if (connectorAddress == null) {
+        throw new NullPointerException("connectorAddress is null");
+      }
+    }
+    vm.detach();
+    System.out.println(connectorAddress);
+
+    // 第三步，借助于JMX进行沟通
+    JMXServiceURL servURL = new JMXServiceURL(connectorAddress);
+    JMXConnector con = JMXConnectorFactory.connect(servURL);
+    MBeanServerConnection mbsc = con.getMBeanServerConnection();
+    RuntimeMXBean proxy = ManagementFactory.getPlatformMXBean(mbsc, RuntimeMXBean.class);
+    long uptime = proxy.getUptime();
+    System.out.println(uptime);
+  }
+
+  public static String findPID(String name) {
+    List<VirtualMachineDescriptor> list = VirtualMachine.list();
+    for (VirtualMachineDescriptor vmd : list) {
+      String displayName = vmd.displayName();
+      if (displayName != null && displayName.equals(name)) {
+        return vmd.id();
+      }
+    }
+    throw new RuntimeException("Not Exist: " + name);
+  }
+}
+```
+
+### 7.2 Since Java 9
+
+在[JDK 9 Release Notes](https://www.oracle.com/java/technologies/javase/9-removed-features.html#JDK-8043939)中提到：**management-agent.jar is removed**。
+
+`management-agent.jar` has been removed. Tools that have been using the Attach API to load this agent into a running VM should be aware that the Attach API has been updated in JDK 9 to define two new methods for starting a management agent:
+
+- `com.sun.tools.attach.VirtualMachine.startManagementAgent(Properties agentProperties)`
+- `com.sun.tools.attach.VirtualMachine.startLocalManagementAgent()`
+
+#### startLocalManagementAgent
+
+```java
+package run;
+
+import com.sun.tools.attach.VirtualMachine;
+import com.sun.tools.attach.VirtualMachineDescriptor;
+
+import javax.management.MBeanServerConnection;
+import javax.management.remote.JMXConnector;
+import javax.management.remote.JMXConnectorFactory;
+import javax.management.remote.JMXServiceURL;
+import java.lang.management.ManagementFactory;
+import java.lang.management.RuntimeMXBean;
+import java.util.List;
+
+public class VMAttach {
+  static final String LOCAL_CONNECTOR_ADDRESS_PROP = "com.sun.management.jmxremote.localConnectorAddress";
+
+  public static void main(String[] args) throws Exception {
+    // 第一步，准备参数
+    String displayName = "sample.Program";
+
+    // 第二步，启动JMX
+    String pid = findPID(displayName);
+    VirtualMachine vm = VirtualMachine.attach(pid);
+    String connectorAddress = vm.getAgentProperties().getProperty(LOCAL_CONNECTOR_ADDRESS_PROP);
+    if (connectorAddress == null) {
+      vm.startLocalManagementAgent();
+      connectorAddress = vm.getAgentProperties().getProperty(LOCAL_CONNECTOR_ADDRESS_PROP);
+      if (connectorAddress == null) {
+        throw new NullPointerException("connectorAddress is null");
+      }
+    }
+    vm.detach();
+    System.out.println(connectorAddress);
+
+    // 第三步，借助于JMX进行沟通
+    JMXServiceURL servURL = new JMXServiceURL(connectorAddress);
+    JMXConnector con = JMXConnectorFactory.connect(servURL);
+    MBeanServerConnection mbsc = con.getMBeanServerConnection();
+    RuntimeMXBean proxy = ManagementFactory.getPlatformMXBean(mbsc, RuntimeMXBean.class);
+    long uptime = proxy.getUptime();
+    System.out.println(uptime);
+  }
+
+  public static String findPID(String name) {
+    List<VirtualMachineDescriptor> list = VirtualMachine.list();
+    for (VirtualMachineDescriptor vmd : list) {
+      String displayName = vmd.displayName();
+      if (displayName != null && displayName.equals(name)) {
+        return vmd.id();
+      }
+    }
+    throw new RuntimeException("Not Exist: " + name);
+  }
+}
+```
+
+#### startManagementAgent
+
+```java
+package run;
+
+import com.sun.tools.attach.VirtualMachine;
+import com.sun.tools.attach.VirtualMachineDescriptor;
+
+import javax.management.MBeanServerConnection;
+import javax.management.remote.JMXConnector;
+import javax.management.remote.JMXConnectorFactory;
+import javax.management.remote.JMXServiceURL;
+import java.lang.management.ManagementFactory;
+import java.lang.management.RuntimeMXBean;
+import java.util.List;
+import java.util.Properties;
+
+public class VMAttach {
+  public static void main(String[] args) throws Exception {
+    // 第一步，准备参数
+    int port = 5000;
+    String displayName = "sample.Program";
+
+    // 第二步，启动JMX
+    String pid = findPID(displayName);
+    VirtualMachine vm = VirtualMachine.attach(pid);
+    Properties props = new Properties();
+    props.put("com.sun.management.jmxremote.port", String.valueOf(port));
+    props.put("com.sun.management.jmxremote.authenticate", "false");
+    props.put("com.sun.management.jmxremote.ssl", "false");
+    vm.startManagementAgent(props);
+    vm.getAgentProperties().list(System.out);
+    vm.detach();
+
+    // 第三步，借助于JMX进行沟通
+    String jmxUrlStr = String.format("service:jmx:rmi:///jndi/rmi://localhost:%d/jmxrmi", port);
+    JMXServiceURL servURL = new JMXServiceURL(jmxUrlStr);
+    JMXConnector con = JMXConnectorFactory.connect(servURL);
+    MBeanServerConnection mbsc = con.getMBeanServerConnection();
+    RuntimeMXBean proxy = ManagementFactory.getPlatformMXBean(mbsc, RuntimeMXBean.class);
+    long uptime = proxy.getUptime();
+    System.out.println(uptime);
+  }
+
+  public static String findPID(String name) {
+    List<VirtualMachineDescriptor> list = VirtualMachine.list();
+    for (VirtualMachineDescriptor vmd : list) {
+      String displayName = vmd.displayName();
+      if (displayName != null && displayName.equals(name)) {
+        return vmd.id();
+      }
+    }
+    throw new RuntimeException("Not Exist: " + name);
+  }
+}
+```
+
+### 7.3 总结
+
+本文内容总结如下：
+
+- 第一点，在Java 8版本当中，我们需要借助于`VirtualMachine`类的`loadAgent()`方法和`management-agent.jar`来开启JMX服务。
+- 第二点，在Java 9之后的版本中，我们需要借助于`VirtualMachine`类的`startLocalManagementAgent()`和`startManagementAgent()`方法来开启JMX服务。
+
+## 8. JMX: Instrumentation
+
+### 8.1 MBean
+
+#### GoodChildMBean
+
+```java
+package lsieun.management.bean;
+
+public interface GoodChildMBean {
+  void study(String className, String methodName, String methodDesc, String options);
+}
+```
+
+#### GoodChild
+
+```java
+package lsieun.management.bean;
+
+import lsieun.asm.visitor.MethodInfo;
+import lsieun.cst.Const;
+import lsieun.instrument.InabilityTransformer;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.Instrumentation;
+import java.util.Formatter;
+import java.util.HashSet;
+import java.util.Set;
+
+public class GoodChild implements GoodChildMBean {
+  protected final Instrumentation instrumentation;
+
+  public GoodChild(Instrumentation instrumentation) {
+    this.instrumentation = instrumentation;
+  }
+
+  @Override
+  public void study(String className, String methodName, String methodDesc, String option) {
+    StringBuilder sb = new StringBuilder();
+    Formatter fm = new Formatter(sb);
+    fm.format("%s%n", Const.SEPARATOR);
+    fm.format("GoodChild.study%n");
+    fm.format("    class  : %s%n", className);
+    fm.format("    method : %s:%s%n", methodName, methodDesc);
+    fm.format("    option : %s%n", option);
+    fm.format("    thread : %s@%s(%s)%n",
+              Thread.currentThread().getName(),
+              Thread.currentThread().getId(),
+              Thread.currentThread().isDaemon()
+             );
+    fm.format("%s%n", Const.SEPARATOR);
+    System.out.println(sb);
+
+    Set<MethodInfo> flags = new HashSet<>();
+    if (option != null) {
+      String[] array = option.split(",");
+      for (String element : array) {
+        if ("".equals(element)) continue;
+        MethodInfo methodInfo = Enum.valueOf(MethodInfo.class, element);
+        flags.add(methodInfo);
+      }
+    }
+
+    // 第一种方式，用Class.forName()方法，速度较快
+    try {
+      Class<?> clazz = Class.forName(className);
+      transform(clazz, methodName, methodDesc, flags);
+      return;
+    } catch (Exception ex) { /* Nope */ }
+
+    // 第二种方式，用Instrumentation.getAllLoadedClasses()方法，速度较慢
+    Class<?>[] allLoadedClasses = instrumentation.getAllLoadedClasses();
+    for (Class<?> clazz : allLoadedClasses) {
+      if (clazz.getName().equals(className)) {
+        transform(clazz, methodName, methodDesc, flags);
+        return;
+      }
+    }
+    throw new RuntimeException("Failed to locate class [" + className + "]");
+  }
+
+  /**
+     * Registers a transformer and executes the transform
+     *
+     * @param clazz      The class to transform
+     * @param methodName The method name to instrument
+     * @param methodDesc The method signature to match
+     */
+  protected void transform(Class<?> clazz, String methodName, String methodDesc, Set<MethodInfo> flags) {
+    ClassLoader classLoader = clazz.getClassLoader();
+    ClassFileTransformer transformer = new InabilityTransformer(classLoader, clazz.getName(), methodName, methodDesc, flags);
+    instrumentation.addTransformer(transformer, true);
+    try {
+      instrumentation.retransformClasses(clazz);
+    } catch (Exception ex) {
+      throw new RuntimeException("Failed to transform [" + clazz.getName() + "]", ex);
+    } finally {
+      instrumentation.removeTransformer(transformer);
+    }
+  }
+}
+```
+
+### 8.2 Agent Jar
+
+#### DynamicAgent
+
+```java
+package lsieun.agent;
+
+import lsieun.cst.Const;
+import lsieun.management.bean.GoodChild;
+import lsieun.utils.*;
+
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
+import java.lang.instrument.Instrumentation;
+import java.lang.management.ManagementFactory;
+
+public class DynamicAgent {
+  public static void agentmain(String agentArgs, Instrumentation inst) throws Exception {
+    // 第一步，打印信息：agentArgs, inst, classloader, thread
+    PrintUtils.printAgentInfo(DynamicAgent.class, "Agent-Class", agentArgs, inst);
+
+    // 第二步，创建MBean
+    System.out.println("Installing JMX Agent...");
+    GoodChild child = new GoodChild(inst);
+    ObjectName objectName = new ObjectName(Const.GOOD_CHILD_BEAN);
+
+    // 第三步，注册MBean
+    MBeanServer beanServer = ManagementFactory.getPlatformMBeanServer();
+    beanServer.registerMBean(child, objectName);
+
+    // 第四步，设置属性
+    System.setProperty(Const.AGENT_MANAGEMENT_PROP, "true");
+    System.out.println("JMX Agent Installed");
+  }
+}
+```
+
+### 8.3 JMX Client
+
+#### AgentInstaller
+
+```java
+package run.jmx;
+
+import com.sun.tools.attach.VirtualMachine;
+import lsieun.cst.Const;
+import lsieun.utils.JarUtils;
+import lsieun.utils.VMAttachUtils;
+
+import javax.management.MBeanServerConnection;
+import javax.management.ObjectName;
+import javax.management.remote.JMXConnector;
+import javax.management.remote.JMXConnectorFactory;
+import javax.management.remote.JMXServiceURL;
+import java.util.Properties;
+
+public class AgentInstaller {
+  public static void main(String[] args) throws Exception {
+    // 第一步，获取PID
+    String displayName = "sample.Program";
+    String pid = VMAttachUtils.findPID(displayName);
+    System.out.println("pid: " + pid);
+
+    // 第二步，利用Attach 机制，加载两个Agent Jar
+    VirtualMachine vm = VirtualMachine.attach(pid);
+    Properties properties = vm.getSystemProperties();
+    String value = properties.getProperty(Const.AGENT_MANAGEMENT_PROP);
+    if (value == null) {
+      // 加载第一个Agent Jar
+      String jarPath = JarUtils.getJarPath();
+      vm.loadAgent(jarPath);
+    }
+
+    String connectorAddress = vm.getAgentProperties().getProperty(Const.LOCAL_CONNECTOR_ADDRESS_PROP, null);
+    vm.getAgentProperties().list(System.out);
+    if (connectorAddress == null) {
+      // 加载第二个Agent Jar
+      String home = vm.getSystemProperties().getProperty("java.home");
+      String managementAgentJarPath = JarUtils.getManagementAgentJarPath(home);
+      vm.loadAgent(managementAgentJarPath);
+      connectorAddress = vm.getAgentProperties().getProperty(Const.LOCAL_CONNECTOR_ADDRESS_PROP, null);
+      vm.getAgentProperties().list(System.out);
+    }
+    System.out.println(connectorAddress);
+    vm.detach();
+
+    // 第三步，准备参数
+    String beanName = Const.GOOD_CHILD_BEAN;
+    String beanMethodName = "study";
+    String[] beanMethodArgArray = new String[]{
+      //                "sample.HelloWorld", "add", "(II)I", "",
+      "sample.HelloWorld", "add", "(II)I", "NAME_AND_DESC,PARAMETER_VALUES",
+      //                "sample.HelloWorld", "add", "(II)I", "NAME_AND_DESC,PARAMETER_VALUES,RETURN_VALUE",
+    };
+
+    // 第四步，借助JMXConnector，调用MBean的方法
+    ObjectName objectName = new ObjectName(beanName);
+    JMXServiceURL serviceURL = new JMXServiceURL(connectorAddress);
+    try (JMXConnector connector = JMXConnectorFactory.connect(serviceURL)) {
+      MBeanServerConnection server = connector.getMBeanServerConnection();
+      server.invoke(objectName, beanMethodName, beanMethodArgArray,
+                    new String[]{
+                      String.class.getName(),
+                      String.class.getName(),
+                      String.class.getName(),
+                      String.class.getName(),
+                    });
+    }
+  }
+}
+```
+
+从下面的输出结果当中，我们可以看到`GoodChild.study()`方法运行在不同的线程（thread）：
+
+```shell
+GoodChild.study
+    class  : sample.HelloWorld
+    method : add:(II)I
+    option : NAME_AND_DESC,PARAMETER_VALUES
+    thread : RMI TCP Connection(6)-192.168.200.1@20(true)
+GoodChild.study
+    class  : sample.HelloWorld
+    method : sub:(II)I
+    option : RETURN_VALUE
+    thread : RMI TCP Connection(4)-192.168.200.1@18(true)
+GoodChild.study
+    class  : sample.HelloWorld
+    method : sub:(II)I
+    option : NAME_AND_DESC
+    thread : RMI TCP Connection(3)-192.168.200.1@17(true)
+```
+
+#### JConsole
+
+在下面的`jconsole`当中，`study`方法的参数值：
+
+- `p1`: `sample.HelloWorld`
+- `p2`: `add`
+- `p3`: `(II)I`
+- `p4`: `NAME_AND_DESC`
+
+![img](https://lsieun.github.io/assets/images/java/agent/jmx-instrumentation-good-child-study.png)
+
+## 9. ja-netfilter分析
+
+### 9.1 ja-netfilter分析
+
+#### Project
+
+[mini-jn](https://gitee.com/lsieun/mini-jn)
+
+```pseudocode
+mini-jn
+├─── pom.xml
+├─── src
+│    └─── main
+│         └─── java
+│              ├─── boot
+│              │    └─── filter
+│              │         ├─── BigIntegerFilter.java
+│              │         ├─── HttpClientFilter.java
+│              │         ├─── InetAddressFilter.java
+│              │         ├─── LinkedTreeMapFilter.java
+│              │         └─── VMManagementImplFilter.java
+│              ├─── jn
+│              │    ├─── agent
+│              │    │    └─── LoadTimeAgent.java
+│              │    ├─── asm
+│              │    │    ├─── MyClassNode.java
+│              │    │    └─── tree
+│              │    │         ├─── BigIntegerNode.java
+│              │    │         ├─── HttpClientNode.java
+│              │    │         ├─── InetAddressNode.java
+│              │    │         ├─── LinkedTreeMapNode.java
+│              │    │         └─── VMManagementImplNode.java
+│              │    ├─── cst
+│              │    │    └─── Const.java
+│              │    ├─── Main.java
+│              │    └─── utils
+│              │         ├─── ClassUtils.java
+│              │         ├─── FileUtils.java
+│              │         └─── TransformerUtils.java
+│              ├─── run
+│              │    └─── instrument
+│              │         └─── StaticInstrumentation.java
+│              └─── sample
+│                   └─── Program.java
+└─── target
+     ├─── boot-support.jar
+     └─── mini-jn.jar
+```
+
+```shell
+$ mvn clean package
+$ cd ./target/classes/
+$ jar -cvf boot-support.jar boot/
+$ mv boot-support.jar ../
+```
+
+### 9.2 测试
+
+#### VMManagementImpl
+
+```java
+package sample;
+
+import sun.management.VMManagement;
+
+import java.lang.management.ManagementFactory;
+import java.lang.management.RuntimeMXBean;
+import java.lang.reflect.Field;
+import java.util.List;
+
+public class Program {
+  public static void main(String[] args) throws Exception {
+    RuntimeMXBean runtime = ManagementFactory.getRuntimeMXBean();
+    Field jvm = runtime.getClass().getDeclaredField("jvm");
+    jvm.setAccessible(true);
+    VMManagement mgmt = (sun.management.VMManagement) jvm.get(runtime);
+    System.out.println(mgmt.getClass());
+
+    List<String> vmArguments = mgmt.getVmArguments();
+    for (String item : vmArguments) {
+      System.out.println(item);
+    }
+  }
+}
+```
+
+第一次运行：
+
+```shell
+$ java -cp ./target/classes/ -Duser.language=en -Duser.country=US -Djanf.debug=true sample.Program
+
+class sun.management.VMManagementImpl
+-Duser.language=en
+-Duser.country=US
+-Djanf.debug=true
+```
+
+第二次运行：
+
+```shell
+$ java -cp ./target/classes/ -Duser.language=en -Duser.country=US -Djanf.debug=true -javaagent:./target/mini-jn.jar sample.Program
+
+Premain-Class: jn.agent.LoadTimeAgent
+Can-Redefine-Classes: true
+Can-Retransform-Classes: true
+Can-Set-Native-Method-Prefix: true
+========= ========= =========
+class sun.management.VMManagementImpl
+-Duser.language=en
+-Duser.country=US
+```
+
+#### InetAddress
+
+```java
+package sample;
+
+import java.net.InetAddress;
+
+public class Program {
+  public static void main(String[] args) throws Exception {
+    getAllByName();
+    isReachable();
+  }
+
+  private static void getAllByName() {
+    try {
+      String host = "jetbrains.com";
+      InetAddress[] addresses = InetAddress.getAllByName(host);
+      System.out.println("host: " + host);
+      for (InetAddress item : addresses) {
+        System.out.println("    " + item);
+      }
+    } catch (Exception ignored) {
+    }
+  }
+
+  private static void isReachable() {
+    try {
+      String host = "jetbrains.com";
+      String ip = "13.33.141.66";
+      String[] array = ip.split("\\.");
+      byte[] ip_bytes = new byte[4];
+      for (int i = 0; i < 4; i++) {
+        ip_bytes[i] = (byte) (Integer.parseInt(array[i]) & 0xff);
+      }
+      InetAddress address = InetAddress.getByAddress(host, ip_bytes);
+      boolean reachable = address.isReachable(2000);
+      System.out.println(reachable);
+    } catch (Exception ignored) {
+    }
+  }
+}
+```
+
+第一次运行：
+
+```shell
+$ java -cp ./target/classes/ sample.Program
+host: jetbrains.com
+    jetbrains.com/13.33.141.66
+    jetbrains.com/13.33.141.72
+    jetbrains.com/13.33.141.29
+    jetbrains.com/13.33.141.64
+true
+```
+
+第二次运行：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/mini-jn.jar sample.Program
+Premain-Class: jn.agent.LoadTimeAgent
+Can-Redefine-Classes: true
+Can-Retransform-Classes: true
+Can-Set-Native-Method-Prefix: true
+========= ========= =========
+Reject dns query: jetbrains.com
+Reject dns reachable test: jetbrains.com
+false
+```
+
+#### HttpClient
+
+```java
+package sample;
+
+import java.net.URL;
+import java.net.URLConnection;
+
+public class Program {
+  public static void main(String[] args) throws Exception {
+    URL url = new URL("https://account.jetbrains.com/lservice/rpc/validateKey.action");
+    URLConnection urlConnection = url.openConnection();
+    urlConnection.connect();
+  }
+}
+```
+
+第一次运行：
+
+```shell
+$ java -cp ./target/classes/ sample.Program
+```
+
+第二次运行：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/mini-jn.jar sample.Program
+Premain-Class: jn.agent.LoadTimeAgent
+Can-Redefine-Classes: true
+Can-Retransform-Classes: true
+Can-Set-Native-Method-Prefix: true
+========= ========= =========
+Exception in thread "main" java.net.SocketTimeoutException: connect timed out
+        at boot.filter.HttpClientFilter.testURL(HttpClientFilter.java:15)
+        at sun.net.www.http.HttpClient.openServer(Unknown Source)
+```
+
+#### LinkedTreeMap
+
+```java
+package sample;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import jn.cst.Const;
+
+public class Program {
+  public static void main(String[] args) throws Exception {
+    Gson gson = new GsonBuilder().setPrettyPrinting().create();
+    Object obj = gson.fromJson(Const.LICENSE_JSON, Object.class);
+    System.out.println(gson.toJson(obj));
+  }
+}
+```
+
+第一次运行：
+
+```shell
+$ java -cp ./target/classes/\;./target/lib/gson-2.8.9.jar sample.Program
+{
+  "licenseId": "HELLOWORLD",
+  "licenseeName": "Jerry",
+  "products": [
+    {
+      "code": "II",
+      "fallbackDate": "2020-01-10",
+      "paidUpTo": "2021-01-09"
+    }
+  ],
+  "gracePeriodDays": 7.0,
+  "autoProlongated": false,
+  "isAutoProlongated": false
+}
+```
+
+第二次运行：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/mini-jn.jar sample.Program
+Premain-Class: jn.agent.LoadTimeAgent
+Can-Redefine-Classes: true
+Can-Retransform-Classes: true
+Can-Set-Native-Method-Prefix: true
+========= ========= =========
+{
+  "licenseId": "HELLOWORLD",
+  "licenseeName": "Tom",
+  "products": [
+    {
+      "code": "II",
+      "fallbackDate": "2020-01-10",
+      "paidUpTo": "2022-12-31"
+    }
+  ],
+  "gracePeriodDays": "30",
+  "autoProlongated": false,
+  "isAutoProlongated": false
+}
+```
+
+#### BigInteger
+
+```java
+package sample;
+
+import java.math.BigInteger;
+
+public class Program {
+  public static void main(String[] args) {
+    // a^b mod c
+    BigInteger a = new BigInteger("5");
+    BigInteger b = new BigInteger("3");
+    BigInteger c = new BigInteger("101");
+
+    BigInteger actualValue = a.modPow(b, c);
+    System.out.println(actualValue);
+
+    BigInteger expectedValue = new BigInteger("21");
+    System.out.println(expectedValue);
+  }
+}
+```
+
+第一次运行：
+
+```shell
+$ java -cp ./target/classes/ sample.Program
+24
+21
+```
+
+第二次运行：
+
+```shell
+$ java -cp ./target/classes/ -javaagent:./target/mini-jn.jar sample.Program
+Premain-Class: jn.agent.LoadTimeAgent
+Can-Redefine-Classes: true
+Can-Retransform-Classes: true
+Can-Set-Native-Method-Prefix: true
+========= ========= =========
+21
+21
+```
 
 # 其他相关资料
 
@@ -9064,4 +11272,6 @@ class state ───┤
 > [类加载器一篇足以 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/520521579) <= 推荐阅读
 >
 > [类加载时JVM在搞什么？JVM源码分析+OOP-KLASS模型分析_躺平程序猿的博客-CSDN博客](https://blog.csdn.net/yangxiaofei_java/article/details/118469738) <= 推荐阅读
+>
+> [jmx 是什么？应用场景是什么？ - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/376796753)
 
