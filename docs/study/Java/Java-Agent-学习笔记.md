@@ -11274,4 +11274,6 @@ Can-Set-Native-Method-Prefix: true
 > [类加载时JVM在搞什么？JVM源码分析+OOP-KLASS模型分析_躺平程序猿的博客-CSDN博客](https://blog.csdn.net/yangxiaofei_java/article/details/118469738) <= 推荐阅读
 >
 > [jmx 是什么？应用场景是什么？ - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/376796753)
+>
+> [什么是JMX？ - 简书 (jianshu.com)](https://www.jianshu.com/p/8c5133cab858)
 
