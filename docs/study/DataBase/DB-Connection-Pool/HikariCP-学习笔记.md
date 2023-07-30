@@ -26,39 +26,69 @@ Hikari连接池目前公认是性能最高的数据库连接池，同时也是Sp
 
 HikariCP的github有很全面的说明，这里摘录部分我个人觉得值得注意的点：
 
-### 1.2.1 适量的配置项
+### 1.2.1 HikariCP配置项
 
 HikariCP和其他连接池实现相同的是，提供了诸如最小连接数、最大连接数等配置项。不同的是，Hikari提供的可配置项整体不多，主要追求极简主义。
 
-下面列举一些常用配置项 (所有时间相关配置单位为ms毫秒)
+下面列举一些常用配置项 (所有时间相关配置单位为ms毫秒)，其他配置项详情见 [HikariCP github](https://github.com/brettwooldridge/HikariCP)
 
-| 配置项              | 说明                                                         | 默认值 |
-| ------------------- | ------------------------------------------------------------ | ------ |
-| dataSourceClassName | 数据源JDBC驱动类名，例如`com.mysql.cj.jdbc.Driver`           |        |
-| jdbcUrl             | 数据库连接url，例如`jdbc:mysql://127.0.0.1:3306/{databaseName}`。一些老的驱动实现要求必须填充JDBC驱动类名 |        |
-| username            | 数据库连接-用户名                                            |        |
-| password            | 数据库连接-密码                                              |        |
-| autoCommit          |                                                              | true   |
-|                     |                                                              |        |
-|                     |                                                              |        |
-|                     |                                                              |        |
-|                     |                                                              |        |
-|                     |                                                              |        |
-|                     |                                                              |        |
-|                     |                                                              |        |
-|                     |                                                              |        |
-|                     |                                                              |        |
-|                     |                                                              |        |
-|                     |                                                              |        |
-|                     |                                                              |        |
-|                     |                                                              |        |
-|                     |                                                              |        |
+| 配置项              | 说明                                                         | 默认值                  |
+| ------------------- | ------------------------------------------------------------ | ----------------------- |
+| dataSourceClassName | 数据源JDBC驱动类名，例如`com.mysql.cj.jdbc.Driver`           |                         |
+| jdbcUrl             | 数据库连接url，例如`jdbc:mysql://127.0.0.1:3306/{databaseName}`。一些老的驱动实现要求必须填充JDBC驱动类名 |                         |
+| username            | 数据库连接-用户名                                            |                         |
+| password            | 数据库连接-密码                                              |                         |
+| autoCommit          | 连接池提供的Conection是否是动提交                            | true                    |
+| connectionTimeout   | 连接池中的连接超时时间，不能小于250ms                        | 30000 (30 seconds)      |
+| idleTimeout         | 仅`maximumPoolSize`>`minimumIdle`时有效，当连接池中连接数超过`minimumIdle`时，连接池中多余的连接的允许闲置时间，超过则删除链接。设置为0时，多余的连接不会被删除 | 600000 (10 minutes)     |
+| keepaliveTime       | idle空闲连接的存活时间，值必须小于`maxLifetime`，允许的最小值为 30000ms (30 seconds) | 0(禁用)                 |
+| maxLifetime         | 连接池中连接的最长存活时间(工作中的连接不会过期)，值0表示无限存活(还需要看`idleTimeout`)，最小允许值30000ms(30秒)。 | 1800000(30分钟)         |
+| connectionTestQuery | 如果驱动driver支持JDBC4则建议不要设置该属性。该查询用于在从连接池中获取连接前，验证连接仍存活，比如`select 1` |                         |
+| minimumIdle         | 线程池中最小空闲连接数。当连接池中空闲连接数小于`minimumIdle`并且总连接数小于`maximumPoolSize`，HikariCP将尽可能添加额外的连接。为性能和应对峰值流量，建议不设置该值，而是允许HikariCP作为固定大小的连接池 | 与`maximumPoolSize`一致 |
+| maximumPoolSize     | 线程池最大连接数，包括空闲连接和工作中的连接。当连接数到达`maximumPoolSize`并且没有空闲连接时，`getConnection()`方法调用将阻塞最多`connectionTimeout`毫秒 | 10                      |
 
-### 1.2.2 
+### 1.2.2 Statement Cache
 
+**许多连接池(包括Apache DBCP、Vibur、c3p0等)都提供了PreparedStatement缓存，但HikariCP没有**。原因如下：
 
+1. **对池层而言，PreparedStatement Cache是Connection隔离的**，缓存牺牲部分资源。
 
-# 2. JDBC查询流程回顾
+   假设有250个经常执行的查询，而线程池有20个连接，那么相当于要求数据库保持5000个query execution plan，连接池必须缓存PreparedStatements和对应的对象图。
+
+2. 大多数JDBC driver支持配置Statement cache (包括PostgreSQL、Oracle、Derby、MySQL、DB2等)，JDBC驱动程序更能利用好数据库特性，**其实现的缓存大多能跨连接共享**。
+
+   如果使用JDBC驱动做缓存，250个常用语句在20个连接中共享缓存，只需要在内存中维护数据库的250个query execution plan。更智能的JDBC驱动甚至不会在内存中保留PreparedStatement对象，而是仅将新实例附加到现存的plan IDs上。
+
+3. **在连接池层面使用statement cache是一种anti-pattern(反模式)的做法，与在驱动层做缓存相比，在池层做缓存对性能更具负面影响**。
+
+### 1.2.3 Log Statement Text / Slow Query Logging
+
+与Statement caching类似，大多数数据库通过数据库驱动的属性来支持statement logging。这包括Oracle、MySQL、Derby、MSSQL等。
+
+### 1.2.4 HikariCP高性能的原因
+
+> [Down the Rabbit Hole · brettwooldridge/HikariCP Wiki (github.com)](https://github.com/brettwooldridge/HikariCP/wiki/Down-the-Rabbit-Hole)
+>
+> HikariCP有很多细节优化，一些优化本身只有毫秒级的收益，但诸多优化在数百万次调用中均摊收益，使得整体性能高。
+
+#### 1. JIT优化
+
++ 研究编译器的字节码输出和JIT汇编输出，尽可能限制key rountines在JIT的inline-threshold阈值内
++ 简化类的继承层次，shadowed member variables，消除强制转化(eliminated casts)
+
+#### 2. 细节优化
+
+##### ArrayList
+
+##### ConcurrentBag
+
+##### Scheduler quanta
+
+##### CPU Cache-line Invalidation
+
+# 2. JDBC
+
+## 2.1 JDBC查询流程回顾
 
 回顾一下如何通过JDBC进行数据库查询：
 
@@ -104,7 +134,7 @@ public static void main(String[] args) {
 }
 ```
 
-# 3. DataSource
+## 2.2 DataSource
 
 `DataSource`接口定义中，最重要的即`getConnection()`方法，用于创建和数据存储之间的连接。
 
@@ -121,8 +151,10 @@ public interface DataSource  extends CommonDataSource, Wrapper {
 }
 ```
 
-# 4. HikariDataSource
+# 3. HikariCP代码阅读
+
+## 3.1 HikariDataSource
 
 在传统JDBC查询流程中，数据库连接池由`DataSource`提供，所以我们着重关注HikariCP对`DataSource`的实现，即`HikariDataSource`类。
 
-`HikariDataSource`在`DataSource`实现中，属于第二种，即连接池实现，主要在"连接池"方向精进。
+`HikariDataSource`在`DataSource`实现中，个人理解属于第二种，即连接池实现，主要在"连接池"方向精进。
