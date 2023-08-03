@@ -171,11 +171,115 @@ ArrayList本身对于以上两个方法的实现是没有问题的，但ArrayLis
    }
    ```
 
+
+
 ##### ConcurrentBag
+
+> HikariCP在`HikariPool`类实现中使用`ConcurrentBag`实例维护线程池对象`PoolEntry`
+
+HikariCP借鉴C# .NET的`ConcurrentBag`，实现了用于存储自定义对象的无锁集合类`ConcurrentBag`。总体而言，`ConcurrentBag`具有以下特性：
+
++ A lock-free design
++ ThreadLocal caching
++ Queue-stealing
++ Direct hand-off optimizations
+
+总总特性使得`ConcurrentBag`能够做到高并发、低延迟、低频发生伪共享问题(minimized occurrences of [false-sharing](http://en.wikipedia.org/wiki/False_sharing))。
+
+
+
+##### Invocation: `invokevirtual` vs `invokestatic`
+
+为给`Connection`, `Statement`, `ResultSet`提供代理对象，HikariCP原本使用单例工厂维护静态成员变量`PROXY_FACTORY`来表示`ConnectionProxy`，于是就有诸多类似如下的方法实现：
+
+```java
+public final PreparedStatement prepareStatement(String sql, String[] columnNames) throws SQLException
+{
+  return PROXY_FACTORY.getProxyPreparedStatement(this, delegate.prepareStatement(sql, columnNames));
+}
+```
+
+使用原本这种单例工厂实现，对应的字节码如下：
+
+```java
+    public final java.sql.PreparedStatement prepareStatement(java.lang.String, java.lang.String[]) throws java.sql.SQLException;
+    flags: ACC_PRIVATE, ACC_FINAL
+    Code:
+      stack=5, locals=3, args_size=3
+         0: getstatic     #59                 // Field PROXY_FACTORY:Lcom/zaxxer/hikari/proxy/ProxyFactory;
+         3: aload_0
+         4: aload_0
+         5: getfield      #3                  // Field delegate:Ljava/sql/Connection;
+         8: aload_1
+         9: aload_2
+        10: invokeinterface #74,  3           // InterfaceMethod java/sql/Connection.prepareStatement:(Ljava/lang/String;[Ljava/lang/String;)Ljava/sql/PreparedStatement;
+        15: invokevirtual #69                 // Method com/zaxxer/hikari/proxy/ProxyFactory.getProxyPreparedStatement:(Lcom/zaxxer/hikari/proxy/ConnectionProxy;Ljava/sql/PreparedStatement;)Ljava/sql/PreparedStatement;
+        18: return
+```
+
+可以看到`0: getstatic     #59`将静态字段`PROXY_FACTORY`加载到栈中(operand stack)，后续`15: invokevirtual #69`调用了ProxyFactory实例上的`getProxyPreparedStatement()`方法。
+
+**HikariCP通过Javassist生成final类`JavassistProxyFactory`消除了原本的单例工厂**，Java代码变为如下：
+
+```java
+public final PreparedStatement prepareStatement(String sql, String[] columnNames) throws SQLException
+{
+  return ProxyFactory.getProxyPreparedStatement(this, delegate.prepareStatement(sql, columnNames));
+}
+```
+
+`getProxyPreparedStatement()`是`ProxyFactory`类中的`static`静态方法，对应的字节码如下：
+
+```java
+    private final java.sql.PreparedStatement prepareStatement(java.lang.String, java.lang.String[]) throws java.sql.SQLException;
+    flags: ACC_PRIVATE, ACC_FINAL
+    Code:
+      stack=4, locals=3, args_size=3
+         0: aload_0
+         1: aload_0
+         2: getfield      #3                  // Field delegate:Ljava/sql/Connection;
+         5: aload_1
+         6: aload_2
+         7: invokeinterface #72,  3           // InterfaceMethod java/sql/Connection.prepareStatement:(Ljava/lang/String;[Ljava/lang/String;)Ljava/sql/PreparedStatement;
+        12: invokestatic  #67                 // Method com/zaxxer/hikari/proxy/ProxyFactory.getProxyPreparedStatement:(Lcom/zaxxer/hikari/proxy/ConnectionProxy;Ljava/sql/PreparedStatement;)Ljava/sql/PreparedStatement;
+        15: areturn
+```
+
+这里有3个要点需要注意：
+
+1. 消除了`getstatic`调用
+2. 对`getProxyPreparedStatement()`方法的调用，由`invokevirtual`变为了`invokestatic`，后者更容易被JVM优化
+3. operand stack大小由5减小到了4，因为原本`invokevirtual`调用的是实例方法，operand stack的下标0位置存放的是实例的`this`引用对象，当`invokevirtual`调用实例方法`getProxyPreparedStatement()`时，会从operand stack弹出该`this`引用对象。改成静态方法调用，则省去了`this`隐式传递和栈弹出过程。
+
+<u>总之，这种优化使得实际字节码执行时省去了静态成员字段的访问(access)，推送(push，即this指针传递)，栈弹出(pop，从operand stack弹出this对象)的步骤，这保证了调用点(callsite)不会发生变化，更有益于JIT完成调用优化。</u>
+
+> [Lambda、MethodHandle、CallSite调用简单性能测试与调优 - 简书 (jianshu.com)](https://www.jianshu.com/p/8502643beffd) => 简洁明了，推荐阅读
+>
+> [反射调用简单性能测试与调优 - 简书 (jianshu.com)](https://www.jianshu.com/p/21d700f80654)
+>
+> [Java虚函数&&内联优化 - 简书 (jianshu.com)](https://www.jianshu.com/p/baaff02a8b5f)
+>
+> [Java中的方法内联_pedro7k的博客-CSDN博客](https://blog.csdn.net/pedro7k/article/details/122729561) => 提到 `invokevirtual`本身可能存在方法调用多态问题，所以JIT难以完成内联优化，这也可解释HikariCP将`invokevirtual`优化成`invokestatic`正是为了更好利用JIT优化。
+>
+> [Java五大invoke指令_invokespecial_醒过来摸鱼的博客-CSDN博客](https://blog.csdn.net/m0_66201040/article/details/122656927)
+>
+> [这波性能优化，太炸裂了！ - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/397845438) => 提到了`invokevirtual`优化成`invokestatic`的一些原因，虽然废话有点多，整体文章还是可以的
+>
+> [Java虚函数&&内联优化 - 简书 (jianshu.com)](https://www.jianshu.com/p/baaff02a8b5f)
+
+
 
 ##### Scheduler quanta
 
+
+
+
+
 ##### CPU Cache-line Invalidation
+
+
+
+
 
 # 2. JDBC
 
