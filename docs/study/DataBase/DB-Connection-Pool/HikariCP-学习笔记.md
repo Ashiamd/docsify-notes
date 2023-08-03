@@ -80,6 +80,97 @@ HikariCP和其他连接池实现相同的是，提供了诸如最小连接数、
 
 ##### ArrayList
 
+一个重要的性能优化即使用`FastList`替代`ArrayList`，用于`ProxyConnection`维护`Statement`实例。
+
++ `Statement`关闭时，它必须从集合中删除
++ `Connection`关闭时，需要遍历其维护的`Statement`集合，关闭所有打开(open)的`Statement`实例，最后清空(clear)集合
+
+上诉流程中，如果使用`ArrayList`来维护`Statement`集合，那么需要频繁调用的方法有如下2个：
+
+1. `public E get(int index)`
+
+   ```java
+   public E get(int index) {
+     // 1. 检查索引是否越界
+     Objects.checkIndex(index, size);
+     // 2. 索引没有越界，则返回ArrayList维护的数组对应index的元素
+     return elementData(index);
+   }
+   ```
+
+2. `public boolean remove(Object o)`
+
+   ```java
+   public boolean remove(Object o) {
+     final Object[] es = elementData;
+     final int size = this.size;
+     int i = 0;
+     found: {
+       // 1. 从头到尾遍历，找到需要删除的元素的索引值，找不到则提前返回false
+       if (o == null) {
+         for (; i < size; i++)
+           if (es[i] == null)
+             break found;
+       } else {
+         for (; i < size; i++)
+           if (o.equals(es[i]))
+             break found;
+       }
+       return false;
+     }
+     // 2. 删除对应索引值的元素
+     fastRemove(es, i);
+     return true;
+   }
+   
+   private void fastRemove(Object[] es, int i) {
+     modCount++;
+     final int newSize;
+     if ((newSize = size - 1) > i)
+       System.arraycopy(es, i + 1, es, i, newSize - i);
+     // 注意, 并不会直接回收原本ArrayList申请的数组空间, 这里只是把最后的位置填充为null值
+     es[size = newSize] = null;
+   }
+   ```
+
+ArrayList本身对于以上两个方法的实现是没有问题的，但ArrayList是无业务场景的通用实现。对于HikariCP数据库连接池而言，这里存在优化空间：
+
+1. HikariCP能保证内部集合维护`Statement`的正确性，所以不需要在`public E get(int index)`方法中额外进行"索引越界检查"
+2. JDBC编程的常见模式中，`Statement`往往在执行完查询后就直接关闭，且常常在List末尾新增打开的`Statement`。这种场景下，`public boolean remove(Object o)`原本的从头到尾遍历，显然不如"从尾到头遍历"来得合适。
+
+根据以上2点优化思路，HikariCP继承`ArrayList`实现了`FastList`，对`public E get(int index)`和`public boolean remove(Object o)`重写(Override)的实现如下：
+
+1. `public T get(int index)`
+
+   ```java
+   public T get(int index)
+   {
+     // 直接返回索引对应的元素，省去ArrayList的越界检查
+     return elementData[index];
+   }
+   ```
+
+2. `public boolean remove(Object element)`
+
+   ```java
+   public boolean remove(Object element)
+   {
+     // 和ArrayList遍历顺序相反，改成从尾向头遍历，更适合JDBC业务场景
+     for (int index = size - 1; index >= 0; index--) {
+       if (element == elementData[index]) {
+         final int numMoved = size - index - 1;
+         if (numMoved > 0) {
+           System.arraycopy(elementData, index + 1, elementData, index, numMoved);
+         }
+         elementData[--size] = null;
+         return true;
+       }
+     }
+   
+     return false;
+   }
+   ```
+
 ##### ConcurrentBag
 
 ##### Scheduler quanta
