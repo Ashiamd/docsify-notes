@@ -253,6 +253,14 @@ public final PreparedStatement prepareStatement(String sql, String[] columnNames
 
 <u>总之，这种优化使得实际字节码执行时省去了静态成员字段的访问(access)，推送(push，即this指针传递)，栈弹出(pop，从operand stack弹出this对象)的步骤，这保证了调用点(callsite)不会发生变化，更有益于JIT完成调用优化。</u>
 
+>  然而，实际基准测试中，其他连接池实现同样是JIT内联优化的受益者，光内联JIT优化这点而言，HikariCP并不见得优势更大。
+>
+> `¯\_(ツ)_/¯` Yeah, but still...
+>
+> In our benchmark, we are obviously running against a stub JDBC driver implementation, so the JIT is doing a lot of inlining.  However, the same inlining at the stub-level is occurring for other pools in the benchmark.  So, no inherent advantage to us.
+>
+> But inlining is certainly a big part of the equation even when real drivers are in use, which brings us to another topic...
+
 > [Lambda、MethodHandle、CallSite调用简单性能测试与调优 - 简书 (jianshu.com)](https://www.jianshu.com/p/8502643beffd) => 简洁明了，推荐阅读
 >
 > [反射调用简单性能测试与调优 - 简书 (jianshu.com)](https://www.jianshu.com/p/21d700f80654)
@@ -271,13 +279,25 @@ public final PreparedStatement prepareStatement(String sql, String[] columnNames
 
 ##### Scheduler quanta
 
+> [Operating Systems: CPU Scheduling (uic.edu)](https://www.cs.uic.edu/~jbell/CourseNotes/OperatingSystems/5_CPU_Scheduling.html)
 
+CPU分时调度：显然运行上百个线程时，除非有对应数量的CPU核数，否则只有一部分线程能够运行。操作系统在N个CPU核之间切换调度线程时，每个线程有一小段时间可运行，这段时间成为quantum。
+
+在运行大量线程时，需要尽可能利用好当前线程的时间片，尽量避免锁等机制使线程放弃执行，因为下次调度到该线程时，可能需要"较长"的时间。
+
+> 前面提到过`ConcurrentBag`使用无锁设计，意味着可尽量避免出让时间片，线程可以尽量工作，而不是等待调度浪费掉一部分时间。
 
 
 
 ##### CPU Cache-line Invalidation
 
+> CPU缓存行失效，和MESI缓存一致性协议有关
+>
+> [MESI协议_百度百科 (baidu.com)](https://baike.baidu.com/item/MESI协议/22742331?fr=ge_ala)
+>
+> [CPU缓存一致性协议MESI详解-电子发烧友网 (elecfans.com)](https://www.elecfans.com/d/1833080.html)
 
+CPU缓存行失效问题。即当前线程CPU资源被其他线程抢占后，下次轮到当前线程执行时，原本使用的数据可能已经不在CPU的L1 cache或L2 cache。并且你可能无法控制当前线程下一次运行时是使用哪个CPU核。
 
 
 
