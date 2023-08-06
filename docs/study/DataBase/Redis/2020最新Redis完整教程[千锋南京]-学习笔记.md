@@ -67,6 +67,18 @@
 >
 > 
 >
+> pipeline
+>
+> [Redis精通系列——Pipeline（管道）_redis管道技术pipeline_李子捌的博客-CSDN博客](https://blog.csdn.net/qq_41125219/article/details/120298689)
+>
+> [(15)redis Pipeline详解 - 简书 (jianshu.com)](https://www.jianshu.com/p/f66e9584154f)
+>
+> [Jedispipeline：Redis管道技术的利器_笔记大全_设计学院 (python100.com)](https://www.python100.com/html/109344.html)
+>
+> [Redis 管道技术——Pipeline - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/462965659?utm_id=0)
+>
+> 
+>
 > 消息队列/发布订阅模式
 >
 > [redis实现消息队列&发布/订阅模式使用](https://www.cnblogs.com/qlqwjy/p/9763754.html)

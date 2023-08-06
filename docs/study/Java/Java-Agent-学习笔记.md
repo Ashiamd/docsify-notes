@@ -15,6 +15,12 @@
 >
 > Java语言规范和JVM规范-官方文档：[Java SE Specifications (oracle.com)](https://docs.oracle.com/javase/specs/index.html)
 
+---
+
+> 其他不错的网文/视频汇总
+>
+> [【java】JavaAgent介绍_哔哩哔哩_bilibili](https://www.bilibili.com/video/BV1fN411h7eD/?spm_id_from=444.41.list.card_archive.click&vd_source=ba4d176271299cb334816d3c4cbc885f)
+
 ## 0. Java Agent通灵之术
 
 > [Java Agent通灵之术-lsieun-lsieun-哔哩哔哩视频 (bilibili.com)](https://www.bilibili.com/list/1321054247?bvid=BV1R34y1b7U7&oid=809582144)

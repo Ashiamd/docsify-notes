@@ -305,6 +305,8 @@ CPU缓存行失效问题。即当前线程CPU资源被其他线程抢占后，�
 
 ## 2.1 JDBC查询流程回顾
 
+> [HikariCP Connection Pooling Example - Examples Java Code Geeks - 2023](https://examples.javacodegeeks.com/java-development/enterprise-java/hikaricp/hikaricp-connection-pooling-example/)
+
 回顾一下如何通过JDBC进行数据库查询：
 
 1. 创建`DataSource`对象
@@ -366,10 +368,134 @@ public interface DataSource  extends CommonDataSource, Wrapper {
 }
 ```
 
+> `HikariDataSource`在`DataSource`实现中，个人理解属于第二种，即连接池实现，主要在"连接池"方向精进。
+
 # 3. HikariCP代码阅读
+
+> 列一些看着不是很相关，但是有些知识点涉及的文章/视频，仅个人学习使用
+>
+> [服务监控 | 彻底搞懂Dropwizard Metrics一篇就够了 - 时钟在说话 - 博客园 (cnblogs.com)](https://www.cnblogs.com/mindforward/p/15792132.html)
+>
+> [红队攻击手特训营-JNDI注入漏洞挖掘_哔哩哔哩_bilibili](https://www.bilibili.com/video/BV1Ne4y1o7ch/?spm_id_from=333.337.search-card.all.click&vd_source=ba4d176271299cb334816d3c4cbc885f)
 
 ## 3.1 HikariDataSource
 
-在传统JDBC查询流程中，数据库连接池由`DataSource`提供，所以我们着重关注HikariCP对`DataSource`的实现，即`HikariDataSource`类。
+在传统JDBC查询流程中，数据库连接池需要通过`DataSource`访问，所以我们着重关注HikariCP对`DataSource`的实现，即`HikariDataSource`类。
 
-`HikariDataSource`在`DataSource`实现中，个人理解属于第二种，即连接池实现，主要在"连接池"方向精进。
+> 下面对源代码进行缩减，只保留关注的部分
+
+从前面JDBC查询流程，和`DataSource`相关的方法调用主要有：
+
++ 构造函数（业务使用时，一般同一个数据库对应的DataSource以单例维护）
++ `getConnection()` => 实际调用`HikariPool`连接池实例的`getConnection()`方法
++ `close()` => 内部需要关闭`HikariPool`连接池对象
+
+```java
+/**
+ * The HikariCP pooled DataSource.
+ *
+ * @author Brett Wooldridge
+ */
+public class HikariDataSource extends HikariConfig implements DataSource, Closeable {
+
+  // 数据库连接DataSource是否已经整体关闭
+  private final AtomicBoolean isShutdown = new AtomicBoolean();
+  // 
+  private final HikariPool fastPathPool;
+  // 
+  private volatile HikariPool pool;
+  // ...
+
+  // 官方建议使用有参构造函数。
+  // 当使用无参构造函数构造连接池，第一次调用getConnection()会有懒加载的配置初始化校验，使得第一次连接响应更慢
+  public HikariDataSource()
+  {
+    // 连接池配置-填充默认参数
+    super();
+    fastPathPool = null;
+  }
+
+  // 有参构造函数，提前做好配置参数校验
+  public HikariDataSource(HikariConfig configuration)
+  {
+    // 1. 连接池配置参数校验
+    configuration.validate();
+    // 2. configuration参数对应的配置copy到当前HikariDataSource实例
+    configuration.copyState(this);
+    // 3. 构造连接池对象 (先不关注HikariPool内部细节)
+    pool = fastPathPool = new HikariPool(this);
+  }
+	
+  // 获取数据库 连接对象
+  public Connection getConnection() throws SQLException
+  {
+    // 1. isShutdown = true, 则不再提供数据库连接对象
+    if (isClosed()) {
+      throw new SQLException("HikariDataSource " + this + " has been closed.");
+    }
+		
+    // 2. 如果使用有参构造函数，则这里不为null，直接返回 连接池对象
+    if (fastPathPool != null) {
+      return fastPathPool.getConnection();
+    }
+
+    // 3. 如果使用无参构造函数，则连接池对象pool / fastPathPool 未初始化，需要临时进行配置校验和pool池对象初始化
+    // See http://en.wikipedia.org/wiki/Double-checked_locking#Usage_in_Java
+    HikariPool result = pool;
+    if (result == null) {
+      synchronized (this) {
+        result = pool;
+        if (result == null) {
+          // 配置参数校验(非关注重点)
+          validate();
+          LOGGER.info("{} - Started.", getPoolName());
+          // 保证 pool 单例 (HikariPool内细节暂不关注)
+          // 注意这里没有再初始化 fastPathPool，换言之无参构造方法后续都直接靠pool对象获取连接
+          pool = result = new HikariPool(this);
+        }
+      }
+    }
+		// 通过连接池 获取 连接对象 (后续再关注HikariPool的getConnection()方法)
+    return result.getConnection();
+  }
+
+  // 标记DataSource关闭(下次getConection()直接抛出异常), 关闭连接池 HikariPool
+  public void close()
+  {
+    // 第一个执行的，返回旧值为false; 重复执行则直接return
+    if (isShutdown.getAndSet(true)) {
+      return;
+    }
+		// 释放连接池资源
+    HikariPool p = pool;
+    if (p != null) {
+      try {
+        // 关闭连接池 (关闭所有空闲or工作中的连接) , fastPathPool 只有在有参构造函数下有值，有值时和pool指向同一个实例
+        p.shutdown();
+      }
+      catch (InterruptedException e) {
+        LOGGER.warn("Interrupted during closing", e);
+        Thread.currentThread().interrupt();
+      }
+    }
+  }
+}
+```
+
+## 3.2 HikariPool
+
+具体提供连接池的类，即`HikariPool`，其构造函数有且仅有一个有参构造函数。
+
+```java
+public class HikariPool extends PoolBase implements HikariPoolMXBean, IBagStateListener{
+  //...
+  private final ConcurrentBag<PoolEntry> connectionBag;
+  private final AtomicInteger totalConnections;
+  private final SuspendResumeLock suspendResumeLock;
+  
+  public HikariPool(final HikariConfig config) {
+    
+  }
+}
+```
+
