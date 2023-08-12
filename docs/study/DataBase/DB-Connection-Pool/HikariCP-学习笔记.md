@@ -372,6 +372,8 @@ public interface DataSource  extends CommonDataSource, Wrapper {
 
 # 3. HikariCP代码阅读
 
+> 下面看代码，会把我个人觉得不算重点的代码剔除，**重点只关注和JDBC流程相关的代码实现**（不关注监控/健康检查等代码实现）
+>
 > 列一些看着不是很相关，但是有些知识点涉及的文章/视频，仅个人学习使用
 >
 > [服务监控 | 彻底搞懂Dropwizard Metrics一篇就够了 - 时钟在说话 - 博客园 (cnblogs.com)](https://www.cnblogs.com/mindforward/p/15792132.html)
@@ -380,15 +382,17 @@ public interface DataSource  extends CommonDataSource, Wrapper {
 
 ## 3.1 HikariDataSource
 
-在传统JDBC查询流程中，数据库连接池需要通过`DataSource`访问，所以我们着重关注HikariCP对`DataSource`的实现，即`HikariDataSource`类。
+### 代码阅读
 
-> 下面对源代码进行缩减，只保留关注的部分
+在传统JDBC查询流程中，数据库连接池需要通过`DataSource`访问，所以我们着重关注HikariCP对`DataSource`的实现，即`HikariDataSource`类。
 
 从前面JDBC查询流程，和`DataSource`相关的方法调用主要有：
 
-+ 构造函数（业务使用时，一般同一个数据库对应的DataSource以单例维护）
++ `HikariDataSource()`/`HikariDataSource(HikariConfig configuration)` => 构造函数（业务使用时，一般同一个数据库对应的DataSource以单例维护）
 + `getConnection()` => 实际调用`HikariPool`连接池实例的`getConnection()`方法
 + `close()` => 内部需要关闭`HikariPool`连接池对象
+
+*可以看出来`HikariDataSource`自身和JDBC查询流程关联不多，主要工作还是由`HikariPool`完成。*
 
 ```java
 /**
@@ -400,9 +404,9 @@ public class HikariDataSource extends HikariConfig implements DataSource, Closea
 
   // 数据库连接DataSource是否已经整体关闭
   private final AtomicBoolean isShutdown = new AtomicBoolean();
-  // 
+  // 连接池对象(有参构造函数使用, fast在于少去一些额外判断)
   private final HikariPool fastPathPool;
-  // 
+  // 连接池对象(有参构造函数初始化,无参构造函数在第一次getConnection()时初始化)
   private volatile HikariPool pool;
   // ...
 
@@ -482,20 +486,240 @@ public class HikariDataSource extends HikariConfig implements DataSource, Closea
 }
 ```
 
+### 代码小结
+
+1. `HikariDataSource()`/`HikariDataSource(HikariConfig configuration)`
+
+   构造函数主要工作即初始化连接池配置，官方推荐使用有参构造函数。
+
+   + 无参构造函数：使用父类`HikariConfig`默认配置项，`fastPathPool`为null，在第一次`getConnection()`时加锁进行配置校验和初始化`pool`
+
+   + 有参构造函数：官方推荐使用，使用参数传入的配置项，预先做配置项校验，以及对`fastPathPool`和`pool`初始化
+
+2. `getConnection()`
+
+   `fastPathPool`不为null则直接从池中获取连接对象`Conneciton`，否则从`pool`中获取连接。*若使用无参构造函数，则第一次调用`getConnection()`时才对配置项进行参数校验，以及初始化`pool`。*
+
+3. `close()` 
+
+   调用`pool`的`shutdown()`方法关闭线程池。*这里`fastPathPool`和`pool`指向的是同一个实例，所以不需要额外再调用`fastPathPool`的`shutdown()`方法。*
+
 ## 3.2 HikariPool
 
-具体提供连接池的类，即`HikariPool`，其构造函数有且仅有一个有参构造函数。
+> [Semaphore在Java并发编程中的使用和比较技术 (baidu.com)](https://baijiahao.baidu.com/s?id=1767470463455689974&wfr=spider&for=pc)
+>
+> - Semaphore允许多个线程同时访问资源，而Lock一次只允许一个线程访问资源。
+> - Semaphore是基于计数的机制，可以控制同时访问的线程数量，而Lock只是简单的互斥锁。 根据具体场景，选择Semaphore还是Lock取决于对资源的访问控制需求。
+> - Semaphore主要用于控制对资源的访问，限制并发线程的数量。
+> - Condition主要用于线程之间的协调，可以通过`await()`和`signal()`等方法实现线程的等待和唤醒。
+>
+> Semaphore的适用场景： Semaphore在以下场景中特别有用：
+>
+> - **控制对有限资源的并发访问，如数据库连接池、线程池等**。
+> - 限制同时执行某个操作的线程数量，如限流和限制并发请求等。
+> - 在生产者-消费者模式中平衡生产者和消费者之间的速度差异。
+
+### 代码阅读
+
+具体提供连接池的类，即`HikariPool`，其构造函数有且仅有一个有参构造函数。这里先只关注被`HikariDataSource`调用的部分代码。
+
++ `HikariPool(final HikariConfig config)` => 构造函数，根据默认/指定配置项初始化连接池
++ `getConnection()` => 从connectionBag中获取池连接对象PoolEntry
++ `shutdown()` => 关闭连接池，释放相关资源
 
 ```java
 public class HikariPool extends PoolBase implements HikariPoolMXBean, IBagStateListener{
-  //...
+  // 维护池对象的并发集合(作用上类似LinkedBlockingQueue, 但这里贴合池场景实现, 性能更好), 一个PoolEntry内维护一个Connection
   private final ConcurrentBag<PoolEntry> connectionBag;
+  // 当前池中的总连接数(Connection数)
   private final AtomicInteger totalConnections;
+  // 锁, 用来并发时互斥地 suspend/resume pool (内部通过Semaphore信号量实现), 默认使用FAUX_LOCK, 所有方法为空实现
   private final SuspendResumeLock suspendResumeLock;
-  
-  public HikariPool(final HikariConfig config) {
-    
+  // 负责创建Connection的 ThreadPoolExecutor
+  private final ThreadPoolExecutor addConnectionExecutor;
+  // 负责关闭Connection的 ThreadPoolExecutor
+  private final ThreadPoolExecutor closeConnectionExecutor;
+  // 负责定时清理空闲连接的ScheduledThreadPoolExecutor
+  private final ScheduledThreadPoolExecutor houseKeepingExecutorService;
+  // (非重点) 负责检查Connection泄漏的RunnablO(使用 houseKeepingExecutorService 运行)
+  private final ProxyLeakTask leakTask;
+
+  public HikariPool(final HikariConfig config)
+  {
+    // 1. 进行配置信息(事务配置,连接通信配置,池基础信息配置)初始化赋值 + 设置DataSource信息(jdbcUrl连接信息, 数据库连接驱动信息)
+    super(config);
+
+    // 2. 初始化池操作涉及的对象信息
+    this.connectionBag = new ConcurrentBag<>(this);
+    this.totalConnections = new AtomicInteger();
+    this.suspendResumeLock = config.isAllowPoolSuspension() ? new SuspendResumeLock() : SuspendResumeLock.FAUX_LOCK;
+
+    // 3. 启动一个Connection但又马上close(), 目的是检查pool的配置是否正常, 是否后续能创建有效的Connection
+    checkFailFast();
+
+    // 4. 初始化负责新建/关闭Connection的ThreadPoolExecutor
+    ThreadFactory threadFactory = config.getThreadFactory();
+    this.addConnectionExecutor = createThreadPoolExecutor(config.getMaximumPoolSize(), poolName + " connection adder", threadFactory, new ThreadPoolExecutor.DiscardPolicy());
+    this.closeConnectionExecutor = createThreadPoolExecutor(config.getMaximumPoolSize(), poolName + " connection closer", threadFactory, new ThreadPoolExecutor.CallerRunsPolicy());
+
+    // 5. 初始化负责定时清理空闲连接的ScheduledThreadPoolExecutor
+    if (config.getScheduledExecutorService() == null) {
+      threadFactory = threadFactory != null ? threadFactory : new DefaultThreadFactory(poolName + " housekeeper", true);
+      this.houseKeepingExecutorService = new ScheduledThreadPoolExecutor(1, threadFactory, new ThreadPoolExecutor.DiscardPolicy());
+      this.houseKeepingExecutorService.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+      this.houseKeepingExecutorService.setRemoveOnCancelPolicy(true);
+    }
+    else {
+      this.houseKeepingExecutorService = config.getScheduledExecutorService();
+    }
+
+    // 6. 启动定时任务, 30ms执行一次(找出STATE_NOT_IN_USE状态的PoolEntry集合,若数量超过设置的最小空闲连接数minIdle,按照最后一次访问时间对空闲PoolEntry升序排序, 从头遍历connectionBag尝试删除"可回收的数量"个poolEntry)
+    // “可回收的数量” = 当前空闲连接数 - 最小空闲连接数(配置项), >0 则进行后续的多余空闲连接回收
+    // 具体回收方式即改变PoolEntry的状态从STATE_NOT_IN_USE到STATE_RESERVED(这样后续可被从connectionBag中remove())
+    // 异步关闭 PoolEntry 对应的 Connection连接(假设网络不畅, 最长通信超时为15s, 为了尽可能保证和数据库通信完成真正的连接关闭)
+    // 最后内部执行fillPool(),尝试将Pool中连接数保持到最小空闲连接数(配置项), 如果本来已经足额则不执行任何逻辑
+    this.houseKeepingExecutorService.scheduleWithFixedDelay(new HouseKeeper(), 0L, HOUSEKEEPING_PERIOD_MS, MILLISECONDS);
+
+    // 7. (非重点) 初始化用于检测Connection泄漏的Runnable
+    this.leakTask = new ProxyLeakTask(config.getLeakDetectionThreshold(), houseKeepingExecutorService);
+  }
+
+  public final Connection getConnection() throws SQLException
+  {
+    return getConnection(connectionTimeout);
+  }
+
+  /**
+    * Get a connection from the pool, or timeout after the specified number of milliseconds.
+    *
+    * @param hardTimeout the maximum time to wait for a connection from the pool
+    * @return a java.sql.Connection instance
+    * @throws SQLException thrown if a timeout occurs trying to obtain a connection
+    */
+  public final Connection getConnection(final long hardTimeout) throws SQLException
+  {
+    // 1. 尝试加锁 (HikariConfig默认配置中isAllowPoolSuspension为false, 即acquire()方法为空实现, 避免性能损耗)
+    // 官方本身并不建议设置isAllowPoolSuspension为true
+    suspendResumeLock.acquire();
+    final long startTime = clockSource.currentTime();
+
+    try {
+      // 连接超时配置时间(ms)
+      long timeout = hardTimeout;
+      do {
+        // 2. 在连接超时之前尝试从 connectionBag(存储PoolEntry的对象) 中获取一个PoolEntry池对象(对应一个Connection)
+        // 内部将 PoolEntry的状态从 STATE_NOT_IN_USE 转为 STATE_IN_USE
+        final PoolEntry poolEntry = connectionBag.borrow(timeout, MILLISECONDS);
+        if (poolEntry == null) {
+          break; // We timed out... break and throw exception
+        }
+
+        final long now = clockSource.currentTime();
+        // 3. 如果 (获取到的PoolEntry已被标记evicted) or (上一次访问时间超过ALIVE_BYPASS_WINDOW_MS) or (连接已关闭) 则关闭连接并移除该PoolEntry, 然后下次do-while循环继续尝试从池中获取PoolEntry
+      	// 否则使用connectionBag中获取到的PoolEntry建立新的Connection并返回
+        if (poolEntry.isMarkedEvicted() || (clockSource.elapsedMillis(poolEntry.lastAccessed, now) > ALIVE_BYPASS_WINDOW_MS && !isConnectionAlive(poolEntry.connection))) {
+          closeConnection(poolEntry, "(connection is evicted or dead)"); // Throw away the dead connection (passed max age or failed alive test)
+          timeout = hardTimeout - clockSource.elapsedMillis(startTime);
+        }
+        else {
+          return poolEntry.createProxyConnection(leakTask.schedule(poolEntry), now);
+        }
+      } while (timeout > 0L);
+    }
+    catch (InterruptedException e) {
+      throw new SQLException(poolName + " - Interrupted during connection acquisition", e);
+    }
+    finally {
+      // 4. 尝试释放锁(默认isAllowPoolSuspension为false, 即这里方法为空实现)
+      suspendResumeLock.release();
+    }
+ 		// ... 忽略由于连接超时抛出异常信息的代码逻辑
+  }
+
+  /**
+    * Shutdown the pool, closing all idle connections and aborting or closing
+    * active connections.
+    *
+    * @throws InterruptedException thrown if the thread is interrupted during shutdown
+    */
+  public final synchronized void shutdown() throws InterruptedException
+  {
+    try {
+      // 1. 改变连接池状态为 POOL_SHUTDOWN
+      poolState = POOL_SHUTDOWN;
+			
+      // 2. 遍历connectionBag中的PoolEntry, 尝试将PoolEntry状态STATE_NOT_IN_USE改为STATE_RESERVED, 成功则继续关闭连接Connection, 移除PoolEntry
+      // 如果尝试修改状态失败, 则先将PoolEntry标记为 evicted (前面getConnection()方法实现中可以知道标记evited的PoolEntry不会被返回给用户)
+      softEvictConnections();
+
+      // 3. 关闭负责创建Connection的 ThreadPoolExecutor
+      addConnectionExecutor.shutdown();
+      addConnectionExecutor.awaitTermination(5L, SECONDS);
+      // 4. 关闭负责定时清理空闲连接的ScheduledThreadPoolExecutor
+      if (config.getScheduledExecutorService() == null && houseKeepingExecutorService != null) {
+        houseKeepingExecutorService.shutdown();
+        houseKeepingExecutorService.awaitTermination(5L, SECONDS);
+      }
+			
+      // 5. 标记 connectionBag 关闭, 不允许再添加新的PoolEntry
+      connectionBag.close();
+
+      // 6. 5s内循环遍历池中的PoolEntry, 尝试关闭所有工作中的PoolEntry(关闭和数据库的物理连接, 回收相关资源), 以及关闭所有空闲连接
+      final ExecutorService assassinExecutor = createThreadPoolExecutor(config.getMaximumPoolSize(), poolName + " connection assassinator", config.getThreadFactory(), new ThreadPoolExecutor.CallerRunsPolicy());
+      try {
+        final long start = clockSource.currentTime();
+        do {
+          abortActiveConnections(assassinExecutor);
+          softEvictConnections();
+        } while (getTotalConnections() > 0 && clockSource.elapsedMillis(start) < SECONDS.toMillis(5));
+      }
+      finally {
+        // 7. 其余Executor关闭, 不再展开说明
+        assassinExecutor.shutdown();
+        assassinExecutor.awaitTermination(5L, SECONDS);
+      }
+
+      shutdownNetworkTimeoutExecutor();
+      closeConnectionExecutor.shutdown();
+      closeConnectionExecutor.awaitTermination(5L, SECONDS);
+    }
+    finally {
+      logPoolState("After closing ");
+      unregisterMBeans();
+      metricsTracker.close();
+      LOGGER.info("{} - Closed.", poolName);
+    }
   }
 }
 ```
 
+### 代码小结
+
+1. `HikariPool(final HikariConfig config)` 
+
+   + 根据配置初始化连接池对象，使用`ConcurrentBag<PoolEntry>`维护池对象`PoolEntry`集合(`PoolEntry`和`Connection`一对一)。
+
+   + 新建/关闭/清理`PoolEntry`都有专门的`ThreadPoolExecutor`，其中用`ScheduledThreadPoolExecutor`定时清理多余的空闲`PoolEntry`。
+
+2. `getConnection()`
+
+   超时时间内从`ConcurrentBag<PoolEntry>`实例connectionBag中循环尝试获取空闲可用的`PoolEntry`，超时抛出异常。
+
+   循环中即使获取到空闲可用的`PoolEntry`，若遇到下述3种情况之一则尝试关闭`PoolEntry`，继续下一次循环：
+
+   + 获取到的PoolEntry已被标记evicted
+   + 上一次访问时间超过ALIVE_BYPASS_WINDOW_MS
+   + 连接已关闭
+
+   通过`ProxyFactory`代理，给`PoolEntry`关联新的`Connection`实例，并返回`Connection`实例。
+
+3. `shutdown()`
+
+   主要做的事情可概述为以下步骤：
+
+   1. 确保不能创建新的`PoolEntry`
+   2. 关闭不涉及"释放池资源"工作的ThreadPoolExecutor
+   3. 5s内循环遍历`PoolEntry`，确保释放完物理连接资源
+   4. 关闭参与"释放池资源"工作的ThreadPoolExecutor
+
+## 3.3 
