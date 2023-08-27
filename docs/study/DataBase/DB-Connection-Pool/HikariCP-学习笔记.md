@@ -722,4 +722,359 @@ public class HikariPool extends PoolBase implements HikariPoolMXBean, IBagStateL
    3. 5s内循环遍历`PoolEntry`，确保释放完物理连接资源
    4. 关闭参与"释放池资源"工作的ThreadPoolExecutor
 
-## 3.3 
+## 3.3 ConcurrentBag
+
+> [CopyOnWriteArrayList详解_猿猿满满的博客-CSDN博客](https://blog.csdn.net/Tom_sensen/article/details/112274464)
+>
+> CopyOnWriteArrayList add(E) 和remove(int index)都是对新的数组进行修改和新增。所以在多线程操作时不会出现java.util.ConcurrentModificationException错误。
+> 所以最后得出结论：CopyOnWriteArrayList适合使用在读操作远远大于写操作的场景里，比如缓存。发生修改时候做copy，新老版本分离，保证读的高性能，适用于以读为主的情况。
+>
+> [用 AtomicLong 还是 LongAdder 呢？ (baidu.com)](https://baijiahao.baidu.com/s?id=1770382518304478892&wfr=spider&for=pc)
+>
+> 如果我们的场景仅仅是需要用到加和减操作的话，那么可以直接使用更高效的 LongAdder，但如果我们需要利用 CAS 比如 compareAndSet 等操作的话，就需要使用 AtomicLong 来完成。
+>
+> [AQS源码浅析(4)——API - 简书 (jianshu.com)](https://www.jianshu.com/p/71a37f7a575b)
+>
+> `AbstractQueuedLongSynchronizer`的加锁方法讲解
+>
+> + `tryAcquireShared`共享模式获取锁
+> + `acquireSharedInterruptibly`在tryAcquireShared基础上若遇到中断信号则抛出异常
+> + `tryAcquireSharedNanos`在`acquireSharedInterruptibly`基础上，若头一次加锁失败后续排队超时则抛出异常
+
+### 代码阅读
+
+`HikariPool`中使用`ConcurrentBag`数据结构来维护`PoolEntry`对象(`PoolEntry`类定义中含有1个`Connection`成员变量)。连接池连接的增加、删除等操作实际都是对`ConcurrentBag`实例connectionBag进行的，这里阅读相关方法实现。
+
++ `ConcurrentBag(final IBagStateListener listener)` => 构造函数
++ `borrow(long timeout, final TimeUnit timeUnit)` => 规定时限内从ConcurrentBag内获取连接池对象（先从ThreadLocal本地缓存中尝试获取，没有再从所有线程共享的实际维护连接池对象集合的sharedList中尝试获取连接池对象，再获取不到则返回null）
++ `close()` => 关闭 ConcurrentBag，实现即修改closed标志为true，之后不允许新增连接池对象到ConcurrentBag中
++ `requite(final T bagEntry)` => 被`HikariPool`的`releaseConnection(...)`内部调用，回收连接池对象到ConcurrentBag中，通知任意一个队列中等待连接池对象的线程去尝试获取连接池对象
++ `remove(final T bagEntry)` => 移除连接池对象（当且仅当该连接池对象通过`borrow()`或`reserve()`获取，才能被移除），在`HikariPool`关闭连接或关闭整个连接池时会调用到该方法
++ `add(final T bagEntry)` => 向shareList添加连接池对象（实际调用时在`HikariPool`的addConnectionExecutor线程池中作为线程任务异步执行）
++ `values()` / `values(final int state)` => 获取(指定状态)的线程池对象集合sharedList快照副本
++ `reserve(final T bagEntry)` => 作用即修改状态为STATE_RESERVED，避免连接池对象状态为STATE_NOT_IN_USE而被`borrow()`返回给线程使用，主要用于在`HikariPool`定时清理超时的空闲连接池对象
++ `size()` => 返回sharedList的大小（即连接池对象总数）
++ `getCount(final int state)` => 获取指定状态的连接池对象数量
+
+```java
+public class ConcurrentBag<T extends IConcurrentBagEntry> implements AutoCloseable {
+  // 同步器，用于支持连接池的并发操作
+  private final QueuedSequenceSynchronizer synchronizer;
+  // 整体共享的连接池对象List(每个线程实际都是往sharedList里新建连接池对象，而threadList是每个线程对各自创建的连接池的缓存)
+  private final CopyOnWriteArrayList<T> sharedList;
+  // true则等borrow时临时初始化threadList内的List,反之构造方法内初始化List<Object>
+  // 为true时，ThreadLocal内的 连接池对象以弱引用的形式返回
+  private final boolean weakThreadLocals;
+
+  // 负责当前线程内缓存 ConcurrentBag 存储的线程池连接对象(尽量减少sharedList的并发竞争)
+  private final ThreadLocal<List<Object>> threadList;
+  // 当有线程请求获取连接池对象时，listener的addBagItem()方法可能被调用，用于补充连接池对象到sharedList中
+  private final IBagStateListener listener;
+  // 等待获取线程池连接对象的 线程数
+  private final AtomicInteger waiters;
+  // ConcurrentBag 是否关闭，调用close()后关闭，不再允许新增连接
+  private volatile boolean closed;
+
+
+  /**
+    * Construct a ConcurrentBag with the specified listener.
+    *
+    * @param listener the IBagStateListener to attach to this bag
+    */
+  public ConcurrentBag(final IBagStateListener listener)
+  {
+    // 1. 初始化成员变量
+    this.listener = listener;
+    // 根据系统变量 System.getProperty("com.zaxxer.hikari.useWeakReferences") 判断是否 true
+    // 或者如果使用了自定义的类加载器加载当前类，那么也返回true
+    this.weakThreadLocals = useWeakThreadLocals();
+
+    this.waiters = new AtomicInteger();
+    this.sharedList = new CopyOnWriteArrayList<>();
+    this.synchronizer = new QueuedSequenceSynchronizer();
+    // 2. 不管启用与否，初始化threadList
+    if (weakThreadLocals) {
+      // 注意这里初始化时并没有设置内部的List数据对象
+      this.threadList = new ThreadLocal<>();
+    }
+    else {
+      this.threadList = new ThreadLocal<List<Object>>() {
+        @Override
+        protected List<Object> initialValue()
+        {
+          return new FastList<>(IConcurrentBagEntry.class, 16);
+        }
+      };
+    }
+  }
+
+  /**
+    * The method will borrow a BagEntry from the bag, blocking for the
+    * specified timeout if none are available.
+    *
+    * @param timeout how long to wait before giving up, in units of unit
+    * @param timeUnit a <code>TimeUnit</code> determining how to interpret the timeout parameter
+    * @return a borrowed instance from the bag or null if a timeout occurs
+    * @throws InterruptedException if interrupted while waiting
+    */
+  public T borrow(long timeout, final TimeUnit timeUnit) throws InterruptedException
+  {
+
+    // 1. 从线程ThreadLocal获取List, 之后尝试直接取线程池连接对象(减少和数据库直接的交互)
+    List<Object> list = threadList.get();
+    // 2. 如果 weakThreadLocals 为true并且其他线程并发执行到这里时还没有初始化list数据
+    if (weakThreadLocals && list == null) {
+      list = new ArrayList<>(16);
+      threadList.set(list);
+    }
+
+    // 3. 循环尝试从 ThreadLocal 的List中获取有效的连接池对象引用
+    for (int i = list.size() - 1; i >= 0; i--) {
+      final Object entry = list.remove(i);
+      @SuppressWarnings("unchecked")
+      // 为true则以弱引用的形式返回连接池对象引用
+      final T bagEntry = weakThreadLocals ? ((WeakReference<T>) entry).get() : (T) entry;
+      if (bagEntry != null && bagEntry.compareAndSet(STATE_NOT_IN_USE, STATE_IN_USE)) {
+        return bagEntry;
+      }
+    }
+
+    // 4. 如果ThreadLocal内没有有效的连接池对象，则尝试从 sharedList 中获取连接池对象
+    timeout = timeUnit.toNanos(timeout);
+    Future<Boolean> addItemFuture = null;
+    // 用于后面计时是否在有效时间内获取到连接池对象
+    final long startScan = System.nanoTime();
+    final long originTimeout = timeout;
+    long startSeq;
+    // 等待获取线程池连接对象的 线程数计数+1
+    waiters.incrementAndGet();
+    try {
+      // 外层do-while即 超时时间内尝试获取 连接池对象
+      do {
+        // 内层do-while即实际遍历 shareList 尝试获取连接池对象
+        // scan the shared list
+        do {
+          // 这里 synchronizer.currentSequence() 的内部 sequence 值在synchronizer调用tryAcquireShared()时会增大，具体即任何可能产生新的空闲连接池对象的方法中会调用一次tryAcquireShared()，主要目的是告知其他线程可以继续尝试获取空闲连接池对象
+          startSeq = synchronizer.currentSequence();
+          for (T bagEntry : sharedList) {
+            // 这里用CAS操作确保只有一个线程能成功 获取 空闲连接池对象
+            if (bagEntry.compareAndSet(STATE_NOT_IN_USE, STATE_IN_USE)) {
+              // 前面ThreadLocal没有获取到连接池对象，所以说这里获取的连接池对象很可能是别的线程里创建的，为了避免其他线程可能因此又缺少可用的连接池对象，所以尝试再往sharedList内创建新的数据库连接池对象(当连接池对象<最大连接数时才会尝试向数据库请求获取连接对象)
+              // if we might have stolen another thread's new connection, restart the add...
+              if (waiters.get() > 1 && addItemFuture == null) {
+                // 这里add实际是提交任务到HikariPool的addConnectionExecutor线程池，异步执行，无太多性能损耗
+                listener.addBagItem();
+              }
+              // 返回连接池对象（注意这里和ThreadLocal内的连接池对象不同，没有执行remove连接池对象的操作，因为这里不是每个线程各自的缓存，是所有线程共同维护的连接池对象集合）
+              return bagEntry;
+            }
+          }
+          // 假设有sequence变化，说明有新增的连接池对象，可以重新遍历尝试获取可用的连接池对象
+        } while (startSeq < synchronizer.currentSequence());
+        // 如果异步任务(添加1个新的连接池对象)完成，则赋值addItemFuture
+        if (addItemFuture == null || addItemFuture.isDone()) {
+          addItemFuture = listener.addBagItem();
+        }
+        // 如果前面没有获取到线程池对象，并且超时时间还有剩余，则继续尝试下一轮获取连接池对象
+        timeout = originTimeout - (System.nanoTime() - startScan);
+        // waitUntilSequenceExceeded, 如果最新序列>当前记录序列 or 剩余超时时间内获取到共享锁 则返回true
+      } while (timeout > 10_000L && synchronizer.waitUntilSequenceExceeded(startSeq, timeout));
+    }
+    finally {
+      // 无论是否获得连接池对象, 不再尝试，那么 等待获取线程池连接对象的 线程数计数-1
+      waiters.decrementAndGet();
+    }
+    // 5. 走到这里说明while循环里没有获取到有效的空闲连接池对象，返回null
+    return null;
+  }
+
+  // 负责往 ConcurrentBag 内添加数据的监听器
+  // Hikari的实现即往addConnectionExecutor线程池添加任务(当前连接数<最大连接数时，尝试从数据库那申请建立1个连接，放入连接池中)
+  public interface IBagStateListener
+  {
+    Future<Boolean> addBagItem();
+  }
+
+  /**
+    * Close the bag to further adds.
+    */
+  @Override
+  public void close()
+  {
+    closed = true;
+  }
+
+  /**
+    * This method will return a borrowed object to the bag.  Objects
+    * that are borrowed from the bag but never "requited" will result
+    * in a memory leak.
+    *
+    * @param bagEntry the value to return to the bag
+    * @throws NullPointerException if value is null
+    * @throws IllegalStateException if the requited value was not borrowed from the bag
+    */
+  public void requite(final T bagEntry)
+  {
+    // 1. 设置 连接池对象的状态为 STATE_NOT_IN_USE，供后续其他线程使用
+    bagEntry.lazySet(STATE_NOT_IN_USE);
+    // 2. 尝试将 该空闲连接池对象缓存到当前线程ThreadLocal中(减少sharedList的竞争,减少后续锁操作开销)
+    final List<Object> threadLocalList = threadList.get();
+    if (threadLocalList != null) {
+      threadLocalList.add(weakThreadLocals ? new WeakReference<>(bagEntry) : bagEntry);
+    }
+    // 3. 通知任意一个队列中等待空闲连接池对象的线程(内部会调用sequence.increment(), 见borrow()方法实现可知, squence增大时, 线程会继续轮训尝试获取新的空闲连接池对象)
+    synchronizer.signal();
+  }
+
+
+  /**
+    * Remove a value from the bag.  This method should only be called
+    * with objects obtained by <code>borrow(long, TimeUnit)</code> or <code>reserve(T)</code>
+    *
+    * @param bagEntry the value to remove
+    * @return true if the entry was removed, false otherwise
+    * @throws IllegalStateException if an attempt is made to remove an object
+    *         from the bag that was not borrowed or reserved first
+    */
+  public boolean remove(final T bagEntry)
+  {
+    if (!bagEntry.compareAndSet(STATE_IN_USE, STATE_REMOVED) && !bagEntry.compareAndSet(STATE_RESERVED, STATE_REMOVED) && !closed) {
+      LOGGER.warn("Attempt to remove an object from the bag that was not borrowed or reserved: {}", bagEntry);
+      return false;
+    }
+
+    final boolean removed = sharedList.remove(bagEntry);
+    if (!removed && !closed) {
+      LOGGER.warn("Attempt to remove an object from the bag that does not exist: {}", bagEntry);
+    }
+
+    // synchronizer.signal();
+    return removed;
+  }
+
+  /**
+    * Add a new object to the bag for others to borrow.
+    *
+    * @param bagEntry an object to add to the bag
+    */
+  public void add(final T bagEntry)
+  {
+    // 1. 如果已经调用close()关闭，则不允许继续添加连接池对象
+    if (closed) {
+      LOGGER.info("ConcurrentBag has been closed, ignoring add()");
+      throw new IllegalStateException("ConcurrentBag has been closed, ignoring add()");
+    }
+    // 2. 向 sharedList 中添加连接池对象(注意这里是 CopyOnWriteArrayList)
+    sharedList.add(bagEntry);
+    // 3. 通知在队列中等待空闲连接池对象的线程继续尝试获取连接池对象
+    synchronizer.signal();
+  }
+
+  // 和 values(final int state) 不同于不筛选 状态，其他一致
+  public List<T> values()
+  {
+    return (List<T>) sharedList.clone();
+  }
+
+  /**
+    * This method provides a "snapshot" in time of the BagEntry
+    * items in the bag in the specified state.  It does not "lock"
+    * or reserve items in any way.  Call <code>reserve(T)</code>
+    * on items in list before performing any action on them.
+    *
+    * @param state one of the {@link IConcurrentBagEntry} states
+    * @return a possibly empty list of objects having the state specified
+    */
+  public List<T> values(final int state)
+  {
+    final ArrayList<T> list = new ArrayList<>(sharedList.size());
+    for (final T entry : sharedList) {
+      if (entry.getState() == state) {
+        list.add(entry);
+      }
+    }
+
+    return list;
+  }
+
+  /**
+    * The method is used to make an item in the bag "unavailable" for
+    * borrowing.  It is primarily used when wanting to operate on items
+    * returned by the <code>values(int)</code> method.  Items that are
+    * reserved can be removed from the bag via <code>remove(T)</code>
+    * without the need to unreserve them.  Items that are not removed
+    * from the bag can be make available for borrowing again by calling
+    * the <code>unreserve(T)</code> method.
+    *
+    * @param bagEntry the item to reserve
+    * @return true if the item was able to be reserved, false otherwise
+    */
+  public boolean reserve(final T bagEntry)
+  {
+    return bagEntry.compareAndSet(STATE_NOT_IN_USE, STATE_RESERVED);
+  }
+
+  public int size()
+  {
+    return sharedList.size();
+  }
+
+  /**
+    * Get a count of the number of items in the specified state at the time of this call.
+    *
+    * @param state the state of the items to count
+    * @return a count of how many items in the bag are in the specified state
+    */
+  public int getCount(final int state)
+  {
+    int count = 0;
+    for (final T entry : sharedList) {
+      if (entry.getState() == state) {
+        count++;
+      }
+    }
+    return count;
+  }
+}
+```
+
+### 代码小结
+
+省略一些非重点方法
+
++ `ConcurrentBag(final IBagStateListener listener)`
+
+  构造函数，初始化一些成员变量，主要需要关注的即传入`IBagStateListener`实现，其作用即往连接池对象集合里添加连接池对象。
+
++ `borrow(long timeout, final TimeUnit timeUnit)` 
+
+  1. 尝试从ThreadLocal缓存中获取空闲连接池对象(减少sharedList的锁竞争)
+  2. ThreadLocal若没有可用的空闲连接池对象，则进一步从sharedList中尝试获取空闲连接池对象
+     + 因为ThreadLocal中没有获取到连接池对象，所以相当于可能获取的连接池对象来自其他线程创建，为避免其他线程可用连接池数减少导致后续一连串竞争，所以若获取连接池对象成功，会再提交新增连接池对象的任务到线程池
+     + 使用CAS操作修改预获取的线程对象状态，保证同一个连接池对象只有当前或某个线程能获得
+     + 若遍历sharedList也没能获取到连接池对象，while循环内通过共享锁到队列中等待直到有新连接对象产生(会收到signal通知)，继续下一轮尝试获取连接池对象
+     + 若达到连接超时时间，也会停止尝试获取连接池对象，返回null
+
++ `requite(final T bagEntry)`
+
+  1. 回收连接池对象，将其状态改为STATE_NOT_IN_USE，以便后续`borrow()`能继续获取空闲连接池对象
+  2. 往当前ThreadLocal添加该空闲连接池对象，`borrow()`中会优先从ThreadLocal中获取连接池对象(注意该方法本身不产生新的连接池对象，所以不需要和sharedList交互)
+  3. 调用`synchronizer.signal()`通知队列中等待的线程继续`borrow()`中的流程以尝试获取空闲连接池对象
+
++ `remove(final T bagEntry)` 
+
+  移除连接池对象，需要满足以下所有条件，才可以移除
+
+  1. 连接池对象的状态为STATE_IN_USE(线程池对象由`borrow()`获取则为该状态)或STATE_RESERVED(线程池对象被调用过`reserve()`则为该状态，该状态下不能被`borrow()`)
+  2. ConcurrentBag未关闭(未调用`close()`方法)
+
++ `add(final T bagEntry)` 
+
+  1. 若ConcurrentBag未关闭，则向sharedList添加连接池对象
+  2. 调用`synchronizer.signal()`通知队列中等待的线程继续`borrow()`中的流程以尝试获取空闲连接池对象
+
++ `reserve(final T bagEntry)`
+
+  修改连接池对象的状态为STATE_RESERVED，避免连接池对象状态为STATE_NOT_IN_USE而被`borrow()`返回给线程使用(主要用于在`HikariPool`定时清理超时的空闲连接池对象，简言之即需要清理某个连接池对象时可先调用该方法确保连接池对象不再被使用)
+
+  
