@@ -1781,6 +1781,8 @@ SELECT title,value FROM query_v1
 
 ## 9.5 JOIN子句
 
+> [ClickHouse Join为什么被大家诟病？ - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/587765205)
+
 ​	JOIN子句可以对左右两张表的数据进行连接，这是最常用的查询子句之一。<u>它的语法包含**连接精度**和**连接类型**两部分</u>。目前ClickHouse支持的JOIN子句形式如图9-3所示。
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20210616173303639.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzQ1MTQxMTA1,size_16,color_FFFFFF,t_70)

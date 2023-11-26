@@ -201,6 +201,8 @@ UserServiceImpl userService; // JDK报错，因为该类型不是接口，JDK是
 > [Java内存分析工具--IDEA的JProfiler和JMeter插件](https://blog.csdn.net/qq_19674905/article/details/80824858)
 >
 > [MAT使用笔记](https://blog.csdn.net/zgmzyr/article/details/8232323)
+>
+> [JVM 基础 - JVM 内存结构 | Java 全栈知识体系 (pdai.tech)](https://pdai.tech/md/java/jvm/java-jvm-struct.html)
 
 ## 7. 浅拷贝和深拷贝
 
@@ -361,4 +363,12 @@ duration = 5342706955
 ## 17. web基础
 
 > [Servlet、Tomcat、SpringMVC-整理-随笔](https://www.cnblogs.com/Ashiamd/p/15085668.html)
+
+## 18. 注解
+
+> [sun.reflect.Reflection介绍以及@CallerSensitive注解-CSDN博客](https://blog.csdn.net/liuxiao723846/article/details/110008081)
+
+## 19. ThreadLocal
+
+> [threadlocal 内部为什么是一个map，而不是set？ - 知乎 (zhihu.com)](https://www.zhihu.com/question/58251712/answer/2833109740)
 
