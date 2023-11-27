@@ -57,7 +57,7 @@
 
 ## 2.1 生成一个类
 
-### 1. 注意点
+### 2.1.1 注意点
 
 1. Byte Buddy默认命名策略(NamingStrategy)，生成的类名
    1. 超类为jdk自带类: `net.bytebuddy.renamed.{超类名}$ByteBuddy${随机字符串}`
@@ -68,7 +68,7 @@
 4. `.subclass(XXX.class)` 指定超类(父类)
 5. `.name("packagename.ClassName")` 指定类名
 
-### 2. 示例代码
+### 2.1.2 示例代码
 
 > [ash_bytebuddy_study/bytebuddy_test/src/test/java/org/example/ByteBuddyCreateClassTest.java at main · Ashiamd/ash_bytebuddy_study (github.com)](https://github.com/Ashiamd/ash_bytebuddy_study/blob/main/bytebuddy_test/src/test/java/org/example/ByteBuddyCreateClassTest.java)
 
@@ -262,8 +262,59 @@ public class ByteBuddyCreateClassTest {
 }
 ```
 
-
-
-
-
 ## 2.2 对实例方法进行插桩
+
+### 2.2.1 注意点
+
+> [程序插桩_百度百科 (baidu.com)](https://baike.baidu.com/item/程序插桩/242087?fr=ge_ala)
+
+java开发中说的插桩(stub)通常指对字节码进行修改(增强)。
+
+埋点可通过插桩或其他形式实现，比如常见的代码逻辑调用次数、耗时监控打点，Android安卓应用用户操作行为打点上报等。
+
++ `.method(XXX)`指定后续需要修改/增强的方法
++ `.intercept(XXX)`对方法进行修改/增强
++ `DynamicType.Unloaded`表示未加载到JVM中的字节码实例
++ `DynamicType.Loaded`表示已经加载到JVM中的字节码实例
++ 无特别配置参数的情况下，通过Byte Buddy动态生成的类，实际由`net.bytebuddy.dynamic.loading.ByteArrayClassLoader`加载
++ 其他注意点，见官方教程文档的"类加载"章节，这里暂不展开
+
+### 2.2.2 示例代码
+
+```java
+/**
+  * (8) 对实例方法插桩(stub), 修改原本的toString方法逻辑
+  */
+@Test
+public void test08() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, IOException {
+  // 1. 声明一个未加载到ClassLoader中的 Byte Buddy 对象
+  DynamicType.Unloaded<NothingClass> nothingClassUnloaded = new ByteBuddy()
+    // 指定 超类 NothingClass
+    .subclass(NothingClass.class)
+    // 指定要拦截(插桩)的方法
+    .method(ElementMatchers.named("toString"))
+    // 指定拦截(插桩)后的逻辑, 这里设置直接返回指定值
+    .intercept(FixedValue.value("just nothing."))
+    .name("com.example.AshiamdTest08")
+    .make();
+  // 2. 将类通过 AppClassLoader 加载到 JVM 中
+  ClassLoader currentClassLoader = getClass().getClassLoader();
+  Assert.assertEquals("app", currentClassLoader.getName());
+  Assert.assertEquals("jdk.internal.loader.ClassLoaders$AppClassLoader",
+                      currentClassLoader.getClass().getName());
+  DynamicType.Loaded<NothingClass> loadedType = nothingClassUnloaded.load(currentClassLoader);
+  // 3. 反射调用 toString方法, 验证方法内逻辑被我们修改
+  Class<? extends NothingClass> loadedClazz = loadedType.getLoaded();
+  Assert.assertEquals("net.bytebuddy.dynamic.loading.ByteArrayClassLoader",
+                      loadedClazz.getClassLoader().getClass().getName());
+  NothingClass subNothingObj = loadedClazz.getDeclaredConstructor().newInstance();
+  Assert.assertEquals("just nothing.", subNothingObj.toString());
+  // 4. 将字节码写入本地
+  loadedType.saveIn(DemoTools.currentClassPathFile());
+}
+```
+
+## 2.3 插入新方法
+
+
+
