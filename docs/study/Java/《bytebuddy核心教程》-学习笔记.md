@@ -282,39 +282,262 @@ java开发中说的插桩(stub)通常指对字节码进行修改(增强)。
 ### 2.2.2 示例代码
 
 ```java
-/**
+public class ByteBuddyCreateClassTest {
+  /**
   * (8) 对实例方法插桩(stub), 修改原本的toString方法逻辑
   */
-@Test
-public void test08() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, IOException {
-  // 1. 声明一个未加载到ClassLoader中的 Byte Buddy 对象
-  DynamicType.Unloaded<NothingClass> nothingClassUnloaded = new ByteBuddy()
-    // 指定 超类 NothingClass
-    .subclass(NothingClass.class)
-    // 指定要拦截(插桩)的方法
-    .method(ElementMatchers.named("toString"))
-    // 指定拦截(插桩)后的逻辑, 这里设置直接返回指定值
-    .intercept(FixedValue.value("just nothing."))
-    .name("com.example.AshiamdTest08")
-    .make();
-  // 2. 将类通过 AppClassLoader 加载到 JVM 中
-  ClassLoader currentClassLoader = getClass().getClassLoader();
-  Assert.assertEquals("app", currentClassLoader.getName());
-  Assert.assertEquals("jdk.internal.loader.ClassLoaders$AppClassLoader",
-                      currentClassLoader.getClass().getName());
-  DynamicType.Loaded<NothingClass> loadedType = nothingClassUnloaded.load(currentClassLoader);
-  // 3. 反射调用 toString方法, 验证方法内逻辑被我们修改
-  Class<? extends NothingClass> loadedClazz = loadedType.getLoaded();
-  Assert.assertEquals("net.bytebuddy.dynamic.loading.ByteArrayClassLoader",
-                      loadedClazz.getClassLoader().getClass().getName());
-  NothingClass subNothingObj = loadedClazz.getDeclaredConstructor().newInstance();
-  Assert.assertEquals("just nothing.", subNothingObj.toString());
-  // 4. 将字节码写入本地
-  loadedType.saveIn(DemoTools.currentClassPathFile());
+  @Test
+  public void test08() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, IOException {
+    // 1. 声明一个未加载到ClassLoader中的 Byte Buddy 对象
+    DynamicType.Unloaded<NothingClass> nothingClassUnloaded = new ByteBuddy()
+      // 指定 超类 NothingClass
+      .subclass(NothingClass.class)
+      // 指定要拦截(插桩)的方法
+      .method(ElementMatchers.named("toString"))
+      // 指定拦截(插桩)后的逻辑, 这里设置直接返回指定值
+      .intercept(FixedValue.value("just nothing."))
+      .name("com.example.AshiamdTest08")
+      .make();
+    // 2. 将类通过 AppClassLoader 加载到 JVM 中
+    ClassLoader currentClassLoader = getClass().getClassLoader();
+    Assert.assertEquals("app", currentClassLoader.getName());
+    Assert.assertEquals("jdk.internal.loader.ClassLoaders$AppClassLoader",
+                        currentClassLoader.getClass().getName());
+    DynamicType.Loaded<NothingClass> loadedType = nothingClassUnloaded.load(currentClassLoader);
+    // 3. 反射调用 toString方法, 验证方法内逻辑被我们修改
+    Class<? extends NothingClass> loadedClazz = loadedType.getLoaded();
+    Assert.assertEquals("net.bytebuddy.dynamic.loading.ByteArrayClassLoader",
+                        loadedClazz.getClassLoader().getClass().getName());
+    NothingClass subNothingObj = loadedClazz.getDeclaredConstructor().newInstance();
+    Assert.assertEquals("just nothing.", subNothingObj.toString());
+    // 4. 将字节码写入本地
+    loadedType.saveIn(DemoTools.currentClassPathFile());
+  }
 }
 ```
 
-## 2.3 插入新方法
+## 2.3 动态增强的三种方式
+
+### 2.3.1 注意点
+
+修改/增强现有类主要有3种方法，subclass(创建子类)，rebase(变基)，redefine（重定义）。
+
++ subclass：继承目标类，以子类的形式重写超类方法，达到增强效果
++ rebase：变基，原方法变为private，并且方法名增加`&origanl&{随机字符串}`后缀，目标方法体替换为指定逻辑
++ redefine：重定义，原方法体逻辑直接替换为指定逻辑
+
+---
+
+根据官方教程文档，对变基截取如下说明：
+
+```java
+class Foo {
+  String bar() { return "bar"; }
+}
+```
+
+当对类型变基时，Byte Buddy 会保留所有被变基类的方法实现。Byte Buddy 会用兼容的签名复制所有方法的实现为一个私有的重命名过的方法， 而不像*类重定义*时丢弃覆写的方法。用这种方式的话，不存在方法实现的丢失，而且变基的方法可以通过调用这些重命名的方法， 继续调用原始的方法。这样，上面的`Foo`类可能会变基为这样
+
+```java
+class Foo {
+  String bar() { return "foo" + bar$original(); }
+  private String bar$original() { return "bar"; }
+}
+```
+
+其中`bar`方法原来返回的"bar"保存在另一个方法中，因此仍然可以访问。当对一个类变基时， Byte Buddy 会处理所有方法，就像你定义了一个子类一样。例如，如果你尝试调用变基的方法的超类方法实现， 你将会调用变基的方法。但相反，它最终会扁平化这个假设的超类为上面显示的变基的类。
+
+### 2.3.2 示例代码
+
+修改/增强的目标类`SomethingClass`
+
+```java
+public class SomethingClass {
+  public String selectUserName(Long userId) {
+    return String.valueOf(userId);
+  }
+
+  public void print() {
+    System.out.println("print something");
+  }
+
+  public int getAge() {
+    return Integer.MAX_VALUE;
+  }
+}
+```
+
+#### 2.3.2.1 subclass(子类) 
+
+```java
+public class ByteBuddyCreateClassTest {
+  /**
+     * (9) 通过subclass继承类, 重写父类方法
+     */
+  @Test
+  public void test09() throws IOException {
+    DynamicType.Unloaded<SomethingClass> subClass = new ByteBuddy().subclass(SomethingClass.class)
+      .method(ElementMatchers.named("selectUserName")
+              // 注意实际字节码Local Variable 0 位置为this引用, 但是这里说的参数位置index只需要关注方法声明时的参数顺序, 无需关注隐性参数this引用
+              .and(ElementMatchers.takesArgument(0, Long.class))
+              // .and(ElementMatchers.returns(Objects.class)) 匹配不到
+              .and(ElementMatchers.returns(String.class))
+             )
+      .intercept(FixedValue.value("ashiamd"))
+      .name("com.example.AshiamdTest09")
+      .make();
+    // subClass.saveIn(DemoTools.currentClassPathFile());
+  }
+}
+```
+
+通过`javap -p -c {com.example.AshiamdTest09.class的文件绝对路径}`得到字节码如下
+
+```shell
+public class com.example.AshiamdTest09 extends org.example.SomethingClass {
+  public java.lang.String selectUserName(java.lang.Long);
+    Code:
+       0: ldc           #8                  // String ashiamd
+       2: areturn
+
+  public com.example.AshiamdTest09();
+    Code:
+       0: aload_0
+       1: invokespecial #12                 // Method org/example/SomethingClass."<init>":()V
+       4: return
+}
+```
+
+可以看到`selectUserName`方法已经被重写，原本返回值由`String.valueOf(userId)`变为"ashiamd"。
+
+#### 2.3.2.2 rebase(变基)
+
+```java
+public class ByteBuddyCreateClassTest {
+  /**
+     * (10) rebase变基, 原方法保留变为private且被改名(增加$original${随机字符串}后缀), 原方法名内逻辑替换成我们指定的逻辑
+     */
+  @Test
+  public void test10() throws IOException {
+    DynamicType.Unloaded<SomethingClass> rebase = new ByteBuddy()
+      .rebase(SomethingClass.class)
+      .method(ElementMatchers.named("selectUserName")
+              // 注意实际字节码Local Variable 0 位置为this引用, 但是这里说的参数位置index只需要关注方法声明时的参数顺序, 无需关注隐性参数this引用
+              .and(ElementMatchers.takesArgument(0, Long.class))
+              // .and(ElementMatchers.returns(Objects.class)) 匹配不到
+              .and(ElementMatchers.returns(String.class))
+             )
+      .intercept(FixedValue.value("ashiamd"))
+      .method(ElementMatchers.named("getAge"))
+      .intercept(FixedValue.value(0))
+      .name("com.example.AshiamdTest10")
+      .make();
+    rebase.saveIn(DemoTools.currentClassPathFile());
+  }
+}
+```
+
+通过`javap -p -c {com.example.AshiamdTest10.class的文件绝对路径}`得到字节码如下
+
+```shell
+public class com.example.AshiamdTest10 {
+  public com.example.AshiamdTest10();
+    Code:
+       0: aload_0
+       1: invokespecial #1                  // Method java/lang/Object."<init>":()V
+       4: return
+
+  public java.lang.String selectUserName(java.lang.Long);
+    Code:
+       0: ldc           #50                 // String ashiamd
+       2: areturn
+
+  private java.lang.String selectUserName$original$iTRnD3qL(java.lang.Long);
+    Code:
+       0: aload_1
+       1: invokestatic  #7                  // Method java/lang/String.valueOf:(Ljava/lang/Object;)Ljava/lang/String;
+       4: areturn
+
+  public void print();
+    Code:
+       0: getstatic     #13                 // Field java/lang/System.out:Ljava/io/PrintStream;
+       3: ldc           #19                 // String print something
+       5: invokevirtual #21                 // Method java/io/PrintStream.println:(Ljava/lang/String;)V
+       8: return
+
+  public int getAge();
+    Code:
+       0: iconst_0
+       1: ireturn
+
+  private int getAge$original$iTRnD3qL();
+    Code:
+       0: ldc           #29                 // int 2147483647
+       2: ireturn
+}
+```
+
+可以看到，`selectUserName()`和`getAge()`的方法内逻辑已经被我们修改，而原本的方法变成了`private`方法，并且方法名增加后缀`$original${随机字符串}`
+
+#### 2.3.2.3 redefine(重定义)
+
+```java
+public class ByteBuddyCreateClassTest {
+  /**
+     * (11) redefine重定义, 重写指定的方法, 原方法逻辑不保留(被我们指定的逻辑覆盖掉)
+     */
+  @Test
+  public void test11() throws IOException {
+    DynamicType.Unloaded<SomethingClass> redefine = new ByteBuddy()
+      .redefine(SomethingClass.class)
+      .method(ElementMatchers.named("print")
+              // 不匹配 .and(ElementMatchers.returns(NullType.class))
+              // 不匹配 .and(ElementMatchers.returnsGeneric(Void.class))
+              // 不匹配 .and(ElementMatchers.returns(TypeDescription.ForLoadedType.of(Void.class)))
+              // 不匹配 .and(ElementMatchers.returns(Void.class))
+              // 匹配 .and(ElementMatchers.returns(TypeDescription.VOID))
+              // 匹配 .and(ElementMatchers.returns(void.class))
+             )
+      .intercept(FixedValue.value(TypeDescription.ForLoadedType.of(Void.class)))
+      .name("com.example.AshiamdTest11")
+      .make();
+    // redefine.saveIn(DemoTools.currentClassPathFile());
+  }
+}
+```
+
+通过`javap -p -c {com.example.AshiamdTest11.class的文件绝对路径}`得到字节码如下
+
+```shell
+public class com.example.AshiamdTest11 {
+  public com.example.AshiamdTest11();
+    Code:
+       0: aload_0
+       1: invokespecial #1                  // Method java/lang/Object."<init>":()V
+       4: return
+
+  public java.lang.String selectUserName(java.lang.Long);
+    Code:
+       0: aload_1
+       1: invokestatic  #7                  // Method java/lang/String.valueOf:(Ljava/lang/Object;)Ljava/lang/String;
+       4: areturn
+
+  public void print();
+    Code:
+       0: ldc           #50                 // class java/lang/Void
+       2: pop
+       3: return
+
+  public int getAge();
+    Code:
+       0: ldc           #29                 // int 2147483647
+       2: ireturn
+}
+```
+
+可以看到`print()`方法内的逻辑已经被我们修改，并且不像rebase操作会保留原方法。
+
+## 2.4 插入新方法
 
 
 
