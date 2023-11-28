@@ -322,9 +322,9 @@ public class ByteBuddyCreateClassTest {
 
 修改/增强现有类主要有3种方法，subclass(创建子类)，rebase(变基)，redefine（重定义）。
 
-+ subclass：继承目标类，以子类的形式重写超类方法，达到增强效果
-+ rebase：变基，原方法变为private，并且方法名增加`&origanl&{随机字符串}`后缀，目标方法体替换为指定逻辑
-+ redefine：重定义，原方法体逻辑直接替换为指定逻辑
++ `.subclass(目标类.class)`：继承目标类，以子类的形式重写超类方法，达到增强效果
++ `.rebase(目标类.class)`：变基，原方法变为private，并且方法名增加`&origanl&{随机字符串}`后缀，目标方法体替换为指定逻辑
++ `.redefine(目标类.class)`：重定义，原方法体逻辑直接替换为指定逻辑
 
 ---
 
@@ -538,6 +538,56 @@ public class com.example.AshiamdTest11 {
 可以看到`print()`方法内的逻辑已经被我们修改，并且不像rebase操作会保留原方法。
 
 ## 2.4 插入新方法
+
+### 2.4.1 注意点
+
++ `.defineMethod(方法名, 方法返回值类型, 方法访问描述符)`: 定义新增的方法
++ `.withParameters(Type...)`: 定义新增的方法对应的形参类型列表
++ `.intercept(XXX)`: 和修改/增强现有方法一样，对前面的方法对象的方法体进行修改
+
+### 2.4.2 示例代码
+
+```java
+public class ByteBuddyCreateClassTest {
+  /**
+    * (12) redefine基础上, 增加新方法
+    */
+  @Test
+  public void test12() throws IOException {
+    DynamicType.Unloaded<NothingClass> redefine = new ByteBuddy().redefine(NothingClass.class)
+      // 定义方法的 方法名, 方法返回值类型, 方法访问修饰符
+      .defineMethod("returnBlankString", String.class, Modifier.PUBLIC | Modifier.STATIC)
+      // 定义方法的形参
+      .withParameters(String.class, Integer.class)
+      // 定义方法体内逻辑
+      .intercept(FixedValue.value(""))
+      .name("com.example.AshiamdTest12")
+      .make();
+    // redefine.saveIn(DemoTools.currentClassPathFile());
+  }
+}
+```
+
+通过`javap -p -c {com.example.AshiamdTest12.class的文件绝对路径}`得到字节码如下
+
+```shell
+public class com.example.AshiamdTest12 {
+  public com.example.AshiamdTest12();
+    Code:
+       0: aload_0
+       1: invokespecial #1                  // Method java/lang/Object."<init>":()V
+       4: return
+
+  public static java.lang.String returnBlankString(java.lang.String, java.lang.Integer);
+    Code:
+       0: ldc           #22                 // String
+       2: areturn
+}
+```
+
+可以看到新增了一个`private static`修饰的`returnBlankString(String, Integer)`方法，里面的逻辑就是直接返回空字符串""
+
+## 2.5 插入新属性
 
 
 
