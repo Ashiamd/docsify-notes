@@ -589,5 +589,83 @@ public class com.example.AshiamdTest12 {
 
 ## 2.5 插入新属性
 
+### 2.5.1 注意点
 
++ `.defineField(String name, Type type, int modifier)`: 定义成员变量
++ `.implement(Type interfaceType)`: 指定实现的接口类
++ `.intercept(FieldAccessor.ofField("成员变量名")` 或`.intercept(FieldAccessor.ofBeanProperty())`在实现的接口为Bean规范接口时，都能生成成员变量对应的getter和setter方法
+
+>  视频使用`intercept(FieldAccessor.ofField("成员变量名")`，而官方教程的"访问字段"章节使用`.intercept(FieldAccessor.ofBeanProperty())`来生成getter和setter方法
+
+### 2.5.2 示例代码
+
+后续生成getter, setter方法需要依赖的接口类定义
+
+```java
+/**
+ * 简单的Bean接口(getter, setter)
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/2 4:35 PM
+ */
+public interface IAgeBean {
+    int getAge();
+    void setAge(int age);
+}
+```
+
+给生成的子类新增"age"成员变量，并且按照Bean规范生成getter和setter方法
+
+```java
+public class ByteBuddyCreateClassTest {
+  /**
+    * (13) 增加新成员变量, 以及生成对应的getter, setter方法
+    */
+  @Test
+  public void test13() throws IOException {
+    DynamicType.Unloaded<NothingClass> ageBean = new ByteBuddy().subclass(NothingClass.class)
+      // 定义新增的字段 name, type, 访问描述符
+      .defineField("age", int.class, Modifier.PRIVATE)
+      // 指定类实现指定接口(接口内定义我们需要的getter和setter方法)
+      .implement(IAgeBean.class)
+      // 指定实现接口的逻辑
+      // ok .intercept(FieldAccessor.ofField("age"))
+      .intercept(FieldAccessor.ofBeanProperty())
+      .name("com.example.AshiamdTest13")
+      .make();
+    ageBean.saveIn(DemoTools.currentClassPathFile());
+  }
+}
+```
+
+使用`.intercept(FieldAccessor.ofField("age"))`和使用`.intercept(FieldAccessor.ofBeanProperty())`在这里效果是一样的，视频教程使用前者，官方文档中使用后者。
+
+通过`javap -p -c {com.example.AshiamdTest13.class的文件绝对路径}`得到字节码如下
+
+```shell
+public class com.example.AshiamdTest13 extends org.example.NothingClass implements org.example.IAgeBean {
+  private int age;
+
+  public int getAge();
+    Code:
+       0: aload_0
+       1: getfield      #12                 // Field age:I
+       4: ireturn
+
+  public void setAge(int);
+    Code:
+       0: aload_0
+       1: iload_1
+       2: putfield      #12                 // Field age:I
+       5: return
+
+  public com.example.AshiamdTest13();
+    Code:
+       0: aload_0
+       1: invokespecial #18                 // Method org/example/NothingClass."<init>":()V
+       4: return
+}
+```
+
+## 2.6 方法委托
 
