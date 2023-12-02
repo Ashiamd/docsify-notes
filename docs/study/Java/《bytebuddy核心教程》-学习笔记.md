@@ -6,7 +6,7 @@
 >
 > + ByteBuddy官方教程: [Byte Buddy - runtime code generation for the Java virtual machine](http://bytebuddy.net/#/tutorial-cn)
 >
-> + 个人学习记录的demo代码仓库: [Ashiamd/ash_bytebuddy_study](https://github.com/Ashiamd/ash_bytebuddy_study/tree/main)
+> + 个人学习记录demo代码的gituub仓库: [Ashiamd/ash_bytebuddy_study](https://github.com/Ashiamd/ash_bytebuddy_study/tree/main)
 >
 > ---
 >
@@ -668,4 +668,546 @@ public class com.example.AshiamdTest13 extends org.example.NothingClass implemen
 ```
 
 ## 2.6 方法委托
+
+### 2.6.1 注意点
+
++ `.intercept(MethodDelegation.to(Class<?> type))`：将被拦截的方法委托给指定的增强类，增强类中需要定义和目标方法一致的方法签名，然后多一个static访问标识
++ `.intercept(MethodDelegation.to(Object target))`：将被拦截的方法委托给指定的增强类实例，增强类可以指定和目标类一致的方法签名，或通过`@RuntimeType`指示 Byte Buddy 终止严格类型检查以支持运行时类型转换。
+
+其中委托给相同签名的静态方法/实例方法相对容易理解，委托给自定义方法时，该视频主要介绍几个使用到的方法参数注解：
+
++ `@This Object targetObj`：表示被拦截的目标对象, 只有拦截实例方法时可用
++ `@Origin Method targetMethod`：表示被拦截的目标方法, 只有拦截实例方法或静态方法时可用
++ `@AllArguments Object[] targetMethodArgs`：目标方法的参数
++ `@Super Object targetSuperObj`：表示被拦截的目标对象, 只有拦截实例方法时可用 (可用来调用目标类的super方法)。若明确知道具体的超类(父类类型)，这里`Object`可以替代为具体超类(父类)
++ `@SuperCall Callable<?> zuper`：用于调用目标方法
+
+**其中调用目标方法时，通过`Object result = zuper.call()`。不能直接通过反射的`Object result = targetMethod.invoke(targetObj,targetMethodArgs)`进行原方法调用。因为后者会导致无限递归进入当前增强方法逻辑。**
+
+> 其他具体细节和相关介绍，可参考[官方教程]([Byte Buddy - runtime code generation for the Java virtual machine](http://bytebuddy.net/#/tutorial-cn))的"委托方法调用"章节。尤其是各种注解的介绍，官方教程更加完善一些，但是相对比较晦涩难懂一点。
+
+### 2.6.2 示例代码
+
+#### 2.6.2.1 委托方法给相同方法签名的静态方法
+
+接收委托的类，定义和需要修改/增强的目标类中的指定方法的方法签名(方法描述符)一致的方法，仅多static访问修饰符
+
+```java
+/**
+ * 用于修改/增强 {@link SomethingClass#selectUserName(Long)} 方法
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/2 9:21 PM
+ */
+public class SomethingInterceptor01 {
+    /**
+     * 修改/增强 {@link SomethingClass#selectUserName(Long)} 方法 <br/>
+     * 注意这里除了增加static访问修饰符，其他方法描述符信息和原方法(被修改/增强的目标方法)一致
+     */
+    public static String selectUserName(Long userId) {
+        // 原方法逻辑 return String.valueOf(userId);
+        return "SomethingInterceptor01.selectUserName, userId: " + userId;
+    }
+}
+```
+
+将原方法调用委托给静态方法
+
+```java
+public class ByteBuddyCreateClassTest {
+  /**
+    * (14) 将拦截的方法委托给相同方法签名的静态方法进行修改/增强
+    */
+  @Test
+  public void test14() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, IOException {
+    DynamicType.Unloaded<SomethingClass> subClassUnloaded = new ByteBuddy().subclass(SomethingClass.class)
+      .method(ElementMatchers.named("selectUserName"))
+      // 将 selectUserName 方法委托给 SomethingInterceptor01 中的 相同方法签名(方法描述符)的静态方法 进行修改/增强
+      .intercept(MethodDelegation.to(SomethingInterceptor01.class))
+      .name("com.example.AshiamdTest14")
+      .make();
+    // 前置 saveIn则在 subClassUnloaded.load(getClass().getClassLoader()) 报错 java.lang.IllegalStateException: Class already loaded: class com.example.AshiamdTest14
+    // subClassUnloaded.saveIn(DemoTools.currentClassPathFile());
+    // 加载类
+    String returnStr = subClassUnloaded.load(getClass().getClassLoader())
+      .getLoaded()
+      // 实例化并调用 selectUserName 方法验证是否被修改/增强
+      .getConstructor()
+      .newInstance()
+      .selectUserName(1L);
+    Assert.assertEquals("SomethingInterceptor01.selectUserName, userId: 1", returnStr);
+    // subClassUnloaded.saveIn(DemoTools.currentClassPathFile());
+  }
+}
+```
+
+通过`javap -p -c {com.example.AshiamdTest14.class的文件绝对路径}`得到字节码如下
+
+```shell
+public class com.example.AshiamdTest14 extends org.example.SomethingClass {
+  public java.lang.String selectUserName(java.lang.Long);
+    Code:
+       0: aload_1
+       1: invokestatic  #10                 // Method org/example/SomethingInterceptor01.selectUserName:(Ljava/lang/Long;)Ljava/lang/String;
+       4: areturn
+
+  public com.example.AshiamdTest14();
+    Code:
+       0: aload_0
+       1: invokespecial #14                 // Method org/example/SomethingClass."<init>":()V
+       4: return
+}
+```
+
+可以看出来，原本的`selectUserName`方法体内的逻辑，直接被替换成调用`SomethingInterceptor01.selectUserName`静态方法
+
+#### 2.6.2.2 委托方法给相同方法签名的实例方法
+
+接收方法委托的类，这里和`SomethingInterceptor01.selectUserName`方法主要不同点在于，这里定义的是实例方法，而不是静态方法；共同点即方法签名和原方法保持一致。
+
+```java
+package org.example;
+
+/**
+ * 用于修改/增强 {@link SomethingClass#selectUserName(Long)} 方法
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/2 9:21 PM
+ */
+public class SomethingInterceptor02 {
+
+    /**
+     * 修改/增强 {@link SomethingClass#selectUserName(Long)} 方法 <br/>
+     * 这里和 {@link SomethingInterceptor01#selectUserName(Long)} 主要不同点在于没有 static修饰, 是实例方法
+     */
+    public String selectUserName(Long userId) {
+        // 原方法逻辑 return String.valueOf(userId);
+        return "SomethingInterceptor02.selectUserName, userId: " + userId;
+    }
+}
+```
+
+委托方法给实例方法
+
+```java
+public class ByteBuddyCreateClassTest {
+  /**
+    * (15) 将拦截的方法委托给相同方法签名的实例方法进行修改/增强
+    */
+  @Test
+  public void test15() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, IOException {
+    DynamicType.Unloaded<SomethingClass> subClassUnloaded = new ByteBuddy().subclass(SomethingClass.class)
+      .method(ElementMatchers.named("selectUserName"))
+      // 将 selectUserName 方法委托给 SomethingInterceptor02 中的 相同方法签名(方法描述符)的实例方法 进行修改/增强
+      .intercept(MethodDelegation.to(new SomethingInterceptor02()))
+      .name("com.example.AshiamdTest15")
+      .make();
+    // 前置 saveIn则在 subClassUnloaded.load(getClass().getClassLoader()) 报错 java.lang.IllegalStateException: Class already loaded: class com.example.AshiamdTest14
+    // subClassUnloaded.saveIn(DemoTools.currentClassPathFile());
+    // 加载类
+    String returnStr = subClassUnloaded.load(getClass().getClassLoader())
+      .getLoaded()
+      // 实例化并调用 selectUserName 方法验证是否被修改/增强
+      .getConstructor()
+      .newInstance()
+      .selectUserName(2L);
+    Assert.assertEquals("SomethingInterceptor02.selectUserName, userId: 2", returnStr);
+    // subClassUnloaded.saveIn(DemoTools.currentClassPathFile());
+  }
+}
+```
+
+通过`javap -p -c -v {com.example.AshiamdTest15.class的文件绝对路径}`得到字节码如下
+
+```shell
+Classfile /Users/ashiamd/mydocs/docs/study/javadocument/javadocument/IDEA_project/ash_bytebuddy_study/bytebuddy_test/target/test-classes/com/example/AshiamdTest15.class
+  Last modified Dec 2, 2023; size 366 bytes
+  SHA-256 checksum 065b7bd6f6610c615a637374b06edd64875e1e2bacc5a84b7c2b7cd4b57d4140
+public class com.example.AshiamdTest15 extends org.example.SomethingClass
+  minor version: 0
+  major version: 65
+  flags: (0x0021) ACC_PUBLIC, ACC_SUPER
+  this_class: #2                          // com/example/AshiamdTest15
+  super_class: #4                         // org/example/SomethingClass
+  interfaces: 0, fields: 1, methods: 2, attributes: 0
+Constant pool:
+   #1 = Utf8               com/example/AshiamdTest15
+   #2 = Class              #1             // com/example/AshiamdTest15
+   #3 = Utf8               org/example/SomethingClass
+   #4 = Class              #3             // org/example/SomethingClass
+   #5 = Utf8               delegate$2h9gn60
+   #6 = Utf8               Lorg/example/SomethingInterceptor02;
+   #7 = Utf8               selectUserName
+   #8 = Utf8               (Ljava/lang/Long;)Ljava/lang/String;
+   #9 = NameAndType        #5:#6          // delegate$2h9gn60:Lorg/example/SomethingInterceptor02;
+  #10 = Fieldref           #2.#9          // com/example/AshiamdTest15.delegate$2h9gn60:Lorg/example/SomethingInterceptor02;
+  #11 = Utf8               org/example/SomethingInterceptor02
+  #12 = Class              #11            // org/example/SomethingInterceptor02
+  #13 = NameAndType        #7:#8          // selectUserName:(Ljava/lang/Long;)Ljava/lang/String;
+  #14 = Methodref          #12.#13        // org/example/SomethingInterceptor02.selectUserName:(Ljava/lang/Long;)Ljava/lang/String;
+  #15 = Utf8               <init>
+  #16 = Utf8               ()V
+  #17 = NameAndType        #15:#16        // "<init>":()V
+  #18 = Methodref          #4.#17         // org/example/SomethingClass."<init>":()V
+  #19 = Utf8               Code
+{
+  public static volatile org.example.SomethingInterceptor02 delegate$2h9gn60;
+    descriptor: Lorg/example/SomethingInterceptor02;
+    flags: (0x1049) ACC_PUBLIC, ACC_STATIC, ACC_VOLATILE, ACC_SYNTHETIC
+
+  public java.lang.String selectUserName(java.lang.Long);
+    descriptor: (Ljava/lang/Long;)Ljava/lang/String;
+    flags: (0x0001) ACC_PUBLIC
+    Code:
+      stack=2, locals=2, args_size=2
+         0: getstatic     #10                 // Field delegate$2h9gn60:Lorg/example/SomethingInterceptor02;
+         3: aload_1
+         4: invokevirtual #14                 // Method org/example/SomethingInterceptor02.selectUserName:(Ljava/lang/Long;)Ljava/lang/String;
+         7: areturn
+
+  public com.example.AshiamdTest15();
+    descriptor: ()V
+    flags: (0x0001) ACC_PUBLIC
+    Code:
+      stack=1, locals=1, args_size=1
+         0: aload_0
+         1: invokespecial #18                 // Method org/example/SomethingClass."<init>":()V
+         4: return
+}
+```
+
+注意：
+
+1. 这里Byte Buddy还给子类添加了成员变量`public static volatile org.example.SomethingInterceptor02 delegate$2h9gn60;`。然后通过该成员变量再调用实例方法`SomethingInterceptor02.selectUserName`。
+
+2. 这里`delegate$2h9gn60`被标注为`ACC_SYNTHETIC`，标明是动态生成的，而非来自源代码定义。
+
+3. 在不细看Byte Buddy代码实现的情况下，可以简单推理这里`delegate$2h9gn60`变量的值来源于我们`.intercept(MethodDelegation.to(new SomethingInterceptor02()))`传递进去的实例`new SomethingInterceptor02()`。
+
+> [Chapter 4. The class File Format (oracle.com)](https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html#jvms-4.1)
+>
+> The `ACC_SYNTHETIC` flag indicates that this field was generated by a compiler and does not appear in source code.
+
+#### 2.6.2.3 委托方法给自定义方法
+
+这次接收委托的类，其中定义的方法不再需要和目标类的原方法名保持方法签名一致
+
+```java
+package org.example;
+
+import net.bytebuddy.implementation.bind.annotation.*;
+
+import java.lang.reflect.Method;
+import java.util.Arrays;
+import java.util.concurrent.Callable;
+
+/**
+ * 用于修改/增强 {@link SomethingClass#selectUserName(Long)} 方法
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/2 9:21 PM
+ */
+public class SomethingInterceptor03 {
+
+  /**
+     * 修改/增强 {@link SomethingClass#selectUserName(Long)} 方法 <br/>
+     * 和 {@link SomethingInterceptor01#selectUserName(Long)} 以及 {@link SomethingInterceptor02#selectUserName(Long)} 大不相同，
+     * 不需要和原目标方法保持相同的方法签名 <br/>
+     * 为了克服需要一致方法签名的限制，Byte Buddy 允许给方法和方法参数添加@RuntimeType注解， 它指示 Byte Buddy 终止严格类型检查以支持运行时类型转换 <br/>
+     */
+  @RuntimeType
+  public Object otherMethodName(
+    // 表示被拦截的目标对象, 只有拦截实例方法时可用
+    @This Object targetObj,
+    // 表示被拦截的目标方法, 只有拦截实例方法或静态方法时可用
+    @Origin Method targetMethod,
+    // 目标方法的参数
+    @AllArguments Object[] targetMethodArgs,
+    // 表示被拦截的目标对象, 只有拦截实例方法时可用 (可用来调用目标类的super方法)
+    @Super Object targetSuperObj,
+    // 若确定超类(父类), 也可以用具体超类(父类)接收
+    // @Super SomethingClass targetSuperObj,
+    // 用于调用目标方法
+    @SuperCall Callable<?> zuper
+  ) {
+    // 原方法逻辑 return String.valueOf(userId);
+    // targetObj = com.example.AshiamdTest16@79e4c792
+    System.out.println("targetObj = " + targetObj);
+    // targetMethod.getName() = selectUserName
+    System.out.println("targetMethod.getName() = " + targetMethod.getName());
+    // Arrays.toString(targetMethodArgs) = [3]
+    System.out.println("Arrays.toString(targetMethodArgs) = " + Arrays.toString(targetMethodArgs));
+    // targetSuperObj = com.example.AshiamdTest16@79e4c792
+    System.out.println("targetSuperObj = " + targetSuperObj);
+    Object result = null;
+    try {
+      // 调用目标方法
+      result = zuper.call();
+      // 直接通过反射的方式调用原方法, 会导致无限递归进入当前增强的逻辑
+      // result = targetMethod.invoke(targetObj,targetMethodArgs);
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+    return result;
+  }
+}
+```
+
+使用自定义方法接收委托的方法
+
+```java
+public class ByteBuddyCreateClassTest {
+  /**
+    * (16) 将拦截的方法委托给自定义方法
+    */
+  @Test
+  public void test16() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, IOException {
+    DynamicType.Unloaded<SomethingClass> subClassUnloaded = new ByteBuddy().subclass(SomethingClass.class)
+      .method(ElementMatchers.named("selectUserName"))
+      // 将 selectUserName 方法委托给 SomethingInterceptor03 进行修改/增强
+      .intercept(MethodDelegation.to(new SomethingInterceptor03()))
+      .name("com.example.AshiamdTest16")
+      .make();
+    // 前置 saveIn则在 subClassUnloaded.load(getClass().getClassLoader()) 报错 java.lang.IllegalStateException: Class already loaded: class com.example.AshiamdTest14
+    // subClassUnloaded.saveIn(DemoTools.currentClassPathFile());
+    // 加载类
+    String returnStr = subClassUnloaded.load(getClass().getClassLoader())
+      .getLoaded()
+      // 实例化并调用 selectUserName 方法验证是否被修改/增强
+      .getConstructor()
+      .newInstance()
+      .selectUserName(3L);
+    // returnStr = 3
+    System.out.println("returnStr = " + returnStr);
+    // subClassUnloaded.saveIn(DemoTools.currentClassPathFile());
+  }
+}
+```
+
+运行得到输出如下：
+
+```shell
+targetObj = com.example.AshiamdTest16@79e4c792
+targetMethod.getName() = selectUserName
+Arrays.toString(targetMethodArgs) = [3]
+targetSuperObj = com.example.AshiamdTest16@79e4c792
+returnStr = 3
+```
+
+通过`javap -p -c -v {com.example.AshiamdTest16.class的文件绝对路径}`得到字节码如下
+
+```shell
+Classfile /Users/ashiamd/mydocs/docs/study/javadocument/javadocument/IDEA_project/ash_bytebuddy_study/bytebuddy_test/target/test-classes/com/example/AshiamdTest16.class
+  Last modified Dec 2, 2023; size 1612 bytes
+  SHA-256 checksum 49cf511bf549c0affeb88a10341b7d129a687ac48f7eacb263c3bd070caf40bc
+public class com.example.AshiamdTest16 extends org.example.SomethingClass
+  minor version: 0
+  major version: 65
+  flags: (0x0021) ACC_PUBLIC, ACC_SUPER
+  this_class: #2                          // com/example/AshiamdTest16
+  super_class: #4                         // org/example/SomethingClass
+  interfaces: 0, fields: 2, methods: 8, attributes: 0
+Constant pool:
+   #1 = Utf8               com/example/AshiamdTest16
+   #2 = Class              #1             // com/example/AshiamdTest16
+   #3 = Utf8               org/example/SomethingClass
+   #4 = Class              #3             // org/example/SomethingClass
+   #5 = Utf8               delegate$2h9gn60
+   #6 = Utf8               Lorg/example/SomethingInterceptor03;
+   #7 = Utf8               selectUserName
+   #8 = Utf8               (Ljava/lang/Long;)Ljava/lang/String;
+   #9 = NameAndType        #5:#6          // delegate$2h9gn60:Lorg/example/SomethingInterceptor03;
+  #10 = Fieldref           #2.#9          // com/example/AshiamdTest16.delegate$2h9gn60:Lorg/example/SomethingInterceptor03;
+  #11 = Utf8               cachedValue$EqnJA1Hc$vvmmnn1
+  #12 = Utf8               Ljava/lang/reflect/Method;
+  #13 = NameAndType        #11:#12        // cachedValue$EqnJA1Hc$vvmmnn1:Ljava/lang/reflect/Method;
+  #14 = Fieldref           #2.#13         // com/example/AshiamdTest16.cachedValue$EqnJA1Hc$vvmmnn1:Ljava/lang/reflect/Method;
+  #15 = Utf8               java/lang/Object
+  #16 = Class              #15            // java/lang/Object
+  #17 = Utf8               com/example/AshiamdTest16$auxiliary$8ABGsyBN
+  #18 = Class              #17            // com/example/AshiamdTest16$auxiliary$8ABGsyBN
+  #19 = Utf8               <init>
+  #20 = Utf8               ()V
+  #21 = NameAndType        #19:#20        // "<init>":()V
+  #22 = Methodref          #18.#21        // com/example/AshiamdTest16$auxiliary$8ABGsyBN."<init>":()V
+  #23 = Utf8               target
+  #24 = Utf8               Lcom/example/AshiamdTest16;
+  #25 = NameAndType        #23:#24        // target:Lcom/example/AshiamdTest16;
+  #26 = Fieldref           #18.#25        // com/example/AshiamdTest16$auxiliary$8ABGsyBN.target:Lcom/example/AshiamdTest16;
+  #27 = Utf8               com/example/AshiamdTest16$auxiliary$aXiraJW5
+  #28 = Class              #27            // com/example/AshiamdTest16$auxiliary$aXiraJW5
+  #29 = Utf8               (Lcom/example/AshiamdTest16;Ljava/lang/Long;)V
+  #30 = NameAndType        #19:#29        // "<init>":(Lcom/example/AshiamdTest16;Ljava/lang/Long;)V
+  #31 = Methodref          #28.#30        // com/example/AshiamdTest16$auxiliary$aXiraJW5."<init>":(Lcom/example/AshiamdTest16;Ljava/lang/Long;)V
+  #32 = Utf8               org/example/SomethingInterceptor03
+  #33 = Class              #32            // org/example/SomethingInterceptor03
+  #34 = Utf8               otherMethodName
+  #35 = Utf8               (Ljava/lang/Object;Ljava/lang/reflect/Method;[Ljava/lang/Object;Ljava/lang/Object;Ljava/util/concurrent/Callable;)Ljava/lang/Object;
+  #36 = NameAndType        #34:#35        // otherMethodName:(Ljava/lang/Object;Ljava/lang/reflect/Method;[Ljava/lang/Object;Ljava/lang/Object;Ljava/util/concurrent/Callable;)Ljava/lang/Object;
+  #37 = Methodref          #33.#36        // org/example/SomethingInterceptor03.otherMethodName:(Ljava/lang/Object;Ljava/lang/reflect/Method;[Ljava/lang/Object;Ljava/lang/Object;Ljava/util/concurrent/Callable;)Ljava/lang/Object;
+  #38 = Utf8               java/lang/String
+  #39 = Class              #38            // java/lang/String
+  #40 = Methodref          #4.#21         // org/example/SomethingClass."<init>":()V
+  #41 = Utf8               <clinit>
+  #42 = String             #7             // selectUserName
+  #43 = Utf8               java/lang/Class
+  #44 = Class              #43            // java/lang/Class
+  #45 = Utf8               java/lang/Long
+  #46 = Class              #45            // java/lang/Long
+  #47 = Utf8               getMethod
+  #48 = Utf8               (Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;
+  #49 = NameAndType        #47:#48        // getMethod:(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;
+  #50 = Methodref          #44.#49        // java/lang/Class.getMethod:(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;
+  #51 = Utf8               toString$accessor$EqnJA1Hc
+  #52 = Utf8               ()Ljava/lang/String;
+  #53 = Utf8               toString
+  #54 = NameAndType        #53:#52        // toString:()Ljava/lang/String;
+  #55 = Methodref          #4.#54         // org/example/SomethingClass.toString:()Ljava/lang/String;
+  #56 = Utf8               clone$accessor$EqnJA1Hc
+  #57 = Utf8               ()Ljava/lang/Object;
+  #58 = Utf8               java/lang/CloneNotSupportedException
+  #59 = Class              #58            // java/lang/CloneNotSupportedException
+  #60 = Utf8               clone
+  #61 = NameAndType        #60:#57        // clone:()Ljava/lang/Object;
+  #62 = Methodref          #4.#61         // org/example/SomethingClass.clone:()Ljava/lang/Object;
+  #63 = Utf8               selectUserName$accessor$EqnJA1Hc
+  #64 = NameAndType        #7:#8          // selectUserName:(Ljava/lang/Long;)Ljava/lang/String;
+  #65 = Methodref          #4.#64         // org/example/SomethingClass.selectUserName:(Ljava/lang/Long;)Ljava/lang/String;
+  #66 = Utf8               equals$accessor$EqnJA1Hc
+  #67 = Utf8               (Ljava/lang/Object;)Z
+  #68 = Utf8               equals
+  #69 = NameAndType        #68:#67        // equals:(Ljava/lang/Object;)Z
+  #70 = Methodref          #4.#69         // org/example/SomethingClass.equals:(Ljava/lang/Object;)Z
+  #71 = Utf8               hashCode$accessor$EqnJA1Hc
+  #72 = Utf8               ()I
+  #73 = Utf8               hashCode
+  #74 = NameAndType        #73:#72        // hashCode:()I
+  #75 = Methodref          #4.#74         // org/example/SomethingClass.hashCode:()I
+  #76 = Utf8               Code
+  #77 = Utf8               Exceptions
+{
+  public static volatile org.example.SomethingInterceptor03 delegate$2h9gn60;
+    descriptor: Lorg/example/SomethingInterceptor03;
+    flags: (0x1049) ACC_PUBLIC, ACC_STATIC, ACC_VOLATILE, ACC_SYNTHETIC
+
+  private static final java.lang.reflect.Method cachedValue$EqnJA1Hc$vvmmnn1;
+    descriptor: Ljava/lang/reflect/Method;
+    flags: (0x101a) ACC_PRIVATE, ACC_STATIC, ACC_FINAL, ACC_SYNTHETIC
+
+  public java.lang.String selectUserName(java.lang.Long);
+    descriptor: (Ljava/lang/Long;)Ljava/lang/String;
+    flags: (0x0001) ACC_PUBLIC
+    Code:
+      stack=9, locals=2, args_size=2
+         0: getstatic     #10                 // Field delegate$2h9gn60:Lorg/example/SomethingInterceptor03;
+         3: aload_0
+         4: getstatic     #14                 // Field cachedValue$EqnJA1Hc$vvmmnn1:Ljava/lang/reflect/Method;
+         7: iconst_1
+         8: anewarray     #16                 // class java/lang/Object
+        11: dup
+        12: iconst_0
+        13: aload_1
+        14: aastore
+        15: new           #18                 // class com/example/AshiamdTest16$auxiliary$8ABGsyBN
+        18: dup
+        19: invokespecial #22                 // Method com/example/AshiamdTest16$auxiliary$8ABGsyBN."<init>":()V
+        22: dup
+        23: aload_0
+        24: putfield      #26                 // Field com/example/AshiamdTest16$auxiliary$8ABGsyBN.target:Lcom/example/AshiamdTest16;
+        27: new           #28                 // class com/example/AshiamdTest16$auxiliary$aXiraJW5
+        30: dup
+        31: aload_0
+        32: aload_1
+        33: invokespecial #31                 // Method com/example/AshiamdTest16$auxiliary$aXiraJW5."<init>":(Lcom/example/AshiamdTest16;Ljava/lang/Long;)V
+        36: invokevirtual #37                 // Method org/example/SomethingInterceptor03.otherMethodName:(Ljava/lang/Object;Ljava/lang/reflect/Method;[Ljava/lang/Object;Ljava/lang/Object;Ljava/util/concurrent/Callable;)Ljava/lang/Object;
+        39: checkcast     #39                 // class java/lang/String
+        42: areturn
+
+  public com.example.AshiamdTest16();
+    descriptor: ()V
+    flags: (0x0001) ACC_PUBLIC
+    Code:
+      stack=1, locals=1, args_size=1
+         0: aload_0
+         1: invokespecial #40                 // Method org/example/SomethingClass."<init>":()V
+         4: return
+
+  static {};
+    descriptor: ()V
+    flags: (0x0008) ACC_STATIC
+    Code:
+      stack=6, locals=0, args_size=0
+         0: ldc           #4                  // class org/example/SomethingClass
+         2: ldc           #42                 // String selectUserName
+         4: iconst_1
+         5: anewarray     #44                 // class java/lang/Class
+         8: dup
+         9: iconst_0
+        10: ldc           #46                 // class java/lang/Long
+        12: aastore
+        13: invokevirtual #50                 // Method java/lang/Class.getMethod:(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;
+        16: putstatic     #14                 // Field cachedValue$EqnJA1Hc$vvmmnn1:Ljava/lang/reflect/Method;
+        19: return
+
+  final java.lang.String toString$accessor$EqnJA1Hc();
+    descriptor: ()Ljava/lang/String;
+    flags: (0x1010) ACC_FINAL, ACC_SYNTHETIC
+    Code:
+      stack=1, locals=1, args_size=1
+         0: aload_0
+         1: invokespecial #55                 // Method org/example/SomethingClass.toString:()Ljava/lang/String;
+         4: areturn
+
+  final java.lang.Object clone$accessor$EqnJA1Hc() throws java.lang.CloneNotSupportedException;
+    descriptor: ()Ljava/lang/Object;
+    flags: (0x1010) ACC_FINAL, ACC_SYNTHETIC
+    Code:
+      stack=1, locals=1, args_size=1
+         0: aload_0
+         1: invokespecial #62                 // Method org/example/SomethingClass.clone:()Ljava/lang/Object;
+         4: areturn
+    Exceptions:
+      throws java.lang.CloneNotSupportedException
+
+  final java.lang.String selectUserName$accessor$EqnJA1Hc(java.lang.Long);
+    descriptor: (Ljava/lang/Long;)Ljava/lang/String;
+    flags: (0x1010) ACC_FINAL, ACC_SYNTHETIC
+    Code:
+      stack=2, locals=2, args_size=2
+         0: aload_0
+         1: aload_1
+         2: invokespecial #65                 // Method org/example/SomethingClass.selectUserName:(Ljava/lang/Long;)Ljava/lang/String;
+         5: areturn
+
+  final boolean equals$accessor$EqnJA1Hc(java.lang.Object);
+    descriptor: (Ljava/lang/Object;)Z
+    flags: (0x1010) ACC_FINAL, ACC_SYNTHETIC
+    Code:
+      stack=2, locals=2, args_size=2
+         0: aload_0
+         1: aload_1
+         2: invokespecial #70                 // Method org/example/SomethingClass.equals:(Ljava/lang/Object;)Z
+         5: ireturn
+
+  final int hashCode$accessor$EqnJA1Hc();
+    descriptor: ()I
+    flags: (0x1010) ACC_FINAL, ACC_SYNTHETIC
+    Code:
+      stack=1, locals=1, args_size=1
+         0: aload_0
+         1: invokespecial #75                 // Method org/example/SomethingClass.hashCode:()I
+         4: ireturn
+}
+```
+
+1. 这里使用自定义类接收委托，和`SomethingInterceptor02`同样是以实例委托给`SomethingInterceptor03`实例进行实际方法修改/增强，所以也是生成了一个`SomethingInterceptor03`成员变量，然后通过该成员变量调用增强方法`SomethingInterceptor03.otherMethod`
+2. 从字节码可以看出来，比起委托给相同方法签名的静态方法/实例方法，这里委托给灵活性更高的自定义方法，需要额外生成更多的`ACC_SYNTHETIC`方法，并且还多了许多其他逻辑，这里不是重点，暂不细究
+
+## 2.7 动态修改入参
+
+### 2.7.1 注意点
+
+### 2.7.2 示例代码
+
+## 2.8 对构造方法进行插桩
 
