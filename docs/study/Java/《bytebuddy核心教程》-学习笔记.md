@@ -1426,3 +1426,109 @@ class com.example.AshiamdTest17$auxiliary$rULEYsoa implements org.example.MyCall
 
 ## 2.8 对构造方法进行插桩
 
+### 2.8.1 注意点
+
++ `.constructor(ElementMatchers.any())`: 表示拦截目标类的任意构造方法
++ `.intercept(SuperMethodCall.INSTANCE.andThen(Composable implementation)`: 表示在实例构造方法逻辑执行结束后再执行拦截器中定义的增强逻辑
++ `@This`: 被拦截的目标对象this引用，构造方法也是实例方法，同样有this引用可以使用
+
+### 2.8.2 示例代码
+
+给需要增强的类上新增构造方法，方便后续掩饰构造方法插桩效果
+
+```java
+/**
+ * 具有一些方法的类
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/11/28 4:55 PM
+ */
+public class SomethingClass {
+
+  public SomethingClass() {
+    System.out.println("SomethingClass()");
+  }
+  // 省略其他方法
+}
+```
+
+新建用于增强构造器方法的拦截器类，里面描述构造方法直接结束后，后续执行的逻辑
+
+```java
+package org.example;
+
+import net.bytebuddy.implementation.bind.annotation.RuntimeType;
+import net.bytebuddy.implementation.bind.annotation.This;
+
+/**
+ * 用于增强 {@link SomethingClass#SomethingClass()} 构造方法
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/3 11:30 AM
+ */
+public class SomethingInterceptor05 {
+
+  @RuntimeType
+  public void constructEnhance(
+    //  表示被拦截的目标对象, 在构造方法中同样是可用的(也是实例方法)
+    @This Object targetObj) {
+    // constructEnhance() , com.example.AshiamdTest18@10163d6
+    System.out.println("constructEnhance() , " + targetObj);
+  }
+}
+```
+
+生成增强类，运行查看标准输出
+
+```java
+public class ByteBuddyCreateClassTest {
+  /**
+     * (18) 对构造方法插桩
+     */
+  @Test
+  public void test18() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, IOException {
+    DynamicType.Unloaded<SomethingClass> subClassUnloaded = new ByteBuddy().subclass(SomethingClass.class)
+      // 对任何构造方法都进行插桩
+      .constructor(ElementMatchers.any())
+      // 表示在被拦截的构造方法原方法逻辑执行完后，再委托给拦截器
+      .intercept(SuperMethodCall.INSTANCE.andThen(
+        MethodDelegation.to(new SomethingInterceptor05())))
+      .name("com.example.AshiamdTest18")
+      .make();
+    subClassUnloaded.load(getClass().getClassLoader())
+      .getLoaded()
+      // 实例化并调用 selectUserName 方法验证是否被修改/增强
+      .getConstructor()
+      .newInstance();
+    // subClassUnloaded.saveIn(DemoTools.currentClassPathFile());
+  }
+}
+```
+
+输出如下：
+
+```shell
+SomethingClass()
+constructEnhance() , com.example.AshiamdTest18@10163d6
+```
+
+通过`javap -p -c {com.example.AshiamdTest18.class的文件绝对路径}`得到字节码如下
+
+```shell
+public class com.example.AshiamdTest18 extends org.example.SomethingClass {
+  public static volatile org.example.SomethingInterceptor05 delegate$n4v9vh1;
+
+  public com.example.AshiamdTest18();
+    Code:
+       0: aload_0
+       1: invokespecial #10                 // Method org/example/SomethingClass."<init>":()V
+       4: getstatic     #12                 // Field delegate$n4v9vh1:Lorg/example/SomethingInterceptor05;
+       7: aload_0
+       8: invokevirtual #18                 // Method org/example/SomethingInterceptor05.constructEnhance:(Ljava/lang/Object;)V
+      11: return
+}
+```
+
+从字节码也可以看出来，先是调用超类构造方法`org/example/SomethingClass."<init>":()V`，然后才是调用增强方法`org/example/SomethingInterceptor05.constructEnhance:(Ljava/lang/Object;)V`。
+
+## 2.9 对静态方法进行插桩
