@@ -1640,4 +1640,79 @@ what to Say, say: hello world
 after sayWhat
 ```
 
-## 2.10 
+## 2.10 @SuperCall, rebase, redefine, subclass
+
+### 2.9.1 注意点
+
++ `@SuperCall`仅在原方法仍存在的场合能够正常使用，比如`subclass`超类方法仍为目标方法，而`rebase`则是会重命名目标方法并保留原方法体逻辑；但`redefine`直接替换掉目标方法，所以`@SuperCall`不可用
++ `rebase`和`redefine`都可以修改目标类静态方法，但是若想在原静态方法逻辑基础上增加其他增强逻辑，那么只有`rebase`能通过`@SuperCall`或`@Morph`调用到原方法逻辑；`redefine`不保留原目标方法逻辑
+
+### 2.9.2 示例代码
+
+这里使用的示例代码和"2.9.2 示例代码"一致，主要是用于说明前面"2.9 对静态方法进行插桩"时为什么只能用rebase，而不能用subclass；以及使用rebase后，整个增强的大致调用流程。
+
++ `subclass`：以目标类子类的形式，重写父类方法完成修改/增强。子类不能重写静态方法，所以增强目标类的静态方法时，不能用`subclass`
++ `redefine`：因为redefine不保留目标类原方法，所以`SomethingInterceptor06`中的`sayWhatEnhance`方法获取不到`@SuperCall Callable<?> zuper`参数，若注解掉zuper相关的代码，发现能正常运行，但是目标方法相当于直接被替换成我们的逻辑，达不到保留原方法逻辑并增强的目的。
++ `rebase`：原方法会被重命名并保留原逻辑，所以能够在通过`@SuperCall Callable<?> zuper`保留执行原方法逻辑执行的情况下，继续执行我们自定义的修改/增强逻辑
+
+使用`rebase`生成了两个class，一个为`AshaimdTest19.class`，一个为辅助类`AshiamdTest19$auxiliary$souxJETk.class`。
+
+查看`AshaimdTest19.class`反编译结果，结合其字节码进行分析：
+
+```java
+public class AshiamdTest19 {
+ //... 省略其他代码
+  public static void sayWhat(String var0) {
+    // 参数分别对应 SomethingInterceptor06 的 sayWhatEnhance方法定义的参数
+    // @Origin Class<?> clazz, @Origin Method targetMethod, @AllArguments Object[] targetMethodArgs, @SuperCall Callable<?> zuper
+        delegate$e6tl5f0.sayWhatEnhance(AshiamdTest19.class, cachedValue$E9ljqfKp$01vs1t0, new Object[]{var0}, new AshiamdTest19$auxiliary$souxJETk(var0));
+    }
+}
+```
+
++ `delegate$e6tl5f0`：通过字节码查看，得知是`SomethingInterceptor06`实例引用，即这里调用拦截器类的`sayWhatEnhance`实例方法。
+
++ `cachedValue$E9ljqfKp$01vs1t0`：通过查看字节码，得知对应`AshiamdTest19`类的`sayWhat`静态方法
++ `new Object[]{var0}`：原方法参数
++ `new AshiamdTest19$auxiliary$souxJETk(var0)`：`AshiamdTest19$auxiliary$souxJETk`对应ByteBuddy生成的辅助类实例，`var0`则是原方法参数
+
+接下来看看Byte Buddy生成的辅助类
+
+```java
+class AshiamdTest19$auxiliary$souxJETk implements Runnable, Callable {
+  private String argument0;
+
+  public Object call() throws Exception {
+    AshiamdTest19.sayWhat$original$dWjxaaDU$accessor$E9ljqfKp(this.argument0);
+    return null;
+  }
+
+  public void run() {
+    AshiamdTest19.sayWhat$original$dWjxaaDU$accessor$E9ljqfKp(this.argument0);
+  }
+
+  AshiamdTest19$auxiliary$souxJETk(String var1) {
+    this.argument0 = var1;
+  }
+}
+```
+
+这里结合生成的`AshiamdTest19`代码，可知辅助类`AshiamdTest19$auxiliary$souxJETk`作用就是对应拦截器类里面的`zuper.call();`逻辑，其中转原方法参数，调用原方法逻辑
+
++ `AshiamdTest19.sayWhat$original$dWjxaaDU$accessor$E9ljqfKp`：rebase后，保留的被重命名的原方法
+
+整理一下逻辑，即：
+
+Byte Buddy通过我们指定的代码增强`SomethingClass.sayWhat`方法后，执行逻辑大致可描述为：
+
+1. 生成拦截器类`AshiamdTest19`和`AshiamdTest19$auxiliary$souxJETk`
+
+2. 调用`AshiamdTest19`的`sayWhat`方法时，如下流程
+
+   1. `AshiamdTest19`的`sayWhat`对应拦截器类的`@Origin Method targetMethod`
+   2. 目标方法`SomethingClass.sayWhat`逻辑则被重命名为`AshiamdTest19.sayWhat$original$dWjxaaDU$accessor$E9ljqfKp`，对应拦截器类的`@SuperCall Callable<?> zuper`
+
+   3. 执行`AshiamdTest19.sayWhat`即执行拦截器类的`SomethingInterceptor06.sayWhatEnhance`实例方法。
+
+## 2.11 
+
