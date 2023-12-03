@@ -671,6 +671,8 @@ public class com.example.AshiamdTest13 extends org.example.NothingClass implemen
 
 ### 2.6.1 注意点
 
+方法委托，可简单理解将目标方法的方法体逻辑修改为调用指定的某个辅助类方法。
+
 + `.intercept(MethodDelegation.to(Class<?> type))`：将被拦截的方法委托给指定的增强类，增强类中需要定义和目标方法一致的方法签名，然后多一个static访问标识
 + `.intercept(MethodDelegation.to(Object target))`：将被拦截的方法委托给指定的增强类实例，增强类可以指定和目标类一致的方法签名，或通过`@RuntimeType`指示 Byte Buddy 终止严格类型检查以支持运行时类型转换。
 
@@ -1202,12 +1204,225 @@ Constant pool:
 
 1. 这里使用自定义类接收委托，和`SomethingInterceptor02`同样是以实例委托给`SomethingInterceptor03`实例进行实际方法修改/增强，所以也是生成了一个`SomethingInterceptor03`成员变量，然后通过该成员变量调用增强方法`SomethingInterceptor03.otherMethod`
 2. 从字节码可以看出来，比起委托给相同方法签名的静态方法/实例方法，这里委托给灵活性更高的自定义方法，需要额外生成更多的`ACC_SYNTHETIC`方法，并且还多了许多其他逻辑，这里不是重点，暂不细究
+3. 实际除了`AshiamdTest16`外，还另外生成了2个辅助类(AuxiliaryType)的class文件，可以本地试试，这里暂不展开介绍。
 
 ## 2.7 动态修改入参
 
 ### 2.7.1 注意点
 
++ **`@Morph`：和`@SuperCall`功能基本一致，主要区别在于`@Morph`支持传入参数**。
+
++ **使用`@Morph`时，需要在拦截方法注册代理类/实例前，指定install注册配合`@Morph`使用的函数式接口，其入参必须为`Object[]`类型，并且返回值必须为`Object`类型**。
+
+  ```java
+  .intercept(MethodDelegation
+                   .withDefaultConfiguration()
+             			 // 向Byte Buddy 注册 用于中转目标方法入参和返回值的 函数式接口
+                   .withBinders(Morph.Binder.install(MyCallable.class))
+                   .to(new SomethingInterceptor04()))
+  ```
+
+> java源代码中`@Mopth`的文档注释如下：
+>
+> ```java
+> /**
+>  * This annotation instructs Byte Buddy to inject a proxy class that calls a method's super method with
+>  * explicit arguments. For this, the {@link Morph.Binder}
+>  * needs to be installed for an interface type that takes an argument of the array type {@link java.lang.Object} and
+>  * returns a non-array type of {@link java.lang.Object}. This is an alternative to using the
+>  * {@link net.bytebuddy.implementation.bind.annotation.SuperCall} or
+>  * {@link net.bytebuddy.implementation.bind.annotation.DefaultCall} annotations which call a super
+>  * method using the same arguments as the intercepted method was invoked with.
+>  *
+>  * @see net.bytebuddy.implementation.MethodDelegation
+>  * @see net.bytebuddy.implementation.bind.annotation.TargetMethodAnnotationDrivenBinder
+>  */
+> @Documented
+> @Retention(RetentionPolicy.RUNTIME)
+> @Target(ElementType.PARAMETER)
+> public @interface Morph {
+>   ...
+> }
+> ```
+
 ### 2.7.2 示例代码
+
+用来中转目标方法的入参和返回值的接口，后续注册到Byte Buddy中，才能实现借助`@Morph`修改目标方法入参的效果
+
+```java
+package org.example;
+
+/**
+ * 用于后续接收目标方法的参数, 以及中转返回值的函数式接口 <br/>
+ * 入参必须是 Object[], 返回值必须是 Object
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/3 8:38 AM
+ */
+@FunctionalInterface
+public interface MyCallable {
+    // java.lang.IllegalArgumentException: public abstract java.lang.String org.example.MyCallable.apply(java.lang.Object[]) does not return an Object-type
+    // String apply(Object[] args);
+
+    // java: incompatible types: java.lang.Object[] cannot be converted to java.lang.Long[]
+    // Object apply(Long[] args);
+
+    Object apply(Object[] args);
+}
+```
+
+用于增强目标方法的类
+
+```java
+package org.example;
+
+import net.bytebuddy.implementation.bind.annotation.*;
+
+import java.lang.reflect.Method;
+import java.util.Arrays;
+import java.util.concurrent.Callable;
+
+/**
+ * 用于修改/增强 {@link SomethingClass#selectUserName(Long)} 方法
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/2 9:21 PM
+ */
+public class SomethingInterceptor04 {
+
+  /**
+     * 修改/增强 {@link SomethingClass#selectUserName(Long)} 方法 <br/>
+     * <a href="http://bytebuddy.net/#/tutorial-cn" target="_blank">Byte Buddy官方教程文档</a>
+     * <p>
+     *  {@code @Morph}: 这个注解的工作方式与{@code @SuperCall}注解非常相似。然而，使用这个注解允许指定用于调用超类方法参数。
+     *  注意， 仅当你需要调用具有与原始调用不同参数的超类方法时，才应该使用此注解，因为使用@Morph注解需要对所有参数装箱和拆箱。
+     *  如果过你想调用一个特定的超类方法， 请考虑使用@Super注解来创建类型安全的代理。在这个注解被使用之前，需要显式地安装和注册，类似于@Pipe注解。
+     * </p>
+     */
+  @RuntimeType
+  public Object otherMethodName(
+    // 目标方法的参数
+    @AllArguments Object[] targetMethodArgs,
+    // @SuperCall Callable<?> zuper
+    // 用于调用目标方法 (这里使用@Morph, 而不是@SuperCall, 才能修改入参)
+    @Morph MyCallable zuper
+  ) {
+    // 原方法逻辑 return String.valueOf(userId);
+    Object result = null;
+    try {
+      // 修改参数
+      if(null != targetMethodArgs && targetMethodArgs.length > 0) {
+        targetMethodArgs[0] = (long) targetMethodArgs[0] + 1;
+      }
+      // @SuperCall 不接受参数 result = zuper.call();
+      // 调用目标方法
+      result = zuper.apply(targetMethodArgs);
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+    return result;
+  }
+}
+```
+
+生成增强目标方法的类
+
+```java
+public class ByteBuddyCreateClassTest {
+  /**
+    * (17) 通过@Morph动态修改方法入参
+    */
+  @Test
+  public void test17() throws NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException, IOException {
+    DynamicType.Unloaded<SomethingClass> subClassUnloaded = new ByteBuddy().subclass(SomethingClass.class)
+      .method(ElementMatchers.named("selectUserName"))
+      .intercept(MethodDelegation
+                 .withDefaultConfiguration()
+                 // 向Byte Buddy 注册 用于中转目标方法入参和返回值的 函数式接口
+                 .withBinders(Morph.Binder.install(MyCallable.class))
+                 .to(new SomethingInterceptor04()))
+      .name("com.example.AshiamdTest17")
+      .make();
+    String returnStr = subClassUnloaded.load(getClass().getClassLoader())
+      .getLoaded()
+      // 实例化并调用 selectUserName 方法验证是否被修改/增强
+      .getConstructor()
+      .newInstance()
+      .selectUserName(3L);
+    // 符合预期，第一个参数被修改+1
+    Assert.assertEquals("4", returnStr);
+    subClassUnloaded.saveIn(DemoTools.currentClassPathFile());
+  }
+}
+```
+
+通过`javap -p -c {com.example.AshiamdTest17.class的文件绝对路径}`得到字节码如下
+
+```shell
+public class com.example.AshiamdTest17 extends org.example.SomethingClass {
+  public static volatile org.example.SomethingInterceptor04 delegate$0ebbdv1;
+
+  public java.lang.String selectUserName(java.lang.Long);
+    Code:
+       0: getstatic     #10                 // Field delegate$0ebbdv1:Lorg/example/SomethingInterceptor04;
+       3: iconst_1
+       4: anewarray     #12                 // class java/lang/Object
+       7: dup
+       8: iconst_0
+       9: aload_1
+      10: aastore
+      11: new           #14                 // class com/example/AshiamdTest17$auxiliary$rULEYsoa
+      14: dup
+      15: aload_0
+      16: invokespecial #18                 // Method com/example/AshiamdTest17$auxiliary$rULEYsoa."<init>":(Lcom/example/AshiamdTest17;)V
+      19: invokevirtual #24                 // Method org/example/SomethingInterceptor04.otherMethodName:([Ljava/lang/Object;Lorg/example/MyCallable;)Ljava/lang/Object;
+      22: checkcast     #26                 // class java/lang/String
+      25: areturn
+
+  public com.example.AshiamdTest17();
+    Code:
+       0: aload_0
+       1: invokespecial #29                 // Method org/example/SomethingClass."<init>":()V
+       4: return
+
+  final java.lang.String selectUserName$accessor$JPV1Twdw(java.lang.Long);
+    Code:
+       0: aload_0
+       1: aload_1
+       2: invokespecial #32                 // Method org/example/SomethingClass.selectUserName:(Ljava/lang/Long;)Ljava/lang/String;
+       5: areturn
+}
+```
+
+实际还生成了一个辅助类(AuxiliaryType)，`AshiamdTest17$auxiliary$rULEYsoa.class`，对应的字节码如下：
+
+```shell
+class com.example.AshiamdTest17$auxiliary$rULEYsoa implements org.example.MyCallable {
+  private final com.example.AshiamdTest17 target;
+
+  public java.lang.Object apply(java.lang.Object[]);
+    Code:
+       0: aload_0
+       1: getfield      #12                 // Field target:Lcom/example/AshiamdTest17;
+       4: aload_1
+       5: iconst_0
+       6: aaload
+       7: checkcast     #14                 // class java/lang/Long
+      10: invokevirtual #20                 // Method com/example/AshiamdTest17.selectUserName$accessor$JPV1Twdw:(Ljava/lang/Long;)Ljava/lang/String;
+      13: areturn
+
+  com.example.AshiamdTest17$auxiliary$rULEYsoa(com.example.AshiamdTest17);
+    Code:
+       0: aload_0
+       1: invokespecial #25                 // Method java/lang/Object."<init>":()V
+       4: aload_0
+       5: aload_1
+       6: putfield      #12                 // Field target:Lcom/example/AshiamdTest17;
+       9: return
+}
+```
+
+可以看到生成的辅助类实现了我们定义的函数式接口`MyCallable`，可以看出来该辅助类的主要作用即中转目标方法的入参和返回值，本身没有其他太多逻辑。
 
 ## 2.8 对构造方法进行插桩
 
