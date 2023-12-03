@@ -1532,3 +1532,112 @@ public class com.example.AshiamdTest18 extends org.example.SomethingClass {
 从字节码也可以看出来，先是调用超类构造方法`org/example/SomethingClass."<init>":()V`，然后才是调用增强方法`org/example/SomethingInterceptor05.constructEnhance:(Ljava/lang/Object;)V`。
 
 ## 2.9 对静态方法进行插桩
+
+### 2.9.1 注意点
+
++ 增强静态方法时，通过`@This`和`@Super`获取不到目标对象
++ 增强静态方法时，通过`@Origin Class<?> clazz`可获取静态方法所处的Class对象
+
+### 2.9.2 示例代码
+
+给目标类增加static静态方法，后续演示增强静态方法
+
+```java
+package org.example;
+
+/**
+ * 具有一些方法的类
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/11/28 4:55 PM
+ */
+public class SomethingClass {
+   // ... 省略其他方法
+    public static void sayWhat(String whatToSay) {
+        System.out.println("what to Say, say: " + whatToSay);
+    }
+}
+```
+
+定义拦截器的增强逻辑
+
+```java
+package org.example;
+
+import net.bytebuddy.implementation.bind.annotation.*;
+
+import java.lang.reflect.Method;
+import java.util.Arrays;
+import java.util.concurrent.Callable;
+
+/**
+ * 用于修改/增强 {@link SomethingClass#sayWhat(String)} 静态方法
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/3 7:30 PM
+ */
+public class SomethingInterceptor06 {
+
+  @RuntimeType
+  public void sayWhatEnhance(
+    // 静态方法对应的类class对象
+    @Origin Class<?> clazz,
+    // 静态方法不可访问 @This Object targetObj,
+    @Origin Method targetMethod,
+    @AllArguments Object[] targetMethodArgs,
+    // 静态方法不可访问 @Super Object targetSuperObj,
+    @SuperCall Callable<?> zuper) {
+    // 原方法逻辑 System.out.println("what to Say, say: " + whatToSay);
+    System.out.println("clazz = " + clazz);
+    System.out.println("targetMethod.getName() = " + targetMethod.getName());
+    System.out.println("Arrays.toString(targetMethodArgs) = " + Arrays.toString(targetMethodArgs));
+    try {
+      System.out.println("before sayWhat");
+      // 调用目标方法
+      zuper.call();
+      System.out.println("after sayWhat");
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+  }
+}
+```
+
+生成增强类
+
+```java
+public class ByteBuddyCreateClassTest {
+  /**
+    * (19) 对静态方法插桩
+    */
+  @Test
+  public void test19() throws InvocationTargetException, IllegalAccessException, IOException, NoSuchMethodException {
+    DynamicType.Unloaded<SomethingClass> sayWhatUnload = new ByteBuddy().rebase(SomethingClass.class)
+      // 拦截 名为 "sayWhat" 的静态方法
+      .method(ElementMatchers.named("sayWhat").and(ModifierReviewable.OfByteCodeElement::isStatic))
+      // 拦截后的修改/增强逻辑
+      .intercept(MethodDelegation.to(new SomethingInterceptor06()))
+      .name("com.example.AshiamdTest19")
+      .make();
+    // 调用类静态方法, 验证是否执行了增强逻辑
+    Class<? extends SomethingClass> loadedClazz = sayWhatUnload.load(getClass().getClassLoader())
+      .getLoaded();
+    Method sayWhatMethod = loadedClazz.getMethod("sayWhat", String.class);
+    sayWhatMethod.invoke(null, "hello world");
+    // sayWhatUnload.saveIn(DemoTools.currentClassPathFile());
+  }
+}
+```
+
+运行后，标准输出如下
+
+```shell
+clazz = class com.example.AshiamdTest19
+targetMethod.getName() = sayWhat
+Arrays.toString(targetMethodArgs) = [hello world]
+before sayWhat
+what to Say, say: hello world
+after sayWhat
+```
+
+## 2.10 
