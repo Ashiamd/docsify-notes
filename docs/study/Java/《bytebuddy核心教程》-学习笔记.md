@@ -1714,5 +1714,322 @@ Byte Buddy通过我们指定的代码增强`SomethingClass.sayWhat`方法后，�
 
    3. 执行`AshiamdTest19.sayWhat`即执行拦截器类的`SomethingInterceptor06.sayWhatEnhance`实例方法。
 
-## 2.11 
+## 2.11 rebase, redefine默认生成类名
+
+`subclass`, `rebase`, `redefine`各自的默认命名策略如下：
+
++ `.subclass(目标类.class)`：
+  + 超类为jdk自带类: `net.bytebuddy.renamed.{超类名}$ByteBuddy${随机字符串}`
+  + 超类非jdk自带类 `{超类名}$ByteBuddy${随机字符串}`
++ `.rebase(目标类.class)`：和目标类的类名一致（效果上即覆盖原本的目标类class文件）
++ `.redefine(目标类.class)`：和目标类的类名一致（效果上即覆盖原本的目标类class文件）
+
+这里就不写示例代码了，实验的方式很简单，即把自己指定的类名`.name(yyy.zzz.Xxxx)`去掉，即根据默认命名策略生成类名
+
+## 2.12 bytebuddy的类加载器
+
+### 2.12.1 注意点
+
++ `DynamicType.Unloaded<SomethingClass>实例.load(getClass().getClassLoader()).getLoaded()`等同于`DynamicType.Unloaded<SomethingClass>实例.load(getClass().getClassLoader(), ClassLoadingStrategy.Default.WRAPPER).getLoaded()`
+
+  Byte Buddy默认使用`WRAPPER`类加载策略，该策略会优先根据类加载的双亲委派机制委派父类加载器加载指定类，若类成功被父类加载器加载，此处仍通过`.load`加载类就报错。（直观上就是将生成的类的`.class`文件保存到本地后，继续执行`.load`方法会抛异常`java.lang.IllegalStateException: Class already loaded`）
+
++ **若使用`CHILD_FIRST`类加载策略，那么打破双亲委派机制，优先在当前类加载器加载类**（直观上就是将生成的类的`.class`文件保存到本地后，继续执行`.load`方法不会报错，`.class`类由ByteBuddy的ByteArrayClassLoader正常加载）。具体代码可见`net.bytebuddy.dynamic.loading.ByteArrayClassLoader.ChildFirst#loadClass`
+
+下面摘出`net.bytebuddy.dynamic.loading.ByteArrayClassLoader.ChildFirst#loadClass`源代码
+
+```java
+/**
+     * Loads the class with the specified <a href="#binary-name">binary name</a>.  The
+     * default implementation of this method searches for classes in the
+     * following order:
+     *
+     * <ol>
+     *
+     *   <li><p> Invoke {@link #findLoadedClass(String)} to check if the class
+     *   has already been loaded.  </p></li>
+     *
+     *   <li><p> Invoke the {@link #loadClass(String) loadClass} method
+     *   on the parent class loader.  If the parent is {@code null} the class
+     *   loader built into the virtual machine is used, instead.  </p></li>
+     *
+     *   <li><p> Invoke the {@link #findClass(String)} method to find the
+     *   class.  </p></li>
+     *
+     * </ol>
+     *
+     * <p> If the class was found using the above steps, and the
+     * {@code resolve} flag is true, this method will then invoke the {@link
+     * #resolveClass(Class)} method on the resulting {@code Class} object.
+     *
+     * <p> Subclasses of {@code ClassLoader} are encouraged to override {@link
+     * #findClass(String)}, rather than this method.  </p>
+     *
+     * <p> Unless overridden, this method synchronizes on the result of
+     * {@link #getClassLoadingLock getClassLoadingLock} method
+     * during the entire class loading process.
+     *
+     * @param   name
+     *          The <a href="#binary-name">binary name</a> of the class
+     *
+     * @param   resolve
+     *          If {@code true} then resolve the class
+     *
+     * @return  The resulting {@code Class} object
+     *
+     * @throws  ClassNotFoundException
+     *          If the class could not be found
+     */
+protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+  synchronized (SYNCHRONIZATION_STRATEGY.initialize().getClassLoadingLock(this, name)) {
+    Class<?> type = findLoadedClass(name);
+    if (type != null) {
+      return type;
+    }
+    try {
+      type = findClass(name);
+      if (resolve) {
+        resolveClass(type);
+      }
+      return type;
+    } catch (ClassNotFoundException exception) {
+      // If an unknown class is loaded, this implementation causes the findClass method of this instance
+      // to be triggered twice. This is however of minor importance because this would result in a
+      // ClassNotFoundException what does not alter the outcome.
+      return super.loadClass(name, resolve);
+    }
+  }
+}
+```
+
+---
+
+> 其他关于类加载的介绍，可以查阅[Byte Buddy官方教程文档](http://bytebuddy.net/#/tutorial-cn)的"类加载"章节，下面内容摘自官方教程文档
+
+​	目前为止，我们只是创建了一个动态类型，但是我们并没有使用它。Byte Buddy 创建的类型是通过`DynamicType.Unloaded`的一个实例来表示的。通过名称可以猜到，这些类不会加载到JVM。 相反，Byte Buddy 创建的类以[Java 类文件格式](http://docs.oracle.com/javase/specs/jvms/se8/html/jvms-4.html)的二进制结构表示。 这样的话，你可以决定用生成的类来做什么。例如，你或许想从构建脚本运行 Byte Buddy，该脚本仅在部署前生成类以增强 Java 应用。 对于这个目的，`DynamicType.Unloaded`类允许提取动态类型的字节数组。为了方便， 该类型还额外提供了`saveIn(File)`方法，该方法允许你将一个类保存到给定的文件夹。此外， 它允许你通过`inject(File)`方法将类注入到已存在的 *jar* 文件。
+
+​	虽然直接访问一个类的二进制结构是直截了当的，但不幸的是加载一个类更复杂。**在 Java 里，所有的类都用`ClassLoader(类加载器)`加载。 这种类加载器的一个示例是启动类加载器，它负责加载 Java 类库里的类。另一方面，系统类加载器负责加载 Java 应用程序类路径里的类。 显然，这些预先存在的类加载器都不知道我们创建的任何动态类。为了解决这个问题，我们需要找其他的可能性用于加载运行时生成的类**。 Byte Buddy 通过开箱即用的不同方法提供解决方案：
+
+- 我们仅仅创建一个新的`ClassLoader`，它被明确地告知存在一个特定的动态创建的类。 因为 Java 类加载器是按层级组织的，我们定义的这个类加载器是程序里已经存在的类加载器的孩子。这样， 程序里的所有类对于新`类加载器`加载的动态类型都是可见的。
+- 通常，Java 类加载器在尝试直接加载给定名称的类之前会询问他的父`类加载器`。这意味着，在父类加载器知道有相同名称的类时， 子类加载器通常不会加载类。为此，**Byte Buddy 提供了孩子优先创建的类加载器，它在询问父类加载器之前会尝试自己加载类**。 除此之外，这种方法类似于刚才上面提及的方法。注意，这种方法不会覆盖父类加载器加载的类，而是隐藏其他类型。
+- 最后，我们可以用反射将一个类注入到已存在的`类加载器`。通常，类加载器会被要求通过类名称来提供一个给定的类。 用反射我们可以扭转这个规则，调用受保护的方法将一个新类注入类加载器，而类加载器实际上不知道如何定位这个动态类。
+
+不幸的是，上面的方法都有其缺点：
+
+- **如果我们创建一个新的`ClassLoader`，这个类加载器会定义一个新的命名空间。 这样可能会通过两个不同的类加载器加载两个有相同名称的类。这两个类永远不会被JVM视为相等，即时这两个类是相同的类实现**。 这个相等规则也适用于 Java 包。这意味着，如果不是用相同的类加载器加载， `example.Foo`类无法访问`example.Bar`类的包私有方法。此外， 如果`example.Bar`继承`example.Foo`，任何被覆写的包私有方法都将变为无效，但会委托给原始实现。
+- 每当加载一个类时，一旦引用另一种类型的代码段被解析，它的类加载器将查找该类中引用的所有类型。该查找会委托给同一个类加载器。 想象一下这种场景：我们动态的创建了`example.Foo`和`example.Bar`两个类， 如果我们将`example.Foo`注入一个已经存在的类加载器，这个类加载器可能会尝试定位查找`example.Bar`。 然而，这个查找会失败，因为后一个类是动态创建的，而且对于刚才注入`example.Foo`类的类加载器来说是不可达的。 因此反射的方法不能用于在类加载期间生效的带有循环依赖的类。**幸运的是，大多数JVM的实现在第一次使用时都会延迟解析引用类， 这就是类注入通常在没有这些限制的时候正常工作的原因。此外，实际上，由 Byte Buddy 创建的类通常不会受这样的循环影响**。
+
+​	你可能会任务遇到循环依赖的机会是无关紧要的，因为一次只创建一个动态类。然而，动态类型的创建可能会触发辅助类型的创建。 这些类型由 Byte Buddy 自动创建，以提供对正在创建的动态类型的访问。我们将在下面的章节学习辅助类型，现在不要担心这些。 但是，正因为如此，我们推荐你尽可能通过创建一个特定的`ClassLoader`来加载动态类， 而不是将他们注入到一个已存在的类加载器。
+
+​	创建一个`DynamicType.Unloaded`后，这个类型可以用`ClassLoadingStrategy`加载。 如果没有提供这个策略，Byte Buddy 会基于提供的类加载器推测出一种策略，并且仅为启动类加载器创建一个新的类加载器， 该类加载器不能用反射的方式注入任何类。否则为默认设置。
+
+​	Byte Buddy 提供了几种开箱即用的类加载策略， 每一种都遵循上述概念中的其中一个。**这些策略都在`ClassLoadingStrategy.Default`中定义，其中， `WRAPPER`策略会创建一个新的，经过包装的`ClassLoader`， `CHILD_FIRST`策略会创建一个类似的具有孩子优先语义的类加载器，`INJECTION`策略会用反射注入一个动态类型**。
+
+​	 `WRAPPER`和`CHILD_FIRST`策略也可以在所谓的*manifest(清单)*版本中使用，即使在类加载后， 也会保留类的二进制格式。这些可替代的版本使类加载器加载的类的二进制表示可以通过`ClassLoader::getResourceAsStream`方法访问。 但是，请注意，这需要这些类加载器保留一个类的完整的二进制表示的引用，这会占用 JVM 堆上的空间。因此， 如果你打算实际访问类的二进制格式，你应该只使用清单版本。由于`INJECTION`策略通过反射实现， 而且不可能改变方法ClassLoader::getResourceAsStream的语义，因此它自然在清单版本中不可用。
+
+​	让我们看一下这样的类加载：
+
+```java
+Class<?> type = new ByteBuddy()
+  .subclass(Object.class)
+  .make()
+  .load(getClass().getClassLoader(), ClassLoadingStrategy.Default.WRAPPER)
+  .getLoaded();
+```
+
+​	在上面的示例中，我们创建并加载了一个类。像我们之前提到的，我们用`WRAPPER`加载策略加载类， 它适用于大多数场景。最后，`getLoaded`方法返回了一个现在已经加载的 Java `Class(类)`的实例， 这个实例代表着动态类。
+
+​	注意，当加载类时，预定义的类加载策略是通过应用执行上下文的`ProtectionDomain`来执行的。或者， 所有默认的策略通过调用`withProtectionDomain`方法来提供明确地保护域规范。 当使用安全管理器或使用签名jar包中定义的类时，定义一个明确地保护域是非常重要的。
+
+### 2.12.2 示例代码
+
+1. 默认类加载策略`WRAPPER`，不保存`.class`文件到本地，重复加载类
+
+   ```java
+   public class ByteBuddyCreateClassTest {
+     /**
+       * (20) 默认类加载策略`WRAPPER`, 不保存`.class`文件到本地, 重复加载类
+       */
+     @Test
+     public void test20() {
+       DynamicType.Unloaded<SomethingClass> sayWhatUnload = new ByteBuddy().rebase(SomethingClass.class)
+         .method(ElementMatchers.named("sayWhat").and(ModifierReviewable.OfByteCodeElement::isStatic))
+         .intercept(MethodDelegation.to(new SomethingInterceptor06()))
+         .name("com.example.AshiamdTest20")
+         .make();
+       Class<? extends SomethingClass> loaded01 = sayWhatUnload.load(getClass().getClassLoader()).getLoaded();
+       Class<? extends SomethingClass> loaded02 = sayWhatUnload.load(getClass().getClassLoader()).getLoaded();
+       Assert.assertNotEquals(loaded01, loaded02);
+       // loaded01 = class com.example.AshiamdTest20
+       System.out.println("loaded01 = " + loaded01);
+       // loaded02 = class com.example.AshiamdTest20
+       System.out.println("loaded02 = " + loaded02);
+       // loaded01.hashCode() = 589273327
+       System.out.println("loaded01.hashCode() = " + loaded01.hashCode());
+       // loaded02.hashCode() = 609656250
+       System.out.println("loaded02.hashCode() = " + loaded02.hashCode());
+     }
+   }
+   ```
+
+   可以看到，每次加载出来的`Class<? extends SomethingClass>`指向堆中的Class对象实际是不同的
+
+2. 默认类加载策略`WRAPPER`，保存`.class`文件到本地，之后加载类
+
+   ```java
+   public class ByteBuddyCreateClassTest {
+     /**
+       * (21) 默认类加载策略`WRAPPER`,保存`.class`文件到本地, 之后加载类
+       */
+     @Test
+     public void test21() throws IOException {
+       DynamicType.Unloaded<SomethingClass> sayWhatUnload = new ByteBuddy().rebase(SomethingClass.class)
+         .method(ElementMatchers.named("sayWhat").and(ModifierReviewable.OfByteCodeElement::isStatic))
+         .intercept(MethodDelegation.to(new SomethingInterceptor06()))
+         .name("com.example.AshiamdTest21")
+         .make();
+       sayWhatUnload.saveIn(DemoTools.currentClassPathFile());
+       Assert.assertThrows(IllegalStateException.class,
+                           // 会抛出 java.lang.IllegalStateException: Class already loaded: class com.example.AshiamdTest21
+                           () -> sayWhatUnload.load(getClass().getClassLoader()).getLoaded());
+     }
+   }
+   ```
+
+   根据调试对比，可以发现在没有`sayWhatUnload.saveIn(DemoTools.currentClassPathFile());`这行代码时，内部执行逻辑到`net.bytebuddy.dynamic.loading.ByteArrayClassLoader#load(java.lang.ClassLoader, java.util.Map<net.bytebuddy.description.type.TypeDescription,byte[]>, java.security.ProtectionDomain, net.bytebuddy.dynamic.loading.ByteArrayClassLoader.PersistenceHandler, net.bytebuddy.dynamic.loading.PackageDefinitionStrategy, boolean, boolean)`方法时，`type.getClassLoader() != classLoader`为false，这里两边都是`ByteArrayClassLoader`。
+
+   若将`.class`文件保存到本地后，会发现`type.getClassLoader() != classLoader`为true，左边为`AppClassLoader`。
+
+   ```java
+   /**
+        * Loads a given set of class descriptions and their binary representations.
+        *
+        * @param classLoader               The parent class loader.
+        * @param types                     The unloaded types to be loaded.
+        * @param protectionDomain          The protection domain to apply where {@code null} references an implicit protection domain.
+        * @param persistenceHandler        The persistence handler of the created class loader.
+        * @param packageDefinitionStrategy The package definer to be queried for package definitions.
+        * @param forbidExisting            {@code true} if the class loading should throw an exception if a class was already loaded by a parent class loader.
+        * @param sealed                    {@code true} if the class loader should be sealed.
+        * @return A map of the given type descriptions pointing to their loaded representations.
+        */
+   @SuppressFBWarnings(value = "DP_CREATE_CLASSLOADER_INSIDE_DO_PRIVILEGED", justification = "Assuring privilege is explicit user responsibility.")
+   public static Map<TypeDescription, Class<?>> load(@MaybeNull ClassLoader classLoader,
+                                                     Map<TypeDescription, byte[]> types,
+                                                     @MaybeNull ProtectionDomain protectionDomain,
+                                                     PersistenceHandler persistenceHandler,
+                                                     PackageDefinitionStrategy packageDefinitionStrategy,
+                                                     boolean forbidExisting,
+                                                     boolean sealed) {
+     Map<String, byte[]> typesByName = new HashMap<String, byte[]>();
+     for (Map.Entry<TypeDescription, byte[]> entry : types.entrySet()) {
+       typesByName.put(entry.getKey().getName(), entry.getValue());
+     }
+     classLoader = new ByteArrayClassLoader(classLoader,
+                                            sealed,
+                                            typesByName,
+                                            protectionDomain,
+                                            persistenceHandler,
+                                            packageDefinitionStrategy,
+                                            ClassFilePostProcessor.NoOp.INSTANCE);
+     Map<TypeDescription, Class<?>> result = new LinkedHashMap<TypeDescription, Class<?>>();
+     for (TypeDescription typeDescription : types.keySet()) {
+       try {
+         Class<?> type = Class.forName(typeDescription.getName(), false, classLoader);
+         if (!GraalImageCode.getCurrent().isNativeImageExecution() 
+             && forbidExisting 
+             // 将类文件保存到本地后，type被AppClassLoader加载; 否则被ByteArrayClassLoader加载
+             // classLoader 在这里都是 ByteArrayClassLoader
+             && type.getClassLoader() != classLoader) {
+           throw new IllegalStateException("Class already loaded: " + type);
+         }
+         result.put(typeDescription, type);
+       } catch (ClassNotFoundException exception) {
+         throw new IllegalStateException("Cannot load class " + typeDescription, exception);
+       }
+     }
+     return result;
+   }
+   ```
+
+3. 类加载策略`CHILD_FIRST`，保存`.class`文件到本地，之后重复加载类
+
+   ```java
+   public class ByteBuddyCreateClassTest {
+     /**
+       * (22) 类加载策略`CHILD_FIRST`，保存`.class`文件到本地，之后重复加载类
+       */
+     @Test
+     public void test22() throws IOException {
+       DynamicType.Unloaded<SomethingClass> sayWhatUnload = new ByteBuddy().rebase(SomethingClass.class)
+         .method(ElementMatchers.named("sayWhat").and(ModifierReviewable.OfByteCodeElement::isStatic))
+         .intercept(MethodDelegation.to(new SomethingInterceptor06()))
+         .name("com.example.AshiamdTest22")
+         .make();
+       sayWhatUnload.saveIn(DemoTools.currentClassPathFile());
+       Class<? extends SomethingClass> loaded01 = sayWhatUnload.load(getClass().getClassLoader(),
+                                                                     ClassLoadingStrategy.Default.CHILD_FIRST).getLoaded();
+       Class<? extends SomethingClass> loaded02 = sayWhatUnload.load(getClass().getClassLoader(),
+                                                                     ClassLoadingStrategy.Default.CHILD_FIRST).getLoaded();
+       Assert.assertNotEquals(loaded01, loaded02);
+       // loaded01 = class com.example.AshiamdTest22
+       System.out.println("loaded01 = " + loaded01);
+       // loaded02 = class com.example.AshiamdTest22
+       System.out.println("loaded02 = " + loaded02);
+       // loaded01.hashCode() = 1293680734
+       System.out.println("loaded01.hashCode() = " + loaded01.hashCode());
+       // loaded02.hashCode() = 611520720
+       System.out.println("loaded02.hashCode() = " + loaded02.hashCode());
+     }
+   }
+   ```
+
+   可看出来，使用`CHILD_FIRST`类加载策略时，即使`sayWhatUnload.saveIn(DemoTools.currentClassPathFile());`保存类文件到本地，也不会报错。因为该策略优先使用当前类加载器加载类，但是重复加载时，同样生成不同的Class对象
+
+4. redefine后，配合`CHILD_FIRST`重新加载类
+
+   ```java
+   public class ByteBuddyCreateClassTest {
+     /**
+       * (23) redefine后，配合`CHILD_FIRST`加载类
+       */
+     @Test
+     public void test23() throws IOException, NoSuchMethodException, InvocationTargetException, InstantiationException, IllegalAccessException {
+       DynamicType.Unloaded<NothingClass> redefine = new ByteBuddy().redefine(NothingClass.class)
+         .defineMethod("returnBlankString", String.class, Modifier.PUBLIC | Modifier.STATIC)
+         .withParameters(String.class, Integer.class)
+         .intercept(FixedValue.value(""))
+         .make();
+   
+       // redefine.saveIn(DemoTools.currentClassPathFile());
+   
+       Class<? extends NothingClass> loaded01 = redefine.load(getClass().getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST).getLoaded();
+       // loaded01 = class org.example.NothingClass
+       System.out.println("loaded01 = " + loaded01);
+       // loaded01.equals(NothingClass.class) = false
+       System.out.println("loaded01.equals(NothingClass.class) = " + loaded01.equals(NothingClass.class));
+       // loaded01.getClassLoader() = net.bytebuddy.dynamic.loading.ByteArrayClassLoader$ChildFirst@23348b5d
+       System.out.println("loaded01.getClassLoader() = " + loaded01.getClassLoader());
+       // NothingClass.class.getClassLoader() = jdk.internal.loader.ClassLoaders$AppClassLoader@4e0e2f2a
+       System.out.println("NothingClass.class.getClassLoader() = " + NothingClass.class.getClassLoader());
+       // loaded01.getDeclaredConstructor().newInstance() instanceof NothingClass = false
+       System.out.println("loaded01.getDeclaredConstructor().newInstance() instanceof NothingClass = " +
+                          (loaded01.getDeclaredConstructor().newInstance() instanceof NothingClass));
+   
+       Class<? extends NothingClass> loaded02 = redefine.load(getClass().getClassLoader(), ClassLoadingStrategy.Default.CHILD_FIRST).getLoaded();
+       // loaded02 = class org.example.NothingClass
+       System.out.println("loaded02 = " + loaded02);
+       // loaded01.equals(loaded02) = false
+       System.out.println("loaded01.equals(loaded02) = " + loaded01.equals(loaded02));
+       // loaded01.hashCode() = 1725008249
+       System.out.println("loaded01.hashCode() = " + loaded01.hashCode());
+       // loaded02.hashCode() = 1620890840
+       System.out.println("loaded02.hashCode() = " + loaded02.hashCode());
+     }
+   }
+   ```
+
+   可以看出来这里代码中的NothingClass还是指被redefine之前，由AppClassLoader加载的原类。
+
+## 2.13 
 
