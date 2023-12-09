@@ -2031,5 +2031,101 @@ Class<?> type = new ByteBuddy()
 
    可以看出来这里代码中的NothingClass还是指被redefine之前，由AppClassLoader加载的原类。
 
-## 2.13 
+## 2.13 自定义类的加载路径
+
+### 2.13.1 注意点
+
++ `ClassFileLocator`：类定位器，用来定位类文件所在的路径，支持jar包所在路径，`.class`文件所在路径，类加载器等。
+  + 一般使用时都需要带上`ClassFileLocator.ForClassLoader.ofSystemLoader()`，才能保证jdk自带类能够正常被扫描识别到，否则会抛出异常(`net.bytebuddy.pool.TypePool$Resolution$NoSuchTypeException: Cannot resolve type description for java.lang.Object`)。
++ `ClassFileLocator.Compound`：本身也是类定位器，用于整合多个`ClassFileLocator`。
++ `TypePool`：类型池，一般配合`ClassFileLocator.Compound`使用，用于从指定的多个类定位器内获取类描述对象
+  + 调用`typePool.describe("全限制类名").resolve()`获取`TypeDescription`类描述对象，**`resolve()`不会触发类加载。**
++ `TypeDescription`：类描述对象，用于描述java类，后续`subclass`, `rebase`, `redefine`时用于指定需要修改/增改的类。
+
+---
+
+> 其他介绍可见官方教程文档的"重新加载类"和"使用未加载的类"章节，下面内容摘至官方教程文档：
+
+​	使用 Java 的 HotSwap 功能有一个巨大的缺陷，**HotSwap的当前实现要求重定义的类在重定义前后应用相同的类模式。 这意味着当重新加载类时，不允许添加方法或字段**。我们已经讨论过 Byte Buddy 为任何变基的类定义了原始方法的副本， 因此类的变基不适用于`ClassReloadingStrategy`。此外，类重定义不适用于具有显式的类初始化程序的方法(类中的静态块)的类， 因为该初始化程序也需要复制到额外的方法中。不幸的是， OpenJDK已经退出了[扩展HotSwap的功能](http://openjdk.java.net/jeps/159)， 因此，无法使用HotSwap的功能解决此限制。同时，Byte Buddy 的HotSwap支持可用于某些看起来有用的极端情况。 否则，当(例如，从构建脚本)增强存在的类时，变基和重定义可能是一个便利的功能。
+
+​	意识到HotSwap功能的局限性后，人们可能会认为`变基`和`重定义`指令的唯一有意义的应用是在构建期间。 通过应用构建时的处理，人们可以断言一个已经处理过的类在它的初始类简单地加载之前没有被加载，因为这个类加载是在不同的JVM实例中完成的。 然而，**Byte Buddy 同样有能力处理尚未加载的类。为此，Byte Buddy 抽象了 Java 的反射 API，例如， 一个`Class`实例在内部由一个`TypeDescription`表示**。事实上， Byte Buddy 只知道如何处理由实现了`TypeDescription`接口的适配器提供的`Class`。 这种抽象的最大好处是类的信息不需要由`类加载器`提供，而是可以由其他的源提供。
+
+​	**Byte Buddy 使用`TypePool(类型池)`，提供了一种标准的方式来获取类的`TypeDescription(类描述)`**。当然， 这个池的默认实现也提供了。`TypePool.Default`的实现解析类的二进制格式并将其表示为需要的`TypeDescription`。 类似于`类加载器`为加载好的类维护一个缓存，该缓存也是可定制的。此外，**它通常从`类加载器`中检索类的二进制格式， 但不指示它加载此类**。
+
+​	JVM仅在第一次使用时加载一个类。因此，我们可以安全的重定义一个类，例如：
+
+```java
+package foo;
+class Bar { }
+```
+
+​	在运行任何其他的代码之前，程序启动时：
+
+```java
+class MyApplication {
+  public static void main(String[] args) {
+    TypePool typePool = TypePool.Default.ofSystemLoader();
+    Class bar = new ByteBuddy()
+      .redefine(typePool.describe("foo.Bar").resolve(), // do not use 'Bar.class'
+                ClassFileLocator.ForClassLoader.ofSystemLoader())
+      .defineField("qux", String.class) // we learn more about defining fields later
+      .make()
+      .load(ClassLoader.getSystemClassLoader(), ClassLoadingStrategy.Default.INJECTION)
+      .getLoaded();
+    assertThat(bar.getDeclaredField("qux"), notNullValue());
+  }
+}
+```
+
+​	通过第一次在断言中使用类之前显式地重定义类，我们先于JVM内置的类加载。这样，重新定义的类`foo.Bar`就被加载了， 并且贯穿整个应用的运行时。然而，请**注意，当我们用`TypePool`来提供类型描述时，我们不会通过一个类的字面量(literal)来引用该类。 如果我们用了`foo.bar`的字面量，JVM 将在我们有机会重定义该类之前加载它，我们的重定义尝试将无效**。此外，请注意， 当处理未加载的类时，我们还需要指定一个`ClassFileLocator(类文件定位器)`，它允许定位类的类文件。在上面的示例中， 我们简单地创建了一个类文件定位器，它扫描了正在运行的应用的类路径以查找foo.Bar这样的文件。
+
+### 2.13.2 示例代码
+
+```java
+public class ByteBuddyCreateClassTest {
+  /**
+     * (24) 从指定 “jar包”, “文件目录”, “系统类加载器” 加载指定类
+     */
+  @Test
+  public void test24() throws IOException {
+    // 1. 指定需要扫描的jar包路径
+    ClassFileLocator jarPathLocator = ClassFileLocator.ForJarFile.of(new File("/Users/ashiamd/mydocs/dev-tools/apache-maven-3.9.3/repository/commons-io/commons-io/2.15.0/commons-io-2.15.0.jar"));
+    // 2. 指定需要扫描的.class文件所在路径
+    ClassFileLocator.ForFolder classPathLocator = new ClassFileLocator.ForFolder(new File("/Users/ashiamd/mydocs/docs/study/javadocument/javadocument/IDEA_project/ash_bytebuddy_study/bytebuddy_test/target/test-classes"));
+    // 3. 从系统类加载器中扫描类 (不加则找不到jdk自身的类)
+    ClassFileLocator classLoaderLocator = ClassFileLocator.ForClassLoader.ofSystemLoader();
+    // 整合 多个 自定义的类扫描路径
+    ClassFileLocator.Compound locatorCompound = new ClassFileLocator.Compound(jarPathLocator, classPathLocator, classLoaderLocator);
+    // locatorCompound 去掉 classLoaderLocator 后, 后续net.bytebuddy.ByteBuddy.redefine(ByteBuddy.java:886)往下调用时,
+    // 报错 net.bytebuddy.pool.TypePool$Resolution$NoSuchTypeException: Cannot resolve type description for java.lang.Object
+    // ClassFileLocator.Compound locatorCompound = new ClassFileLocator.Compound(jarPathLocator, classPathLocator);
+    // 类型池, 提供根据 全限制类名 从指定 类路径扫描范围内 获取 类描述对象 的方法
+    TypePool typePool = TypePool.Default.of(locatorCompound);
+    // 4. 从前面指定的扫描类范围中, 获取 “commons-io-2.15.0.jar” 内 FileUtils 类描述对象, resolve()不会触发类加载
+    TypeDescription jarPathTypeDescription = typePool.describe("org.apache.commons.io.FileUtils").resolve();
+    // 5. 获取 target下测试类路径的NothingClass类
+    TypeDescription classPathTypeDescription = typePool.describe("org.example.NothingClass").resolve();
+
+    // 6-1 redefine 指定 jar包内的 FileUtils 类, 并将生成的.class文件保存到本地
+    new ByteBuddy().redefine(jarPathTypeDescription, locatorCompound)
+      .method(ElementMatchers.named("current"))
+      .intercept(FixedValue.nullValue())
+      .make()
+      .saveIn(DemoTools.currentClassPathFile());
+
+    // 6-2 redefine 指定.class文件路径内的 NothingClass类, 并将生成的.class文件保存到本地
+    new ByteBuddy().redefine(classPathTypeDescription, locatorCompound)
+      .defineMethod("justVoid", void.class, Modifier.PUBLIC)
+      .intercept(FixedValue.value(void.class))
+      .make()
+      .saveIn(DemoTools.currentClassPathFile());
+  }
+}
+```
+
+运行后查看target目录下的类文件，可验证逻辑生效。`org.apache.commons.io.FileUtils#current()`的方法提逻辑已经变成返回null，而`org.example.Nothing`也新增了一个名为`justVoid`的方法
+
+## 2.14 清空方法体
+
+
 
