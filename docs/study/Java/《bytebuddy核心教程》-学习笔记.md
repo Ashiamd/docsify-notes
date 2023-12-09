@@ -2036,6 +2036,9 @@ Class<?> type = new ByteBuddy()
 ### 2.13.1 注意点
 
 + `ClassFileLocator`：类定位器，用来定位类文件所在的路径，支持jar包所在路径，`.class`文件所在路径，类加载器等。
+  + `ClassFileLocator.ForJarFile.of(File file)`：jar包所在路径
+  + `ClassFileLocator.ForFolder(File file)`：`.class`文件所在路径
+  + `ClassFileLocator.ForClassLoader.ofXxxLoader()`：类加载器
   + 一般使用时都需要带上`ClassFileLocator.ForClassLoader.ofSystemLoader()`，才能保证jdk自带类能够正常被扫描识别到，否则会抛出异常(`net.bytebuddy.pool.TypePool$Resolution$NoSuchTypeException: Cannot resolve type description for java.lang.Object`)。
 + `ClassFileLocator.Compound`：本身也是类定位器，用于整合多个`ClassFileLocator`。
 + `TypePool`：类型池，一般配合`ClassFileLocator.Compound`使用，用于从指定的多个类定位器内获取类描述对象
@@ -2126,6 +2129,148 @@ public class ByteBuddyCreateClassTest {
 运行后查看target目录下的类文件，可验证逻辑生效。`org.apache.commons.io.FileUtils#current()`的方法提逻辑已经变成返回null，而`org.example.Nothing`也新增了一个名为`justVoid`的方法
 
 ## 2.14 清空方法体
+
+### 2.14.1 注意点
+
++ `ElementMatchers.isDeclaredBy(Class<?> type))`：拦截仅由目标类声明的方法，通常用于排除超类方法
++ `StubMethod.INSTANCE`：Byte Buddy默认的拦截器方法实现之一，会根据被拦截的目标方法的返回值类型返回对应的默认值
+  1. The value 0 for all numeric type.
+  2. The null character for the char type.
+  3. false for the boolean type.
+  4. Nothing for void types.
+  5. A null reference for any reference types. Note that this includes primitive wrapper types.
++ 当使用`ElementMatchers.any()`时，仅`subclass`包含构造方法，`rebase`和`redefine`不包含构造方法
++ 使用`ElementMatchers.any().and(ElementMatchers.isDeclaredBy(目标类.class))`时，仅`subclass`支持修改生成类名，`rebase`和`redefine`若修改类名则拦截后的修改/增强逻辑无效。
+
+### 2.14.2 示例代码
+
+1. 清空指定类所有方法的方法体（包含超类方法）
+
+   ```java
+   public class ByteBuddyCreateClassTest {
+     /**
+       * (25) 清空指定类的所有方法的方法体(包含超类方法)
+       */
+     @Test
+     public void test25() throws IOException {
+       DynamicType.Unloaded<SomethingClass> allMethodIncludeSuper = new ByteBuddy().redefine(SomethingClass.class)
+         // 拦截所有方法(包括超类方法)
+         .method(ElementMatchers.any())
+         // 根据方法返回值类型, 返回对应类型的默认值
+         .intercept(StubMethod.INSTANCE)
+         .name("com.example.AshiamdTest25")
+         .make();
+       allMethodIncludeSuper.saveIn(DemoTools.currentClassPathFile());
+     }
+   }
+   ```
+
+   生成的类，反编译结果如下：
+
+   <u>可以注意到构造方法的方法体没有被清空，当使用`rebase`或`redefine`就会如此，仅`subclass`会清空构造方法的方法体</u>
+
+   ```java
+   //
+   // Source code recreated from a .class file by IntelliJ IDEA
+   // (powered by FernFlower decompiler)
+   //
+   
+   package com.example;
+   
+   public class AshiamdTest25 {
+     public AshiamdTest25() {
+       System.out.println("SomethingClass()");
+     }
+   
+     public String selectUserName(Long var1) {
+       return null;
+     }
+   
+     public void print() {
+     }
+   
+     public int getAge() {
+       return 0;
+     }
+   
+     public static void sayWhat(String var0) {
+     }
+   
+     public boolean equals(Object var1) {
+       return false;
+     }
+   
+     public String toString() {
+       return null;
+     }
+   
+     public int hashCode() {
+       return 0;
+     }
+   
+     protected Object clone() throws CloneNotSupportedException {
+       return null;
+     }
+   }
+   
+   ```
+
+2. 清空指定类所有方法的方法体
+
+   使用`subclass`时，生成类的构造方法体逻辑也被清空
+
+   ```java
+   public class ByteBuddyCreateClassTest {
+     /**
+       * (26) 清空指定类的当前类声明的所有方法的方法体(不包含超类方法)
+       */
+     @Test
+     public void test26() throws IOException, ClassNotFoundException {
+       DynamicType.Unloaded<SomethingClass> allMethod = new ByteBuddy().subclass(SomethingClass.class)
+         // 拦截所有目标类声明的方法(不包括超类方法)
+         .method(ElementMatchers.any().and(ElementMatchers.isDeclaredBy(SomethingClass.class)))
+         // 根据方法返回值类型, 返回对应类型的默认值
+         .intercept(StubMethod.INSTANCE)
+         // 若这里使用rebase或redefine, 则需要去掉.name(“全限制类名”), 覆盖原类后才能使清空方法体的逻辑生效
+         .name("com.example.AshiamdTest26")
+         .make();
+       allMethod.saveIn(DemoTools.currentClassPathFile());
+     }
+   }
+   ```
+
+   生成的类反编译结果如下：
+
+   和上面不同的是，这里使用`subclass`，同时也清空了当前类构造方法的方法体
+
+   ```java
+   //
+   // Source code recreated from a .class file by IntelliJ IDEA
+   // (powered by FernFlower decompiler)
+   //
+   
+   package com.example;
+   
+   import org.example.SomethingClass;
+   
+   public class AshiamdTest26 extends SomethingClass {
+     public void print() {
+     }
+   
+     public String selectUserName(Long var1) {
+       return null;
+     }
+   
+     public int getAge() {
+       return 0;
+     }
+   
+     public AshiamdTest26() {
+     }
+   }
+   ```
+
+# 三、java agent
 
 
 
