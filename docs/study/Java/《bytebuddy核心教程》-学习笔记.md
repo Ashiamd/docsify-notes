@@ -2531,5 +2531,574 @@ pool-1-thread-2, Something.returnHello():Hi
 // ...
 ```
 
-## 3.2 
+## 3.2 byte buddy实现agent实战
+
+byte buddy在jdk的java agent基础上进行了封装，更加简单易用。
+
+### 3.2.1 拦截实例方法
+
+#### 3.2.1.1 注意点
+
++ `AgentBuilder`：对java agent常见的类转换等逻辑进行包装的构造器类，通常在`premain`方法入口中使用
+  + An agent builder provides a convenience API for defining a Java agent . By default, this transformation is applied by rebasing the type if not specified otherwise by setting a AgentBuilder.TypeStrategy.
++ `AgentBuilder.Transformer`：对被拦截的类进行修改/增强的转换器类，这里面主要指定拦截的方法和具体拦截后的增强逻辑
+  + A transformer allows to apply modifications to a DynamicType. Such a modification is then applied to any instrumented type that was matched by the preceding matcher.
++ `AgentBuilder.Listener`：监听器类，在`instrumentation`过程中执行该类中的hook方法(里面所有类都是hook回调方法，在特定环节被调用，比如某个类被transform后，被ignored后，等等)
+  + A listener that is informed about events that occur during an instrumentation process.
+
+> 其他相关介绍，可见官方教程文档的"创建Java代理"章节，下面内容摘自官方教程文档
+
+​	当一个应用增长得更大，且变得更模块化时，在指定的程序位置应用这样的转换当然是一个繁琐的强制约束。而且， 确实有一个更好的办法来*按需要*应用类的重定义。 用[Java 代理](https://docs.oracle.com/javase/8/docs/api/java/lang/instrument/package-summary.html)， 它可以拦截 Java 应用中进行的任何类加载活动。Java 代理被实现为一个简单的带有入口点的 jar 文件，其入口点在 jar 文件的 manifest(清单) 文件中指定， 像链接中描述的一样。在 Byte Buddy 中，通过使用`AgentBuilder`，代理的实现是相当直接的。 假定我们之前定义了一个名为`ToString`的注解，通过实现代理的`premain`方法， 对所有带该注解的类实现`toString`方法是很容易的。如下所示：
+
+```java
+class ToStringAgent {
+  public static void premain(String arguments, Instrumentation instrumentation) {
+    new AgentBuilder.Default()
+      .type(isAnnotatedWith(ToString.class))
+      .transform(new AgentBuilder.Transformer() {
+        @Override
+        public DynamicType.Builder transform(DynamicType.Builder builder,
+                                             TypeDescription typeDescription,
+                                             ClassLoader classloader) {
+          return builder.method(named("toString"))
+            .intercept(FixedValue.value("transformed"));
+        }
+      }).installOn(instrumentation);
+  }
+}
+```
+
+​	作为应用上述`AgentBuilder.Transformer`的结果，添加注解的类的所有`toString`方法将返回 `transformed`。 我们将在接下来的章节中学习`DynamicType.Builder`，所以现在不要担心这个类。上面的代码当然是一个微不足道且毫无意义的应用。 然而，正确使用这个概念，对于实现面向切面编程会提供一个非常强大的工具。
+
+​	**请注意，在使用代理时也可以检测由启动类加载器加载的类。但是，这需要一些准备。首先，启动类加载器由`null`值表示， 这会导致无法通过反射在该类加载器加载类**。然而，有时需要加载辅助类到检测类的类加载器中以支持类的实现。<u>为了向启动类加载器中加载类， Byte Buddy 可以创建 jar 文件并且将这些文件添加到启动类的加载路径中。然而，为了使这个成为可能，需要将这些类保存到磁盘上。 使用`enableBootstrapInjection`命令可以指定存放这些类的文件夹，该命令也采用`Instrumentation`接口以附加这些类。 请注意，被检测类使用的所有用户类也需要放在启动类加载器类加载路径上，这样会使使用`Instrumentation`接口成为可能</u>。
+
+#### 3.2.1.2 示例代码
+
+新建`instance-method-agent`module，对应的`pom.xml`文件如下：
+
+```xml
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.example</groupId>
+    <artifactId>ash_bytebuddy_study</artifactId>
+    <version>1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>instance-method-agent</artifactId>
+  <packaging>jar</packaging>
+
+  <name>instance-method-agent</name>
+  <url>http://maven.apache.org</url>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <!-- Byte Buddy -->
+    <!-- https://mvnrepository.com/artifact/net.bytebuddy/byte-buddy -->
+    <dependency>
+      <groupId>net.bytebuddy</groupId>
+      <artifactId>byte-buddy</artifactId>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-assembly-plugin</artifactId>
+        <version>3.6.0</version>
+        <configuration>
+          <descriptorRefs>
+            <descriptorRef>jar-with-dependencies</descriptorRef>
+          </descriptorRefs>
+          <archive>
+            <manifest>
+              <mainClass>org.example.InstanceMainClass</mainClass>
+              <!-- 自动添加META-INF/MANIFEST.MF文件 -->
+              <addClasspath>true</addClasspath>
+              <!-- 将依赖的存放位置添加到 MANIFEST.MF 中-->
+              <classpathPrefix>../lib/</classpathPrefix>
+            </manifest>
+            <manifestEntries>
+              <!-- MANIFEST.MF 配置项 -->
+              <Premain-Class>org.example.InstancePreMainClass</Premain-Class>
+              <Can-Redefine-Classes>true</Can-Redefine-Classes>
+              <Can-Retransform-Classes>true</Can-Retransform-Classes>
+              <Can-Set-Native-Method-Prefix>true</Can-Set-Native-Method-Prefix>
+            </manifestEntries>
+          </archive>
+        </configuration>
+        <executions>
+          <execution>
+            <id>make-assembly</id>
+            <!-- 绑定到package生命周期 -->
+            <phase>package</phase>
+            <goals>
+              <!-- 只运行一次 -->
+              <goal>single</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+```
+
+这里写的类相对较多，先总体讲一下每个类的作用，下面直接按顺序把每个类的代码贴上，最后贴上运行结果
+
+```shell
+src
+└── main
+    └── java
+        └── org
+            └── example
+                ├── AshCallLog.java
+                ├── AshOtherAnno.java
+                ├── InstanceInterceptor.java
+                ├── InstanceListener.java
+                ├── InstanceMainClass.java
+                ├── InstancePreMainClass.java
+                ├── InstanceTransformer.java
+                ├── Something01.java
+                └── Something02.java
+```
+
++ `AshCallLog.java`：注解类，用于标识某个类中的具体某个方法后续需要通过字节码增强，打印额外方法执行信息。
++ `AshOtherAnno.java`：注解类，无实际用处，只是用来和`AshCallLog.java`形成对比。即使用当前注解的方法，并不会因此被我们后续拦截增强
++ `InstanceInterceptor.java`：该示例代码中，拦截实例方法并增强逻辑的拦截器类，内部逻辑只是单纯的输出被调用的方法名，方法参数，返回值，以及方法执行耗时
++ `InstanceListener.java`：监听器类，当`Instrumentation`实例执行Byte Buddy封装的agent逻辑时，会执行其内部的多个hook回调方法
++ `InstanceMainClass.java`：main方法入口类，简单的调用`Something01`和`Something02`的方法
++ `InstancePreMainClass.java`：premain方法入口类，使用Byte Buddy封装的agent逻辑进行transform
++ `InstanceTransformer.java`：类转化器，用于注册需要拦截的方法，以及指定拦截后的增强逻辑
++ `Something01.java`：被增强的目标类1，实际增强其内部使用了`@AshCallLog`注解的方法
++ `Something02.java`：被增强的目标类2，实际增强其内部使用了`@AshCallLog`注解的方法
+
+---
+
++ ``AshCallLog.java`：注解类，用于标识某个类中的具体某个方法后续需要通过字节码增强，打印额外方法执行信息。`
+
+```java
+package org.example;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
+/**
+ * 标识 需要记录方法调用信息 的方法, 后续 插桩逻辑会log输出 被调用的方法名, 方法参数, 方法执行耗时等信息
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/10 5:05 PM
+ */
+@Retention(RetentionPolicy.RUNTIME)
+@Target(value = {ElementType.TYPE, ElementType.METHOD})
+public @interface AshCallLog {
+}
+```
+
++ `AshOtherAnno.java`：注解类，无实际用处，只是用来和`AshCallLog.java`形成对比。即使用当前注解的方法，并不会因此被我们后续拦截增强
+
+```java
+package org.example;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
+/**
+ * 模拟其他 注解, 无实际作用
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/10 5:06 PM
+ */
+@Retention(RetentionPolicy.RUNTIME)
+@Target(value = {ElementType.TYPE, ElementType.METHOD})
+public @interface AshOtherAnno {
+}
+```
+
++ `InstanceInterceptor.java`：该示例代码中，拦截实例方法并增强逻辑的拦截器类，内部逻辑只是单纯的输出被调用的方法名，方法参数，返回值，以及方法执行耗时
+
+```java
+package org.example;
+
+import net.bytebuddy.implementation.bind.annotation.AllArguments;
+import net.bytebuddy.implementation.bind.annotation.Origin;
+import net.bytebuddy.implementation.bind.annotation.RuntimeType;
+import net.bytebuddy.implementation.bind.annotation.SuperCall;
+
+import java.lang.reflect.Method;
+import java.util.Arrays;
+import java.util.concurrent.Callable;
+
+/**
+ * 实例方法 拦截器, 这里配合 {@link AshCallLog} 注解使用,
+ * 输出被调用的方法的方法名, 参数, 返回值, 执行时间
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/10 8:30 PM
+ */
+public class InstanceInterceptor {
+
+  @RuntimeType
+  public Object instanceMethodIntercept(
+    @Origin Method targetMethod,
+    @AllArguments Object[] targetMethodArgs,
+    @SuperCall Callable<?> zuper) {
+    System.out.println("「增强逻辑」targetMethod.getName() = " + targetMethod.getName());
+    System.out.println("「增强逻辑」Arrays.toString(targetMethodArgs) = " + Arrays.toString(targetMethodArgs));
+    long callStartTime = System.currentTimeMillis();
+    Object returnValue = null;
+    try {
+      returnValue = zuper.call();
+      System.out.println("「增强逻辑」returnValue = " + returnValue);
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    } finally {
+      System.out.println("「增强逻辑」callTime: " + (System.currentTimeMillis() - callStartTime));
+    }
+    return returnValue;
+  }
+}
+```
+
++ `InstanceListener.java`：监听器类，当`Instrumentation`实例执行Byte Buddy封装的agent逻辑时，会执行其内部的多个hook回调方法
+
+```java
+package org.example;
+
+import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.DynamicType;
+import net.bytebuddy.utility.JavaModule;
+
+/**
+ * 注册监听器, 在 类进行transform过程中, 会回调下面这些hook方法<br/>
+ * A listener that is informed about events that occur during an instrumentation process.
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/10 8:42 PM
+ */
+public class InstanceListener implements AgentBuilder.Listener {
+  /**
+     * 当某个类将要被加载时, 就会回调该方法
+     *
+     * @param typeName    The binary name of the instrumented type.
+     * @param classLoader The class loader which is loading this type or {@code null} if loaded by the boots loader.
+     * @param module      The instrumented type's module or {@code null} if the current VM does not support modules.
+     * @param loaded      {@code true} if the type is already loaded.
+     */
+  @Override
+  public void onDiscovery(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded) {
+    System.out.println("【onDiscovery】typeName: " + typeName);
+  }
+
+  /**
+     * 对某个类完成了transform之后会回调
+     *
+     * @param typeDescription The type that is being transformed.
+     * @param classLoader     The class loader which is loading this type or {@code null} if loaded by the boots loader.
+     * @param module          The transformed type's module or {@code null} if the current VM does not support modules.
+     * @param loaded          {@code true} if the type is already loaded.
+     * @param dynamicType     The dynamic type that was created.
+     */
+  @Override
+  public void onTransformation(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded, DynamicType dynamicType) {
+    System.out.println("【onTransformation】typeDescription: " + typeDescription);
+  }
+
+  /**
+     * 当某个类将要被加载, 但配置了被byte buddy忽略(或本身没有配置被拦截), 则执行该方法
+     *
+     * @param typeDescription The type being ignored for transformation.
+     * @param classLoader     The class loader which is loading this type or {@code null} if loaded by the boots loader.
+     * @param module          The ignored type's module or {@code null} if the current VM does not support modules.
+     * @param loaded          {@code true} if the type is already loaded.
+     */
+  @Override
+  public void onIgnored(TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, boolean loaded) {
+    System.out.println("【onIgnored】 typeDescription: " + typeDescription);
+  }
+
+  /**
+     * 当 Byte Buddy 在 transform 过程中 发生异常, 则执行该方法
+     *
+     * @param typeName    The binary name of the instrumented type.
+     * @param classLoader The class loader which is loading this type or {@code null} if loaded by the boots loader.
+     * @param module      The instrumented type's module or {@code null} if the current VM does not support modules.
+     * @param loaded      {@code true} if the type is already loaded.
+     * @param throwable   The occurred error.
+     */
+  @Override
+  public void onError(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded, Throwable throwable) {
+    System.out.println("【onError】 typeName: " + typeName);
+  }
+
+  /**
+     * 某个类处理结束后(transform/ignore/error都算), 回调该方法
+     *
+     * @param typeName    The binary name of the instrumented type.
+     * @param classLoader The class loader which is loading this type or {@code null} if loaded by the boots loader.
+     * @param module      The instrumented type's module or {@code null} if the current VM does not support modules.
+     * @param loaded      {@code true} if the type is already loaded.
+     */
+  @Override
+  public void onComplete(String typeName, ClassLoader classLoader, JavaModule module, boolean loaded) {
+    System.out.println("【onComplet】 typeName: " + typeName);
+  }
+}
+```
+
++ `InstanceMainClass.java`：main方法入口类，简单的调用`Something01`和`Something02`的方法
+
+```java
+package org.example;
+
+/**
+ * 入口类, 启动几个线程执行方法, 观察 java agent修改字节码的效果
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/10 4:57 PM
+ */
+public class InstanceMainClass {
+  public static void main(String[] args) {
+    System.out.println("执行 main");
+    Something01 something01 = new Something01();
+    System.out.println("main, something01.returnSeven(1, 2) = " + something01.returnSeven(1, 2));
+    System.out.println("main, something01.returnZero(1, 2) = " + something01.returnZero(1, 2));
+
+    Something02 something02 = new Something02();
+    System.out.println("main, something02.returnHello(\"hi\", \"hello\") = " + something02.returnHello("hi", "hello"));
+    System.out.println("main, something02.returnHi(\"hahaha\") = " + something02.returnHi("hahaha"));
+    System.out.println("main, something02.returnArgs(\"arg1\", \"arg2\") = " + something02.returnArgs("arg1", "arg2"));
+  }
+}
+```
+
++ `InstancePreMainClass.java`：premain方法入口类，使用Byte Buddy封装的agent逻辑进行transform
+
+```java
+package org.example;
+
+import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.matcher.ElementMatchers;
+
+import java.lang.instrument.Instrumentation;
+
+import static net.bytebuddy.matcher.ElementMatchers.*;
+
+/**
+ * premain 入口类, 用于java agent进行插桩
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/10 5:21 PM
+ */
+public class InstancePreMainClass {
+  /**
+     * java agent 入口, premain在main方法之前执行
+     */
+  public static void premain(String arg, Instrumentation instrumentation) {
+    System.out.println("执行 premain");
+    // 使用 Byte Buddy 包装的 agent常见处理逻辑(指定要拦截的对象, 以及拦截后的处理逻辑, 任何字节码操作工具都基本这个流程)
+    AgentBuilder agentBuilder = new AgentBuilder.Default()
+      // 忽略(不拦截)的类, 这里忽略 java自带类和byte buddy的类
+      .ignore(ElementMatchers.nameStartsWith("java.")
+              .or(ElementMatchers.nameStartsWith("javax."))
+              .or(ElementMatchers.nameStartsWith("jdk."))
+              .or(ElementMatchers.nameStartsWith("sun."))
+              // 忽略byte buddy的类
+              .or(ElementMatchers.nameStartsWith("net.bytebuddy.")))
+      // 拦截的类
+      .type(isAnnotatedWith(nameStartsWith("org.example.Ash").and(nameEndsWith("Log"))))
+      // 拦截的方法, 以及指定修改/增强的逻辑
+      .transform(new InstanceTransformer())
+      // 注册 回调方法监听器
+      .with(new InstanceListener());
+    // 注册到 Instrumentation
+    agentBuilder.installOn(instrumentation);
+  }
+}
+```
+
++ `InstanceTransformer.java`：类转化器，用于注册需要拦截的方法，以及指定拦截后的增强逻辑
+
+```java
+package org.example;
+
+import net.bytebuddy.ByteBuddy;
+import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.DynamicType;
+import net.bytebuddy.implementation.MethodDelegation;
+import net.bytebuddy.utility.JavaModule;
+
+import java.security.ProtectionDomain;
+
+import static net.bytebuddy.matcher.ElementMatchers.*;
+
+/**
+ * 针对 实例 方法进行 修改/增强的 类转换器 <br/>
+ * 同理, 某个类 将被加载到JVM 前, 进入transform方法
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/10 6:06 PM
+ */
+public class InstanceTransformer implements AgentBuilder.Transformer {
+  /**
+     * transform 转化逻辑
+     *
+     * @param builder          之前Byte Buddy 增强修改类时的中间产物Builder(比如 {@link ByteBuddy#subclass(Class)}的返回值就是) The dynamic builder to transform.
+     * @param typeDescription  将被加载的类对应的类信息 The description of the type currently being instrumented.
+     * @param classLoader      The class loader of the instrumented class. Might be {@code null} to represent the bootstrap class loader.
+     * @param module           The class's module or {@code null} if the current VM does not support modules.
+     * @param protectionDomain The protection domain of the transformed type.
+     * @return : A transformed version of the supplied builder.
+     */
+  @Override
+  public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
+                                          TypeDescription typeDescription,
+                                          ClassLoader classLoader,
+                                          JavaModule module,
+                                          ProtectionDomain protectionDomain) {
+    DynamicType.Builder.MethodDefinition.ReceiverTypeDefinition<?> result = builder
+      .method(not(isStatic()).and(isAnnotatedWith(nameStartsWith("org.example.Ash").and(nameEndsWith("Log")))))
+      .intercept(MethodDelegation.to(new InstanceInterceptor()));
+    // 这里不能直接返回 builder, 因为byte buddy库中的类大都是不可变的 (也就是大多数链式方法其实对原对象无变动, 而是返回一个新对象)
+    return result;
+  }
+}
+
+```
+
++ `Something01.java`：被增强的目标类1，实际增强其内部使用了`@AshCallLog`注解的方法
+
+```java
+package org.example;
+
+/**
+ * 后续 进行 插桩增强的目标类 01
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/10 5:01 PM
+ */
+@AshCallLog
+@AshOtherAnno
+public class Something01 {
+  public int returnZero(int number01, int number02) {
+    return 0;
+  }
+
+  @AshCallLog
+  public int returnSeven(int... numbers) {
+    return 7;
+  }
+}
+
+```
+
++ `Something02.java`：被增强的目标类2，实际增强其内部使用了`@AshCallLog`注解的方法
+
+```java
+package org.example;
+
+/**
+ * 后续 进行 插桩增强的目标类 01
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/10 5:01 PM
+ */
+@AshCallLog
+@AshOtherAnno
+public class Something01 {
+  public int returnZero(int number01, int number02) {
+    return 0;
+  }
+
+  @AshCallLog
+  public int returnSeven(int... numbers) {
+    return 7;
+  }
+}
+```
+
+之后在项目所在路径执行`mvn clean package`完成module打包，得到`instance-method-agent-1.0-SNAPSHOT-jar-with-dependencies.jar`。
+
+执行指令运行java程序，`java -javaagent:jar包绝对路径=k1=v1,k2=v2 -jar jar包绝对路径`，标准输出如下：
+
+```shell
+执行 premain
+【onDiscovery】typeName: jdk.internal.vm.PostVMInitHook
+【onIgnored】 typeDescription: class jdk.internal.vm.PostVMInitHook
+【onComplet】 typeName: jdk.internal.vm.PostVMInitHook
+【onDiscovery】typeName: jdk.internal.vm.PostVMInitHook$1
+【onIgnored】 typeDescription: class jdk.internal.vm.PostVMInitHook$1
+【onComplet】 typeName: jdk.internal.vm.PostVMInitHook$1
+【onDiscovery】typeName: sun.launcher.LauncherHelper
+【onIgnored】 typeDescription: class sun.launcher.LauncherHelper
+【onComplet】 typeName: sun.launcher.LauncherHelper
+【onDiscovery】typeName: org.example.InstanceMainClass
+【onIgnored】 typeDescription: class org.example.InstanceMainClass
+【onComplet】 typeName: org.example.InstanceMainClass
+【onDiscovery】typeName: jdk.internal.misc.MainMethodFinder
+【onIgnored】 typeDescription: class jdk.internal.misc.MainMethodFinder
+【onComplet】 typeName: jdk.internal.misc.MainMethodFinder
+执行 main
+【onDiscovery】typeName: org.example.Something01
+【onTransformation】typeDescription: class org.example.Something01
+【onComplet】 typeName: org.example.Something01
+【onDiscovery】typeName: org.example.Something01$auxiliary$9zuoZ9to
+【onIgnored】 typeDescription: class org.example.Something01$auxiliary$9zuoZ9to
+【onComplet】 typeName: org.example.Something01$auxiliary$9zuoZ9to
+「增强逻辑」targetMethod.getName() = returnSeven
+「增强逻辑」Arrays.toString(targetMethodArgs) = [[I@563e4951]
+「增强逻辑」returnValue = 7
+【onDiscovery】typeName: java.lang.invoke.BoundMethodHandle$Species_LJ
+【onIgnored】 typeDescription: class java.lang.invoke.BoundMethodHandle$Species_LJ
+【onComplet】 typeName: java.lang.invoke.BoundMethodHandle$Species_LJ
+「增强逻辑」callTime: 0
+main, something01.returnSeven(1, 2) = 7
+main, something01.returnZero(1, 2) = 0
+【onDiscovery】typeName: org.example.Something02
+【onTransformation】typeDescription: class org.example.Something02
+【onComplet】 typeName: org.example.Something02
+【onDiscovery】typeName: org.example.Something02$auxiliary$OqhCeZyv
+【onIgnored】 typeDescription: class org.example.Something02$auxiliary$OqhCeZyv
+【onComplet】 typeName: org.example.Something02$auxiliary$OqhCeZyv
+main, something02.returnHello("hi", "hello") = Hello
+main, something02.returnHi("hahaha") = Hi
+「增强逻辑」targetMethod.getName() = returnArgs
+「增强逻辑」Arrays.toString(targetMethodArgs) = [[Ljava.lang.String;@3e6f3f28]
+「增强逻辑」returnValue = [arg1, arg2]
+「增强逻辑」callTime: 0
+main, something02.returnArgs("arg1", "arg2") = [arg1, arg2]
+【onDiscovery】typeName: java.util.IdentityHashMap$IdentityHashMapIterator
+【onIgnored】 typeDescription: class java.util.IdentityHashMap$IdentityHashMapIterator
+【onComplet】 typeName: java.util.IdentityHashMap$IdentityHashMapIterator
+【onDiscovery】typeName: java.util.IdentityHashMap$KeyIterator
+【onIgnored】 typeDescription: class java.util.IdentityHashMap$KeyIterator
+【onComplet】 typeName: java.util.IdentityHashMap$KeyIterator
+【onDiscovery】typeName: java.lang.Shutdown
+【onIgnored】 typeDescription: class java.lang.Shutdown
+【onComplet】 typeName: java.lang.Shutdown
+【onDiscovery】typeName: java.lang.Shutdown$Lock
+【onIgnored】 typeDescription: class java.lang.Shutdown$Lock
+【onComplet】 typeName: java.lang.Shutdown$Lock
+```
+
+### 3.2.2 拦截静态方法
+
+
+
+### 3.2.3 拦截构造方法
+
+
+
+## 3.3 总结
 
