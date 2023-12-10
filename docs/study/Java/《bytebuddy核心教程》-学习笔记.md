@@ -2272,5 +2272,264 @@ public class ByteBuddyCreateClassTest {
 
 # 三、java agent
 
+## 3.1 原生jdk实现
 
+### 3.1.1 注意点
+
++ `premain`方法在main之前执行
++ `Instrumentation#addTransformer(ClassFileTransformer transformer)`：注册字节码转换器，这里在premain方法内注册，保证在main方法执行前就完成字节码转换
++ 字节码中类名以`/`间隔，而不是`.`间隔
+
+> 关于java agent，网上也有很多相关文章，这里不多做介绍，这里简单链接一些文章：
+>
+> [一文讲透Java Agent是什么玩意？能干啥？怎么用？ - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/636603910)
+>
+> [Java探针(javaagent) - 简书 (jianshu.com)](https://www.jianshu.com/p/cc88c8b0181b)
+>
+> [初探Java安全之JavaAgent - SecIN社区 - 博客园 (cnblogs.com)](https://www.cnblogs.com/SecIN/archive/2022/11/22/16915321.html)
+>
+> [java.lang.instrument (Java SE 21 & JDK 21) (oracle.com)](https://docs.oracle.com/en/java/javase/21/docs/api/java.instrument/java/lang/instrument/package-summary.html)
+
+### 3.1.2 示例代码
+
+新建一个module为`jdk-agent`，这里图方便，把后续java agent使用的premain类也放在同一个module内。需要注意maven的`pom.xml`配置，如下：
+
+```xml
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.example</groupId>
+    <artifactId>ash_bytebuddy_study</artifactId>
+    <version>1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>jdk-agent</artifactId>
+  <packaging>jar</packaging>
+
+  <name>jdk-agent</name>
+  <url>http://maven.apache.org</url>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <!-- Byte Buddy -->
+    <!-- https://mvnrepository.com/artifact/net.bytebuddy/byte-buddy -->
+    <dependency>
+      <groupId>net.bytebuddy</groupId>
+      <artifactId>byte-buddy</artifactId>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-assembly-plugin</artifactId>
+        <version>3.6.0</version>
+        <configuration>
+          <descriptorRefs>
+            <descriptorRef>jar-with-dependencies</descriptorRef>
+          </descriptorRefs>
+          <archive>
+            <manifest>
+              <mainClass>org.example.MainClass</mainClass>
+              <!-- 自动添加META-INF/MANIFEST.MF文件 -->
+              <addClasspath>true</addClasspath>
+              <!-- 将依赖的存放位置添加到 MANIFEST.MF 中-->
+              <classpathPrefix>../lib/</classpathPrefix>
+            </manifest>
+            <manifestEntries>
+              <!-- MANIFEST.MF 配置项 -->
+              <Premain-Class>org.example.PreMainClass</Premain-Class>
+              <Can-Redefine-Classes>true</Can-Redefine-Classes>
+              <Can-Retransform-Classes>true</Can-Retransform-Classes>
+              <Can-Set-Native-Method-Prefix>true</Can-Set-Native-Method-Prefix>
+            </manifestEntries>
+          </archive>
+        </configuration>
+        <executions>
+          <execution>
+            <id>make-assembly</id>
+            <!-- 绑定到package生命周期 -->
+            <phase>package</phase>
+            <goals>
+              <!-- 只运行一次 -->
+              <goal>single</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+```
+
+先定义一个后续修改/增强的目标类`org.example.Something`
+
+```java
+package org.example;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/10 12:04 PM
+ */
+public class Something {
+  public static String returnHello() {
+    return "Hello";
+  }
+}
+```
+
+其次，我们定义一个用于字节码转换的转换器类`org.example.ByteBuddyTransformer`，后续注册到`Instrumentation`实例，在premain方法执行时会执行我们的字节码修改/增强逻辑。
+
+这里定义的修改/增强逻辑，即修改`org.example.Something#returnHello`的返回值，从"Hello"变成"Hi"
+
+```java
+package org.example;
+
+import net.bytebuddy.ByteBuddy;
+import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.ClassFileLocator;
+import net.bytebuddy.implementation.FixedValue;
+import net.bytebuddy.matcher.ElementMatchers;
+import net.bytebuddy.pool.TypePool;
+
+import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.IllegalClassFormatException;
+import java.security.ProtectionDomain;
+
+/**
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/10 12:17 PM
+ */
+public class ByteBuddyTransformer implements ClassFileTransformer {
+
+  /**
+     * 在 某个类的字节码 被加载到JVM之前 都会先进入该方法. 如果对字节码进行修改则返回修改后的字节码, 否则直接返回null即可
+     *
+     * @param loader              the defining loader of the class to be transformed,
+     *                            may be {@code null} if the bootstrap loader
+     * @param className           the name of the class in the internal form of fully
+     *                            qualified class and interface names as defined in
+     *                            <i>The Java Virtual Machine Specification</i>.
+     *                            For example, <code>"java/util/List"</code>.
+     * @param classBeingRedefined if this is triggered by a redefine or retransform,
+     *                            the class being redefined or retransformed;
+     *                            if this is a class load, {@code null}
+     * @param protectionDomain    the protection domain of the class being defined or redefined
+     * @param classfileBuffer     the input byte buffer in class file format - must not be modified
+     * @return a well-formed class file buffer (the result of the transform), or null if no transform is performed
+     * @throws IllegalClassFormatException
+     */
+  @Override
+  public byte[] transform(ClassLoader loader,
+                          String className,
+                          Class<?> classBeingRedefined,
+                          ProtectionDomain protectionDomain,
+                          byte[] classfileBuffer) throws IllegalClassFormatException {
+    byte[] result = null;
+    // 字节码中类名是使用/间隔, 而不是.
+    if ("org/example/Something".equals(className)) {
+      System.out.println("进行字节码修改");
+      // 对Something.java进行字节码修改/增强 (这里修改字节码可以用任何字节码操作工具,asm, javassist, cglib, bytebuddy等)
+      final String targetClassName = className.replace('/', '.');
+      ClassFileLocator classLoaderLoader = ClassFileLocator.ForClassLoader.ofSystemLoader();
+      ClassFileLocator.Compound loaderCompound = new ClassFileLocator.Compound(classLoaderLoader);
+      TypePool typePool = TypePool.Default.of(loaderCompound);
+      TypeDescription targetTypeDescription = typePool.describe(targetClassName).resolve();
+      result = new ByteBuddy().redefine(targetTypeDescription, loaderCompound)
+        .method(ElementMatchers.named("returnHello"))
+        .intercept(FixedValue.value("Hi"))
+        .make()
+        .getBytes();
+    }
+    return result;
+  }
+}
+```
+
+定义premain入口对应的java类`org.example.PreMainClass`，premain方法会在main方法之前执行
+
+```java
+package org.example;
+
+import java.lang.instrument.Instrumentation;
+
+/**
+ * 一般premain都是在另一个单独工程/module内编写然后打包, 这里图方便直接和需要插桩增强的{@link MainClass}放在同一个module内打包
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/10 12:02 PM
+ */
+public class PreMainClass {
+
+  /**
+     * java agent启动的方式之一(另一个是agentmain), premain方法在main方法之前先执行, 是插桩入口
+     *
+     * @param arg             javaagent指定的参数
+     * @param instrumentation jdk自带的工具类
+     */
+  public static void premain(String arg, Instrumentation instrumentation) {
+    System.out.println("premain, arg = " + arg);
+    // 注册我们编写的 字节码转化器
+    instrumentation.addTransformer(new ByteBuddyTransformer());
+  }
+}
+```
+
+最后写一个简易的main方法入口类`org.example.MainClass`，多线程输出`org.example.Something#returnHello`的返回值
+
+```java
+package org.example;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * 简单的创建4个线程, 打印 {@link Something#returnHello()} 的返回值
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/10 12:02 PM
+ */
+public class MainClass {
+  public static void main(String[] args) {
+    ExecutorService executorService = Executors.newFixedThreadPool(4);
+    for (int count = 0; count < 4; ++count) {
+      executorService.submit(() -> {
+        for (int i = 100; i > 0; --i) {
+          System.out.println(Thread.currentThread().getName() + ", Something.returnHello():" + Something.returnHello());
+          try {
+            Thread.sleep(1000);
+          } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+          }
+        }
+      });
+    }
+  }
+}
+```
+
+之后在项目所在路径执行`mvn clean package`完成module打包，得到`jdk-agent-1.0-SNAPSHOT-jar-with-dependencies.jar`。
+
+执行指令运行java程序，`java -javaagent:jar包绝对路径=k1=v1,k2=v2 -jar jar包绝对路径`，标准输出如下：
+
+```shell
+premain, arg = k1=v1,k2=v2
+进行字节码修改
+pool-1-thread-2, Something.returnHello():Hi
+pool-1-thread-1, Something.returnHello():Hi
+pool-1-thread-4, Something.returnHello():Hi
+pool-1-thread-3, Something.returnHello():Hi
+pool-1-thread-3, Something.returnHello():Hi
+pool-1-thread-4, Something.returnHello():Hi
+pool-1-thread-1, Something.returnHello():Hi
+pool-1-thread-2, Something.returnHello():Hi
+// ...
+```
+
+## 3.2 
 
