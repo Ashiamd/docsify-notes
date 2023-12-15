@@ -3377,9 +3377,236 @@ Hi, IABTD
 
 #### 3.2.3.1 注意点
 
+和"2.8 对构造方法进行插桩"区别不大。
+
 #### 3.2.3.2 示例代码
 
+新建模块`constructor-method-agent`，其`pom.xml`配置如下：
 
+```xml
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.example</groupId>
+    <artifactId>ash_bytebuddy_study</artifactId>
+    <version>1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>constructor-method-agent</artifactId>
+  <packaging>jar</packaging>
+
+  <name>constructor-method-agent</name>
+  <url>http://maven.apache.org</url>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <!-- Byte Buddy -->
+    <!-- https://mvnrepository.com/artifact/net.bytebuddy/byte-buddy -->
+    <dependency>
+      <groupId>net.bytebuddy</groupId>
+      <artifactId>byte-buddy</artifactId>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-assembly-plugin</artifactId>
+        <version>3.6.0</version>
+        <configuration>
+          <descriptorRefs>
+            <descriptorRef>jar-with-dependencies</descriptorRef>
+          </descriptorRefs>
+          <archive>
+            <manifest>
+              <mainClass>org.example.ConstructorMain</mainClass>
+              <!-- 自动添加META-INF/MANIFEST.MF文件 -->
+              <addClasspath>true</addClasspath>
+              <!-- 将依赖的存放位置添加到 MANIFEST.MF 中-->
+              <classpathPrefix>../lib/</classpathPrefix>
+            </manifest>
+            <manifestEntries>
+              <!-- MANIFEST.MF 配置项 -->
+              <Premain-Class>org.example.ConstructorPremain</Premain-Class>
+              <Can-Redefine-Classes>true</Can-Redefine-Classes>
+              <Can-Retransform-Classes>true</Can-Retransform-Classes>
+              <Can-Set-Native-Method-Prefix>true</Can-Set-Native-Method-Prefix>
+            </manifestEntries>
+          </archive>
+        </configuration>
+        <executions>
+          <execution>
+            <id>make-assembly</id>
+            <!-- 绑定到package生命周期 -->
+            <phase>package</phase>
+            <goals>
+              <!-- 只运行一次 -->
+              <goal>single</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+```
+
+src目录结构如下：
+
+```shell
+src
+└── main
+    └── java
+        └── org
+            └── example
+                ├── ConstructorInterceptor.java
+                ├── ConstructorMain.java
+                ├── ConstructorPremain.java
+                ├── ConstructorTransformer.java
+                └── Something.java
+```
+
++ `ConstructorInterceptor.java`
+
+  ```java
+  package org.example;
+  
+  import net.bytebuddy.implementation.bind.annotation.AllArguments;
+  import net.bytebuddy.implementation.bind.annotation.RuntimeType;
+  import net.bytebuddy.implementation.bind.annotation.This;
+  
+  import java.util.Arrays;
+  
+  /**
+   * 对拦截的构造方法进行增强
+   *
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2023/12/15 11:28 PM
+   */
+  public class ConstructorInterceptor {
+    @RuntimeType
+    public void constructorIntercept(
+      @This Object targetObj,
+      @AllArguments Object[] targetMethodArgs) {
+      System.out.println("targetObj: " + targetObj + ", args: " + Arrays.toString(targetMethodArgs));
+    }
+  }
+  ```
+
++ `ConstructorMain.java`
+
+  ```java
+  package org.example;
+  
+  /**
+   * main方法入口
+   *
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2023/12/15 11:23 PM
+   */
+  public class ConstructorMain {
+    public static void main(String[] args) {
+      Something something1 = new Something("str111");
+      Something something2 = new Something("str222");
+    }
+  }
+  ```
+
++ `ConstructorPremain.java`
+
+  ```java
+  package org.example;
+  
+  import net.bytebuddy.agent.builder.AgentBuilder;
+  import net.bytebuddy.matcher.ElementMatchers;
+  
+  import java.lang.instrument.Instrumentation;
+  
+  /**
+   * premain入口, 在main之前执行
+   *
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2023/12/15 11:25 PM
+   */
+  public class ConstructorPremain {
+    public static void premain(String arg, Instrumentation instrumentation) {
+      System.out.println("执行 premain");
+      new AgentBuilder.Default()
+        .type(ElementMatchers.named("org.example.Something"))
+        .transform(new ConstructorTransformer())
+        .installOn(instrumentation);
+    }
+  }
+  
+  ```
+
++ `ConstructorTransformer.java`
+
+  ```java
+  package org.example;
+  
+  import net.bytebuddy.agent.builder.AgentBuilder;
+  import net.bytebuddy.description.type.TypeDescription;
+  import net.bytebuddy.dynamic.DynamicType;
+  import net.bytebuddy.implementation.MethodDelegation;
+  import net.bytebuddy.implementation.SuperMethodCall;
+  import net.bytebuddy.matcher.ElementMatchers;
+  import net.bytebuddy.utility.JavaModule;
+  
+  import java.security.ProtectionDomain;
+  
+  /**
+   * 构造方法增强
+   *
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2023/12/15 11:27 PM
+   */
+  public class ConstructorTransformer implements AgentBuilder.Transformer {
+  
+    @Override
+    public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder, TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, ProtectionDomain protectionDomain) {
+      return builder.constructor(ElementMatchers.any())
+        .intercept(SuperMethodCall.INSTANCE.andThen(
+          MethodDelegation.to(new ConstructorInterceptor())));
+    }
+  }
+  ```
+
++ `Something.java`
+
+  ```java
+  package org.example;
+  
+  /**
+   * 目标类
+   *
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2023/12/15 11:23 PM
+   */
+  public class Something {
+    public Something(String str) {
+      System.out.println("Something(), " + str);
+    }
+  }
+  
+  ```
+
+之后在项目所在路径执行`mvn clean package`完成module打包，得到`constructor-method-agent-1.0-SNAPSHOT-jar-with-dependencies.jar`。
+
+执行指令运行java程序，`java -javaagent:jar包绝对路径 -jar jar包绝对路径`，标准输出如下：
+
+```shell
+执行 premain
+Something(), str111
+targetObj: org.example.Something@28b46423, args: [str111]
+Something(), str222
+targetObj: org.example.Something@26df6e3a, args: [str222]
+```
 
 ## 3.3 总结
 
