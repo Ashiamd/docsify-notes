@@ -6,7 +6,7 @@
 >
 > + ByteBuddy官方教程: [Byte Buddy - runtime code generation for the Java virtual machine](http://bytebuddy.net/#/tutorial-cn)
 >
-> + 个人学习记录demo代码的gituub仓库: [Ashiamd/ash_bytebuddy_study](https://github.com/Ashiamd/ash_bytebuddy_study/tree/main)
+> + 个人学习记录demo代码的github仓库: [Ashiamd/ash_bytebuddy_study](https://github.com/Ashiamd/ash_bytebuddy_study/tree/main)
 >
 > ---
 >
@@ -3608,5 +3608,5 @@ Something(), str222
 targetObj: org.example.Something@26df6e3a, args: [str222]
 ```
 
-## 3.3 总结
+
 
