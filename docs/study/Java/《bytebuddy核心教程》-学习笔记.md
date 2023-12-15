@@ -2862,7 +2862,7 @@ public class InstanceListener implements AgentBuilder.Listener {
 package org.example;
 
 /**
- * 入口类, 启动几个线程执行方法, 观察 java agent修改字节码的效果
+ * 入口类, 观察 java agent修改字节码的效果
  *
  * @author : Ashiamd email: ashiamd@foxmail.com
  * @date : 2023/12/10 4:57 PM
@@ -2945,7 +2945,7 @@ import static net.bytebuddy.matcher.ElementMatchers.*;
 
 /**
  * 针对 实例 方法进行 修改/增强的 类转换器 <br/>
- * 同理, 某个类 将被加载到JVM 前, 进入transform方法
+ * 某个类被 {@link AgentBuilder#type(ElementMatcher)}匹配后, 将要被类加载时, 进入transform方法
  *
  * @author : Ashiamd email: ashiamd@foxmail.com
  * @date : 2023/12/10 6:06 PM
@@ -2967,11 +2967,8 @@ public class InstanceTransformer implements AgentBuilder.Transformer {
                                           ClassLoader classLoader,
                                           JavaModule module,
                                           ProtectionDomain protectionDomain) {
-    DynamicType.Builder.MethodDefinition.ReceiverTypeDefinition<?> result = builder
-      .method(not(isStatic()).and(isAnnotatedWith(nameStartsWith("org.example.Ash").and(nameEndsWith("Log")))))
+    return builder.method(not(isStatic()).and(isAnnotatedWith(nameStartsWith("org.example.Ash").and(nameEndsWith("Log")))))
       .intercept(MethodDelegation.to(new InstanceInterceptor()));
-    // 这里不能直接返回 builder, 因为byte buddy库中的类大都是不可变的 (也就是大多数链式方法其实对原对象无变动, 而是返回一个新对象)
-    return result;
   }
 }
 
@@ -3094,9 +3091,293 @@ main, something02.returnArgs("arg1", "arg2") = [arg1, arg2]
 
 ### 3.2.2 拦截静态方法
 
+#### 3.2.2.1 注意点
 
++ `ElementMatcher`：元素匹配器，本次示例代码实现了自定义类元素匹配器
+
+```java
+public static ElementMatcher<? super TypeDescription> getMatcher() {
+  // 相同效果, 类名匹配 return ElementMatchers.named("org.example.StaticUtils");
+  return new ElementMatcher.Junction.AbstractBase<NamedElement>() {
+    @Override
+    public boolean matches(NamedElement target) {
+      // 当类名匹配时, 拦截
+      return "org.example.StaticUtils".equals(target.getActualName());
+    }
+  };
+}
+```
+
+#### 3.2.2.2 示例代码
+
+新建`static-method-agent`模块，对应的`pom.xml`文件如下：
+
+```xml
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.example</groupId>
+    <artifactId>ash_bytebuddy_study</artifactId>
+    <version>1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>static-method-agent</artifactId>
+  <packaging>jar</packaging>
+
+  <name>static-method-agent</name>
+  <url>http://maven.apache.org</url>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <!-- Byte Buddy -->
+    <!-- https://mvnrepository.com/artifact/net.bytebuddy/byte-buddy -->
+    <dependency>
+      <groupId>net.bytebuddy</groupId>
+      <artifactId>byte-buddy</artifactId>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-assembly-plugin</artifactId>
+        <version>3.6.0</version>
+        <configuration>
+          <descriptorRefs>
+            <descriptorRef>jar-with-dependencies</descriptorRef>
+          </descriptorRefs>
+          <archive>
+            <manifest>
+              <mainClass>org.example.StaticMain</mainClass>
+              <!-- 自动添加META-INF/MANIFEST.MF文件 -->
+              <addClasspath>true</addClasspath>
+              <!-- 将依赖的存放位置添加到 MANIFEST.MF 中-->
+              <classpathPrefix>../lib/</classpathPrefix>
+            </manifest>
+            <manifestEntries>
+              <!-- MANIFEST.MF 配置项 -->
+              <Premain-Class>org.example.StaticPremain</Premain-Class>
+              <Can-Redefine-Classes>true</Can-Redefine-Classes>
+              <Can-Retransform-Classes>true</Can-Retransform-Classes>
+              <Can-Set-Native-Method-Prefix>true</Can-Set-Native-Method-Prefix>
+            </manifestEntries>
+          </archive>
+        </configuration>
+        <executions>
+          <execution>
+            <id>make-assembly</id>
+            <!-- 绑定到package生命周期 -->
+            <phase>package</phase>
+            <goals>
+              <!-- 只运行一次 -->
+              <goal>single</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+
+```
+
+src目录结构如下：
+
+```shell
+src
+└── main
+    └── java
+        └── org
+            └── example
+                ├── StaticInterceptor.java
+                ├── StaticMain.java
+                ├── StaticPremain.java
+                ├── StaticTransformer.java
+                └── StaticUtils.java
+```
+
++ `StaticInterceptor.java`
+
+  ```java
+  package org.example;
+  
+  import net.bytebuddy.implementation.bind.annotation.AllArguments;
+  import net.bytebuddy.implementation.bind.annotation.Origin;
+  import net.bytebuddy.implementation.bind.annotation.RuntimeType;
+  import net.bytebuddy.implementation.bind.annotation.SuperCall;
+  
+  import java.lang.reflect.Method;
+  import java.util.concurrent.Callable;
+  
+  /**
+   * 静态方法拦截
+   *
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2023/12/15 10:03 PM
+   */
+  public class StaticInterceptor {
+  
+    @RuntimeType
+    public Object staticMethodIntercept(
+      @Origin Class<?> clazz,
+      @Origin Method targetMethod,
+      @AllArguments Object[] targetMethodArgs,
+      @SuperCall Callable<?> zuper) {
+      System.out.println("「增强逻辑」targetMethod.getName() = " + targetMethod.getName());
+      long callStartTime = System.currentTimeMillis();
+      Object returnValue = null;
+      try {
+        returnValue = zuper.call();
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      } finally {
+        System.out.println("「增强逻辑」callTime: " + (System.currentTimeMillis() - callStartTime));
+      }
+      return returnValue;
+    }
+  }
+  ```
+
++ `StaticMain.java`
+
+  ```java
+  package org.example;
+  
+  /**
+   * main 入口, 观察 java agent修改字节码的效果
+   *
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2023/12/15 9:56 PM
+   */
+  public class StaticMain {
+    public static void main(String[] args) {
+      System.out.println("执行 main");
+      System.out.println(StaticUtils.hi("Ashiamd"));
+      System.out.println(StaticUtils.hi("IABTD"));
+    }
+  }
+  ```
+
++ `StaticPremain.java`
+
+  ```java
+  package org.example;
+  
+  import net.bytebuddy.agent.builder.AgentBuilder;
+  import net.bytebuddy.description.NamedElement;
+  import net.bytebuddy.description.type.TypeDescription;
+  import net.bytebuddy.matcher.ElementMatcher;
+  
+  import java.lang.instrument.Instrumentation;
+  
+  /**
+   * premain 入口, 进行java agent 插桩
+   *
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2023/12/15 9:56 PM
+   */
+  public class StaticPremain {
+  
+    /**
+       * java agent 入口, premain 在main方法之前执行
+       */
+    public static void premain(String arg, Instrumentation instrumentation) {
+      System.out.println("执行 premain");
+      new AgentBuilder.Default()
+        // 使用我们自定义的匹配器指定拦截的类
+        .type(getMatcher())
+        .transform(new StaticTransformer())
+        .installOn(instrumentation);
+    }
+  
+    public static ElementMatcher<? super TypeDescription> getMatcher() {
+      // 相同效果, 类名匹配 return ElementMatchers.named("org.example.StaticUtils");
+      return new ElementMatcher.Junction.AbstractBase<NamedElement>() {
+        @Override
+        public boolean matches(NamedElement target) {
+          // 当类名匹配时, 拦截
+          return "org.example.StaticUtils".equals(target.getActualName());
+        }
+      };
+    }
+  }
+  ```
+
++ `StaticTransformer.java`
+
+  ```java
+  package org.example;
+  
+  import net.bytebuddy.agent.builder.AgentBuilder;
+  import net.bytebuddy.description.type.TypeDescription;
+  import net.bytebuddy.dynamic.DynamicType;
+  import net.bytebuddy.implementation.MethodDelegation;
+  import net.bytebuddy.matcher.ElementMatcher;
+  import net.bytebuddy.matcher.ElementMatchers;
+  import net.bytebuddy.utility.JavaModule;
+  
+  import java.security.ProtectionDomain;
+  
+  /**
+   * 针对静态方法进行增强<br/>
+   * 某个类被 {@link AgentBuilder#type(ElementMatcher)}匹配, 将要被类加载时, 进入transform方法
+   *
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2023/12/15 10:04 PM
+   */
+  public class StaticTransformer implements AgentBuilder.Transformer {
+    @Override
+    public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder, TypeDescription typeDescription, ClassLoader classLoader, JavaModule module, ProtectionDomain protectionDomain) {
+      return builder.method(ElementMatchers.isStatic())
+        .intercept(MethodDelegation.to(new StaticInterceptor()));
+    }
+  }
+  
+  ```
+
++ `StaticUtils.java`
+
+  ```java
+  package org.example;
+  
+  /**
+   * 本次Demo准备修改/增强的目标类
+   *
+   * @author : Ashiamd email: ashiamd@foxmail.com
+   * @date : 2023/12/15 10:03 PM
+   */
+  public class StaticUtils {
+    public static String hi(String name) {
+      return "Hi, " + name;
+    }
+  }
+  ```
+
+之后在项目所在路径执行`mvn clean package`完成module打包，得到`static-method-agent-1.0-SNAPSHOT-jar-with-dependencies.jar`。
+
+执行指令运行java程序，`java -javaagent:jar包绝对路径 -jar jar包绝对路径`，标准输出如下：
+
+```shell
+执行 premain
+执行 main
+「增强逻辑」targetMethod.getName() = hi
+「增强逻辑」callTime: 0
+Hi, Ashiamd
+「增强逻辑」targetMethod.getName() = hi
+「增强逻辑」callTime: 0
+Hi, IABTD
+```
 
 ### 3.2.3 拦截构造方法
+
+#### 3.2.3.1 注意点
+
+#### 3.2.3.2 示例代码
 
 
 
