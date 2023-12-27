@@ -372,3 +372,6 @@ duration = 5342706955
 
 > [threadlocal 内部为什么是一个map，而不是set？ - 知乎 (zhihu.com)](https://www.zhihu.com/question/58251712/answer/2833109740)
 
+## 20. 类加载
+
+> [JVM性能优化 —— 类加载器,手动实现类的热加载 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/654446941)
