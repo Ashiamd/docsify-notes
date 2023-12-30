@@ -115,23 +115,155 @@
 
 1. 使用多个`-javaagent:{agent的jar包绝对路径}`指定使用多个javaagent
 
-## 4.3 阶段二: 可插拔分析
+### 4.2.4 思考
+
+1. 如何记录多个拦截器各自拦截的范围，transform拦截的方法范围，以及使用的interceptor？
+
+   可以提供抽象类/接口，并要求插件需要在实现中说明需要拦截的类的范围，拦截的方法范围，以及对应的拦截器逻辑
+
+2. 如何仅指定一次`-javaagent`参数就加载多个agent插件？
+
+   提供一个加载指定目录下所有插件的agent包
+
+3. 加载插件的agent包，如何得知每个插件的入口类？
+
+   可以约定要求每个插件在jar包内以配置文件记录自身的插件入口类
+
+4. 插件和插件中拦截到的目标类使用什么类加载器？
+
+   插件和插件拦截到的类都是用自定义类加载器，加载器的父类(双亲委托原则)则为ByteBuddy Agent加载目标类时使用的类加载器。不同类加载器之间互相隔离，这里插件和插件拦截的类使用相同的类加载器，保证插件能够访问到被拦截的类
+
+## 4.3 阶段二: 可插拔插件加载思路分析
 
 ### 4.3.1 目标
 
+像SkyWalking一样，只提供一个统一的agent.jar包作为`-javaagent:`的参数，且后续能够通过该jar包加载指定插件目录下的所有插件jar包。
+
 ### 4.3.2 代码实现
 
-### 4.3.3 小结
+#### 4.3.2.1 目录结构
 
-## 4.4 阶段三: 抽象插件拦截器
+```pseudocode
+apm-sniffer
+├── apm-agent
+│   ├── pom.xml
+│   └── src/main/java/org.example.SkyWalkingAgent.java
+├── apm-agent-core
+│   ├── pom.xml
+│   └── src
+├── apm-plugins
+│   ├── pom.xml
+│   └── src
+└── pom.xml
+```
 
-### 4.4.1 目标
++ `apm-agent`：统一的java agent包
++ `apm-agent-core`：agent的核心逻辑，包括插件的顶级抽象类/接口，拦截器的顶级抽象类/接口等，插件实现需要依赖该模块
++ `apm-plugins`：插件实现的模块集合，所有插件实现在该模块下创建子模块，并且根据`apm-agent-core`内规定的抽象类/接口进行实现
 
-### 4.4.2 代码实现
+#### 4.3.2.2 Agent实现和思考
 
-### 4.4.3 小结
++ 问题思考
 
-## 4.5 阶段四: 
+1. 如何实现单一java agent入口类
+
+   仅在`apm-agent`模块提供一个`premain`方法入口，其他插件未来都在`apm-plugins`内实现
+
+2. 如何整合多个插件需要拦截的类范围
+
+   `AgentBuilder#type`方法中，通过`.or(Xxx)`链接多个插件需要拦截的类范围
+
+3. 如何整合多个插件需要增强的方法范围
+
+   `DynamicType.Builder#method`方法中，通过`.or(Xxx)`链接多个插件需要增强的方法范围
+
+4. 如何整个多个插件各自增强的方法对应的拦截器
+
+   `DynamicType.Builder.MethodDefinition.ImplementationDefinition#intercept`可以通过`andThen`指定多个拦截器
+
+5. 如何让被拦截的类中增强的方法走正确的拦截器逻辑？
+
+   拦截器InterceptorA对应类拦截范围ClassA下的增强方法范围MethodA，所以需要有一种机制维护三者之间的关系
+
+   需要记录的映射：
+
+   + 拦截类范围 => 增强的方法范围
+   + 拦截类范围 => 拦截器
+
+   （如果没有维护这些映射关系，那么多个拦截器互相干扰，比如意外增强了其他类中的同名方法）
+
++ 代码实现
+
+`org.example.SkyWalkingAgent.java`
+
+```java
+package org.example;
+
+import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.DynamicType;
+import net.bytebuddy.implementation.MethodDelegation;
+import net.bytebuddy.utility.JavaModule;
+
+import java.lang.instrument.Instrumentation;
+import java.security.ProtectionDomain;
+
+import static net.bytebuddy.matcher.ElementMatchers.*;
+
+/**
+ * 模仿SkyWalking 的 统一 Java Agent 入口类
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/30 3:08 PM
+ */
+public class SkyWalkingAgent {
+  public static void premain(String args, Instrumentation instrumentation) {
+    AgentBuilder agentBuilder = new AgentBuilder.Default()
+      .type(
+      /*
+                        // springmvc
+                        isAnnotatedWith(named("org.springframework.stereotype.Controller")
+                                .or(named("org.springframework.web.bind.annotation.RestController")))
+                        // mysql
+                        .or(named("com.mysql.cj.jdbc.ClientPreparedStatement")
+                                .or(named("com.mysql.cj.jdbc.ServerPreparedStatement")))
+                        // 其他插件 类拦截配置
+                        */
+    )
+      .transform()
+      .installOn(instrumentation);
+  }
+
+  private static class Transformer implements AgentBuilder.Transformer {
+
+    @Override
+    public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
+                                            TypeDescription typeDescription,
+                                            // 加载 typeDescription 的类加载器
+                                            ClassLoader classLoader,
+                                            JavaModule javaModule,
+                                            ProtectionDomain protectionDomain) {
+      return builder.method(
+        /*
+                    // springmvc
+                    not(isStatic())
+                            .and(isAnnotatedWith(nameStartsWith("org.springframework.web.bind.annotation")
+                                    .and((nameEndsWith("Mapping")))))
+                    // mysql
+                    .or(named("execute").or(named("executeUpdate").or(named("executeQuery"))))
+                    */
+      ).intercept(
+        // springMvc 需要使用 SpringMVC插件的Interceptor
+        // mysql 需要使用 mysql 插件的 Interceptor
+        MethodDelegation.to());
+    }
+  }
+}
+```
+
+## 4.4 阶段三: 
+
+
 
 
 
