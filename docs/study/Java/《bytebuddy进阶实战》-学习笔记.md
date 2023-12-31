@@ -1187,5 +1187,593 @@ public class SkyWalkingAgent {
 
    从上面流程可以看出来，A和B实际互不影响（A和B自己的逻辑都有try-catch），所以A和B就算公用同一个成员变量，也没任何问题。
 
-## 4.6 阶段五: 插件类加载
+## 4.6 阶段五: 插件和拦截器类加载
+
+### 4.6.1 目标
+
+将指定的插件目录(`dist/plugins`)下的所有的插件和拦截器加载到Agent中，使得增强逻辑生效
+
+### 4.6.2 代码实现和思考
+
+#### 4.6.2.1 配置声明插件
+
+前面虽然已经实现了插件和拦截器逻辑，但并没有实现把插件类和拦截器类实际加载到JVM中的逻辑。
+
+这里SkyWalking通过要求插件jar包内声明特定的配置文件`skywalking-plugin.def`来告知Agent该加载哪些插件实现类。
+
++ `skywalking-plugin.def`：配置文件，`key=value`，key表示拦截器名（可重复），value表示拦截器全限制类名
++ `PluginDefine`：表示`skywalking-plugin.def`配置文件中的一行数据
++ `PluginCfg`：表示`skywalking-plugin.def`配置对象，汇总所有插件的配置文件的所有配置行`PluginDefine`
++ `PluginResourceResolver`：解析插件目录下所有插件jar包中配置文件`skywalking-plugin.def文件`的URL
+
+---
+
++ `PluginDefine`
+
+```java
+package org.example.core;
+
+import org.apache.commons.lang3.StringUtils;
+
+/**
+ * 表示  skywalking-plugin.def 配置文件中的一行记录
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2024/1/1 3:36 AM
+ */
+public class PluginDefine {
+  /**
+     * 插件名，一个插件名可以对应多个类，配置中的key
+     */
+  private String name;
+
+  /**
+     * 插件的全限制类名
+     */
+  private String defineClass;
+
+  public String getDefineClass() {
+    return defineClass;
+  }
+
+  private PluginDefine(String name, String defineClass) {
+    this.name = name;
+    this.defineClass = defineClass;
+  }
+
+  /**
+     * @param define 表示 skywalking-plugin.def 配置文件中的一行记录
+     * @return PluginDefine 实例对象
+     */
+  public static PluginDefine build(String define) {
+    if (StringUtils.isEmpty(define)) {
+      throw new RuntimeException(define);
+    }
+
+    String[] pluginDefine = define.split("=");
+    if (pluginDefine.length != 2) {
+      throw new RuntimeException(define);
+    }
+
+    String pluginName = pluginDefine[0];
+    String defineClass = pluginDefine[1];
+    return new PluginDefine(pluginName, defineClass);
+  }
+}
+
+```
+
+
+
++ `PluginCfg`
+
+```java
+package org.example.core;
+
+import lombok.extern.slf4j.Slf4j;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * 表示 skywalking-plugin.def 配置
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2024/1/1 3:34 AM
+ */
+@Slf4j
+public enum PluginCfg {
+  /**
+     * 单例
+     */
+  INSTANCE;
+
+  /**
+     * 所有插件的skywalking-plugin.def文件解析出来的PluginDefine实例 （也就是多行配置记录key=value）
+     */
+  private List<PluginDefine> pluginClassList = new ArrayList<>();
+
+  /**
+     * 转换skywalking-plugin.def文件的内容为PluginDefine
+     */
+  void load(InputStream input) throws IOException {
+    try (BufferedReader reader = new BufferedReader(new InputStreamReader(input))) {
+      String pluginDefine;
+      // 读取多行配置，构造 配置行对象
+      while ((pluginDefine = reader.readLine()) != null) {
+        try {
+          if (pluginDefine.trim().isEmpty() || pluginDefine.startsWith("#")) {
+            continue;
+          }
+          PluginDefine plugin = PluginDefine.build(pluginDefine);
+          pluginClassList.add(plugin);
+        } catch (Exception e) {
+          log.error("Failed to format plugin({}) define, e :", pluginDefine, e);
+        }
+      }
+    }
+  }
+
+  public List<PluginDefine> getPluginClassList() {
+    return pluginClassList;
+  }
+}
+```
+
+
+
++ `PluginResourceResolver`
+
+```java
+package org.example.core;
+
+import lombok.extern.slf4j.Slf4j;
+import org.example.core.loader.AgentClassLoader;
+
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.List;
+
+/**
+ * 解析 插件目录下所有 插件jar包中配置文件skywalking-plugin.def文件的URL
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2024/1/1 2:59 AM
+ */
+@Slf4j
+public class PluginResourceResolver {
+  /**
+     * 获取插件目录(/plugins)下所有jar包中的skywalking-plugin.def配置文件的URL
+     */
+  public List<URL> getResources() {
+    List<URL> cfgUrlPaths = new ArrayList<>();
+    try {
+      Enumeration<URL> urls = AgentClassLoader.getDefaultLoader().getResources("skywalking-plugin.def");
+      while (urls.hasMoreElements()) {
+        URL pluginDefineDefUrl = urls.nextElement();
+        cfgUrlPaths.add(pluginDefineDefUrl);
+        log.info("find skywalking plugin define file url: {}", pluginDefineDefUrl);
+      }
+      return cfgUrlPaths;
+    } catch (Exception e) {
+      log.error("read resource error", e);
+    }
+    return null;
+  }
+}
+```
+
+
+
+思考：
+
+1. jar包对Agent提供插件类位置的方式
+
+   通过在jar内提供配置文件来说明插件类的全限制类名。
+
+   这种通过约定配置来完成数据读取的方式，在项目开发中很常见，比如SpringBoot的`application.yml`配置
+
+#### 4.6.2.2 插件类加载
+
+Agent通过配置得知插件类的全限制类名后，还需要能够从jar文件中加载插件类，
+
++ `AgentPackagePath`：用于获取agent.jar（Agent的jar包）所在的目录
++ `AgentClassLoader`：自定义类加载器，用于加载插件类和拦截器类
++ `PluginBoostrap`：读取所有插件jar，使用自定义拦截器`AgentClassLoader`加载插件jar中的插件类。这里必须使用自定义类加载器，因为自带的类加载器无法从我们自定义的路径加载类
+
+---
+
++ `AgentPackagePath`
+
+```java
+package org.example.core.booster;
+
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+
+import java.io.File;
+import java.net.URL;
+
+/**
+ * 表示 agent.jar 所在的路径
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2024/1/1 2:01 AM
+ */
+@Slf4j
+public class AgentPackagePath {
+
+  /**
+     * apm-agent.jar 所在路径对应的File对象
+     */
+  private static File AGENT_PACKAGE_PATH;
+
+  public static File getPath() {
+    return null == AGENT_PACKAGE_PATH ? AGENT_PACKAGE_PATH = findPath() : AGENT_PACKAGE_PATH;
+  }
+
+  /**
+     * 获取 apm-agent.jar 所在路径对应的File对象
+     */
+  private static File findPath() {
+    // 类名 => 路径名
+    String classResourcePath = AgentPackagePath.class.getName().replaceAll("\\.", "/") + ".class";
+    // file:Class文件路径.class
+    // jar:file:jar文件路径.jar!/Class文件路径.class (这里因为打包，所以一定是这种情况)
+    URL resource = ClassLoader.getSystemClassLoader().getResource(classResourcePath);
+    if (resource != null) {
+      String urlStr = resource.toString();
+      // 如果是jar包中的类文件路径，则含有"!"
+      boolean isInJar = urlStr.indexOf('!') > -1;
+      // 因为agent会打包成jar，所以其实一定是jar里面的class类
+      if (isInJar) {
+        urlStr = StringUtils.substringBetween(urlStr, "file:", "!");
+        File agentJarFile = null;
+        try {
+          agentJarFile = new File(urlStr);
+        } catch (Exception e) {
+          log.error("agent jar not find by url : {}, exception:", urlStr, e);
+        }
+        if (agentJarFile.exists()) {
+          // 返回jar所在的目录对应的File对象
+          return agentJarFile.getParentFile();
+        }
+      }
+    }
+    log.error("agent jar not find ");
+    throw new RuntimeException("agent jar not find");
+  }
+}
+```
+
+
+
++ `AgentClassLoader`
+
+```java
+package org.example.core.loader;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.ArrayUtils;
+import org.example.core.AbstractClassEnhancePluginDefine;
+import org.example.core.PluginBoostrap;
+import org.example.core.booster.AgentPackagePath;
+
+import java.io.File;
+import java.io.IOException;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.util.*;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
+
+/**
+ * 自定义类加载器，用于加载插件和插件内定义的拦截器
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2024/1/1 1:16 AM
+ */
+@Slf4j
+public class AgentClassLoader extends ClassLoader {
+  /**
+     * 用于加载 插件jar中 {@link AbstractClassEnhancePluginDefine} 插件定义类 (jar中拦截器类由拦截的目标类对应的类加载器加载)
+     */
+  private static AgentClassLoader DEFAULT_LOADER;
+
+  /**
+     * 自定义类加载器 加载类的路径
+     */
+  private List<File> classpath;
+  /**
+     * 所有的插件jar包
+     */
+  private List<Jar> allJars;
+  /**
+     * 避免jar并发加载，加锁
+     */
+  private ReentrantLock jarScanLock = new ReentrantLock();
+
+  public AgentClassLoader(ClassLoader parentClassLoader) {
+    super(parentClassLoader);
+    // 获取 agent.jar 的目录
+    File agentJarDir = AgentPackagePath.getPath();
+    classpath = new ArrayList<>();
+    // 指定从 agent.jar 同级别目录下的子目录/plugins 加载类
+    classpath.add(new File(agentJarDir, "plugins"));
+  }
+
+  public static void intDefaultLoader() {
+    if (DEFAULT_LOADER == null) {
+      DEFAULT_LOADER = new AgentClassLoader(PluginBoostrap.class.getClassLoader());
+    }
+  }
+
+  public static AgentClassLoader getDefaultLoader() {
+    return DEFAULT_LOADER;
+  }
+
+  /**
+     * 双亲委派 loadClass -> 找不到 则调用当前findClass(自定义类加载逻辑) -> 最后通过defineClass获取Class对象 <br/>
+     * 这里的逻辑即从 指定的插件目录加载所有的jar文件后，寻找jar中指定的 插件类 并返回其字节码
+     */
+  @Override
+  protected Class<?> findClass(String className) throws ClassNotFoundException {
+    List<Jar> allJars = getAllJars();
+    // . 转为 /， 获取类对应的文件路径
+    String path = className.replace(".", "/").concat(".class");
+    for (Jar jar : allJars) {
+      JarEntry jarEntry = jar.jarFile.getJarEntry(path);
+      if (jarEntry == null) {
+        continue;
+      }
+      try {
+        URL url = new URL("jar:file:" + jar.sourceFile.getAbsolutePath() + "!/" + path);
+        byte[] classBytes = IOUtils.toByteArray(url);
+        return defineClass(className, classBytes, 0, classBytes.length);
+      } catch (Exception e) {
+        log.error("can't find class: {}, exception: ", className, e);
+      }
+    }
+    throw new ClassNotFoundException("can't find class: " + className);
+  }
+
+  /**
+     * 解析 指定类所在的 URL (从众多插件jar中寻找)
+     */
+  @Override
+  public URL getResource(String name) {
+    List<Jar> allJars = getAllJars();
+    for (Jar jar : allJars) {
+      JarEntry jarEntry = jar.jarFile.getJarEntry(name);
+      if (jarEntry == null) {
+        continue;
+      }
+      try {
+        return new URL("jar:file:" + jar.sourceFile.getAbsolutePath() + "!/" + name);
+      } catch (MalformedURLException e) {
+        log.error("getResource failed, e: ", e);
+      }
+    }
+    return null;
+  }
+
+  @Override
+  public Enumeration<URL> getResources(String name) throws IOException {
+    List<URL> allResources = new ArrayList<>();
+    List<Jar> allJars = getAllJars();
+    log.info("allJars is not empty: {}", null!=allJars && !allJars.isEmpty());
+    for (Jar jar : allJars) {
+      JarEntry jarEntry = jar.jarFile.getJarEntry(name);
+      if (jarEntry == null) {
+        continue;
+      }
+      allResources.add(new URL("jar:file:" + jar.sourceFile.getAbsolutePath() + "!/" + name));
+    }
+    Iterator<URL> iterator = allResources.iterator();
+    return new Enumeration<URL>() {
+      @Override
+      public boolean hasMoreElements() {
+        return iterator.hasNext();
+      }
+
+      @Override
+      public URL nextElement() {
+        return iterator.next();
+      }
+    };
+  }
+
+  private List<Jar> getAllJars() {
+    // 确保仅加载一次jar
+    if (allJars == null) {
+      jarScanLock.lock();
+      try {
+        if (allJars == null) {
+          allJars = doGetJars();
+        }
+      } finally {
+        jarScanLock.unlock();
+      }
+    }
+    return allJars;
+  }
+
+  private List<Jar> doGetJars() {
+    List<Jar> list = new LinkedList<>();
+    for (File path : classpath) {
+      if (path.exists() && path.isDirectory()) {
+        String[] jarFileNames = path.list((dir, name) -> name.endsWith(".jar"));
+        if (ArrayUtils.isEmpty(jarFileNames)) {
+          continue;
+        }
+        for (String jarFileName : jarFileNames) {
+          try {
+            File jarSourceFile = new File(path, jarFileName);
+            Jar jar = new Jar(new JarFile(jarSourceFile), jarSourceFile);
+            list.add(jar);
+            log.info("jar: {} loaded", jarSourceFile.getAbsolutePath());
+          } catch (Exception e) {
+            log.error("jar: {} load failed, e: ", jarFileName, e);
+          }
+
+        }
+      }
+    }
+    return list;
+  }
+
+  @RequiredArgsConstructor
+  private static class Jar {
+    /**
+         * jar文件对应的jarFile对象
+         */
+    private final JarFile jarFile;
+    /**
+         * jar文件对象
+         */
+    private final File sourceFile;
+  }
+}
+```
+
+
+
++ `PluginBoostrap`
+
+```java
+package org.example.core;
+
+import lombok.extern.slf4j.Slf4j;
+import org.example.core.loader.AgentClassLoader;
+
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * 加载jar文件中的 插件类
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2024/1/1 1:18 AM
+ */
+@Slf4j
+public class PluginBoostrap {
+  /**
+     * 加载所有生效的插件(即指定目录下的所有插件jar文件)
+     * <ol>
+     *   <li>获取指定存放插件jar文件的路径</li>
+     *   <li>使用自定义类加载器进行加载(默认的类加载器不会从我们指定的路径加载class)</li>
+     * </ol>
+     */
+  public List<AbstractClassEnhancePluginDefine> loadPlugins() {
+    AgentClassLoader.intDefaultLoader();
+    PluginResourceResolver resourceResolver = new PluginResourceResolver();
+    // 1. 获取插件jar中配置文件skywalking-plugin.def的 URL集合
+    List<URL> resources = resourceResolver.getResources();
+    if (null == resources || resources.isEmpty()) {
+      log.warn("don't find any skywalking-plugin.def");
+      return new ArrayList<>();
+    }
+    // 2. 存储所有插件jar中的 skywalking-plugin.def 的配置行记录
+    for (URL resource : resources) {
+      try {
+        PluginCfg.INSTANCE.load(resource.openStream());
+      } catch (Exception e) {
+        log.error("plugin def file {} init fail", resource, e);
+      }
+    }
+    // 3. 根据配置行中记录的全限制类名加载 插件类
+    List<PluginDefine> pluginClassList = PluginCfg.INSTANCE.getPluginClassList();
+    List<AbstractClassEnhancePluginDefine> plugins = new ArrayList<>();
+    for (PluginDefine pluginDefine : pluginClassList) {
+      try {
+        // 注意这里使用自定义的类加载器 AgentClassLoader，因为只有这个类加载器知道从我们定义的路径寻找class文件
+        AbstractClassEnhancePluginDefine plugin = (AbstractClassEnhancePluginDefine) Class.forName(pluginDefine.getDefineClass(),
+                                                                                                   true, AgentClassLoader.getDefaultLoader()).newInstance();
+        plugins.add(plugin);
+      } catch (Exception e) {
+        log.error("load class {} failed, e: ", pluginDefine.getDefineClass(), e);
+      }
+    }
+    return plugins;
+  }
+}
+```
+
+
+
+思考：
+
+1. 为什么插件类需要使用自定义类加载器加载？
+
+   因为自带的类加载器无法自动从我们指定的路径加载类，所以需要使用自定义类加载器。并且需要重写以下方法：
+
+   + `URL getResource(String name)`：返回全限制类名对应的文件的URL，因为我们使用`/dist/plugins`作为类加载路径，所以需要重写该方法，从该路径中获取类文件URL。自带的类加载器本身不知道我们自定义的类加载路径
+   + `Enumeration<URL> getResources(String name)`：返回全限制类名对应的URL集合，需要重写的原因和`URL getResource(String name)`一致。
+   + `protected Class<?> findClass(String className)`：返回全限制类名对应的`Class<?>`对象，同样因为需要从自定义类加载路径的插件jar中获取类信息，所以需要重写方法（自带类加载器无法得知我们的类自定义加载路径）
+
+#### 4.6.2.3 拦截器类加载
+
+为了保证拦截器类能够访问到被拦截的目标类，所以要求拦截器类使用的类加载器需要是被拦截类的类加载器或其子类。
+
++ `InterceptorInstanceLoader`：负责加载插件jar中的拦截器类，本身非类加载器，但是会使用被拦截类的类加载器作为双亲委派的父类加载器以创建一个`AgentClassLoader`类加载器对象，然后用自定义类加载器`AgentClassLoader`加载拦截器类。
+
+```java
+package org.example.core.loader;
+
+import org.example.core.interceptor.enhance.ConstructorInterceptor;
+import org.example.core.interceptor.enhance.InstanceMethodAroundInterceptor;
+import org.example.core.interceptor.enhance.StaticMethodAroundInterceptor;
+
+/**
+ * 插件内的 拦截器 的加载器
+ * <p>
+ * 拦截器包括:
+ *     <ol>
+ *       <li>构造方法拦截器: {@link ConstructorInterceptor}</li>
+ *       <li>实例方法拦截器: {@link InstanceMethodAroundInterceptor}</li>
+ *       <li>静态方法拦截器: {@link StaticMethodAroundInterceptor}</li>
+ *     </ol>
+ * </p>
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2024/1/1 4:05 AM
+ */
+public class InterceptorInstanceLoader {
+  /**
+     * @param interceptorClassName 插件中拦截器的全限制类名
+     * @param targetClassLoader    要想在插件拦截器中能够访问到被拦截的类,
+     *                             需要拦截器和被拦截的类使用同一个类加载器，或拦截器的类加载器是被拦截类的类加载器的子类
+     * @return ConstructorInterceptor 或 InstanceMethodsAroundInterceptor 或 StaticMethodsAroundInterceptor 的实例
+     */
+  public static <T> T load(String interceptorClassName, ClassLoader targetClassLoader)
+    throws ClassNotFoundException, IllegalAccessException, InstantiationException {
+    if (targetClassLoader == null) {
+      targetClassLoader = InterceptorInstanceLoader.class.getClassLoader();
+    }
+    // 新建类加载器，设置父类为 被拦截类的类加载器，保证 拦截器后续能访问到被拦截类
+    AgentClassLoader classLoader = new AgentClassLoader(targetClassLoader);
+    return (T) Class.forName(interceptorClassName, true, classLoader).newInstance();
+  }
+}
+```
+
+
+
+思考：
+
+1. 为什么拦截器类还需要使用被拦截的类的类加载器或其子类来进行类加载？
+
+   因为在HotSpot JVM虚拟机中，不同类加载器加载的类是彼此独立且不能互相访问的。
+
+   + 类A可以访问类B，要求类A的和类B的类加载器相同，或者类A的类加载器C1为类B的类加载C2的子类
+
+## 4.7 总结
 
