@@ -554,5 +554,638 @@ public class MysqlInstrumentation extends AbstractClassEnhancePluginDefine {
 }
 ```
 
-## 
+## 4.5 阶段四: 拦截器逻辑
+
+### 4.5.1 目标
+
+完善插件的拦截器逻辑，具体包括拦截的方法范围，拦截后的拦截器增强逻辑
+
+### 4.5.2 代码实现和思考
+
+#### 4.5.2.1 拦截器内部逻辑抽象
+
+SkyWalking对拦截器内的具体逻辑进行抽象，只需要开发者根据拦截方法的类型实现拦截器接口方法。
+
++ `InstanceMethodAroundInterceptor`：实例方法拦截器接口，所有插件中的实例方法拦截器需要实现该接口
++ `ConstructorInterceptor`：构造方法拦截器接口，所有插件中的构造方法拦截器需要实现该接口
++ `StaticMethodAroundInterceptor`：静态方法拦截器接口，所有插件中的静态方法拦截器需要实现该接口
+
+这里拿`InstanceMethodAroundInterceptor`代码举例：
+
++ `beforeMethod`：在被增强的实例方法之前执行
+
++ `afterMethod`：相当于被增强的实例方法的finally中执行
++ `handleEx`：被增强的方法出现异常时执行
+
+```java
+package org.example.core.interceptor.enhance;
+
+import java.lang.reflect.Method;
+
+/**
+ * 实例方法(不包括 构造方法) 的拦截器 都需要实现当前接口
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/31 6:37 PM
+ */
+public interface InstanceMethodAroundInterceptor {
+  /**
+     * 前置增强逻辑
+     */
+  void beforeMethod(EnhancedInstance obj, Method method, Object[] allArgs, Class<?>[] parameterTypes);
+
+  /**
+     * finally 后置增强逻辑 (不管原方法是否异常都会执行)
+     * @return 方法返回值
+     */
+  Object afterMethod(EnhancedInstance obj, Method method, Object[] allArgs, Class<?>[] parameterTypes, Object returnValue);
+
+  /**
+     * 异常处理
+     */
+  void handleEx(EnhancedInstance obj, Method method, Object[] allArgs, Class<?>[] parameterTypes, Throwable t);
+}
+```
+
+思考：
+
+1. 拦截器内部逻辑分类？
+
+   本身开发Byte Buddy拦截器时，对实例方法、构造方法、静态方法的拦截器处理逻辑不同，所以分成3类很合理
+
+2. 拦截器内部逻辑抽象的方式？
+
+   从接口定义不难看出来，很像常见的AOP切面开发。个人觉得这是一种经验总结后得到的开发模式。即大部分人在进行方法增强时，一般也就是在方法之前、方法执行后，以及出现异常时，执行我们自己的拦截器逻辑。
+
+#### 4.5.2.2 拦截器模版
+
+使用ByteBuddy指定拦截的方法范围后，需要指定使用的拦截器，而拦截器的实现基本都是套路化了，SkyWalking也是为构造方法、实例方法、静态方法提供了具体的拦截器模版实现。
+
++ `ConstructorInter`：构造方法拦截器模版
++ `InstanceMethodsInter`：实例方法拦截器模版
++ `StaticMethodsInter`：静态方法拦截器模版
+
+这里以`StaticMethodsInter`举例：
+
++ `intercept`方法，ByteBuddy执行拦截的目标方法时，会调用该拦截逻辑。可以看出来里面用到了插件具体实现的拦截器逻辑，而整体的调用链路基本都是套路，所以直接模版化实现
+
+```java
+package org.example.core.interceptor.enhance;
+
+import lombok.extern.slf4j.Slf4j;
+import net.bytebuddy.implementation.bind.annotation.AllArguments;
+import net.bytebuddy.implementation.bind.annotation.Origin;
+import net.bytebuddy.implementation.bind.annotation.RuntimeType;
+import net.bytebuddy.implementation.bind.annotation.SuperCall;
+
+import java.lang.reflect.Method;
+import java.util.concurrent.Callable;
+
+/**
+ * 通用的静态方法拦截器
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/31 6:27 PM
+ */
+@Slf4j
+public class StaticMethodsInter {
+  /**
+     * 拦截器在各个位置执行某些逻辑，封装在此成员变量中
+     */
+  private StaticMethodAroundInterceptor interceptor;
+
+  public StaticMethodsInter(String methodsInterceptorName, ClassLoader classLoader) {
+  }
+
+
+  /**
+     * 具体的拦截器逻辑， 整体预留的填充逻辑和AOP切面编程类似
+     */
+  @RuntimeType
+  public Object intercept(
+    // 被拦截的目标类
+    @Origin Class<?> clazz,
+    // 被拦截的目标方法
+    @Origin Method method,
+    // 方被拦截的方法的法参数
+    @AllArguments Object[] allArgs,
+    // 调用原被拦截的目标方法
+    @SuperCall Callable<?> zuper) throws Throwable {
+    // 1. 前置增强
+    try {
+      interceptor.beforeMethod(clazz, method, allArgs, method.getParameterTypes());
+    } catch (Throwable e) {
+      log.error("Static Method Interceptor: {}, enhance method: {}, before method failed, e: ", interceptor.getClass().getName(), method.getName(), e);
+    }
+    Object returnValue = null;
+    try {
+      returnValue = zuper.call();
+    } catch (Throwable e) {
+      // 2. 异常处理
+      try {
+        interceptor.handleEx(clazz, method, allArgs, method.getParameterTypes(), e);
+      } catch (Throwable innerError) {
+        log.error("Static Method Interceptor: {}, enhance method: {}, handle Exception failed, e: ", interceptor.getClass().getName(), method.getName(), e);
+      }
+      // 继续上抛异常, 不影响原方法执行逻辑
+      throw e;
+    } finally {
+      // 3. 后置增强
+      try {
+        returnValue = interceptor.afterMethod(clazz, method, allArgs, method.getParameterTypes(), returnValue);
+      } catch (Throwable e) {
+        log.error("Static Method Interceptor: {}, enhance method: {}, after method failed, e: ", interceptor.getClass().getName(), method.getName(), e);
+      }
+    }
+    return returnValue;
+  }
+}
+```
+
+#### 4.5.2.3 插件规范
+
+前面的 "4.4.2.1 插件规范"中，只要求插件声明自己需要拦截的类范围，以及拦截点（拦截的方法范围和拦截器类名），但是并没有定义如何执行增强逻辑。
+
+这里对插件规范进一步完善，规范定义了插件进行类增强的执行流程。
+
++ `AbstractClassEnhancePluginDefine`：所有插件的顶级父类
++ `ClassEnhancePluginDefine`：所有插件的父类，指定具体的transform逻辑（拦截的方法范围，以及拦截器逻辑指定）
+
+1. `AbstractClassEnhancePluginDefine`
+
++ `CONTEXT_ATTR_NAME`：增强实例方法/构造方法时，给目标类新增的成员变量的变量名，用于拦截器`beforeMethod`, `afterMethod`, `handleEx`之间传递中间值
++ `define`：定义方法的增强逻辑（包括绑定增强的方法范围，以及使用的拦截器）
++ `enhance`：具体的增强逻辑，包括增强构造方法、实例方法、静态方法
+  + `enhanceInstance`：增强实例方法和构造方法，包括绑定方法拦截范围和拦截器指定
+  + `enhanceClass`：增强静态方法，包括绑定方法拦截范围和拦截器指定
+
+```java
+package org.example.core;
+
+import lombok.extern.slf4j.Slf4j;
+import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.DynamicType;
+import net.bytebuddy.matcher.ElementMatcher;
+import org.example.core.interceptor.ConstructorMethodsInterceptorPoint;
+import org.example.core.interceptor.InstanceMethodsInterceptorPoint;
+import org.example.core.interceptor.StaticMethodsInterceptorPoint;
+import org.example.core.match.ClassMatch;
+
+/**
+ * 所有插件的顶级父类
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/30 6:10 PM
+ */
+@Slf4j
+public abstract class AbstractClassEnhancePluginDefine {
+
+  /**
+     * 为匹配到的字节码(类)新增的成员变量的名称
+     */
+  public static final String CONTEXT_ATTR_NAME = "_$EnhancedClassField_ws";
+
+  /**
+     * 表示当前插件要拦截/增强的类范围 <br/>
+     * 相当于对应 {@link AgentBuilder#type(ElementMatcher)} 的 参数 {@code ElementMatcher<? super TypeDescription>}
+     */
+  protected abstract ClassMatch enhanceClass();
+
+  /**
+     * 实例方法的拦截点 <br/>
+     * ps: 类下面多个方法可能使用不同的拦截器
+     */
+  protected abstract InstanceMethodsInterceptorPoint[] getInstanceMethodsInterceptorPoints();
+
+  /**
+     * 构造方法的拦截点 <br/>
+     */
+  protected abstract ConstructorMethodsInterceptorPoint[] getConstructorMethodsInterceptorPoints();
+
+  /**
+     * 静态方法的拦截点 <br/>
+     * ps: 类下面多个方法可能使用不同的拦截器
+     */
+  protected abstract StaticMethodsInterceptorPoint[] getStaticMethodsInterceptorPoints();
+
+  /**
+     * 增强类的主入口，绑定 当前类中哪些方法被拦截+具体的拦截器逻辑 到 builder(后续链式调用会把所有插件的配置都绑定上)
+     */
+  public DynamicType.Builder<?> define(TypeDescription typeDescription,
+                                       DynamicType.Builder<?> builder,
+                                       ClassLoader classLoader,
+                                       EnhanceContext enhanceContext) {
+    log.info("类: {}, 被插件: {} 增强 -- start", typeDescription, this.getClass().getName());
+    DynamicType.Builder<?> newBuilder = this.enhance(typeDescription, builder, classLoader, enhanceContext);
+    // 表示 当前类已经被增强过了
+    enhanceContext.initializationStageCompleted();
+    log.info("类: {}, 被插件: {} 增强 -- end", typeDescription, this.getClass().getName());
+    return newBuilder;
+  }
+
+  /**
+     * 具体的增强逻辑
+     */
+  private DynamicType.Builder<?> enhance(TypeDescription typeDescription,
+                                         DynamicType.Builder<?> newBuilder,
+                                         ClassLoader classLoader,
+                                         EnhanceContext enhanceContext) {
+    // 1. 静态方法增强
+    newBuilder = this.enhanceClass(typeDescription, newBuilder, classLoader);
+    // 2. 实例方法增强(包括构造方法)
+    newBuilder = this.enhanceInstance(typeDescription, newBuilder, classLoader, enhanceContext);
+    return newBuilder;
+  }
+
+  /**
+     * 实例方法增强(包括构造方法)
+     */
+  protected abstract DynamicType.Builder<?> enhanceInstance(TypeDescription typeDescription,
+                                                            DynamicType.Builder<?> newBuilder,
+                                                            ClassLoader classLoader,
+                                                            EnhanceContext context);
+
+  /**
+     * 静态方法增强
+     */
+  protected abstract DynamicType.Builder<?> enhanceClass(TypeDescription typeDescription,
+                                                         DynamicType.Builder<?> newBuilder,
+                                                         ClassLoader classLoader);
+}
+```
+
+2. `ClassEnhancePluginDefine`
+
++ `enhanceInstance`：遍历实例方法拦截点和构造方法拦截点，通过Byte Buddy绑定拦截的方法范围和对应的拦截器，并且头一次增强时新增用于传递中间值的成员变量。
++ `enhanceClass`：遍历静态方法拦截点，绑定拦截的方法范围和对应的拦截器
+
+```java
+package org.example.core.interceptor.enhance;
+
+import lombok.extern.slf4j.Slf4j;
+import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.DynamicType;
+import net.bytebuddy.implementation.FieldAccessor;
+import net.bytebuddy.implementation.MethodDelegation;
+import net.bytebuddy.implementation.SuperMethodCall;
+import net.bytebuddy.jar.asm.Opcodes;
+import net.bytebuddy.matcher.ElementMatcher;
+import org.example.core.AbstractClassEnhancePluginDefine;
+import org.example.core.EnhanceContext;
+import org.example.core.interceptor.ConstructorMethodsInterceptorPoint;
+import org.example.core.interceptor.InstanceMethodsInterceptorPoint;
+import org.example.core.interceptor.StaticMethodsInterceptorPoint;
+
+import static net.bytebuddy.matcher.ElementMatchers.isStatic;
+import static net.bytebuddy.matcher.ElementMatchers.not;
+
+/**
+ * 所有插件直接or间接继承当前类, 当前类完成具体的增强逻辑(transform的方法拦截范围指定，以及拦截器指定)
+ * <p>
+ * 当前类的作用相当于:
+ * {@code DynamicType.Builder<?> newBuilder = builder.method(xx).intercept(MethodDelegation.to(xx))}
+ * </p>
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/31 5:57 PM
+ */
+@Slf4j
+public abstract class ClassEnhancePluginDefine extends AbstractClassEnhancePluginDefine {
+  @Override
+  protected DynamicType.Builder<?> enhanceInstance(TypeDescription typeDescription, DynamicType.Builder<?> newBuilder, ClassLoader classLoader, EnhanceContext context) {
+    ConstructorMethodsInterceptorPoint[] constructorPoints = getConstructorMethodsInterceptorPoints();
+    InstanceMethodsInterceptorPoint[] instanceMethodPoints = getInstanceMethodsInterceptorPoints();
+    // 构造方法拦截点是否存在
+    boolean existedConstructorPoint = null != constructorPoints && constructorPoints.length > 0;
+    // 实例方法拦截点是否存在
+    boolean existedInstanceMethodPoint = null != instanceMethodPoints && instanceMethodPoints.length > 0;
+    if (!existedConstructorPoint && !existedInstanceMethodPoint) {
+      // 都不存在，则拦截的类范围内，没有需要拦截器增强的方法
+      return newBuilder;
+    }
+
+    // 如果是头一次增强当前类, 则新增用于传递中间值的成员变量 (如果还没实现EnhanceContext接口，且没有新增过字段，则新增)
+    if(!typeDescription.isAssignableFrom(EnhanceContext.class)
+       && !context.isObjectExtended()) {
+      newBuilder
+        // 新增成员变量，用于拦截器逻辑传递中间值
+        .defineField(CONTEXT_ATTR_NAME,Object.class, Opcodes.ACC_PRIVATE | Opcodes.ACC_VOLATILE)
+        // 实现 getter, setter接口
+        .implement(EnhancedInstance.class)
+        .intercept(FieldAccessor.ofField(CONTEXT_ATTR_NAME));
+      // 当前类已经拓展过(新增过成员变量)
+      context.objectExtendedCompleted();
+    }
+
+    // 1.构造方法增强
+    if(existedConstructorPoint) {
+      String typeName = typeDescription.getTypeName();
+      for (ConstructorMethodsInterceptorPoint constructorPoint : constructorPoints) {
+        String constructorInterceptorName = constructorPoint.getConstructorInterceptor();
+        if (null == constructorInterceptorName || "".equals(constructorInterceptorName.trim())) {
+          log.error("插件: {} 没有指定目标类: {} 的构造方法对应的拦截器", this.getClass().getName(), typeName);
+        }
+        ElementMatcher<MethodDescription> constructorMatcher = constructorPoint.getConstructorMatcher();
+        newBuilder = newBuilder.constructor(constructorMatcher)
+          .intercept(SuperMethodCall.INSTANCE.andThen(
+            // 构造方法直接结束后调用
+            MethodDelegation.withDefaultConfiguration()
+            .to(new ConstructorInter(constructorInterceptorName, classLoader))
+          ));
+      }
+    }
+    // 2. 实例方法增强
+    if(existedInstanceMethodPoint) {
+      String typeName = typeDescription.getTypeName();
+      for (InstanceMethodsInterceptorPoint instancePoint : instanceMethodPoints) {
+        String instanceInterceptorName = instancePoint.getMethodsInterceptor();
+        if (null == instanceInterceptorName || "".equals(instanceInterceptorName.trim())) {
+          log.error("插件: {} 没有指定目标类: {} 的实例方法对应的拦截器", this.getClass().getName(), typeName);
+        }
+        ElementMatcher<MethodDescription> methodsMatcher = instancePoint.getMethodsMatcher();
+        newBuilder = newBuilder.method(not(isStatic()).and(methodsMatcher))
+          .intercept(MethodDelegation.withDefaultConfiguration()
+                     .to(new InstanceMethodsInter(instanceInterceptorName, classLoader)));
+      }
+    }
+    return newBuilder;
+  }
+
+  @Override
+  protected DynamicType.Builder<?> enhanceClass(TypeDescription typeDescription, DynamicType.Builder<?> newBuilder, ClassLoader classLoader) {
+    StaticMethodsInterceptorPoint[] staticPoint = getStaticMethodsInterceptorPoints();
+    if (null == staticPoint || staticPoint.length == 0) {
+      // 当前插件没有指定 静态方法的增强逻辑(方法范围+拦截器), 则直接返回链式builder
+      return newBuilder;
+    }
+    String typeName = typeDescription.getTypeName();
+    for (StaticMethodsInterceptorPoint staticMethodsInterceptorPoint : staticPoint) {
+      String methodsInterceptorName = staticMethodsInterceptorPoint.getMethodsInterceptor();
+      if (null == methodsInterceptorName || "".equals(methodsInterceptorName.trim())) {
+        log.error("插件: {} 没有指定目标类: {} 的静态方法对应的拦截器", this.getClass().getName(), typeName);
+      }
+      ElementMatcher<MethodDescription> methodsMatcher = staticMethodsInterceptorPoint.getMethodsMatcher();
+      newBuilder = newBuilder.method(isStatic().and(methodsMatcher))
+        .intercept(MethodDelegation.withDefaultConfiguration()
+                   .to(new StaticMethodsInter(methodsInterceptorName, classLoader)));
+    }
+    return newBuilder;
+  }
+}
+```
+
+思考：
+
+1. 代码实现方式
+
+   通过将平时开发的经验总结，得出Byte Buddy方法增强的代码套路，并且提供相应的开发模版，简化后续开发者插件开发成本。平时项目开发时，如果有类似这种执行流程都是一致的，只不过某些特定动作不同，则可以考虑将执行流程模版化实现，只需要对其中几个步骤提供具体的实现类即可。
+
+#### 4.5.2.4 插件信息汇总
+
+`PluginFinder`用于搜寻指定目录下的插件文件，然后解析并汇总维护每个插件拦截的类范围，拦截的方法范围，以及方法对应的拦截器。
+
++ `nameMatchDefine`：成员变量，用于维护 全限制类名匹配的插件
++ `signatureMatchDefine`：成员变量，用于维护 除了全限制类名匹配以外的插件
++ `PluginFinder(List<AbstractClassEnhancePluginDefine> plugins)`：传入插件集合，解析并分类为`nameMatchDefine`或`signatureMatchDefine`
++ `ElementMatcher<? super TypeDescription> buildMatch() `：构造`AgentBuilder#type(ElementMatcher)`的参数，即汇总并返回所有插件需要拦截的类范围（并集）
++ `List<AbstractClassEnhancePluginDefine> find(TypeDescription typeDescription)`：获取拦截的目标类对应的插件集合（用于后续构造transform需要的方法拦截范围、拦截器参数）
+
+```java
+package org.example.core;
+
+import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.description.NamedElement;
+import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.matcher.ElementMatcher;
+import org.example.core.match.ClassMatch;
+import org.example.core.match.IndirectMatch;
+import org.example.core.match.NameMatch;
+
+import java.util.*;
+
+import static net.bytebuddy.matcher.ElementMatchers.*;
+
+/**
+ * 用于查找/dist/plugins下的插件
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/31 1:28 PM
+ */
+public class PluginFinder {
+
+  /**
+     * 用于存储 {@link org.example.core.match.NameMatch} 类型的插件 <br/>
+     * key: 匹配的全限制类名, value: 插件plugin集合
+     */
+  private final Map<String, LinkedList<AbstractClassEnhancePluginDefine>> nameMatchDefine = new HashMap<>();
+
+  /**
+     * 存储 {@link org.example.core.match.IndirectMatch} 类型的插件 <br/>
+     */
+  private final List<AbstractClassEnhancePluginDefine> signatureMatchDefine = new ArrayList<>();
+
+  /**
+     * 对/dist/plugins 目录下的插件进行分类
+     *
+     * @param plugins 插件集合
+     */
+  public PluginFinder(List<AbstractClassEnhancePluginDefine> plugins) {
+    for (AbstractClassEnhancePluginDefine plugin : plugins) {
+      ClassMatch classMatch = plugin.enhanceClass();
+      if (null == classMatch) {
+        continue;
+      }
+      // 1. 全限制类名精准匹配
+      if (classMatch instanceof NameMatch) {
+        NameMatch nameMatch = (NameMatch) classMatch;
+        nameMatchDefine.computeIfAbsent(nameMatch.getClassName(), item -> new LinkedList<>()).add(plugin);
+      } else {
+        // 2. 间接匹配 (本身目前的 ClassMatch实现中, 就两大类: 类名匹配, 间接匹配)
+        signatureMatchDefine.add(plugin);
+      }
+    }
+  }
+
+  /**
+     * 构造 {@link AgentBuilder#type(ElementMatcher)} 的参数, 即需要拦截的类范围 <br/>
+     * 多个插件插件的类范围用or链接，表示取并集，所有插件总计需要拦截的类范围
+     */
+  public ElementMatcher<? super TypeDescription> buildMatch() {
+    // 1. 先判断 全限制类名 匹配
+    ElementMatcher.Junction<? super TypeDescription> junction = new ElementMatcher.Junction.AbstractBase<NamedElement>() {
+      @Override
+      public boolean matches(NamedElement target) {
+        // 某个类首次被加载时回调当前逻辑
+        return nameMatchDefine.containsKey(target.getActualName());
+      }
+    };
+    // 2. 接着判断是否命中 间接匹配 (这里只增强 非 接口类)
+    junction.and(not(isInterface()));
+    for (AbstractClassEnhancePluginDefine pluginDefine : signatureMatchDefine) {
+      ClassMatch classMatch = pluginDefine.enhanceClass();
+      if (classMatch instanceof IndirectMatch) {
+        // 实际上运行到这里，signatureMatchDefine中的一定时IndirectMatch
+        IndirectMatch indirectMatch = (IndirectMatch) classMatch;
+        // 用or链接，即取所有插件 需要拦截的类范围 并集
+        junction = junction.or(indirectMatch.buildJunction());
+      }
+    }
+    return junction;
+  }
+
+  /**
+     * 从pluginFinder维护的 类=>插件 关系(插件内有 类 => 拦截点(方法范围, 拦截器)) 中搜索 当前类对应的插件集合
+     *
+     * @param typeDescription 被匹配到的类 (某个插件声明拦截的类)
+     * @return 拦截当前指定类的插件集合
+     */
+  public List<AbstractClassEnhancePluginDefine> find(TypeDescription typeDescription) {
+    List<AbstractClassEnhancePluginDefine> matechedPluginList = new LinkedList<>();
+    String className = typeDescription.getActualName();
+    // 1. 判断 全限制类名匹配的插件
+    if(nameMatchDefine.containsKey(className)){
+      matechedPluginList.addAll(nameMatchDefine.get(className));
+    }
+    // 2. 判断 间接匹配的插件 (需要插件提供 判断是否匹配的方法)
+    for(AbstractClassEnhancePluginDefine indirectMatchPlugin : signatureMatchDefine) {
+      IndirectMatch indirectMatch = (IndirectMatch) indirectMatchPlugin;
+      if(indirectMatch.isMatch(typeDescription)) {
+        matechedPluginList.add(indirectMatchPlugin);
+      }
+    }
+    return matechedPluginList;
+  }
+}
+
+```
+
+#### 4.5.2.5 Agent指定转化器
+
+在有了`PluginFinder`后，可以从中获取插件的信息，构造转换器中需要的方法拦截范围和拦截器。
+
+对原本的Agent（`SkyWalkingAgent`）进一步修改：
+
+```java
+package org.example;
+
+import lombok.extern.slf4j.Slf4j;
+import net.bytebuddy.ByteBuddy;
+import net.bytebuddy.agent.builder.AgentBuilder;
+import net.bytebuddy.description.type.TypeDescription;
+import net.bytebuddy.dynamic.DynamicType;
+import net.bytebuddy.dynamic.scaffold.TypeValidation;
+import net.bytebuddy.utility.JavaModule;
+import org.example.core.AbstractClassEnhancePluginDefine;
+import org.example.core.EnhanceContext;
+import org.example.core.PluginFinder;
+
+import java.lang.instrument.Instrumentation;
+import java.security.ProtectionDomain;
+import java.util.List;
+
+/**
+ * 模仿SkyWalking 的 统一 Java Agent 入口类
+ *
+ * @author : Ashiamd email: ashiamd@foxmail.com
+ * @date : 2023/12/30 3:08 PM
+ */
+@Slf4j
+public class SkyWalkingAgent {
+  public static void premain(String args, Instrumentation instrumentation) {
+
+    PluginFinder pluginFinder = null;
+    try {
+      pluginFinder = new PluginFinder(null);
+    } catch (Exception e) {
+      log.error("Agent初始化失败, e: ", e);
+    }
+
+    ByteBuddy byteBuddy = new ByteBuddy().with(TypeValidation.of(true));
+    AgentBuilder agentBuilder = new AgentBuilder.Default(byteBuddy);
+
+    agentBuilder
+      // 1. 因为 pluginFinder负责加载插件，所以维护了所有插件需要拦截的类范围
+      .type(pluginFinder.buildMatch())
+      // 2. 从 所有插件中提取需要拦截的方法和拦截器
+      .transform(new Transformer(pluginFinder))
+      .installOn(instrumentation);
+  }
+
+  private static class Transformer implements AgentBuilder.Transformer {
+    /**
+         * 这里Transformer 需要知道 类对应的方法拦截范围，以及拦截器，而pluginFinder在加载插件时正好汇总了这些信息
+         */
+    private PluginFinder pluginFinder;
+
+    public Transformer(PluginFinder pluginFinder) {
+      this.pluginFinder = pluginFinder;
+    }
+
+    @Override
+    public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
+                                            TypeDescription typeDescription,
+                                            // 加载 typeDescription 的类加载器
+                                            ClassLoader classLoader,
+                                            JavaModule javaModule,
+                                            ProtectionDomain protectionDomain) {
+      log.info("typeDescription: {}, prepare to transform.", typeDescription.getActualName());
+      // 1. 因为 PluginFinder 存储了 类与拦截方法范围, 拦截器之间的关系，所以从pluginFinder找每个插件拦截当前类时需要的方法范围和拦截器
+      List<AbstractClassEnhancePluginDefine> pluginDefineList = pluginFinder.find(typeDescription);
+      if (pluginDefineList.isEmpty()) {
+        // 当前拦截的类 实际没有对应的 插件，则直接返回builder (下次进入当前方法就是下一个待判断的类了)
+        log.debug("pluginFinder拦截了指定类,但是没有对应的插件(正常不该出现该情况), typeDescription: {}", typeDescription.getActualName());
+        return builder;
+      }
+      DynamicType.Builder<?> newBuilder = builder;
+      EnhanceContext enhanceContext = new EnhanceContext();
+      for (AbstractClassEnhancePluginDefine pluginDefine : pluginDefineList) {
+        // 2. 每个插件都有指定的拦截方法范围和拦截器逻辑，遍历(构造)每个插件需要的拦截方法范围和拦截器逻辑
+        DynamicType.Builder<?> possibleBuilder = pluginDefine.define(typeDescription, newBuilder, classLoader, enhanceContext);
+        // 这里相当于平时Byte Buddy代码指定了 A方法拦截范围+a拦截器，然后后面继续链式调用 B方法拦截范围+b拦截器
+        newBuilder =  possibleBuilder == null ? newBuilder : possibleBuilder;
+      }
+      if(enhanceContext.isEnhanced()) {
+        log.debug("class: {} has been enhanced", typeDescription.getActualName());
+      }
+      // 链式调用后，已经绑定了拦截typeDescription的插件集合的各自方法拦截范围+拦截器
+      return newBuilder;
+    }
+  }
+}
+```
+
+思考：
+
+1. 这里transformer，每个插件都遍历其拦截的方法范围，并且指定拦截器。（`pluginDefine.define`），内部如果是实例方法或构造方法增强，会给类增强成员变量。那么多个插件增强同一个类时共用这一个变量，会不会出现问题，比如A插件的值被B覆盖之类？
+
+   假设A和B插件都是对同一个类的同一个实例方法增强，由于Byte Buddy指定的拦截器逻辑是链式调用，并且SkyWalking要求插件实现类AOP风格的增强逻辑（`beforeMethod`, `afterMethod`, `handleEx`），成员变量值只在执行类AOP的增强方法之间传递。假设链式调用中A在B之前，那么轮到B执行时，A的完整执行结果丢给B继续使用。执行流程大致如下：
+
+   ```pse
+   1. 链中 A => B => ...其他拦截器
+   
+   2. A增强逻辑执行时（假设都有异常）
+   
+   A.beforeMethod
+   被拦截的方法
+   A.handleEx
+   A.afterMethod
+   
+   3. 轮到B增强逻辑执行时
+   
+   B.beforeMethod
+   (
+   A.beforeMethod
+   被拦截的方法
+   A.handleEx（会继续上抛异常）
+   A.afterMethod
+   抛出异常（被拦截的方法的异常）
+   )
+   B.handleEx
+   B.afterMethod（被拦截的方法的异常）
+   ```
+
+   从上面流程可以看出来，A和B实际互不影响（A和B自己的逻辑都有try-catch），所以A和B就算公用同一个成员变量，也没任何问题。
+
+## 4.6 阶段五: 插件类加载
 
