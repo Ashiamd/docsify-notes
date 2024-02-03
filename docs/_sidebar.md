@@ -24,6 +24,7 @@
     * [**设计模式**](/study/设计模式/README)
     * [**计算广告**](/study/计算广告/README)
     * [**文件管理**](/study/文件管理/README)
+    * [**编程范式(ProgrammingParadigm)**](/study/编程范式(ProgrammingParadigm)/README.md)
     * [**DataBase**](/study/DataBase/README)
     * [**Elastic-Stack**](/study/Elastic-Stack/README)
     * [**Docker**](/study/Docker/README)
