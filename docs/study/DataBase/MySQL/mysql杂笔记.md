@@ -43,4 +43,18 @@
 > 分布式事务
 >
 > [终于有人把“TCC分布式事务”实现原理讲明白了！ - 阿里-马云的学习笔记 - 博客园 (cnblogs.com)](https://www.cnblogs.com/alimayun/p/12057142.html)
+>
+> 
+>
+> 锁
+>
+> [MySQL死锁日志的查看和分析 - ianCloud - 博客园 (cnblogs.com)](https://www.cnblogs.com/iancloud/p/18021606)
+>
+> [MySQL锁--03---意向锁（Intention Locks）、间隙锁（Gap Locks）、临键锁(Next-Key Locks)_mysql 意向锁-CSDN博客](https://blog.csdn.net/weixin_48052161/article/details/121985667)
+>
+> [【原创】惊！史上最全的select加锁分析(Mysql) - 孤独烟 - 博客园 (cnblogs.com)](https://www.cnblogs.com/rjzheng/p/9950951.html) 超高质量
+>
+> [【原创】互联网项目中mysql应该选什么事务隔离级别 - 孤独烟 - 博客园 (cnblogs.com)](https://www.cnblogs.com/rjzheng/p/10510174.html) 超高质量
+>
+> [MySQL介于普通读和加锁读之间的读取方式：semi-consistent read - 掘金 (juejin.cn)](https://juejin.cn/post/6844904022499917838) RC下的半一致性读 说明，高质量
 

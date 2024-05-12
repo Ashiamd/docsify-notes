@@ -436,7 +436,7 @@ class Solution00{
 
 思路：常见的岛屿问题。这里算面积，就把面积变量当作静态成员变量，然后其他代码和常见的岛屿问题一致。
 
-代码（2ms，100%）：
+代码1（2ms，100%）：
 
 ```java
 class Solution {
@@ -470,6 +470,48 @@ class Solution {
   }
 }
 ```
+
+代码2（3ms，27.90%）：BFS，整体思路还是记录已走过的岛屿位置
+
+```java
+class Solution {
+  int[][] move = {{-1, 0}, {0,1}, {1, 0}, {0, -1}};
+  public int maxAreaOfIsland(int[][] grid) {
+    int max = 0, lenX = grid.length, lenY = grid[0].length;
+    boolean[][] used = new boolean[lenX][lenY];
+    for(int i = 0; i < lenX; ++i) {
+      for(int j = 0; j < lenY; ++j) {
+        if( !used[i][j] && grid[i][j] == 1) {
+          max = Math.max(max, bfs(grid, used, i, j, lenX, lenY));
+        }
+      }
+    }
+    return max;
+  }
+
+  public int bfs(int[][] grid, boolean[][] used, int x, int y, int lenX, int lenY) {
+    int max = 1;
+    used[x][y] = true;
+    LinkedList<int[]> path = new LinkedList();
+    path.add(new int[] {x,y});
+    while(!path.isEmpty()) {
+      int[] cur = path.poll();
+      for(int[] next: move) {
+        x = cur[0] + next[0];
+        y = cur[1] + next[1];
+        if( x >= 0 && x < lenX && y >= 0 && y < lenY && !used[x][y] && grid[x][y] == 1) {
+          ++max;
+          used[x][y] = true;
+          path.add(new int[] {x , y});
+        }
+      }
+    }
+    return max;
+  }
+}
+```
+
+
 
 ## 75. 颜色分类
 
@@ -861,6 +903,40 @@ public class Solution {
 }
 ```
 
+思路：01背包问题，如果能正好填充满`sum/2`容量的背包，则认为满足条件，返回true
+
+代码（20ms，84.60%）：
+
+```java
+class Solution {
+  public boolean canPartition(int[] nums) {
+    int sum = 0;
+    for(int i = 0; i < nums.length; ++i) {
+      sum += nums[i];
+    }
+    if(sum % 2 == 1) {
+      return false;
+    }
+    sum /= 2;
+    // dp[背包容量] = 已装满的价值; 这里尽量多装, 把容量装满说明 找到 答案
+    int[] dp = new int[sum+1];
+    for(int i = 0; i < nums.length; ++i) {
+      for(int j = sum ; j >= nums[i]; --j){
+        dp[j] = Math.max(dp[j], dp[j-nums[i]]+ nums[i]);
+        if(dp[j] == sum) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+}
+```
+
+
+
+
+
 ## 474. 一和零
 
 > [474. 一和零](https://leetcode-cn.com/problems/ones-and-zeroes/)
@@ -915,6 +991,34 @@ class Solution {
       }
     }
     return count;
+  }
+}
+```
+
+代码2（25ms，30.29%）：01背包问题，和代码1思路一样，写法略有差异罢了
+
+```java
+class Solution {
+  public int findMaxForm(String[] strs, int m, int n) {
+    int len = strs.length;
+    int[] mCount = new int[len];
+    int[] nCount = new int[len];
+    int[][] dp = new int[m+1][n+1]; // 能装m个0, n个n的背包最多装几个字符串
+    for(int i = 0; i < len; ++i) {
+      char[] cs = strs[i].toCharArray();
+      for(char c : cs) {
+        mCount[i] += c == '0' ? 1 : 0;
+        nCount[i] += c == '1' ? 1 : 0;
+      }
+    }
+    for(int i = 0; i < len; ++i) {
+      for(int j = m; j >= mCount[i]; --j) {
+        for(int k = n; k >= nCount[i]; --k) {
+          dp[j][k] = Math.max(dp[j][k], dp[j-mCount[i]][k-nCount[i]]+1);
+        }
+      }
+    }
+    return dp[m][n];
   }
 }
 ```
@@ -2648,7 +2752,7 @@ class Solution {
 
 思路：暴力双层for循环，效率超级慢。直接每个子串都判断回文。
 
-代码（582ms，5.02%）：感觉自己对"字符串处理"相关的题目不是很熟练。
+代码1（582ms，5.02%）：感觉自己对"字符串处理"相关的题目不是很熟练。
 
 ```java
 class Solution {
@@ -2674,6 +2778,81 @@ class Solution {
       --right;
     }
     return true;
+  }
+}
+```
+
+代码2（13ms，48.04%）：动态规划，`dp[i][j]`表示闭区间`[i,j]`的回文子串个数，需要注意的是遍历顺序和这个dp数组的定义（一开始想的是区间`[i,j]`能形成的回文子串数量，后面感觉这个没法依赖之前的数据做推倒）
+
+```java
+class Solution {
+  public int countSubstrings(String s) {
+    int len = s.length();
+    // 闭区间[i, j]能形成 回文
+    boolean[][] dp = new boolean[len][len];
+    int result = len;
+    for(int i = 0; i <len; ++i) {
+      dp[i][i] = true;
+    }
+    // 从 dp[i+1][j-1] 可以看出来 二维数组依赖左下角数据，所以从下往上，从左往右遍历
+    for(int i = len-2; i >=0; --i) {
+      for(int j = i+1; j < len; ++j) {
+        if(s.charAt(i) == s.charAt(j) && (j - 1 == i || dp[i+1][j-1])) {
+          dp[i][j] = true;
+          ++ result;
+        }
+      }
+    }
+    return result;
+  }
+}
+```
+
+代码3（14ms，47.02%）：在原本动态规划的基础上，省去一开始的初始化，留到中间直接计算
+
+```java
+class Solution {
+  public int countSubstrings(String s) {
+    int len = s.length();
+    // 闭区间[i, j]能形成 回文
+    boolean[][] dp = new boolean[len][len];
+    int result = 0;
+    // 从 dp[i+1][j-1] 可以看出来 二维数组依赖左下角数据，所以从下往上，从左往右遍历
+    for (int i = len - 1; i >= 0; --i) {
+      for (int j = i; j < len; ++j) {
+        if (s.charAt(i) == s.charAt(j) && (j - 1 <= i || dp[i + 1][j - 1])) {
+          dp[i][j] = true;
+          ++result;
+        }
+      }
+    }
+    return result;
+  }
+}
+```
+
+代码4（5ms，91.72%）：双指针考虑1个元素为中心和2个元素为中心的情况加和
+
+```java
+class Solution {
+  public int countSubstrings(String s) {
+    int len = s.length();
+    int result = 0;
+    for(int i = 0; i < len; ++i) {
+      result += huiwen(i, i, s, len);
+      result += huiwen(i, i+1, s, len);
+    }
+    return result;
+  }
+
+  public int huiwen(int left, int right, String s, int len) {
+    int count = 0;
+    while(left >= 0 && right < len && s.charAt(left) == s.charAt(right)) {
+      --left;
+      ++right;
+      ++count;
+    }
+    return count;
   }
 }
 ```
@@ -7449,6 +7628,2307 @@ class Solution {
       nums[i] = nums[i-1] + nums[i-2];
     }
     return nums[n];
+  }
+}
+```
+
+## 1049. 最后一块石头的重量 II
+
+语言：java
+
+思路：这题关键在于如何思考，这里思路就是把石头分成共2堆，然后2堆石头的重量要接近。这里就可以看成有一个容量为`sumWeight/2`的背包，求该背包最多能装多少石头，然后求`石头总重量 - 背包总石头重量 - 剩余石头的重量`的值（`sumWeight - dp[sumWeight/2] - (sumWeight - (sumWeight - dp[sumWeight/2]))`）
+
+代码（2ms，97.44%）：
+
+```java
+class Solution {
+  public int lastStoneWeightII(int[] stones) {
+    int sum = 0;
+    // 1. 求总重量
+    for(int weight : stones) {
+      sum += weight;
+    }
+    // 2. 容量 = 总重量/2 的背包, 能最多装多少石头 (01背包问题)
+    int target = sum/2;
+    int[] dp = new int[target+1]; // dp[i] 表示 容量还剩i的背包能装下的最多石头重量
+    // 3. 总重量 - 背包内的石头总重量 = 答案
+    for(int i = 0; i < stones.length; ++i) {
+      // 外层遍历 物品，内层 遍历背包容量 （倒序，避免石头重复计算）
+      for(int j = target; j >= stones[i]; --j) {
+        // dp[j] 不放石头; dp[j-stones[i]]+stones[i] 表示拿了石头后减少了容量
+        dp[j] = Math.max(dp[j], dp[j-stones[i]]+stones[i]);
+      }
+    }
+    //  石头总重量 - 背包内重量 - 剩余重量
+    //  sum - dp[target] - (sum - (sum-dp[target]))
+    //= sum - 2 * dp[target] 
+    return sum - dp[target] * 2;
+  }
+}
+```
+
+代码（1ms，99.78%）：整体思路还是01背包，只是dp数组换成boolean形式，`dp[i]`表示能够正好装满容量为i的背包。
+
+```java
+class Solution {
+  public int lastStoneWeightII(int[] stones) {
+    int sum = 0;
+    // 1. 求总重量
+    for(int weight : stones) {
+      sum += weight;
+    }
+    // 2. 容量 = 总重量/2 的背包, 能最多装多少石头 (01背包问题)
+    int target = sum/2;
+    boolean[] dp = new boolean[target+1]; // dp[i] 表示 能够装背包正好重量为i (背包容量从0～target都有效，至少有一个最后会是true)
+    // 3. 总重量 - 背包内的石头总重量 = 答案
+    dp[0] = true; // 0容量什么都不放就可以做到，所以true
+    for(int i = 0; i < stones.length; ++i) {
+      // 外层遍历 物品，内层 遍历背包容量 （倒序，避免石头重复计算）
+      for(int j = target; j >= stones[i]; --j) {
+        // dp[j] 不放石头;  另一个表示放石头
+        dp[j] = dp[j] || dp[j-stones[i]];
+      }
+    }
+    //  石头总重量 - 背包内重量 - 剩余重量
+    //  sum - dp[target] - (sum - (sum-dp[target]))
+    //= sum - 2 * dp[target] 
+    for(int i = target; i >= 0; --i) {
+      if(dp[i]) {
+        return sum - i * 2;
+      }
+    }
+    // 不可能执行到这里
+    return sum;
+  }
+}
+```
+
+## 377. 组合总和 Ⅳ
+
+语言：java
+
+思路：完全背包问题，与01背包不同的是，每个物品可以拿多次，所以内循环逻辑为正序遍历。组合数，外层遍历物品+内层遍历背包；排列数，外层遍历背包+内层遍历物品
+
+代码（1ms，91.02%）：
+
+```java
+class Solution {
+  public int combinationSum4(int[] nums, int target) {
+    int len = nums.length;
+    // 凑齐 target的排列数有几种方案
+    int[] dp = new int[target + 1];
+    // 0 只有一种方式，就是拿0（但是实际nums[i] > 0）
+    dp[0] = 1;
+    // 排列数，外层 遍历背包；内层 物品，保证物品每轮外层遍历时都会从头再拿一遍（物品可拿多次）
+    for (int i = 1; i <= target; ++i) {
+      for (int num : nums) {
+        if(i >= num) {
+          // 凑齐i的方式，即对应 凑齐 i-num 有几种方式； += 是因为有多轮遍历，累计
+          dp[i] += dp[i - num];
+        }
+      }
+    }
+    return dp[target];
+  }
+}
+```
+
+## 322. 零钱兑换
+
+语言：java
+
+思路：完全背包问题，这里需要注意求的是最少硬币数量。由于需要求最小值，所以一开始给`int[] dp`填充不可能触达的超大值；这里组合数or排列数都可以凑齐硬币，所以内外层遍历顺序随意；而硬币可以重复使用，所以内层循环从0开始，保证硬币重复使用（从尾到0遍历的话，则是确保每个硬币只用一次）。
+
+代码（12ms，86.53%）：
+
+```java
+class Solution {
+  public int coinChange(int[] coins, int amount) {
+    // 凑齐 i 所需的最少硬币数
+    if (amount == 0) {
+      return 0;
+    }
+    int[] dp = new int[amount + 1];
+    Arrays.fill(dp, amount+1);
+    dp[0] = 0;
+    for (int i = 1; i <= amount; ++i) {
+      for (int j = 0; j < coins.length; ++j) {
+        if (i >= coins[j]) {
+          dp[i] = Math.min(dp[i], dp[i - coins[j]]+1);
+        }
+      }
+    }
+    return dp[amount] == amount+1 ? -1 : dp[amount];
+  }
+}
+```
+
+## 279. 完全平方数
+
+语言：java
+
+思路：完全背包问题；无组合数or排列树区分，外层遍历背包or数字都ok；需要数字能重复使用，所以内层从最小有效值开始遍历
+
+代码（26ms，68.37%）：
+
+```java
+class Solution {
+  public int numSquares(int n) {
+    int[] dp = new int[n + 1];
+    Arrays.fill(dp, n);
+    dp[0] = 0;
+    for (int i = 1; i * i <= n; ++i) {
+      for (int j = i * i; j <= n; ++j) {
+        dp[j] = Math.min(dp[j], dp[j - i * i] + 1);
+      }
+    }
+    return dp[n];
+  }
+}
+```
+
+## 139. 单词拆分
+
+语言：java
+
+思路：完全背包问题（每个物品可以取多次，这里物品是散装单词，背包是凑成的目标字符串）；凑成目标字符串对物品的排列有要求，所以先遍历背包，后遍历物品；由于物品可以拿多次，所以背包从头往后遍历，保证物品可以取多次。
+
+代码1（7ms，69.10%）：
+
+```java
+class Solution {
+  public boolean wordBreak(String s, List<String> wordDict) {
+    int sLen = s.length();
+    // 表示 从 1～length 字符串中，已匹配的 字符串长度
+    int[] dp = new int[sLen + 1];
+    for (int i = 0; i < sLen; ++i) {
+      for (String str : wordDict) {
+        if (i < str.length() - 1) {
+          continue;
+        }
+        if (s.substring(i - str.length() + 1, i + 1).equals(str)) {
+          dp[i + 1] = Math.max(dp[i + 1], dp[i + 1 - str.length()] + str.length());
+        }
+      }
+    }
+    return dp[sLen] == sLen;
+  }
+}
+```
+
+代码2（7ms，69.10%）：整体思路不变，就是dp递推数组，改成`boolean[]`，表示到长度`i`为止，匹配到的字符串长度
+
+```java
+class Solution {
+  public boolean wordBreak(String s, List<String> wordDict) {
+    HashSet<String> wordSet = new HashSet(wordDict);
+    int len = s.length();
+    boolean[] dp = new boolean[len+1];
+    dp[0] = true;
+    for(int i = 0; i < len; ++i) {
+      for(String str : wordSet) {
+        int strLen = str.length();
+        if(i+1 >= strLen && dp[i+1-strLen] && s.substring(i+1-strLen, i+1).equals(str)) {
+          dp[i+1] = true;
+        }
+      }
+    }
+    return dp[len];
+  }
+}
+```
+
+参考代码（8ms，51.19%）：整体思路也是完全背包，就是遍历填充dp数组的方式变了
+```java
+public class Solution {
+  public boolean wordBreak(String s, List<String> wordDict) {
+    Set<String> wordDictSet = new HashSet(wordDict);
+    boolean[] dp = new boolean[s.length() + 1];
+    dp[0] = true;
+    for (int i = 1; i <= s.length(); i++) {
+      for (int j = 0; j < i; j++) {
+        if (dp[j] && wordDictSet.contains(s.substring(j, i))) {
+          dp[i] = true;
+          break;
+        }
+      }
+    }
+    return dp[s.length()];
+  }
+}
+```
+
+## 198. 打家劫舍
+
+语言：java
+
+思路：动态规划，需要注意的是，因为每次拿东西需要至少间隔一个屋子，所以需要多一个纬度用来记录拿or不拿的状态；
+
+代码1（0ms，100%）：
+
+```java
+class Solution {
+  public int rob(int[] nums) {
+    int len = nums.length;
+    // 1. 表示 到第i个 屋子为止，最后最多能获取的金额, 第i个屋子可能 拿[i][0] or 不拿[i][1]
+    int[][] dp = new int[len][2];
+    // 2. 递推公式, dp[i][0] = max(dp[i-1][0], dp[i-1][1]+nums[i])
+    //             dp[i][1] = max(dp[i-1][0], dp[i-1[1]])
+    // 3. 初始化 
+    dp[0][0] = nums[0];
+    dp[0][1] = 0;
+    // 4. 遍历顺序(从左到右, 因为需要依赖之前的结果)
+    for(int i = 1;i < len; ++i) {
+      dp[i][0] = Math.max(dp[i-1][0], dp[i-1][1] + nums[i]);
+      dp[i][1] = Math.max(dp[i-1][0], dp[i-1][1]);
+    }
+    return Math.max(dp[len-1][0], dp[len-1][1]);
+  }
+}
+```
+
+代码2（0ms，100%）：省略用来记录拿or不拿的状态字段（和01背包拿or不拿一样），只不过这里每次拿的时候，需要间隔一个房间再拿
+
+```java
+class Solution {
+  public int rob(int[] nums) {
+    int len = nums.length;
+    // 1. 表示 到第i个 屋子为止，最后最多能获取的金额
+    int[] dp = new int[len];
+    // 2. 递推公式, dp[i] = max(dp[i-1], dp[i-2] + nums[i]) 前者表示当前不拿，后者表示当前拿
+    // 3. 初始化 
+    if(len == 1) {
+      return nums[0];
+    }
+    dp[0] = nums[0];
+    dp[1] = Math.max(nums[0], nums[1]);
+    // 4. 遍历顺序(从左到右, 因为需要依赖之前的结果)
+    for(int i = 2;i < len; ++i) {
+      dp[i] = Math.max(dp[i-1], dp[i-2] + nums[i]);
+    }
+    return dp[len-1];
+  }
+}
+```
+
+代码3（）：根据dp数组的写法，可以发现实际我们只依赖前面2个值即可计算出下一个值，所以不需要声明数组也ok
+
+```java
+class Solution {
+  public int rob(int[] nums) {
+    int len = nums.length;
+    if(len == 1) {
+      return nums[0];
+    }
+    int a = nums[0];
+    int b = Math.max(nums[0], nums[1]);
+    for(int i = 2; i < len; ++i) {
+      int next = Math.max(b, a + nums[i]);
+      a = b;
+      b = next;
+    }
+    return b;
+  }
+}
+```
+
+## 213. 打家劫舍 II
+
+语言：java
+
+思路：动态规划，环形需要分2情况：（1）第一个不拿，则最后一个可考虑拿；（2）第一个拿，则最后一个肯定不拿。分两种情况进行遍历，最后求最大值即可
+
+代码（0ms，100%）：
+
+```java
+class Solution {
+  public int rob(int[] nums) {
+    // 环型和非环形的区别在于，环形需要考虑第一个位置拿or不拿，分两种情况即可
+    int len = nums.length;
+    if(len == 1) {
+      return nums[0];
+    }
+    if(len == 2) {
+      return Math.max(nums[0], nums[1]);
+    }
+    int max = 0;
+    // 1. nums[0] 不拿的情况
+    int a = 0;
+    int b = nums[1];
+    for(int i = 2; i < len; ++i) {
+      int next = Math.max(a + nums[i], b);
+      a = b;
+      b = next;
+    }
+    max = Math.max(max, b);
+    // 2. nums[0] 拿的情况 (最后一个不拿, 所以只遍历到 倒数第二个元素)
+    a = nums[0];
+    b = Math.max(a, nums[1]);
+    for(int i = 2; i < len-1; ++i) {
+      int next = Math.max(a + nums[i], b);
+      a = b;
+      b = next;
+    }
+    max = Math.max(max, b);
+    return max;
+  }
+}
+```
+
+## 337. 打家劫舍 III
+
+语言：java
+
+思路：DFS，注意需要用Map记录已经做过的运算，否则计算超时
+
+代码1（2ms，28.89%）：
+
+```java
+class Solution {
+  HashMap<TreeNode, Integer> maxMap = new HashMap();
+  public int rob(TreeNode root) {
+    if(root == null) {
+      return 0;
+    }
+    if(root.left == null && root.right == null) {
+      return root.val;
+    }
+    if(maxMap.containsKey(root)) {
+      return maxMap.get(root);
+    }
+    // 不取当前，取左右两个节点的情况
+    int l = 0;
+    int r = 0;
+    // 取当前，左右两个不取的情况
+    int ll = 0, lr = 0, rl = 0, rr = 0;
+    if(root.left !=null) {
+      l = rob(root.left);
+      ll = rob(root.left.left);
+      lr = rob(root.left.right);
+    }
+    if(root.right != null) {
+      r = rob(root.right);
+      rl = rob(root.right.left);
+      rr = rob(root.right.right);
+    }
+    // 取当前节点+ 左右两个往下间隔一个节点的情况
+    int max =  Math.max(l + r, root.val + ll + lr + rl + rr);
+    maxMap.put(root,max);
+    return max;
+  }
+}
+```
+
+代码2（0ms，100%）：动态规划，每个节点向上返回 拿 or 不拿两种情况的 金额最大值
+
+```java
+class Solution {
+  public int rob(TreeNode root) {
+    int[] result = dfs(root);
+    return Math.max(result[0], result[1]);
+  }
+  public int[] dfs(TreeNode root) {
+    if(null == root) {
+      return new int[] {0,0};
+    }
+    // [0] 表示拿当前节点，[1] 表示不拿当前节点 
+    int[] left = dfs(root.left);
+    int[] right = dfs(root.right);
+    int[] cur = new int[2];
+    cur[0] = left[1] + right[1] + root.val;
+    // 注意：不拿当前节点，则左右取最大值的情况
+    cur[1] = Math.max(left[0], left[1]) + Math.max(right[0], right[1]);
+    return cur;
+  }
+}
+```
+
+## 121. 买卖股票的最佳时机
+
+语言：java
+
+思路：这里用动态规划实现，只能买一次和卖出一次股票。难点在于怎么定义递推数组。这里`dp[i][0]`表示到第i天为止仍持有股票的利润（0～第i天完成买入）；`dp[i][1]`表示到第i天为止此时没有持有股票的利润（1～第i天完成卖出）
+
+代码1（26ms，13.66%）：
+
+```java
+class Solution {
+    public int maxProfit(int[] prices) {
+        int len = prices.length;
+        // dp[i][0] 表示到i天为止 持有股票的利润； dp[i][1] 为 第i天不持有股票的最大收益
+        int[][] dp = new int[len][2];
+        dp[0][0] = -prices[0];
+        for(int i = 1; i < len; ++i) {
+          	// 目前持有股票的最大收益 = i之前持有股票的最大收益 or i这天持有股票
+            dp[i][0] = Math.max(dp[i-1][0], -prices[i]);
+          	// i之前完成卖出，第i天啥也不干； i这天完成卖出
+            dp[i][1] = Math.max(dp[i-1][1], dp[i-1][0] + prices[i]);
+        }
+        return dp[len-1][1];
+    }
+}
+```
+
+代码2（5ms，16.77%）：dp递推数组可以看出来，每次只依赖上一天和当天的数据，所以二维数组的第一纬也可以改成只用2个空间（滚动数组）
+
+```java
+class Solution {
+  public int maxProfit(int[] prices) {
+    int len = prices.length;
+    // dp[i][0] 表示到i天为止 持有股票的利润； dp[i][1] 为 第i天不持有股票的利润
+    // 这里 i 只需要关注 昨天和当天就可完成迭代
+    int[][] dp = new int[2][2];
+    dp[0][0] = -prices[0];
+    for (int i = 1; i < len; ++i) {
+      dp[i % 2][0] = Math.max(dp[(i - 1) % 2][0], -prices[i]);
+      dp[i % 2][1] = Math.max(dp[(i - 1) % 2][1], dp[(i - 1) % 2][0] + prices[i]);
+    }
+
+    return dp[(len - 1) % 2][1];
+  }
+}
+```
+
+代码3（4ms，20.39%）：递推公式里面用到的都只有上一天，所以第一个纬度（存放日期）可以省略掉，只保留“持有”和“不持有”的状态
+
+```java
+class Solution {
+  public int maxProfit(int[] prices) {
+    int len = prices.length;
+    // dp[0] 表示到i天为止 持有股票的利润； dp[1] 为 第i天不持有股票的利润
+    int[] dp = new int[2];
+    dp[0] = -prices[0];
+    for (int i = 1; i < len; ++i) {
+      dp[0] = Math.max(dp[0], -prices[i]);
+      dp[1] = Math.max(dp[1], dp[0] + prices[i]);
+    }
+    return dp[1];
+  }
+}
+```
+
+## 122. 买卖股票的最佳时机 II
+
+语言：java
+
+思路：这里仍使用动态规划，`dp[i][0]`表示第i天为止持有股票的最大利润；`dp[i][1]`表示第i天为止不持有股票的最大利润
+
+代码1（3ms，27.01%）：
+
+```java
+class Solution {
+  public int maxProfit(int[] prices) {
+    int len = prices.length;
+    // dp[i][0] 到第i天仍持有股票的利润； dp[i][1] 到第i天不持有股票的利润
+    int[][] dp = new int[len][2];
+    // dp[0][1] 就是当天买入又卖出，所以就是0
+    dp[0][0] = -prices[0];
+    for(int i = 1; i < len; ++i) {
+      dp[i][0] = Math.max(dp[i-1][0], dp[i-1][1]-prices[i]);
+      dp[i][1] = Math.max(dp[i-1][1], dp[i-1][0]+prices[i]);
+    }
+    // 不需要考虑 dp[len-1][0], 因为最后肯定手上没有股票才是最好的
+    return dp[len-1][1];
+  }
+}
+```
+
+代码2（2ms，31.71%）：同样只依赖上一次的状态，所以可以直接用一维数组（直接用2个变量也ok）
+
+```java
+class Solution {
+  public int maxProfit(int[] prices) {
+    int len = prices.length;
+    // dp[i][0] 到第i天仍持有股票的利润； dp[i][1] 到第i天不持有股票的利润
+    int[] dp = new int[2];
+    // dp[0][1] 就是当天买入又卖出，所以就是0
+    dp[0] = -prices[0];
+    for(int i = 1; i < len; ++i) {
+      dp[0] = Math.max(dp[0], dp[1]-prices[i]);
+      dp[1] = Math.max(dp[1], dp[0]+prices[i]);
+    }
+    // 不需要考虑 dp[len-1][0], 因为最后肯定手上没有股票才是最好的
+    return dp[1];
+  }
+}
+```
+
+## 123. 买卖股票的最佳时机 III
+
+语言：java
+
+思路：动态规划，这题难点在于递归数组如何定义，如何表示第N笔交易。原本`dp[i][1]`和`dp[i][2]`可以表示到第i天为止，第一笔交易持有股票 or 不持有 股票的最大利润；`dp[i][3]`和`dp[i][4]`则表示第二笔交易持有股票or不持有股票的最大利润
+
+代码1（20ms，60.68%）：
+
+```java
+class Solution {
+  public int maxProfit(int[] prices) {
+    int len = prices.length;
+    // dp[i][0] 表示什么也不做
+    // dp[i][n]; 第i天为止 第 (n-1)/2 笔交易 持有(n%2==1) or 不持有股票(n%2==0)的最大利润
+    int[][] dp = new int[len][5];
+    // 只需要初始化 持有股票的情况
+    dp[0][1] = -prices[0];
+    dp[0][3] = -prices[0];
+    for (int i = 1; i < len; ++i) {
+      // 第一笔 持有股票
+      dp[i][1] = Math.max(dp[i - 1][1], dp[i - 1][0] - prices[i]);
+      // 第一笔 不持有股票
+      dp[i][2] = Math.max(dp[i - 1][2], dp[i - 1][1] + prices[i]);
+      // 第二笔 持有股票
+      dp[i][3] = Math.max(dp[i - 1][3], dp[i - 1][2] - prices[i]);
+      // 第二笔 不持有股票
+      dp[i][4] = Math.max(dp[i - 1][4], dp[i - 1][3] + prices[i]);
+    }
+    return dp[len - 1][4];
+  }
+}
+```
+
+代码2（2ms，79.31%）：空间优化，由于每次都是依赖`i-1`上一天的运算结果，所以可以省略天维度
+
+```java
+class Solution {
+  public int maxProfit(int[] prices) {
+    int len = prices.length;
+    // dp[i][0] 表示什么也不做
+    // dp[i][n]; 第i天为止 第 (n-1)/2 笔交易 持有(n%2==1) or 不持有股票(n%2==0)的最大利润
+    int[] dp = new int[5];
+    // 只需要初始化 持有股票的情况
+    dp[1] = -prices[0];
+    dp[3] = -prices[0];
+    for (int i = 1; i < len; ++i) {
+      // 第一笔 持有股票
+      dp[1] = Math.max(dp[1], dp[0] - prices[i]);
+      // 第一笔 不持有股票
+      dp[2] = Math.max(dp[2], dp[1] + prices[i]);
+      // 第二笔 持有股票
+      dp[3] = Math.max(dp[3], dp[2] - prices[i]);
+      // 第二笔 不持有股票
+      dp[4] = Math.max(dp[4], dp[3] + prices[i]);
+    }
+    return dp[4];
+  }
+}
+```
+
+## 188. 买卖股票的最佳时机 IV
+
+语言：java
+
+思路：动态规划，难点在于递归数组如何定义，定义方式和"123. 买卖股票的最佳时机 III"相差无几。
+
+代码1（2ms，72.26%）：
+
+```java
+class Solution {
+  public int maxProfit(int k, int[] prices) {
+    // 到i为止，第 (k+1)/2 笔交易 仍持有股票 (k-1)%2 or 不持有股票 (k-1)%2的 最大利润, k=0无效值, k=1~n
+    int len = prices.length;
+    int[][] dp = new int[len][2*k+1];
+    // dp[3][1]表示遍历到下标3为止，第一笔交易持有股票的最大利润; dp[3][2]表示第一笔不持有股票最大利润
+    // 只需要初始化下标0持有股票的情况即可
+    for(int i = 1; i < 2*k; i+=2) {
+      dp[0][i] = -prices[0];
+    }
+    // 从1开始，0已经做过初始化了，递推数组依赖上一次的计算
+    for(int i = 1; i < len ; ++i) {
+      // 遍历 第 X 次交易 （j为持有股票，j+1不持有股票）
+      for(int j = 1; j <= 2 * k; j+=2) {
+        // 仍持有股票
+        dp[i][j] = Math.max(dp[i-1][j], dp[i-1][j-1]-prices[i]);
+        // 不持有股票
+        dp[i][j+1] = Math.max(dp[i-1][j+1], dp[i-1][j]+prices[i]);
+      }
+    }
+    // 最后一次卖出一定是利润最大的
+    return dp[len-1][2*k];
+  }
+}
+```
+
+代码2（1ms，99.91%）：由于每次只依赖上一天的计算，所以dp数组维度1可以省略
+
+```java
+class Solution {
+  public int maxProfit(int k, int[] prices) {
+    // 到i为止，第 (k+1)/2 笔交易 仍持有股票 (k-1)%2 or 不持有股票 (k-1)%2的 最大利润, k=0无效值, k=1~n
+    int len = prices.length;
+    int[] dp = new int[2*k+1];
+    // dp[3][1]表示遍历到下标3为止，第一笔交易持有股票的最大利润; dp[3][2]表示第一笔不持有股票最大利润
+    // 只需要初始化下标0持有股票的情况即可
+    for(int i = 1; i < 2*k; i+=2) {
+      dp[i] = -prices[0];
+    }
+    // 从1开始，0已经做过初始化了，递推数组依赖上一次的计算
+    for(int i = 1; i < len ; ++i) {
+      // 遍历 第 X 次交易 （j为持有股票，j+1不持有股票）
+      for(int j = 1; j <= 2 * k; j+=2) {
+        // 仍持有股票
+        dp[j] = Math.max(dp[j], dp[j-1]-prices[i]);
+        // 不持有股票
+        dp[j+1] = Math.max(dp[j+1], dp[j]+prices[i]);
+      }
+    }
+    // 最后一次卖出一定是利润最大的
+    return dp[2*k];
+  }
+}
+```
+
+## 309. 买卖股票的最佳时机含冷冻期
+
+语言：java
+
+思路：动态规划，注意dp定义和递推定义。这里`dp[i][0]`表示第i天持有股票的最大利润；`dp[i][1]`表示第i天不持有股票且未冷却完毕的最大利润；`dp[i][2]`表示第i天不持有股票且冷却完毕的最大利润。
+
+代码1（1ms，78.36%）：
+
+```java
+class Solution {
+  public int maxProfit(int[] prices) {
+    //dp[i][0] 持有, 不持有未冷却 不持有且已冷却完毕
+    int len = prices.length;
+    if(len == 1) {
+      return 0;
+    }
+    int[][] dp = new int[len][3];
+    // 初始化前2天的情况
+    dp[0][0] = -prices[0];
+    dp[1][0] = Math.max(-prices[0], -prices[1]);
+    // 第1天卖出 or 本来就不持有
+    dp[1][1] = Math.max(prices[1]-prices[0], 0);
+    for(int i = 2; i < len; ++i) {
+      // 不持有且冷却完毕（保持上一次冷却完毕 or 上一次刚卖出股票由于冷静期所以多跳过一天）
+      dp[i][2] = Math.max(dp[i-1][2], dp[i-2][1]);
+      // 持有股票（保持上一次持有股票 or 当天已经冷却完毕后再次持有股票）
+      dp[i][0] = Math.max(dp[i-1][0], dp[i][2] - prices[i]);
+      // 不持有股票未冷却（保持上一次不持有股票未冷却 or 持有股票现在卖出）
+      dp[i][1] = Math.max(dp[i-1][1], dp[i-1][0] + prices[i]);
+    }
+    return Math.max(dp[len-1][1], dp[len-1][2]); 
+  }
+}
+```
+
+代码2（1ms，78.36%）：同动态规划，但是只依赖上一天状态，使用4状态（持有，刚卖出，冷静期，不持有冷静期已结束）
+
+```java
+class Solution {
+  public int maxProfit(int[] prices) {
+    int len = prices.length;
+    if(len == 1) {
+      return 0;
+    }
+    // 0: 持有; 1:现在卖出; 2: 冷静期; 3: 冷静期结束后不持有
+    int[][] dp = new int[len][4];
+    dp[0][0] = -prices[0];
+    for(int i = 1; i < len; ++i) {
+      // 持有 (前一天就持有； 前一天冷静期已结束；前一天还是冷静期)
+      dp[i][0] = Math.max(dp[i-1][0], Math.max(dp[i-1][3] - prices[i], dp[i-1][2]-prices[i]));
+      // 现在卖出（前一天一定持有）
+      dp[i][1] = dp[i-1][0]+prices[i];
+      // 冷静期（前一天一定卖出）
+      dp[i][2] = dp[i-1][1];
+      // 冷静期结束后仍不持有（前一天也是冷静期结束；前一天是冷静期）
+      dp[i][3] = Math.max(dp[i-1][3], dp[i-1][2]);
+    }
+    // 不持有的情况都可能是利润最大值
+    return Math.max(dp[len-1][1], Math.max(dp[len-1][2], dp[len-1][3]));
+  }
+}
+```
+
+代码3（0ms，100%）：4状态的情况做空间优化，仅依赖上一天状态，所以只用一维数组即可。由于利用滚动数组的思想，需要注意for循环里调整了赋值的顺序，保证每个赋值都是依赖上一次计算结果，而不是本次计算结果
+
+```java
+class Solution {
+  public int maxProfit(int[] prices) {
+    int len = prices.length;
+    if (len == 1) {
+      return 0;
+    }
+    // 0: 持有; 1:现在卖出; 2: 冷静期; 3: 冷静期结束后不持有
+    int[] dp = new int[4];
+    dp[0] = -prices[0];
+    for (int i = 1; i < len; ++i) {
+      // 持有 (前一天就持有； 前一天冷静期已结束；前一天还是冷静期)
+      dp[0] = Math.max(dp[0], Math.max(dp[3] - prices[i], dp[2] - prices[i]));
+      // 冷静期结束后仍不持有（前一天也是冷静期结束；前一天是冷静期）
+      dp[3] = Math.max(dp[3], dp[2]);
+      // 冷静期（前一天一定卖出）
+      dp[2] = dp[1];
+      // 现在卖出（前一天一定持有）
+      dp[1] = dp[0] + prices[i];
+    }
+    // 不持有的情况都可能是利润最大值
+    return Math.max(dp[1], Math.max(dp[2], dp[3]));
+  }
+}
+```
+
+代码4（1ms，78.36%）：同动态规划，只用2状态（持有，不持有），这个递推公式相对难想
+
+```java
+class Solution {
+  public int maxProfit(int[] prices) {
+    int len = prices.length;
+    if (len == 1) {
+      return 0;
+    }
+    // 0 持有， 1不持有
+    int[][] dp = new int[len][2];
+    dp[0][0] = -prices[0];
+    dp[1][0] = Math.max(-prices[0], -prices[1]);
+    // 第1天卖出 or 本来就不持有
+    dp[1][1] = Math.max(prices[1]-prices[0], 0);
+    for (int i = 2; i < len; ++i) {
+      // 今天为冷静期，只能上一天买入; 今天不是冷静期(昨天一定没有卖出，则取前天卖出的情况)
+      dp[i][0] =  Math.max(dp[i-1][0], dp[i-2][1]-prices[i]);
+      // 今天冷静期，上一天一定卖出; 今天不是冷静期（今天可以卖出）
+      dp[i][1] = Math.max(dp[i-1][1], dp[i-1][0]+prices[i]);
+    }
+    // 不持有股票一定是 利润最大的情况
+    return dp[len - 1][1];
+  }
+}
+```
+
+## 714. 买卖股票的最佳时机含手续费
+
+语言：java
+
+思路：动态规划，和普通的买卖股票唯一区别就是多了手续费
+
+代码1（19ms，67.75%）：
+
+```java
+class Solution {
+  public int maxProfit(int[] prices, int fee) {
+    int len = prices.length;
+    // dp[i][0] 表示持有； dp[i][1] 表示不持有的最大利润
+    int[][] dp = new int[len][2];
+    dp[0][0] = -prices[0];
+    for(int i = 1; i < len; ++i) {
+      // 前一天已持有； 前一天不持有，本次买入
+      dp[i][0] = Math.max(dp[i-1][0], dp[i-1][1] - prices[i]);
+      // 前一天本不持有；前一天持有，本次卖出（需考虑手续费）
+      dp[i][1] = Math.max(dp[i-1][1], dp[i-1][0] + prices[i]-fee);
+    }
+    // 最后一定是不持有股票时利润最高
+    return dp[len-1][1];
+  }
+}
+```
+
+代码2（6ms，77.85%）：由于计算只依赖上一天结果，所以可以省略第一个纬度，减少空间复杂度
+
+```java
+class Solution {
+  public int maxProfit(int[] prices, int fee) {
+    int len = prices.length;
+    // dp[i][0] 表示持有； dp[i][1] 表示不持有的最大利润
+    int[] dp = new int[2];
+    dp[0] = -prices[0];
+    for(int i = 1; i < len; ++i) {
+      // 前一天已持有； 前一天不持有，本次买入
+      dp[0] = Math.max(dp[0], dp[1] - prices[i]);
+      // 前一天本不持有；前一天持有，本次卖出（需考虑手续费）
+      dp[1] = Math.max(dp[1], dp[0] + prices[i]-fee);
+    }
+    // 最后一定是不持有股票时利润最高
+    return dp[1];
+  }
+}
+```
+
+代码3（3ms，99.60%）：贪心算法，这个不太好想，建议看看官方题解
+
+```java
+class Solution {
+  public int maxProfit(int[] prices, int fee) {
+    int result = 0;
+    // buy，总是挑有收益的时候买入（假设预知后面哪天能卖出）
+    int buy = prices[0] + fee;
+    for(int i = 1; i < prices.length; ++i) {
+      // 有收益，至少可以赚这一笔，所以先把收益加上；但是 买入费用先不计算手续费（因为可能是后面才卖出，只是先算收益）
+      if(prices[i] > buy) {
+        result += prices[i]-buy;
+        // 这里没算手续费，因为收益里面已经扣除过手续费了（相当于赖着先拿收益，但是同一笔手续费可能后面还会用到，比如后面更赚，就后面才卖出）
+        buy = prices[i];
+      } else {
+        // 买卖只会亏，那么 假想的买入成本越低越好
+        buy = Math.min(buy, prices[i]+fee);
+      }
+    }
+    return result;
+  }
+}
+```
+
+## 300.最长递增子序列
+
+语言：java
+
+思路：动态规划，`dp[i]`表示以`nums[i]`结尾的最大长度；这里需要第二层for循环找`[0,i)`最大子序列以及当前`nums[i]`是否能在之前的最大子序列基础上长度+1。
+
+代码（61ms，50.92%）：
+
+```java
+class Solution {
+  public int lengthOfLIS(int[] nums) {
+    //dp[i] 表示到以 i-1 做结尾的最长递增子序列
+    int len = nums.length;
+    int[] dp = new int[len];
+    // 初始化，每个位置至少 为1长度的递增子序列
+    Arrays.fill(dp, 1);
+    int result = 1;
+    for(int i = 1; i < len; ++i) {
+      // 遍历i之前的子序列，如果比之前子序列长，则更新当前子序列最大长度
+      for(int j = 0; j < i; ++j) {
+        // 存在比之前子序列大的元素，则看是否更新 dp[i]最大长度
+        if(nums[i] > nums[j] && dp[i] < dp[j] + 1) {
+          dp[i] = dp[j]+1;
+        }
+      }
+      // 因为 dp[i]不是直接表示 到i为止的最大长度，所以每次都需要计算
+      result = Math.max(dp[i], result);
+    }
+    return result;
+  }
+}
+```
+
+## 674. 最长连续递增序列
+
+语言：java
+
+思路：连续序列，则每次只需要考虑比上一个大才计算长度即可。
+
+代码1（1ms，99.15%）：
+
+```java
+class Solution {
+  public int findLengthOfLCIS(int[] nums) {
+    int result = 1, curLen = 1;
+    for(int i = 1; i < nums.length; ++i) {
+      if(nums[i] > nums[i-1]) {
+        curLen+=1;
+        result = Math.max(result, curLen);
+      } else {
+        curLen = 1;
+      }
+    }
+    return result;
+  }
+}
+```
+
+代码2（2ms，36.67%）：故意动态规划，如果比上一次数字大，则在上次基础上+1
+
+```java
+class Solution {
+  public int findLengthOfLCIS(int[] nums) {
+    int len = nums.length;
+    // 以i结尾的最长递归子序列长度
+    int[] dp = new int[len];
+    // 初始化，每个位置至少认为1长度的最长递增子序列
+    Arrays.fill(dp, 1);
+    int result = 1;
+    for(int i = 1; i < len; ++i) {
+      if(nums[i] > nums[i-1]) {
+        dp[i] = dp[i-1] + 1;
+      }
+      result = Math.max(result, dp[i]);
+    }
+    return result;
+  }
+}
+```
+
+## 718. 最长重复子数组
+
+语言：java
+
+思路：动态规划。需要注意递归数组的定义。这里`dp[i][j]`表示以`nums1[i-1]`结尾的子串和`nums2[j-1]`结尾的子串的最长公共子数组的长度。`dp[i][j] = Math.max(dp[i][j], dp[i - 1][j - 1] + 1)`使用上次计算结果，或者本次计算结果更大则采用
+
+代码1（25ms，37.89%）：
+
+```java
+class Solution {
+  public int findLength(int[] nums1, int[] nums2) {
+    int len1 = nums1.length, len2 = nums2.length, result = 0;
+    // 表示以 nums1[i-1] 结尾的子数组 和 以 nums2[j-1] 结尾的子数组的 最长公共子树组长度
+    int[][] dp = new int[len1 + 1][len2 + 1];
+    for (int i = 1; i <= len1; ++i) {
+      for (int j = 1; j <= len2; ++j) {
+        if (nums1[i - 1] == nums2[j - 1]) {
+          dp[i][j] = Math.max(dp[i][j], dp[i - 1][j - 1] + 1);
+          result = Math.max(result, dp[i][j]);
+        }
+      }
+    }
+    return result;
+  }
+}
+```
+
+代码2（22ms，82.31%）：原本代码1的`dp[i][j] = Math.max(dp[i][j], dp[i - 1][j - 1] + 1)` 直接为 `dp[i-1][j-1]+1`即可（因为一定只由上一次两边各倒退一个字符的状态推导而来，不可能出现其他情况）
+
+```java
+class Solution {
+  public int findLength(int[] nums1, int[] nums2) {
+    int len1 = nums1.length, len2 = nums2.length, result = 0;
+    // 表示以 nums1[i-1] 结尾的子数组 和 以 nums2[j-1] 结尾的子数组的 最长公共子树组长度
+    int[][] dp = new int[len1 + 1][len2 + 1];
+    for (int i = 1; i <= len1; ++i) {
+      for (int j = 1; j <= len2; ++j) {
+        if (nums1[i - 1] == nums2[j - 1]) {
+          dp[i][j] =  dp[i - 1][j - 1] + 1;
+          result = Math.max(result, dp[i][j]);
+        }
+      }
+    }
+    return result;
+  }
+}
+```
+
+代码3（20ms，96.85%）：在原先的基础上，做空间复杂度优化，因为每次只由`[i-1][j-1]`推导而来，所以可以忽略其中一个纬度。这里省略i维度，但是需要从原本二维数组的右上角往左下角遍历
+
+```java
+class Solution {
+  public int findLength(int[] nums1, int[] nums2) {
+    int len1 = nums1.length, len2 = nums2.length, result = 0;
+    // 表示以 nums1[i-1] 结尾的子数组 和 以 nums2[j-1] 结尾的子数组的 最长公共子树组长度
+    int[] dp = new int[len2 + 1];
+    // 从右上角到左下角遍历(原本二维依赖左上角数据，为保证下一行计算时上一行对应的左上角有值，则需要从右往左遍历)
+    for (int i = 1; i <= len1; ++i) {
+      for (int j = len2; j >=1; --j) {
+        if (nums1[i - 1] == nums2[j - 1]) {
+          dp[j] =  dp[j - 1] + 1;
+        } else {
+          dp[j] = 0; // dp[i][j] = 0
+        }
+        result = Math.max(result, dp[j]);
+      }
+    }
+    return result;
+  }
+}
+```
+
+## 1143. 最长公共子序列
+
+语言：java
+
+思路：动态规划，需要注意`dp[i][j]`的递推公式，从原本只从左上角推导，变成左、左上、上这3个方向推导当前值
+
+代码（21ms，27.04%）：
+
+```java
+class Solution {
+  public int longestCommonSubsequence(String text1, String text2) {
+    int len1 = text1.length(), len2 = text2.length();
+    // 以text1[i-1]结尾 和 以text2[j-1]结尾 的最长公共子序列长度
+    int[][] dp = new int[len1 + 1][len2 + 1];
+    int result = 0;
+    for (int i = 1; i <= len1; ++i) {
+      for (int j = 1; j <= len2; ++j) {
+        // 如果相等，取上次各退一格字符的比较结果 + 1
+        if (text1.charAt(i - 1) == text2.charAt(j - 1)) {
+          dp[i][j] = dp[i - 1][j - 1] + 1;
+        } else {
+          // 如果不想等，由于是子序列不要求连续，则需要考虑[0,i-2] [0,j-1]已有的比较结果 + [0, i-1] [0, j-2]已有的比较结果
+          // 相当于二维数组从左or上推导到当前值
+          dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+        }
+        result = Math.max(result, dp[i][j]);
+      }
+    }
+    return result;
+  }
+}
+```
+
+## 1035. 不相交的线
+
+语言：java
+
+思路：动态规划，实际就是求最大公共子序列长度，和"1143. 最长公共子序列"没有区别
+
+代码（6ms，17.87%）：
+
+```java
+class Solution {
+  public int maxUncrossedLines(int[] nums1, int[] nums2) {
+    int result = 0, len1 = nums1.length, len2 = nums2.length;
+    int[][] dp = new int[len1 + 1][len2 + 1];
+    for (int i = 1; i <= len1; ++i) {
+      for (int j = 1; j <= len2; ++j) {
+        // 数字相等，则 各退一个字符的情况 + 1
+        if (nums1[i - 1] == nums2[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1] + 1;
+        } else {
+          // 子序列，复用之前 i退一个 or j退一个的情况，取最大值
+          dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+        }
+        result = Math.max(result, dp[i][j]);
+      }
+    }
+    return result;
+  }
+}
+```
+
+## 53. 最大子数组和
+
+语言：java
+
+思路：故意用动态规划。这里求的是子树组，所以dp数组要么在上一次基础上计算，要么当前重新计算。由于最大子树组不一定以最后一个位置结尾，所以需要遍历过程中记录最大值作为结果
+
+代码1（2ms，41.03%）：
+
+```java
+class Solution {
+  public int maxSubArray(int[] nums) {
+    int len = nums.length;
+    // 以i结尾的最大子树组和
+    int[] dp = new int[len];
+    dp[0] = nums[0];
+    int result = dp[0];
+    for (int i = 1; i < len; ++i) {
+      dp[i] = Math.max(dp[i - 1] + nums[i], nums[i]);
+      result = Math.max(result, dp[i]);
+    }
+    return result;
+  }
+}
+```
+
+代码2（1ms，100%）：由于只依赖上一次的状态，可以做空间复杂度优化
+
+```java
+class Solution {
+  public int maxSubArray(int[] nums) {
+    int len = nums.length;
+    // 以i结尾的最大子树组和
+    int cur = nums[0];
+    int result = nums[0];
+    for (int i = 1; i < len; ++i) {
+      cur = Math.max(cur + nums[i], nums[i]);
+      result = Math.max(result, cur);
+    }
+    return result;
+  }
+}
+```
+
+## 392. 判断子序列
+
+语言：java
+
+思路：动态规划，这里相当于判断s和t的最大公共子序列长度是否和s的长度相等
+
+代码1（6ms，8.55%）：
+
+```java
+class Solution {
+  public boolean isSubsequence(String s, String t) {
+    int len1 = s.length(), len2 = t.length();
+    if(len1 == 0) {
+      return true;
+    }
+    // 以 i-1 结尾的 字符串 和 以 j-1的字符串的最大公共子序列长度
+    int[][] dp = new int[len1+1][len2+1];
+    for(int i = 1; i <= len1; ++i) {
+      for(int j = 1; j <= len2; ++j) {
+        if(s.charAt(i-1) == t.charAt(j-1)) {
+          dp[i][j] = dp[i-1][j-1] + 1;
+        } else {
+          dp[i][j] = Math.max(dp[i-1][j], dp[i][j-1]);
+        }
+        if(dp[i][j] == len1) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+}
+```
+
+代码2（1ms，89.96%）：双指针，一个遍历s字符串，一个遍历t字符串
+
+```java
+class Solution {
+  public boolean isSubsequence(String s, String t) {
+    int len1 = s.length(), len2 = t.length();
+    if(len1 == 0) {
+      return true;
+    }
+    int i = 0, j = 0;
+    for(;i < len1 && j < len2;) {
+      if(s.charAt(i) == t.charAt(j)) {
+        ++i;
+        ++j;
+      } else {
+        ++j;
+      }
+    }
+    return i == len1;
+  }
+}
+```
+
+## 115. 不同的子序列
+
+语言：java
+
+思路：动态规划。这题难点在于如何定义`dp`数组，以及递归公式如何设计。`dp[i-1][j]`相当于只考虑s回退一字符后，还能匹配多少个`t[0, j-1]`；而`dp[i-1][j-1]`则是当前字符已经匹配后，则以`s[i-1]`结尾的字符串中包含的`t[0, j-1]`的个数，就是去掉`s[i-1]`后，之前已经匹配上的`t[0, j-2]`字符串的个数（比如`s=baag`, `t=bag`，这里两边遍历到`g`字符时，`dp[i-1][j-1]`两边最后字符匹配，那么考虑都去掉一个字符，实际也不影响，相当于更改要求为`s=baa`, `t=ba`）
+
+代码（14ms，52.13%）：
+
+```java
+class Solution {
+  public int numDistinct(String s, String t) {
+    int len1 = s.length(), len2 = t.length();
+    // 表示 以 i-1结尾的 s子序列，出现了几次 以 j-1结尾的 t子序列
+    int[][] dp = new int[len1+1][len2+1];
+    // 下面递归公式可以看出来需要依赖左上、上面的数据，所以对第一行+第一列初始化的方案进行考虑
+    // 第0行 dp[0][j] = 0, s 空字符串， t非空 dp[0][0] = 1
+    // 第1列 dp[i][0] = 1, s 非空, t 空字符串
+    for(int i = 0 ; i <= len1; ++i) {
+      dp[i][0] = 1;
+    }
+    for(int i = 1; i <= len1; ++i) {
+      for(int j = 1; j <= len2; ++j) {
+        if(s.charAt(i-1) == t.charAt(j-1)) {
+          // 考虑 s 退后一个字符的情况(因为s可以有多个重复可用字符) + s和t都后退一个字符的情况
+          dp[i][j] = dp[i-1][j] + dp[i-1][j-1];
+        } else {
+          // 这里 j 不需要回退，需要考虑 s字符串出现重复字符的情况
+          dp[i][j] = dp[i-1][j];
+        }
+      }
+    }
+    return dp[len1][len2];
+  }
+}
+```
+
+## 583. 两个字符串的删除操作
+
+语言：java
+
+思路：动态规划。相当于求最大公共子序列长度，然后再计算各自减去公共子序列长度需要的操作次数
+
+代码1（7ms，53.89%）：
+
+```java
+class Solution {
+  public int minDistance(String word1, String word2) {
+    int len1 = word1.length(), len2 = word2.length(), same = 0;
+    // i-1 结尾的 word1 和 j-1结尾的 word2 的最长公共子序列长度
+    int[][] dp = new int[len1+1][len2+1];
+    for(int i = 1; i <= len1; ++i) {
+      for(int j = 1; j <= len2; ++j) {
+        // 当前结尾字符相等，则 考虑各退一个字符情况 + 1
+        if(word1.charAt(i-1) == word2.charAt(j-1)) {
+          dp[i][j] = dp[i-1][j-1] + 1;
+        }else {
+          // 最后一个字符不想等，考虑 word1退后一个字符 or word2退后一个字符的情况
+          dp[i][j] = Math.max(dp[i-1][j], dp[i][j-1]);
+        }
+        same = Math.max(dp[i][j], same);
+      }
+    }
+    return len1+len2-same-same;
+  }
+}
+```
+
+代码2（6ms，75.42%）：动态规划，`dp[i][j]`记录`word1[0, i-1]` 和 `word2[0,j-1]`想等所需要的减字符次数。难点在于递推公式如何定义（知道递推公式后，再返回去写初始化流程）
+
+```java
+class Solution {
+  public int minDistance(String word1, String word2) {
+    int len1 = word1.length(), len2 = word2.length(), same = 0;
+    // i-1 结尾的 word1 和 j-1结尾的 word2 保持相等所需要的删减次数
+    int[][] dp = new int[len1+1][len2+1];
+    // word2 空字符串，word1需要全部删除
+    for(int i = 0; i <= len1; ++i) {
+      dp[i][0] = i;
+    }
+    // word1 空字符串，word2需要全部删除
+    for(int j = 0; j <= len2; ++j) {
+      dp[0][j] = j;
+    }
+    for(int i = 1; i <= len1; ++i) {
+      for(int j = 1; j <= len2; ++j) {
+        if(word1.charAt(i-1) == word2.charAt(j-1)) {
+          // 字符相等，则不需要删除，只需要考虑之前需要删多少次就好了
+          dp[i][j] = dp[i-1][j-1];
+        } else {
+          // 这里可能需要删除word1字符，也可能是需要删除word2字符，取删除次数最少的即可
+          dp[i][j] = Math.min(dp[i-1][j] +1, dp[i][j-1] +1);
+        }
+      }
+    }
+    return dp[len1][len2];
+  }
+}
+```
+
+## 72. 编辑距离
+
+语言：java
+
+思路：动态规划，难点在于如何设计递推公式
+
+代码（4ms，85.65%）：
+
+```java
+class Solution {
+  public int minDistance(String word1, String word2) {
+    int len1 = word1.length(), len2 = word2.length();
+    // word1 以i-1结尾的子串 和 word2 以j-1结尾的子串 变得相等的所需最少操作数
+    int[][] dp = new int[len1+1][len2+1];
+    for(int i = 1; i <= len1; ++i) {
+      dp[i][0] = i;
+    }
+    for(int j = 1; j <= len2; ++j) {
+      dp[0][j] = j;
+    }
+    for(int i = 1; i <= len1; ++i) {
+      for(int j = 1; j <= len2; ++j) {
+        if(word1.charAt(i-1) == word2.charAt(j-1)) {
+          // 结尾一样，则不需要变化，最少操作次数即直接复用之前的情况
+          dp[i][j] = dp[i-1][j-1];
+        } else {
+          // 修改成一样的; 删除word1该字符 or word1插入一个字符(等同于word2删除一个字符)
+          dp[i][j] = Math.min(dp[i-1][j-1], Math.min(dp[i-1][j], dp[i][j-1])) + 1;
+        }
+      }
+    }
+    return dp[len1][len2];
+  }
+}
+```
+
+## 516.最长回文子序列
+
+语言：java
+
+思路：动态规划，难点在于dp数组的定义和递推公式
+
+代码（32ms，66.87%）：
+
+```java
+class Solution {
+  public int longestPalindromeSubseq(String s) {
+    int len = s.length();
+    // [i,j]子序列能形成的最大回文串子序列长度
+    int[][] dp = new int[len][len];
+    // 单个字符都可以视为回文串
+    for(int i = 0; i < len; ++i) {
+      dp[i][i] = 1;
+    }
+    for(int i = len-2; i >=0 ; --i) {
+      for(int j = i+1; j < len; ++j) {
+        if(s.charAt(i) == s.charAt(j)) {
+          // 字符相等，则在缩小的子串基础上+2
+          dp[i][j] = dp[i+1][j-1] + 2;
+        }else {
+          // 字符不想等，则取舍弃一个边界字符的 长度最大值
+          dp[i][j] = Math.max(dp[i+1][j], dp[i][j-1]);
+        }
+      }
+    }
+    return dp[0][len-1];
+  }
+}
+```
+
+## 496. 下一个更大元素 I
+
+语言：java
+
+思路：需要注意题目提到`nums1`是`nums2`的子集这个关键信息。那么实际只需要维护`nums2`的单调栈即可。
+
+代码1（3ms，89.74%）：单调栈
+
+```java
+class Solution {
+  public int[] nextGreaterElement(int[] nums1, int[] nums2) {
+    // key: nums1[i], value: i
+    Map<Integer, Integer> map = new HashMap<>();
+    for(int i = 0; i < nums1.length;++i) {
+      map.put(nums1[i], i);
+    }
+    int[] result = new int[nums1.length];
+    Arrays.fill(result, -1);
+    LinkedList<Integer> stack = new LinkedList<>();
+    stack.addFirst(nums2[0]);
+    for(int i = 1; i < nums2.length; ++i) {
+      while(!stack.isEmpty() && nums2[i] > stack.peekFirst()) {
+        int top = stack.pollFirst();
+        if(map.containsKey(top)) {
+          result[map.get(top)] = nums2[i];
+        }
+      }
+      stack.addFirst(nums2[i]);
+    }
+    return result;
+  }
+}
+```
+
+代码2（3ms，89.74%）：同样单调栈，就是遍历顺序改成从右到左；然后map改成纪录`nums2`中比`nums2[i]`大的第一个数值`nums2[i+x]`
+
+```java
+class Solution {
+  public int[] nextGreaterElement(int[] nums1, int[] nums2) {
+    // key: nums2[i], value: nums2[i+x] (比nums2[i]大的第一个数值)
+    Map<Integer, Integer> map = new HashMap<>();
+    int[] result = new int[nums1.length];
+    LinkedList<Integer> stack = new LinkedList<>();
+    for(int i = nums2.length-1; i >= 0; --i) {
+      while(!stack.isEmpty() && nums2[i] > stack.peekFirst()) {
+        stack.pollFirst();
+      }
+      map.put(nums2[i], stack.isEmpty() ? -1 : stack.peekFirst());
+      stack.addFirst(nums2[i]);
+    }
+    for(int i = 0;i < nums1.length; ++i) {
+      result[i] = map.get(nums1[i]);
+    }
+    return result;
+  }
+}
+```
+
+## 503. 下一个更大元素 II
+
+语言：java
+
+思路：单调栈，循环队列则直接把原本队列往后再贴一遍（换言之就是多遍历一遍队列）
+
+代码（5ms，93.05%）：
+
+```java
+class Solution {
+  public int[] nextGreaterElements(int[] nums) {
+    int[] result = new int[nums.length];
+    Arrays.fill(result, -1);
+    LinkedList<Integer> stack = new LinkedList<>();
+    for(int i = 0; i <= (nums.length-1) * 2; ++i) {
+      while(!stack.isEmpty() && nums[i % nums.length] > nums[stack.peek()]) {
+        int topIndex  = stack.poll();
+        // 这个if去掉也可通过，因为最多是重复赋值，影响不大
+        if(result[topIndex] == -1) {
+          result[topIndex] = nums[i % nums.length];
+        }
+      }
+      stack.push(i % nums.length);
+    }
+    return result;
+  }
+}
+```
+
+## 42. 接雨水
+
+语言：java
+
+思路：单调栈，每次计算水量时，高度取左右边界较小值，宽度则是左右边界中间的间隔
+
+代码1（2ms，32.54%）：
+
+```java
+class Solution {
+  public int trap(int[] height) {
+    LinkedList<Integer> stack = new LinkedList<>();
+    int result = 0, len = height.length;
+    for (int i = 0; i < len; ++i) {
+      while (!stack.isEmpty() && height[i] > height[stack.peek()]) {
+        int bottomIndex = stack.poll();
+        if (!stack.isEmpty()) {
+          int leftIndex = stack.peek();
+          result += (Math.min(height[i], height[leftIndex]) - height[bottomIndex]) * (i - leftIndex - 1);
+        }
+      }
+      stack.push(i);
+    }
+    return result;
+  }
+}
+```
+
+代码2（1ms，69.20%）：双指针，提前记录左右边界的高度，然后遍历雨水数组，计算储水量
+
+```java
+class Solution {
+  public int trap(int[] height) {
+    int len = height.length;
+    int[] lH = new int[len];
+    int[] rH = new int[len];
+    int result = 0;
+    // 计算左边界最大值
+    lH[0] = height[0];
+    for(int i = 1; i < len; ++i) {
+      lH[i] = Math.max(lH[i-1], height[i]);
+    }
+    // 计算右边界最大值
+    rH[len-1] = height[len-1];
+    for(int i = len-2; i >= 0; --i) {
+      rH[i] = Math.max(rH[i+1], height[i]);
+    }
+    // 计算 每个格子 纵向雨水量 (取左右边界最小值)
+    for(int i = 1; i < len-1; ++i) {
+      result += Math.max(Math.min(lH[i], rH[i]) - height[i], 0); 
+    }
+    return result;
+  }
+}
+```
+
+代码3（0ms，100%）：双指针，空间复杂度优化。这个思路不好想到
+
+```java
+class Solution {
+  public int trap(int[] height) {
+    int result = 0, len = height.length, lI = 0, rI = len-1, lH = height[0], rH = height[len-1];
+    while(lI < rI) {
+      if(lH < rH) {
+        result += lH - height[lI];
+        lH = Math.max(lH, height[++lI]);
+      } else {
+        result += rH - height[rI];
+        rH = Math.max(rH, height[--rI]);
+      }
+    }
+    return result;
+  }
+}
+```
+
+## 84.柱状图中最大的矩形
+
+语言：java
+
+思路：双指针，类似接雨水，但是这里需要找到两边高度小于当前高度的下标，用于确定当前高度的最大宽度
+
+代码1（8ms，98.04%）：
+
+```java
+class Solution {
+  public int largestRectangleArea(int[] heights) {
+    int result = 0, len = heights.length;
+    // 表示左边第一个高度小于heights[i] 的下标
+    int[] lMin = new int[len];
+    lMin[0] = -1;
+    for(int i = 1; i < len; ++i) {
+      int tmpL = i-1;
+      // 找到左边 第一个 小于当前高度 的 下标
+      while(tmpL >= 0 && heights[tmpL] >= heights[i]) tmpL = lMin[tmpL];
+      lMin[i] = tmpL; 
+    }
+    // 表示右边第一个高度小于heights[i] 的下标
+    int[] rMin = new int[len];
+    rMin[len-1] = len;
+    for(int i = len-2; i >= 0; --i) {
+      int tmpR = i+1;
+      // 找到右边 第一个 小于当前高度 的 下标
+      while(tmpR < len && heights[tmpR] >= heights[i]) tmpR = rMin[tmpR];
+      rMin[i] = tmpR; 
+    }
+    // 计算以每个height[i] 为高度的 矩形面形
+    for(int i = 0; i < len; ++i) {
+      int sum = heights[i] * (rMin[i] - lMin[i]-1);
+      result = Math.max(sum, result);
+    }
+    return result;
+  }
+}
+```
+
+代码2（21ms，79.16%）：单调栈，难点在于单调栈维护后，如何计算矩形的宽度和高度（这里相当于每次取栈顶的高度，而左边界来自栈顶的下一个元素，右边界则是当前遍历的元素），当一个高度值的左右边界高度都小于自己，就说明可以计算以当前高度作为height的矩形的面积（宽度则是左右边界相减）
+
+```java
+class Solution {
+  public int largestRectangleArea(int[] heights) {
+    int result = 0, len = heights.length, newLen = len + 2;
+    int[] newHeight = new int[newLen];
+    System.arraycopy(heights, 0, newHeight, 1, len);
+    LinkedList<Integer> stack = new LinkedList<>();
+    // 第一个 左边界 0
+    stack.push(0);
+    for (int i = 1; i < newLen; ++i) {
+      // 这里左边一定有最小值 0 兜底，所以栈一定不会为空，不需要判断 栈为空的情况
+      while (newHeight[i] < newHeight[stack.peek()]) {
+        int midIndex = stack.poll();
+        // if(!stack.isEmpty()) {
+        int leftIndex = stack.peek();
+        int tmp = newHeight[midIndex] * (i - leftIndex - 1);
+        result = Math.max(result, tmp);
+        // }
+      }
+      stack.push(i);
+    }
+    return result;
+  }
+}
+```
+
+## 797. 所有可能的路径
+
+语言：java
+
+思路：DFS，每一层选择一个可能的路径，到达`graph[length-1][]`则记录结果
+
+代码（2ms，89.52%）：
+
+```java
+class Solution {
+
+  List<List<Integer>> result = new LinkedList<>();
+  LinkedList<Integer> path = new LinkedList<>();
+
+  public List<List<Integer>> allPathsSourceTarget(int[][] graph) {
+    path.add(0);
+    dfs(graph, 0, graph.length-1);
+    return result;
+  }
+
+  public void dfs(int[][] graph, int depth, int maxDepth) {
+    if(depth == maxDepth) {
+      result.add(new ArrayList<>(path));
+      return;
+    }
+    for(int i = 0; i < graph[depth].length; ++i) {
+      path.add(graph[depth][i]);
+      dfs(graph, graph[depth][i], maxDepth);
+      path.removeLast();
+    }
+  }
+}
+```
+
+## 200. 岛屿数量
+
+语言：java
+
+思路：DFS，遇到一片岛屿后，给他全标记上，然后计数器+1
+
+代码1（2ms，100%）：
+
+```java
+class Solution {
+  public int numIslands(char[][] grid) {
+    int result = 0, maxX = grid.length, maxY = grid[0].length;
+    for(int i = 0; i < maxX; ++i) {
+      for(int j = 0; j < maxY; ++j) {
+        if(grid[i][j] == '1') {
+          result += 1;
+          // 填充已经抵达的岛屿为 '0'
+          dfs(grid, i, j, maxX, maxY);
+        }
+      }
+    }
+    return result;
+  }
+
+  public void dfs(char[][] grid, int x, int y, int maxX, int maxY) {
+    if(x < 0 || y < 0 || x >= maxX || y >= maxY || grid[x][y]=='0') {
+      return;
+    }
+    grid[x][y] = '0';
+    // 上
+    dfs(grid, x-1, y, maxX, maxY);
+    // 右
+    dfs(grid, x, y+1, maxX, maxY);
+    // 下
+    dfs(grid, x+1, y, maxX, maxY);
+    // 左
+    dfs(grid, x, y-1, maxX, maxY);
+  }
+}
+```
+
+代码2：BFS，整体还是把走过的地方都标记一遍
+
+```java
+class Solution {
+  // 上右下左 移动
+  int[][] move = {{-1, 0}, {0, 1}, {1, 0}, {0, -1}};
+  public int numIslands(char[][] grid) {
+    int result = 0, maxX = grid.length, maxY = grid[0].length;
+    boolean[][] used = new boolean[maxX][maxY];
+    for(int i = 0; i < maxX; ++i) {
+      for(int j = 0; j < maxY; ++j) {
+        if(grid[i][j] == '1' && !used[i][j]) {
+          result += 1;
+          // 标记整个岛屿表示 已到达
+          bfs(grid,used, i, j, maxX, maxY);
+        }
+      }
+    }
+    return result;
+  }
+
+  public void bfs(char[][] grid, boolean used[][], int x, int y, int maxX, int maxY) {
+    used[x][y] = true;
+    LinkedList<int[]> path = new LinkedList<>();
+    path.add(new int[]{x,y});
+    while(!path.isEmpty()) {
+      int[] cur = path.poll();
+      //  4个方向移动
+      for(int[] next : move) {
+        int nextX = cur[0] + next[0];
+        int nextY = cur[1] + next[1];
+        if(nextX >= 0 && nextX < maxX && nextY >=0 && nextY < maxY 
+           && !used[nextX][nextY] && grid[nextX][nextY] == '1') {
+          used[nextX][nextY] = true;
+          path.add(new int[]{nextX, nextY});
+        }
+      }
+    }
+  }
+}
+```
+
+## 1020. 飞地的数量
+
+语言：java
+
+思路：DFS，先从边界一圈的1出发， 把所有能走到的1标记起来，然后再遍历整个地图看哪些1没有被走到即可。BFS差不多的，代码比较长，这里就不再写了
+
+代码（7ms，82.40%）：
+
+```java
+class Solution {
+  public int numEnclaves(int[][] grid) {
+    int result = 0, lenX = grid.length, lenY = grid[0].length;
+    for(int i = 0; i < lenX; ++i) {
+      if(grid[i][0] == 1) {
+        dfs(grid, i, 0, lenX, lenY);
+      }
+      if(grid[i][lenY-1] == 1) {
+        dfs(grid, i, lenY-1, lenX, lenY);
+      }
+    }
+    for(int j = 1; j < lenY-1; ++j) {
+      if(grid[0][j] == 1) {
+        dfs(grid, 0, j, lenX, lenY);
+      }
+      if(grid[lenX-1][j] == 1) {
+        dfs(grid, lenX-1, j, lenX, lenY);
+      }
+    }
+    for(int i = 1; i < lenX-1; ++i) {
+      for(int j = 1; j < lenY - 1; ++j) {
+        if(grid[i][j] == 1) {
+          ++result;
+        }
+      }
+    }
+    return result;
+  }
+
+  public void dfs(int[][] grid, int x, int y, int lenX, int lenY) {
+    if(x < 0 || x >= lenX || y < 0 || y >= lenY || grid[x][y] == 0) {
+      return;
+    }
+    grid[x][y] = 0;
+    dfs(grid, x-1, y, lenX, lenY);
+    dfs(grid, x, y+1, lenX, lenY);
+    dfs(grid, x+1, y, lenX, lenY);
+    dfs(grid, x, y-1, lenX, lenY);
+  }
+}
+```
+
+## 417. 太平洋大西洋水流问题
+
+语言：java
+
+思路：DFS或BFS，这里用DFS，写起来比较方便。主要思路就是改成从小到大逆流标记，标记太平洋和大西洋周边各自能走到的节点；最后取两遍都能走到的节点交集即可。
+
+代码（8ms，38.95%）：
+
+```java
+class Solution {
+  public List<List<Integer>> pacificAtlantic(int[][] heights) {
+    int x= heights.length, y = heights[0].length;
+    // i, j 遍历到的 能到 太平洋的；能到大西洋的
+    boolean[][][] used = new boolean[x][y][2];
+    List<List<Integer>> res = new LinkedList<>();
+    // 太平洋
+    for(int i = 0; i < x; ++i) {
+      if(!used[i][0][0]) {
+        dfs(heights, used, i,0, x, y, 0, 0);
+      }
+    }
+    for(int j = 0; j < y; ++j) {
+      if(!used[0][j][0]) {
+        dfs(heights, used, 0, j, x, y, 0, 0);
+      }
+    }
+    // 大西洋
+    for(int i = 0;  i < x; ++i) {
+      if(!used[i][y-1][1]) {
+        dfs(heights, used, i, y-1, x, y, 0, 1);
+      }
+    }
+    for(int j = 0; j < y; ++j) {
+      if(!used[x-1][j][1]) {
+        dfs(heights, used, x-1, j, x, y, 0, 1);
+      }
+    }
+    // 记录结果
+    for(int i = 0; i < x; ++i) {
+      for(int j = 0 ; j < y; ++j) {
+        if(used[i][j][0] && used[i][j][1]) {
+          List<Integer> pos = new ArrayList<>(2);
+          pos.add(i);
+          pos.add(j);
+          res.add(pos);
+        }
+      }
+    }
+    return res;
+  }
+
+  public void dfs(int[][] map, boolean[][][] used, int i, int j, int x, int y, int pre, int mark) {
+    if(i < 0 || j < 0 || i >= x || j >= y || used[i][j][mark] || pre > map[i][j]) {
+      return;
+    }
+    used[i][j][mark] = true; 
+    // 上
+    dfs(map, used, i-1, j, x, y, map[i][j], mark);
+    // 右
+    dfs(map, used, i, j+1, x, y, map[i][j], mark);
+    // 下
+    dfs(map, used, i+1, j, x, y, map[i][j], mark);
+    // 左
+    dfs(map, used, i, j-1, x, y, map[i][j], mark);
+  }
+}
+```
+
+## 827. 最大人工岛
+
+语言：java
+
+思路：DFS，不同岛屿标记成不同的数字，然后记录不同岛屿的面积，最后再整体遍历一遍地图，看哪个位置写成1之后，能把岛屿面积最大化
+
+代码（146ms，16.06%）：
+
+```java
+class Solution {
+  Map<Integer, Integer> maxMap = new HashMap<>();
+  int count = 0;
+  public int largestIsland(int[][] grid) {
+    int max = 0, mark = 2, lenX = grid.length, lenY = grid[0].length;
+    for(int i = 0; i < lenX; ++i) {
+      for(int j = 0; j < lenY; ++j) {
+        if(grid[i][j] == 1) {
+          dfs(grid, mark, i, j, lenX, lenY);
+          maxMap.put(mark, count);
+          max = Math.max(count, max);
+          count = 0;
+          ++mark;
+        }
+      }
+    }
+    for(int i = 0; i < lenX; ++i) {
+      for(int j = 0; j < lenY; ++j) {
+        if(grid[i][j] == 0) {
+          int tmp = compound(grid, i, j, lenX, lenY);
+          max = Math.max(tmp, max);
+        }
+      }
+    }
+    return max;
+  }
+
+  public void dfs(int[][] grid, int mark, int i, int j, int x, int y) {
+    if(i < 0 || j < 0 || i >= x || j >=y || grid[i][j] != 1) {
+      return;
+    }
+    ++count;
+    grid[i][j] = mark;
+    dfs(grid, mark, i-1, j, x, y);
+    dfs(grid, mark, i, j+1, x, y);
+    dfs(grid, mark, i+1, j, x, y);
+    dfs(grid, mark, i, j-1, x, y);
+  }
+
+  public int compound(int[][] grid, int i, int j, int x, int y) {
+    int leftMark = j > 0 ? grid[i][j-1] : 0;
+    int rightMark = j < y-1 ? grid[i][j+1] : 0;
+    int upMark = i > 0 ? grid[i-1][j] : 0;
+    int downMark = i < x-1 ? grid[i+1][j] : 0;
+    Set<Integer> markSet = new HashSet<>();
+    int count = 1;
+    markSet.add(leftMark);
+    markSet.add(rightMark);
+    markSet.add(upMark);
+    markSet.add(downMark);
+    for(int mark : markSet) {
+      if(mark > 0) {
+        count += maxMap.get(mark);
+      }
+    }
+    return count;
+  }
+}
+```
+
+## 127. 单词接龙
+
+语言：java
+
+思路：求最短路径，用BFS只要中间找到答案了，那么一定是最短路径
+
+代码（92ms，58.38%）：
+
+```java
+class Solution {
+  public int ladderLength(String beginWord, String endWord, List<String> wordList) {
+    // key: 目前到达的位置, value: 目前已消耗的步数
+    Map<String, Integer> wordCostMap = new HashMap<>();
+    Set<String> wordSet = new HashSet<>(wordList);
+    if(!wordSet.contains(endWord)) {
+      return 0;
+    }
+    wordCostMap.put(beginWord, 1);
+    LinkedList<String> path = new LinkedList<>();
+    path.add(beginWord);
+    while(!path.isEmpty()) {
+      String cur = path.poll();
+      int cost = wordCostMap.get(cur);
+      // 遍历字符串，找只修改一个字符后，能匹配上的下一个 位置
+      for(int i = 0; i < cur.length(); ++i) {
+        char[] cs = cur.toCharArray();
+        for(char c = 'a'; c <= 'z'; ++c) {
+          cs[i] = c;
+          String nextWord = String.valueOf(cs);
+          if(endWord.equals(nextWord)) {
+            return cost + 1;
+          }
+          if(wordSet.contains(nextWord) && !wordCostMap.containsKey(nextWord)) {
+            wordCostMap.put(nextWord, cost+1);
+            path.add(nextWord);
+          }
+        }
+      }
+    }
+    return 0;
+  }
+}
+```
+
+## 841.钥匙和房间
+
+语言：java
+
+思路：BFS，如果中间无法继续往下遍历，则说明无法走通所有房间
+
+代码1（2ms，28.94%）：
+
+```java
+class Solution {
+  public boolean canVisitAllRooms(List<List<Integer>> rooms) {
+    int len = rooms.size();
+    Set<Integer> canTo = new HashSet<>();
+    // 0 号房间不上锁
+    canTo.add(0);
+    LinkedList<Integer> path = new LinkedList<>();
+    path.add(0);
+    while(!path.isEmpty()) {
+      Integer curPos = path.poll();
+      List<Integer> nextCanList = rooms.get(curPos);
+      for(int nextPos : nextCanList) {
+        if(!canTo.contains(nextPos)) {
+          canTo.add(nextPos);
+          path.add(nextPos);
+        }
+        if(canTo.size() == len) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+}
+```
+
+代码2（0ms，100%）：DFS，要是某一次直接走完所有房间，则可以提前返回
+
+```java
+class Solution {
+  int count = 0;
+  public boolean canVisitAllRooms(List<List<Integer>> rooms) {
+    int len = rooms.size();
+    boolean[] visited = new boolean[len];
+    dfs(rooms, visited, 0);
+    return count == len;
+  }
+
+  public void dfs(List<List<Integer>> rooms, boolean[] visited, int next) {
+    visited[next] = true;
+    ++count;
+    for(Integer nextPos : rooms.get(next)) {
+      if(!visited[nextPos]) {
+        dfs(rooms, visited, nextPos);
+      }
+    }
+  }
+}
+```
+
+## 463. 岛屿的周长
+
+语言：java
+
+思路：DFS，其实就是先找到岛屿，然后岛屿某个位置遍历整个岛屿，只要一走到边界，就边长+1，这样就得到周长结果了。
+
+代码1（7ms，50.94%）：
+
+```java
+class Solution {
+  int count = 0;
+  public int islandPerimeter(int[][] grid) {
+    int x = grid.length, y = grid[0].length;
+    for(int i = 0; i < x; ++i) {
+      for(int j = 0; j < y; ++j) {
+        if(grid[i][j] == 1) {
+          dfs(grid, i, j, x, y);
+          // 题目说了只有一块岛屿，只要找到就OK
+          return count;
+        }
+      }
+    }
+    return count;
+  }
+
+  public void dfs(int[][] grid, int i, int j, int x, int y) {
+    // 走出岛屿，周长+1
+    if(i < 0 || j < 0 || i >= x || j >= y || grid[i][j] == 0) {
+      ++count;
+      return;
+      // 岛屿已经走过的位置，忽略
+    } else if(grid[i][j] == 2) {
+      return;
+    }
+    // 标记2 和 0区分开，表示岛屿已经走过的位置
+    grid[i][j] = 2;
+    dfs(grid, i-1, j, x, y);
+    dfs(grid, i, j+1, x, y);
+    dfs(grid, i+1, j, x, y);
+    dfs(grid, i, j-1, x, y);
+  }
+}
+```
+
+代码2（6ms，68.03%）：上面DFS做的判断很简单，这里直接遍历整个地图的时候做判断也ok
+
+```java
+class Solution {
+  public int islandPerimeter(int[][] grid) {
+    int count = 0, x = grid.length, y = grid[0].length;
+    int[][] move = {{-1,0},{0,1},{1,0},{0,-1}};
+    for(int i = 0; i < x; ++i) {
+      for(int j = 0; j < y; ++j) {
+        if(grid[i][j] == 1) {
+          for(int[] next : move) {
+            int ii = i + next[0];
+            int jj = j + next[1];
+            if(ii < 0 || ii >= x || jj < 0 || jj >=y || grid[ii][jj] == 0) {
+              ++count;
+            } 
+          }
+        }
+      }
+    }
+    return count;
+  }
+}
+```
+
+## 1971. 寻找图中是否存在路径
+
+语言：java
+
+思路：DFS标记走过的位置，然后看能不能到终点就好了。（提前先记录每个位置能走的下一步）
+
+代码1（111ms，9.85%）：
+
+```java
+class Solution {
+  public boolean validPath(int n, int[][] edges, int source, int destination) {
+    boolean[] visited = new boolean[n];
+    List<Integer> [] to = new List[n];
+    for(int i = 0; i < n; ++i) {
+      to[i] = new ArrayList<Integer>();
+    }
+    for(int[] edge : edges) {
+      to[edge[0]].add(edge[1]);
+      to[edge[1]].add(edge[0]);
+    }
+    return dfs(to, visited, source, destination);
+  }
+
+  public boolean dfs(List<Integer> [] to, boolean[] visited, int source, int destination) {
+    if(source == destination) {
+      return true;
+    }
+    visited[source] = true;
+    for(int next : to[source]) {
+      if(!visited[next] && dfs(to, visited, next, destination)) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+```
+
+代码2（13ms，39.28%）：并查集，常用于判断两个元素是否可以视为在同一个集合中（这个起点能走到终点，则说明在同一个集合内）
+```java
+class Solution {
+  public boolean validPath(int n, int[][] edges, int source, int destination) {
+    if(source == destination) {
+      return true;
+    }
+    UnionClass uc = new UnionClass(n);
+    for(int[] edge : edges) {
+      uc.union(edge[0], edge[1]);
+    }
+    return uc.canTo(source, destination);
+  }
+
+  class UnionClass {
+    private int[] parent;
+    private int[] rank;
+
+    public UnionClass(int n) {
+      parent = new int[n];
+      rank = new int[n];
+      for(int i = 0; i < n; ++i) {
+        parent[i] = i;
+      }
+    }
+
+    public void union(int a, int b) {
+      int pA = find(a);
+      int pB = find(b);
+      if(pA != pB) {
+        if(rank[pA] > rank[pB]) {
+          parent[pB] = pA;
+        } else if (rank[pA] < rank[pB]) {
+          parent[pA] = pB;
+        } else {
+          parent[pB] = pA;
+          ++rank[pA]; 
+        }
+      }
+    }
+
+    public int find(int a) {
+      if(parent[a] != a) {
+        parent[a] = find(parent[a]);
+      }
+      return parent[a];
+    }
+
+    public boolean canTo(int a, int b) {
+      return find(a) == find(b);
+    }
+  }
+}
+```
+
+## 684.冗余连接
+
+语言：java
+
+思路：题意即删除一条边，使图不形成环（变成树），如果有多种可能性，则删除边数组种尽量靠后的。 并查集，边集合优先用节点1作为parent，然后把边的节点一个个加入其中，一旦加入某条边时，发现该边的节点本身已经有共同的祖先节点，则视为多余的边，可以删除
+
+代码（1ms，49.30%）：
+
+```java
+class Solution {
+  public int[] findRedundantConnection(int[][] edges) {
+    int n = edges.length;
+    UnionCLass uc = new UnionCLass(n);
+    for(int[] edge: edges) {
+      if(uc.find(edge[0]) == uc.find(edge[1])) {
+        // 题目说了一定有一个答案
+        return edge;
+      } else {
+        uc.union(edge[0], edge[1]);
+      }
+    }
+    return new int[0];
+  }
+
+  public class UnionCLass {
+    private int[] parent;
+    private int[] rank;
+
+    public UnionCLass(int n) {
+      parent = new int[n+1];
+      rank = new int[n+1];
+      for(int i = 1; i <=n; ++i) {
+        parent[i] = i;
+      }
+    }
+
+    public int find(int x) {
+      if(parent[x] != x) {
+        parent[x] = find(parent[x]);
+      }
+      return parent[x];
+    }
+
+    public void union(int x, int y) {
+      int pX = find(x);
+      int pY = find(y);
+      if(rank[pX] < rank[pY]) {
+        parent[pX] = pY;
+      } else if (rank[pX] > rank[pY]) {
+        parent[pY] = pX;
+      } else {
+        parent[pX] = pY;
+        ++rank[pY];
+      }
+    }
+  }
+
+}
+```
+
+## 685.冗余连接II
+
+语言：java
+
+思路：并查集，和之前的区别在于这里是有向图。难点在于分析多余边可能的情况：（1）图没有成环，但是有某节点入度超过1，则指向该节点的边一定有一条是多余的；（2）所有节点的入度都是1，但是图成环，那么找到导致成环的最后一条边即可
+
+代码（1ms，98.87%）：
+
+```java
+class Solution {
+  public int[] findRedundantDirectedConnection(int[][] edges) {
+    int n = edges.length;
+    UnionCLass uc = new UnionCLass(n);
+    // 情况1: 收集入度为2的节点对应的边，如果有，则其中一个边为多余的
+    List<Integer> twoList = new ArrayList<>();
+    int[] count = new int[n+1];
+    for(int i =0; i < n ;++i ) {
+      count[edges[i][1]] += 1;
+    }
+    // 优先删除靠后面的边
+    for(int i = n-1; i >=0; --i) {
+      if(count[edges[i][1]] > 1) {
+        twoList.add(i);
+      }
+    }
+    if(!twoList.isEmpty()) {
+      // 删除其中一个边，看是否能构成树；如果不能则返回另一个边即可
+      if(uc.canTreeDeleted(edges, n, twoList.get(0))) {
+        return edges[twoList.get(0)];
+      } else {
+        return edges[twoList.get(1)];
+      }
+    }
+    // 情况2: 没有入度为2的节点，但是图成环，找到成环的边并返回 
+    return uc.redundant(edges, n);
+  }
+
+  public class UnionCLass {
+    private int[] parent;
+
+    public UnionCLass(int n) {
+      parent = new int[n + 1];
+    }
+
+    public void init(int n) {
+      for (int i = 1; i <= n; ++i) {
+        parent[i] = i;
+      }
+    }
+
+    public int find(int x) {
+      if (parent[x] != x) {
+        parent[x] = find(parent[x]);
+      }
+      return parent[x];
+    }
+
+    public void union(int x, int y) {
+      int pX = find(x);
+      int pY = find(y);
+      // 有向图，这里 x -> y ，则 把y当作x的祖先
+      parent[pX] = pY;
+    }
+
+    public boolean canTreeDeleted(int[][] edges, int n, int deleted) {
+      init(n);
+      for(int i = 0; i < n; ++i) {
+        if(i == deleted) {
+          continue;
+        }
+        if(find(edges[i][0]) == find(edges[i][1])) {
+          return false;
+        }
+        union(edges[i][0], edges[i][1]);
+      }
+      return true;
+    }
+
+    public int[] redundant(int[][] edges, int n) {
+      init(n);
+      for(int[] edge: edges) {
+        if(find(edge[0]) == find(edge[1])) {
+          return edge;
+        }
+        union(edge[0], edge[1]);
+      }
+      // 一定不会走到这里
+      return new int[0];
+    }
+  }
+
+}
+```
+
+## 3. 无重复字符的最长子串
+
+语言：java
+
+思路：滑动窗口，右边界即遍历时移动，而左边界每次遇到相同字符则变为较大的边界值。
+
+代码（4ms，90.89%）：
+
+```java
+class Solution {
+  public int lengthOfLongestSubstring(String s) {
+    int len = s.length();
+    // 左边界
+    int left = 0, max = 0;
+    Map<Character, Integer> map = new HashMap<>();
+    for(int i = 0; i < len; ++i) {
+      left = Math.max(left, map.getOrDefault(s.charAt(i),-1));
+      // 假设value放i，那么aa第二个a更新left还是0；i+1则正好（算是比较取巧）
+      map.put(s.charAt(i),i+1);
+      // 下标相减，+1后才是长度，比如0-0+1
+      max = Math.max(i-left+1, max);
+    }
+    return max;
   }
 }
 ```
