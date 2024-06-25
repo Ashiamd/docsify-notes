@@ -9917,18 +9917,636 @@ class Solution {
 ```java
 class Solution {
   public int lengthOfLongestSubstring(String s) {
-    int len = s.length();
-    // 左边界
-    int left = 0, max = 0;
+    // key : 出现过的字符; value: 字符不重复的最新一个可能位置(也就是 当前字符的位置+1)
     Map<Character, Integer> map = new HashMap<>();
-    for(int i = 0; i < len; ++i) {
-      left = Math.max(left, map.getOrDefault(s.charAt(i),-1));
-      // 假设value放i，那么aa第二个a更新left还是0；i+1则正好（算是比较取巧）
-      map.put(s.charAt(i),i+1);
-      // 下标相减，+1后才是长度，比如0-0+1
-      max = Math.max(i-left+1, max);
+    int res = 0;
+    for(int i = 0, len = s.length(), left = 0; i < len; ++i) {
+      char c = s.charAt(i);
+      if(map.containsKey(c)) {
+        // 遇到窗口内的相同字符，则更新 左窗口位置
+        left = Math.max(map.get(c), left);
+      }
+      // 当前位置+1 即下一个可能和c不同的字符的下标(如果要滑动窗口，则下次应该忽略当前字符，从下一个位置开始)
+      map.put(c, i+1);
+      res = Math.max(i - left + 1, res);
     }
-    return max;
+    return res;
+  }
+}
+```
+
+## 146. LRU 缓存
+
+语言：java
+
+思路：用Map存储Node集合，使用头节点和尾节点维护Node双向链表
+
+代码（46ms，55.86%）：调用了`Map.remove(Object key)`真实进行了key删除操作（释放空间），所以耗时更高一些。
+
+```java
+class LRUCache {
+
+  Map<Integer, Node> dataMap;
+  int capacity;
+  Node head;
+  Node tail;
+
+  public LRUCache(int capacity) {
+    this.dataMap = new HashMap<>();
+    this.capacity = capacity;
+    this.head = null;
+    this.tail = null;
+  }
+
+  public int get(int key) {
+    if(!dataMap.containsKey(key)) {
+      return -1;
+    }
+    resetToHead(dataMap.get(key));
+    return head.value;
+  }
+
+  public void put(int key, int value) {
+    // 1. 更新现有值
+    if(dataMap.containsKey(key)) {
+      updateValue(key, value);
+      return;
+    }
+    // 2. 插入新值
+    // 2-1. 容量不足的情况下插入新值, 先淘汰最老不用的值
+    if(dataMap.size() == capacity) {
+      deleteTail();
+    }
+    // 2-2. 插入新值
+    insertValue(key, value);
+  }
+
+  private void deleteTail() {
+    dataMap.remove(tail.key);
+    if(tail != head) {
+      Node preTail = tail.pre;
+      preTail.next = null;
+      tail.pre = null;
+      tail = preTail;
+    } else {
+      head = null;
+      tail = null;
+    }
+  }
+
+  private void updateValue(int key, int value) {
+    resetToHead(dataMap.get(key));
+    head.value = value;
+  }
+
+  private void insertValue(int key, int value) {
+    if(head == null) {
+      head = tail = new Node(key,value, null, null);
+      dataMap.put(key, head);
+      return;
+    }
+    head.pre = new Node(key, value, null, head);
+    head = head.pre;
+    dataMap.put(key, head);
+  }
+
+  private void resetToHead(Node curNode) {
+    if(head == curNode) {
+      return;
+    }
+    curNode.pre.next = curNode.next;
+    if(tail == curNode) {
+      tail = curNode.pre;
+    } else {
+      curNode.next.pre = curNode.pre;
+    }
+    curNode.pre = null;
+    curNode.next = head;
+    head.pre = curNode;
+    head = curNode;
+  }
+
+  public class Node {
+    int key;
+    int value;
+    Node pre;
+    Node next;
+
+    public Node(int key, int value, Node pre, Node next) {
+      this.key = key;
+      this.value = value;
+      this.pre = pre;
+      this.next = next;
+    }
+  } 
+}
+```
+
+## 215. 数组中的第K个最大元素
+
+语言：java
+
+思路：快排中的快速选择正好是用于搜索第N个最大/最小值的好方式。
+
+代码（2466ms，4.99%）：超夸张的慢
+
+```java
+class Solution {
+  public int findKthLargest(int[] nums, int k) {
+    topK(nums, false, 0, nums.length-1, k-1);
+    return nums[k-1];
+  }
+
+  public void topK(int[] nums, boolean asc, int start, int end, int k) {
+    int pos = quickSelect(nums, asc, start, end);
+    if(pos == k) {
+      return;
+    } else if(pos < k) {
+      topK(nums, asc, pos+1, end, k);
+    } else {
+      topK(nums, asc, start, pos-1, k);
+    }
+  }
+
+  public int quickSelect(int[] nums, boolean asc, int start, int end) {
+    int base = nums[start];
+    int left = start, right = end;
+    while(left < right) {
+      if(asc) {
+        while(left < right && nums[right] >= base) {
+          --right;
+        }
+        while(left < right && nums[left] <= base) {
+          ++left;
+        }
+      } else {
+        while(left < right && nums[right] <= base) {
+          --right;
+        }
+        while(left < right && nums[left] >= base) {
+          ++left;
+        }
+      }
+      if(left < right) {
+        nums[left] ^= nums[right];
+        nums[right] ^= nums[left];
+        nums[left] ^= nums[right];
+      }
+    }
+    nums[start] = nums[left];
+    nums[left] = base;
+    return left;
+  }
+}
+```
+
+## 25. K 个一组翻转链表
+
+语言：java
+
+思路：就多次翻转链表。额外新建一个tmp节点，方便最后返回head节点
+
+代码（0ms，100%）：
+
+```java
+class Solution {
+  public ListNode reverseKGroup(ListNode head, int k) {
+    // 临时头节点
+    ListNode tmpHead = new ListNode();
+    tmpHead.next = head;
+    ListNode pre = tmpHead;
+    while(head != null) {
+      // 不足 k个节点，结束翻转
+      ListNode curTail = pre;
+      for(int i = 0; i < k ; ++i ) {
+        curTail = curTail.next;
+        if(curTail == null) {
+          return tmpHead.next;
+        }
+      }
+      ListNode tmpNext = curTail.next;
+      ListNode[] nodes = reverse(head, curTail);
+      // 把 翻转后的 加入原链
+      head = nodes[0];
+      curTail = nodes[1];
+      pre.next = head;
+      curTail.next = tmpNext;
+      pre = curTail;
+      head = pre.next;
+    }
+    return tmpHead.next;
+  }
+
+  // 翻转 head ～ tail 之间的节点，最后返回 新的 head 和 tail
+  public ListNode[] reverse(ListNode head, ListNode tail) {
+    ListNode pre = tail.next, cur = head;
+    while(pre != tail) {
+      ListNode next = cur.next;
+      cur.next = pre;
+      pre = cur;
+      cur = next;
+    }
+    return new ListNode[]{tail, head};
+  }
+}
+```
+
+## 15. 三数之和
+
+语言：java
+
+思路：双指针，第一难点在于双指针怎么遍历。这里外层遍历最左指针，右边2个指针用双指针遍历（左右边界）
+
+代码（29ms，84.37%）：
+
+```java
+class Solution {
+  public List<List<Integer>> threeSum(int[] nums) {
+    // 1. 自然排序
+    Arrays.sort(nums);
+    // 2. 双指针(左右边界), for遍历中间指针
+    List<List<Integer>> result = new ArrayList<>();
+    int len = nums.length;
+    for(int i = 0; i < len-2; ++i) {
+      // 最左边 > 0, a+b+c > 0
+      if(nums[i] > 0) {
+        break;
+      }
+      // 跳过相同元素，避免重复计算
+      if(i > 0 && nums[i] == nums[i-1]) {
+        continue;
+      }
+      // 采取缩圈的形式遍历
+      int left = i+1, right = len-1;
+      while(left < right) {
+        int sum = nums[i] + nums[left] + nums[right];
+        if(sum == 0) {
+          List<Integer> tmp = new ArrayList<>();
+          tmp.add(nums[i]);
+          tmp.add(nums[left]);
+          tmp.add(nums[right]);
+          result.add(tmp);
+          // left 和 right 各跳过重复元素后，看看是否存在符合要求的值
+          while(left <right && nums[left] == nums[left+1])  {
+            ++left;
+          }
+          while(left <right && nums[right] == nums[right-1]) {
+            --right;
+          }
+          ++left;
+          --right;
+        } else if(sum < 0) {
+          // 这里不用特地考虑重复问题，因为sum不符合要求，就是nums[left]重复，也会继续跳过
+          ++left;
+        } else {
+          // 这里不用特地考虑重复问题，因为sum不符合要求，就是nums[right]重复，也会继续跳过
+          --right;
+        }
+      }
+    }
+    return result;
+  }
+}
+```
+
+## 912. 排序数组
+
+语言：java
+
+思路：快速排序，leetcode有几个测试用例是一大堆重复数字，需要在基础快排上做优化，否则铁超时。这里通过取随机位置作为基准点来做简易优化。
+
+代码1（1658ms，13.95%）：
+
+```java
+class Solution {
+
+  Random random = new Random();
+
+  public int[] sortArray(int[] nums) {
+    quickSort(nums, 0, nums.length-1);
+    return nums;
+  }
+
+
+  // 经过N次快速选择后，数组有序
+  public void quickSort(int[] nums, int start, int end) {
+    int mid = quickSelect(nums, start, end);
+    if(start < mid)
+      quickSort(nums, start, mid-1);
+    if(mid < end)
+      quickSort(nums, mid+1, end);
+  }
+
+  // 快速选择，取最左值作为参考值，重构数组，让数组左边的值都比参考值小，数组右边的值都比参考值大
+  public int quickSelect(int[] nums, int start, int end) {
+    // 使用随机位置作为参考值，优化性能
+    int randomPos = random.nextInt(end-start+1)+start;
+    int baseVal = nums[randomPos];
+    // 用start做逻辑，方便后续处理
+    swap(nums, start, randomPos);
+    int l = start, r = end;
+    while(l < r) {
+      while(l < r && nums[r] >= baseVal) {
+        --r;
+      }
+      while(l < r && nums[l] <= baseVal) {
+        ++l;
+      }
+      if(l < r) {
+        swap(nums, l, r);
+      }
+    }
+    nums[start] = nums[l];
+    nums[l] = baseVal;
+    return l;
+  }
+
+  public void swap(int[] nums, int a,int b) {
+    int tmp = nums[a];
+    nums[a] = nums[b];
+    nums[b] = tmp;
+  }
+}
+```
+
+代码2（24ms，88.14%）：随机位置基准优化+三路快速排序优化（荷兰国旗问题解决法）。三路快速排序能够将等值元素都堆积到一起，减少递归处理的次数
+
+```java
+class Solution {
+
+  Random random = new Random();
+
+  public int[] sortArray(int[] nums) {
+    threeQuickSelect(nums, 0, nums.length - 1);
+    return nums;
+  }
+
+  // 三路快速排序
+  public void threeQuickSelect(int[] nums, int start, int end) {
+    if(start >= end) {
+      return;
+    }
+    // 使用随机位置作为参考值，优化性能
+    int randomPos = random.nextInt(end - start + 1) + start;
+    int baseVal = nums[randomPos];
+    // 用start做逻辑，方便后续处理
+    swap(nums, start, randomPos);
+    // l < baseVal right bound; r > baseValue left bound; i current pos
+    int l = start, r = end, i = start;
+    while(i <= r) {
+      if(nums[i] < baseVal) {
+        swap(nums, l, i);
+        ++i;
+        ++l;
+      } else if(nums[i] > baseVal) {
+        swap(nums, r, i);
+        --r;
+      } else {
+        ++i;
+      }
+    }
+    // 递归左右两边生育子数组（中间应该堆积 相同元素，都是基准值）
+    threeQuickSelect(nums, start, l-1);
+    threeQuickSelect(nums, r+1, end);
+  }
+
+  public void swap(int[] nums, int a, int b) {
+    int tmp = nums[a];
+    nums[a] = nums[b];
+    nums[b] = tmp;
+  }
+}
+```
+
+## 21. 合并两个有序链表
+
+语言：java
+
+思路：两个指针遍历两个链表即可。这里辅以临时节点方便处理
+
+代码（0ms，100%）：
+
+```java
+/**
+ * Definition for singly-linked list.
+ * public class ListNode {
+ *     int val;
+ *     ListNode next;
+ *     ListNode() {}
+ *     ListNode(int val) { this.val = val; }
+ *     ListNode(int val, ListNode next) { this.val = val; this.next = next; }
+ * }
+ */
+class Solution {
+  public ListNode mergeTwoLists(ListNode list1, ListNode list2) {
+    ListNode tmpHead = new ListNode();
+    ListNode i1 = list1, i2 = list2, cur = tmpHead;
+    while(i1 != null && i2 != null) {
+      if(i1.val <= i2.val) {
+        cur.next = i1;
+        i1 = i1.next;
+      } else {
+        cur.next = i2;
+        i2 = i2.next;
+      }
+      cur = cur.next;
+    }
+    while(i1 != null) {
+      cur.next = i1;
+      i1 = i1.next;
+      cur = cur.next;
+    }
+    while(i2 != null) {
+      cur.next = i2;
+      i2 = i2.next;
+      cur = cur.next;
+    }
+    return tmpHead.next;
+  }
+}
+```
+
+## 1. 两数之和
+
+语言：java
+
+思路：利用hashMap记录数据，然后找另一个值
+
+代码1（5ms，43.71%）：
+
+```java
+class Solution {
+  public int[] twoSum(int[] nums, int target) {
+    HashMap<Integer, Integer> valueIndexMap = new HashMap<>();
+    int[] result = new int[2];
+    for(int i = 0; i < nums.length; ++i) {
+      if(valueIndexMap.containsKey(target - nums[i])) {
+        result[0] = i;
+        result[1] = valueIndexMap.get(target - nums[i]);
+      }
+      valueIndexMap.put(nums[i], i);
+    }
+    return result;
+  }
+}
+```
+
+代码2（2ms，99.68%）：逻辑没变，只是返回方式略有变动
+
+```java
+class Solution {
+  public int[] twoSum(int[] nums, int target) {
+    Map<Integer, Integer> map = new HashMap<>();
+    for(int i = 0; i < nums.length; ++i) {
+      if(map.containsKey(target-nums[i])) {
+        return new int[] {map.get(target-nums[i]), i };
+      }
+      map.put(nums[i], i);
+    }
+    return new int[] {};
+  }
+}
+```
+
+## 5. 最长回文子串
+
+语言：java
+
+思路：动态规划，重点是dp数组定义。这里`dp[i][j]`表示i~j下标是回文。这里注意便利顺序，dp数组的右边界先移动，然后内循环遍历左边界。
+
+代码（79ms，56.80%）：
+
+```java
+class Solution {
+  public String longestPalindrome(String s) {
+    int len = s.length();
+    // 1. dp数组含义， index i~j is huiWen
+    boolean[][] dp = new boolean[len][len];
+    char[] cs = s.toCharArray();
+    // 2. dp[i][j] = cs[i] == cs[j] && (j-i < 3 || dp[i+1][j-1])
+    int l = 0, r = 0;
+    // 3. init, all one char is HuiWen
+    for(int i = 0; i < len; ++i) {
+      dp[i][i] = true;
+    }
+    // 4. traverse direction left => right
+    for(int j = 1; j < len; ++j) {
+      for(int i = 0; i < j; ++i) {
+        dp[i][j] = cs[i] == cs[j] && (j-i < 3 || dp[i+1][j-1]);
+        if(dp[i][j] && j-i > r-l) {
+          l = i;
+          r = j;
+        }
+      }
+    }
+    return s.substring(l, r+1);
+  }
+}
+```
+
+## 102. 二叉树的层序遍历
+
+语言：java
+
+思路：层次遍历，可以DFS也可以BFS。这里先写BFS版本（使用一个Queue队列）
+
+代码1（1ms，91.71%）：
+
+```java
+class Solution {
+  public List<List<Integer>> levelOrder(TreeNode root) {
+    List<List<Integer>> result = new ArrayList<>();
+    if(null == root) {
+      return result;
+    }
+    LinkedList<TreeNode> queue = new LinkedList<>();
+    queue.add(root);
+    while(!queue.isEmpty()) {
+      int size = queue.size();
+      List<Integer> values = new ArrayList<>();
+      while(size-- > 0) {
+        TreeNode cur = queue.poll();
+        values.add(cur.val);
+        if(cur.left != null) {
+          queue.add(cur.left);
+        }
+        if(cur.right != null) {
+          queue.add(cur.right);
+        }
+      }
+      result.add(values);
+    }
+    return result;
+  }
+}
+```
+
+代码2（0ms，100%）：DFS，需要记录当前深度，然后每次从result中取已写入的数据
+
+```java
+class Solution {
+
+  private List<List<Integer>> result = new ArrayList<>();
+
+  public List<List<Integer>> levelOrder(TreeNode root) {
+    dfs(root, 0);
+    return result;
+  }
+
+  public void dfs(TreeNode root, int depth) {
+    if(root == null) {
+      return;
+    }
+    if(result.size() == depth) {
+      result.add(new ArrayList<>());
+    }
+    List<Integer> values = result.get(depth);
+    values.add(root.val);
+    dfs(root.left, depth+1);
+    dfs(root.right, depth+1);
+  }
+}
+```
+
+## 33. 搜索旋转排序数组
+
+语言：java
+
+思路：每次二分查找对整个区间分成2部分，一定有一部分是有序的，在有序的一边判断target是否在该范围内。在有序区间则之间区间内二分查找target；不在有序区间，则对另一边区间继续二分查找。
+
+代码（0ms，100%）：
+
+```java
+class Solution {
+  public int search(int[] nums, int target) {
+    int len = nums.length, left = 0, right = len-1;
+    while(left < right) {
+      int mid = left + (right-left)/2;
+      if(target == nums[mid]) {
+        return mid;
+      }
+      // 确认左右两大区间，哪个是有序区间
+      // 1. 左大区间有序
+      if(nums[left] <= nums[mid]) {
+        // 在有序区间内 存在 target
+        if(nums[left] <= target && target < nums[mid]) {
+          right = mid-1;
+        } else {
+          // 在有序区间内不存在 target
+          left = mid+1;
+        }
+      } else {
+        // 2. 右大区间有序
+        // 在有序区间内 存在 target
+        if(nums[mid] < target && target <= nums[right]) {
+          left = mid+1;
+        } else {
+          // 在有序区间内不存在 target
+          right = mid-1;
+        }
+      }
+    }
+    return nums[left] == target ? left : -1;
   }
 }
 ```

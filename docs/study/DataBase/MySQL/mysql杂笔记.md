@@ -57,4 +57,36 @@
 > [【原创】互联网项目中mysql应该选什么事务隔离级别 - 孤独烟 - 博客园 (cnblogs.com)](https://www.cnblogs.com/rjzheng/p/10510174.html) 超高质量
 >
 > [MySQL介于普通读和加锁读之间的读取方式：semi-consistent read - 掘金 (juejin.cn)](https://juejin.cn/post/6844904022499917838) RC下的半一致性读 说明，高质量
+>
+> [MySQL中 LBCC 和 MVCC 的理解，常见问题及示例：-CSDN博客](https://blog.csdn.net/qq_37102984/article/details/126764644) 质量不错
+>
+> [你了解MySQL的加锁规则吗？ - 进击的李同学 - 博客园 (cnblogs.com)](https://www.cnblogs.com/nedulee/p/11838682.html) limit对锁的影响
+>
+> 加锁规则可以概括为：两个原则、两个优化和一个bug:
+>
+> 原则1:加锁的基本单位是next-key lock，前开后闭
+>
+> 原则2:查找过程中访问到的对象才会加锁
+>
+> 优化1:索引上的等值查询，给唯一索引加锁的时候，next-key lock退化成行锁
+>
+> 优化2:索引上的等值查询，向右遍历时且最后一个值不满足等值条件的时候，next-key lock退化为间隙锁
+>
+> 1个bug:唯一索引上的范围查询会访问到不满足条件的第一个值为止。
+>
+> [锁--07_1----插入意向锁-Insert加锁过程-CSDN博客](https://blog.csdn.net/weixin_48052161/article/details/135024886) 插入意向锁
+>
+> [全面深入理解MySQL自增锁-CSDN博客](https://blog.csdn.net/Bb15070047748/article/details/131815884) 自增锁
+>
+> 
+>
+> 分库分表
+>
+> [MySQL数据库之分库分表方案 - 智慧园区-老朱 - 博客园 (cnblogs.com)](https://www.cnblogs.com/IT-Evan/p/15902904.html) 高质量文章
+>
+> 
+>
+> MVCC
+>
+> [看一遍就理解：MVCC原理详解 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/421769708)
 
