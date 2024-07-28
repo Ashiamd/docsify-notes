@@ -40,7 +40,7 @@ try {
 | 方法名称                                                     | 描述                                                         |
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | void lock()                                                  | 获取锁，调用该方法当前线程将会获取锁，当锁获得后，从该方法返回 |
-| void lockInterruptibly() throws InterruptedException         | 可中断地获取锁，和lock()方法不同之处在于该方法会响应中断，即在锁释放中可以中断当前线程 |
+| void lockInterruptibly() throws InterruptedException         | 可中断地获取锁，和lock()方法不同之处在于该方法会响应中断，即在锁的获取中可以中断当前线程 |
 | boolean trylock()                                            | 尝试非阻塞式的获取锁，调用该方法后立刻返回，如果能够获取则返回true，否则返回false |
 | boolean tryLock(Long time,TimeUnit unit)throws InterruptedException | 超时获取锁，当线程在以下3种情况会返回：1. 当前线程在超时时间内获得了锁 2. 当前线程在超时时间内被中断 3. 超时时间结束，返回false |
 | void unLock()                                                | 释放锁                                                       |
@@ -50,7 +50,7 @@ try {
 
 ## 5.2 队列同步器
 
-​	队列同步器`AbstractQueuedSynchronizer`（以下简称同步器），是用来构建锁或者其他同步组件的基础框架，它使用了一个int成员变量表示同步状态，通过内置的FIFO队列来完成资源获取线程的排队工作，并发包的作者（Doug Lea）期望它能够成为实现大部分同步需求的基础。
+​	队列同步器`AbstractQueuedSynchronizer`（以下简称同步器），是用来构建锁或者其他同步组件的基础框架，它使用了一个int成员变量表示同步状态，通过内置的**FIFO队列**来完成资源获取线程的排队工作，并发包的作者（Doug Lea）期望它能够成为实现大部分同步需求的基础。
 
 ​	<u>同步器的主要使用方式是继承，子类通过继承同步器并实现它的抽象方法来管理同步状态</u>，在抽象方法的实现过程中免不了要对同步状态进行更改，这时就需要使用同步器提供的3个方法（getState()、setState(int newState)和compareAndSetState(int expect,int update)）来进行操作，因为它们能够保证状态的改变是安全的。**子类推荐被定义为自定义同步组件的静态内部类**，同步器自身没有实现任何同步接口，它仅仅是定义了若干同步状态获取和释放的方法来供自定义同步组件使用，同步器既可以支持独占式地获取同步状态，也可以支持共享式地获取同步状态，这样就可以方便实现不同类型的同步组件（ReentrantLock、ReentrantReadWriteLock和CountDownLatch等）。
 
@@ -66,9 +66,7 @@ try {
 
 + `setState(int newState)`：设置当前同步状态。
 
-+ `compareAndSetState(int expect,int update)`：使用CAS设置当前状态，该方法能够保证状态
-
-  设置的原子性。
++ `compareAndSetState(int expect,int update)`：使用CAS设置当前状态，该方法能够保证状态设置的原子性。
 
 同步器可重写的方法与描述如下表所示。
 
@@ -852,7 +850,7 @@ protected final int tryAcquireShared(int unused) {
 }
 ```
 
-​	在`tryAcquireShared(int unused)`方法中，如果其他线程已经获取了写锁，则当前线程获取读锁失败，进入等待状态。如果当前线程获取了写锁或者写锁未被获取，则当前线程（线程安全，依靠CAS保证）增加读状态，成功获取读锁。
+​	在`tryAcquireShared(int unused)`方法中，如果其他线程已经获取了写锁，则当前线程获取读锁失败，进入等待状态。**如果当前线程获取了写锁或者写锁未被获取，则当前线程（线程安全，依靠CAS保证）增加读状态，成功获取读锁**。
 
 ​	读锁的每次释放（线程安全的，可能有多个读线程同时释放读锁）均减少读状态，减少的值是（1<<16）。
 
@@ -952,7 +950,8 @@ public void conditionWait() throws InterruptedException {
   } finally {
     lock.unlock();
   }
-} public void conditionSignal() throws InterruptedException {
+} 
+public void conditionSignal() throws InterruptedException {
   lock.lock();
   try {
     condition.signal();
@@ -975,7 +974,7 @@ public void conditionWait() throws InterruptedException {
 | void signal()                                                | 唤醒一个等待在Condition上的线程，该线程从等待方法返回前必须获得与Condition相关联的锁 |
 | void signalAll()                                             | 唤醒所有等待在Condition上的线程，能够从等待方法返回的线程必须获得与Condition相关联的锁 |
 
-​	获取一个Condition必须通过Lock的newCondition()方法。下面通过一个有界队列的示例来深入了解Condition的使用方式。有界队列是一种特殊的队列，当队列为空时，队列的获取操作将会阻塞获取线程，直到队列中有新增元素，当队列已满时，队列的插入操作将会阻塞插入线程，直到队列出现“空位”，如（代码清单5-21 BoundedQueue.java）所示。
+​	<u>获取一个Condition必须通过Lock的newCondition()方法</u>。下面通过一个有界队列的示例来深入了解Condition的使用方式。有界队列是一种特殊的队列，当队列为空时，队列的获取操作将会阻塞获取线程，直到队列中有新增元素，当队列已满时，队列的插入操作将会阻塞插入线程，直到队列出现“空位”，如（代码清单5-21 BoundedQueue.java）所示。
 
 ```java
 public class BoundedQueue<T> {
@@ -2657,7 +2656,7 @@ public class ExchangerTest {
       public void run() {
         try {
           String B = "银行流水B";　　　　// B录入银行流水数据
-          String A = exgr.exchange("B");
+          String A = exgr.exchange(B);
           System.out.println("A和B数据是否一致：" + A.equals(B) + "，A录入的是："
                              + A + "，B录入是：" + B);
         } catch (InterruptedException e) {
@@ -2838,7 +2837,7 @@ try {
 
 ### 9.2.3 关闭线程池
 
-​	**可以通过调用线程池的shutdown或shutdownNow方法来关闭线程池。它们的原理是遍历线程池中的工作线程，然后逐个调用线程的interrupt方法来中断线程，所以无法响应中断的任务可能永远无法终止**。但是它们存在一定的区别。
+​	**可以通过调用线程池的shutdown或shutdownNow方法来关闭线程池。<u>它们的原理是遍历线程池中的工作线程，然后逐个调用线程的interrupt方法来中断线程，所以无法响应中断的任务可能永远无法终止</u>**。但是它们存在一定的区别。
 
 + shutdownNow首先将线程池的状态设置成**STOP**，然后尝试停止所有的正在执行或暂停任务的线程，并返回等待执行任务的列表
 + shutdown只是将线程池的状态设置成**SHUTDOWN**状态，然后中断所有没有正在执行任务的线程。
@@ -3392,7 +3391,7 @@ public boolean offer(E e) {
 
 ---
 
-+ 当FutureTask处于未启动状态时，执行`FutureTask.cancel()`方法将导致此任务永远不会被执行；
++ 当FutureTask处于未启动状态时，执行`FutureTask.cancel(...)`方法将导致此任务永远不会被执行；
 + 当FutureTask处于已启动状态时，执行`FutureTask.cancel（true）`方法将以**中断**执行此任务线程的方式来试图停止任务；
 + 当FutureTask处于已启动状态时，执行`FutureTask.cancel（false）`方法将不会对正在执行此任务的线程产生影响（让正在执行的任务运行完成）；
 + 当FutureTask处于已完成状态时，执行`FutureTask.cancel（…）`方法将返回false。
@@ -3444,7 +3443,7 @@ private String executionTask(final String taskName)
 
 ### 10.4.3 FutureTask的实现
 
-​	FutureTask的实现基于AbstractQueuedSynchronizer（以下简称为AQS）。**java.util.concurrent中的很多可阻塞类（比如ReentrantLock）都是基于AQS来实现的**。AQS是一个同步框架，它提供通用机制来原子性管理同步状态、阻塞和唤醒线程，以及维护被阻塞线程的队列。**JDK 6中AQS被广泛使用，基于AQS实现的同步器包括：ReentrantLock、Semaphore、ReentrantReadWriteLock、CountDownLatch和FutureTask。**
+​	FutureTask的实现基于AbstractQueuedSynchronizer（以下简称为AQS）。**java.util.concurrent中的很多可阻塞类（比如ReentrantLock）都是基于AQS来实现的**。<u>AQS是一个同步框架，它提供通用机制来原子性管理同步状态、阻塞和唤醒线程，以及维护被阻塞线程的队列</u>。**JDK 6中AQS被广泛使用，基于AQS实现的同步器包括：ReentrantLock、Semaphore、ReentrantReadWriteLock、CountDownLatch和FutureTask。**
 
 ​	每一个基于AQS实现的同步器都会包含两种类型的操作，如下。
 
@@ -3475,12 +3474,11 @@ private String executionTask(final String taskName)
 `FutureTask.run()`的执行过程如下。
 
 1. 执行在构造函数中指定的任务（`Callable.call()`）。
-
 2. **以原子方式来更新同步状态**（调用`AQS.compareAndSetState（int expect，int update）`，设置state为执行完成状态RAN）。如果这个原子操作成功，就设置代表计算结果的变量result的值为`Callable.call()`的返回值，然后调用`AQS.releaseShared（int arg）`。
-
 3. `AQS.releaseShared（int arg）`首先会回调在子类Sync中实现的`tryReleaseShared（arg）`来执行release操作（设置运行任务的线程runner为null，然会返回true）；`AQS.releaseShared（int arg）`，然后唤醒线程等待队列中的第一个线程。
+4. 调用`FutureTask.done()`。
 
-4. 调用`FutureTask.done()`。当执行`FutureTask.get()`方法时，如果FutureTask不是处于执行完成状态RAN或已取消状态CANCELLED，当前执行线程将到AQS的线程等待队列中等待（见下图的线程A、B、C和D）。当某个线程执行`FutureTask.run()`方法或`FutureTask.cancel（...）`方法时，会唤醒线程等待队列的第一个线程（见下图所示的线程E唤醒线程A）。
+​	当执行`FutureTask.get()`方法时，如果FutureTask不是处于执行完成状态RAN或已取消状态CANCELLED，当前执行线程将到AQS的线程等待队列中等待（见下图的线程A、B、C和D）。当某个线程执行`FutureTask.run()`方法或`FutureTask.cancel（...）`方法时，会唤醒线程等待队列的第一个线程（见下图所示的线程E唤醒线程A）。
 
 ![FutureTask 的级联唤醒示意图](https://img-blog.csdnimg.cn/20201001133152151.jpg#pic_center)
 

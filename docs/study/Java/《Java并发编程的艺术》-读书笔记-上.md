@@ -975,7 +975,7 @@ class SynchronizedExample {
 
 ​	<small>如上图所示，假设处理器A写一个long型变量，同时处理器B要读这个long型变量。处理器A中64位的写操作被拆分为两个32位的写操作，且这两个32位的写操作被分配到不同的写事务中执行。同时，处理器B中64位的读操作被分配到单个的读事务中执行。当处理器A和B按上图的时序来执行时，处理器B将看到仅仅被处理器A“写了一半”的无效值。</small>
 
-​	注意，在JSR-133之前的旧内存模型中，一个64位long/double型变量的读/写操作可以被拆分为两个32位的读/写操作来执行。从JSR-133内存模型开始（即从JDK5开始），仅仅只允许把一个64位long/double型变量的写操作拆分为两个32位的写操作来执行，**任意的读操作在JSR-133中都必须具有原子性（即任意读操作必须要在单个读事务中执行）。**
+​	注意，在JSR-133之前的旧内存模型中，一个64位long/double型变量的读/写操作可以被拆分为两个32位的读/写操作来执行。<u>从JSR-133内存模型开始（即从JDK5开始），仅仅只允许把一个64位long/double型变量的写操作拆分为两个32位的写操作来执行，**任意的读操作在JSR-133中都必须具有原子性（即任意读操作必须要在单个读事务中执行）。**</u>
 
 ## 3.4 volatile的内存语义
 
@@ -1082,6 +1082,8 @@ class VolatileExample {
 
 ​	**当写一个volatile变量时，JMM会把该线程对应的本地内存中的共享变量值刷新到主内存。**
 
+​	<small>(类比MESI，相当于每次写操作都会将缓存行从S变成E，即写回主存，并且通知其他CPU缓存行更新为I)</small>
+
 ​	以上面示例程序VolatileExample为例，假设线程A首先执行writer()方法，随后线程B执行reader()方法，初始时两个线程的本地内存中的flag和a都是初始状态。下图是线程A执行volatile写后，共享变量的状态示意图。
 
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20200825142426491.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L0hhbmRzb21lX0xlX2xl,size_16,color_FFFFFF,t_70#pic_center)
@@ -1094,6 +1096,8 @@ class VolatileExample {
 
 ​	**当读一个volatile变量时，JMM会把该线程对应的本地内存置为无效。线程接下来将从主内存中读取共享变量。**
 
+​	<small>(类比MESI，相当于每次读都会把缓存行视为I，重新从主存读取数据，设置为E或者S)</small>
+
 ​	在读flag变量后，本地内存B包含的值已经被置为无效。此时，线程B必须从主内存中读取共享变量。线程B的读取操作将导致本地内存B与主内存中的共享变量的值变成一致。
 
 ​	如果我们把volatile写和volatile读两个步骤综合起来看的话，在读线程B读一个volatile变量后，写线程A在写这个volatile变量之前所有可见的共享变量的值都将立即变得对读线程B可见。
@@ -1102,17 +1106,11 @@ class VolatileExample {
 
 ​	下面对volatile写和volatile读的内存语义做个总结。
 
-+ 线程A写一个volatile变量，实质上是线程A向接下来将要读这个volatile变量的某个线程
++ 线程A写一个volatile变量，实质上是线程A向接下来将要读这个volatile变量的某个线程发出了（其对共享变量所做修改的）消息。
 
-发出了（其对共享变量所做修改的）消息。
++ 线程B读一个volatile变量，实质上是线程B接收了之前某个线程发出的（在写这个volatile变量之前对共享变量所做修改的）消息。
 
-+ 线程B读一个volatile变量，实质上是线程B接收了之前某个线程发出的（在写这个volatile
-
-变量之前对共享变量所做修改的）消息。
-
-+ 线程A写一个volatile变量，随后线程B读这个volatile变量，这个过程实质上是线程A通过
-
-主内存向线程B发送消息。
++ 线程A写一个volatile变量，随后线程B读这个volatile变量，这个过程实质上是线程A通过主内存向线程B发送消息。
 
 ### 3.4.4 volatile内存语义的实现
 
@@ -1193,7 +1191,7 @@ class VolatileExample {
 
 ---
 
-​	上述volatile写和volatile读的内存屏障插入策略非常保守。**在实际执行时，只要不改变volatile写-读的内存语义，编译器可以根据具体情况省略不必要的屏障**。
+​	上述volatile写和volatile读的内存屏障插入策略非常保守。**<u>在实际执行时，只要不改变volatile写-读的内存语义，编译器可以根据具体情况省略不必要的屏障</u>**。
 
 ```java
 class VolatileBarrierExample {
@@ -1284,31 +1282,29 @@ class MonitorExample {
 
 ​	**当线程释放锁时，JMM会把该线程对应的本地内存中的共享变量刷新到主内存中。**以上面的MonitorExample程序为例，A线程释放锁后，共享数据的状态示意图如图所示。
 
+​	<small>(从MESI角度看，相当于每次释放锁，都会将缓存行更新为S或者E，刷新数据到主存，然后通知其他CPU缓存行设置I)</small>
+
 ![img](https://img-blog.csdnimg.cn/20190725141944826.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2xlanVzdGRvaXQ=,size_16,color_FFFFFF,t_70)
 
 ---
 
 ​	**当线程获取锁时，JMM会把该线程对应的本地内存置为无效。从而使得被监视器保护的临界区代码必须从主内存中读取共享变量**。图是锁获取的状态示意图。
 
+<small>（用内存MESI来理解的话，相当于CPU0将缓存行从S变成M，然后通知CPU1将缓存行变成I，同时更新主存数据。CPU1下次读取缓存行时就需要重新从主存读取了）</small>
+
 ![img](https://img-blog.csdnimg.cn/2019072514195712.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L2xlanVzdGRvaXQ=,size_16,color_FFFFFF,t_70)
 
-​	**对比锁释放-获取的内存语义与volatile写-读的内存语义可以看出：锁释放与volatile写有相同的内存语义；锁获取与volatile读有相同的内存语义。**
+​	<u>**对比锁释放-获取的内存语义与volatile写-读的内存语义可以看出：锁释放与volatile写有相同的内存语义；锁获取与volatile读有相同的内存语义。**</u>
 
 ---
 
 ​	下面对锁释放和锁获取的内存语义做个总结。
 
-+ 线程A释放一个锁，实质上是线程A向接下来将要获取这个锁的某个线程发出了（线程A
++ 线程A释放一个锁，实质上是线程A向接下来将要获取这个锁的某个线程发出了（线程A对共享变量所做修改的）消息。
 
-对共享变量所做修改的）消息。
++ 线程B获取一个锁，实质上是线程B接收了之前某个线程发出的（在释放这个锁之前对共享变量所做修改的）消息。
 
-+ 线程B获取一个锁，实质上是线程B接收了之前某个线程发出的（在释放这个锁之前对共
-
-享变量所做修改的）消息。
-
-+ 线程A释放锁，随后线程B获取这个锁，这个过程实质上是线程A通过主内存向线程B发
-
-送消息。
++ 线程A释放锁，随后线程B获取这个锁，这个过程实质上是线程A通过主内存向线程B发送消息。
 
 ### 3.5.3 锁内存语义的实现
 
@@ -1350,7 +1346,7 @@ class ReentrantLockExample {
 
 
 
-ReentrantLock分为公平锁和非公平锁，我们首先分析公平锁。
+ReentrantLock分为<u>公平锁和非公平锁</u>，我们首先分析公平锁。
 
 使用公平锁时，加锁方法lock()调用轨迹如下。
 
@@ -1417,7 +1413,7 @@ protected final boolean tryRelease(int releases) {
 
 ​	从上面的源代码可以看出，在释放锁的最后写volatile变量state。
 
-​	公平锁在释放锁的最后写volatile变量state，在获取锁时首先读这个volatile变量。根据volatile的happens-before规则，释放锁的线程在写volatile变量之前可见的共享变量，在获取锁的线程读取同一个volatile变量后将立即变得对获取锁的线程可见。
+​	**公平锁在释放锁的最后写volatile变量state，在获取锁时首先读这个volatile变量。根据volatile的happens-before规则，释放锁的线程在写volatile变量之前可见的共享变量，在获取锁的线程读取同一个volatile变量后将立即变得对获取锁的线程可见**。
 
 ---
 
@@ -1437,11 +1433,11 @@ protected final boolean compareAndSetState(int expect, int update) {
 }
 ```
 
-​	<u>该方法以原子操作的方式更新state变量，本文把Java的compareAndSet()方法调用简称为CAS。JDK文档对该方法的说明如下：如果当前状态值等于预期值，则以原子方式将同步状态设置为给定的更新值。此操作具有volatile读和写的内存语义</u>。
+​	<u>该方法以原子操作的方式更新state变量，本文把Java的compareAndSet()方法调用简称为CAS。JDK文档对该方法的说明如下：如果当前状态值等于预期值，则以原子方式将同步状态设置为给定的更新值。**此操作具有volatile读和写的内存语义**</u>。
 
 ​	这里我们分别从编译器和处理器的角度来分析，CAS如何同时具有volatile读和volatile写的内存语义。
 
-​	前文我们提到过，编译器不会对volatile读与volatile读后面的任意内存操作重排序；编译器不会对volatile写与volatile写前面的任意内存操作重排序。组合这两个条件，意味着**为了同时实现volatile读和volatile写的内存语义，编译器不能对CAS与CAS前面和后面的任意内存操作重排序**。
+​	<u>前文我们提到过，编译器不会对volatile读与volatile读后面的任意内存操作重排序；编译器不会对volatile写与volatile写前面的任意内存操作重排序</u>。组合这两个条件，意味着**为了同时实现volatile读和volatile写的内存语义，编译器不能对CAS与CAS前面和后面的任意内存操作重排序**。
 
 ​	下面我们来分析在常见的intel X86处理器中，CAS是如何同时具有volatile读和volatile写的内存语义的。
 
@@ -1453,7 +1449,7 @@ public final native boolean compareAndSwapInt(Object o, long offset,
                                               int x);
 ```
 
-​	可以看到这是个本地方法调用。这个本地方法在openjdk中依次调用的c++代码为：unsafe.cpp，atomic.cpp和atomic*windows*x86.inline.hpp。这个本地方法的最终实现在openjdk的如下位置：openjdk-7-fcs-src-b147-27*jun*2011\openjdk\hotspot\src\os*cpu\windows*x86\vm\ atomic*windows*x86.inline.hpp（对应于windows操作系统，X86处理器）。下面是对应于intel X86处理器的源代码的片段。
+​	可以看到这是个本地方法调用。这个本地方法在openjdk中依次调用的c++代码为：unsafe.cpp，atomic.cpp和atomic*windows*x86.inline.hpp。这个本地方法的最终实现在openjdk的如下位置：`openjdk-7-fcs-src-b147-27*jun*2011\openjdk\hotspot\src\os*cpu\windows*x86\vm\ atomic*windows*x86.inline.hpp`（对应于windows操作系统，X86处理器）。下面是对应于intel X86处理器的源代码的片段。
 
 ```c
 // Adding a lock prefix to an instruction on MP machine
@@ -1478,21 +1474,15 @@ inline jint     Atomic::cmpxchg    (jint     exchange_value, volatile jint*     
 }
 ```
 
-​	如上面源代码所示，<u>程序会根据当前处理器的类型来决定是否为cmpxchg指令添加lock前缀。如果程序是在多处理器上运行，就为cmpxchg指令加上lock前缀（Lock Cmpxchg）。反之，如果程序是在单处理器上运行，就省略lock前缀（单处理器自身会维护单处理器内的顺序一致性，不需要lock前缀提供的内存屏障效果）</u>。
+​	如上面源代码所示，<u>程序会根据当前处理器的类型来决定是否为cmpxchg指令添加lock前缀。**如果程序是在多处理器上运行，就为cmpxchg指令加上lock前缀**（Lock Cmpxchg）。反之，如果程序是在单处理器上运行，就省略lock前缀（单处理器自身会维护单处理器内的顺序一致性，不需要lock前缀提供的内存屏障效果）</u>。
 
 ​	intel的手册对**lock前缀**的说明如下。
 
-1. 确保对内存的读-改-写操作原子执行。在Pentium及Pentium之前的处理器中，带有lock前
-
-缀的指令在执行期间会锁住总线，使得其他处理器暂时无法通过总线访问内存。很显然，这会
-
-带来昂贵的开销。从Pentium 4、Intel Xeon及P6处理器开始，Intel使用缓存锁定（Cache Locking）
-
-来保证指令执行的原子性。**缓存锁定将大大降低lock前缀指令的执行开销**。
+1. **确保对内存的读-改-写操作原子执行**。在Pentium及Pentium之前的处理器中，带有lock前缀的指令在执行期间会锁住总线，使得其他处理器暂时无法通过总线访问内存。很显然，这会带来昂贵的开销。从Pentium 4、Intel Xeon及P6处理器开始，Intel使用缓存锁定（Cache Locking）来保证指令执行的原子性。**缓存锁定将大大降低lock前缀指令的执行开销**。
 
 2. **禁止该指令，与之前和之后的读和写指令重排序。**
 
-3. **把写缓冲区中的所有数据刷新到内存中。**
+3. **<u>把写缓冲区中的所有数据刷新到内存中</u>。**
 
 上面的第2点和第3点所具有的内存屏障效果，足以同时实现volatile读和volatile写的内存语义。
 
@@ -1506,9 +1496,7 @@ inline jint     Atomic::cmpxchg    (jint     exchange_value, volatile jint*     
 
 + 公平锁获取时，首先会去读volatile变量。
 
-+ 非公平锁获取时，首先会用**CAS更新volatile变量，这个操作同时具有volatile读和volatile**
-
-**写的内存语义**。
++ 非公平锁获取时，首先会用**CAS更新volatile变量，这个操作同时具有volatile读和volatile写的内存语义**。
 
 **从本文对ReentrantLock的分析可以看出，锁释放-获取的内存语义的实现至少有下面两种方式。**
 
@@ -1530,7 +1518,9 @@ inline jint     Atomic::cmpxchg    (jint     exchange_value, volatile jint*     
 
 4. A线程用CAS更新一个volatile变量，随后B线程读这个volatile变量。
 
-​	**Java的CAS会使用现代处理器上提供的高效机器级别的原子指令**，这些原子指令以原子方式对内存执行读-改-写操作，这是在多处理器中实现同步的关键（**从本质上来说，能够支持原子性读-改-写指令的计算机，是顺序计算图灵机的异步等价机器，因此任何现代的多处理器都会去支持某种能对内存执行原子性读-改-写操作的原子指令**）。同时，<u>volatile变量的读/写和CAS可以实现线程之间的通信</u>。把这些特性整合在一起，就形成了整个concurrent包得以实现的基石。如果我们仔细分析concurrent包的源代码实现，会发现一个通用化的实现模式。
+​	**Java的CAS会使用现代处理器上提供的高效机器级别的原子指令**，这些原子指令以原子方式对内存执行读-改-写操作，这是在多处理器中实现同步的关键（**从本质上来说，能够支持原子性读-改-写指令的计算机，是顺序计算图灵机的异步等价机器，因此任何现代的多处理器都会去支持某种能对内存执行原子性读-改-写操作的原子指令**）。同时，<u>volatile变量的读/写和CAS可以实现线程之间的通信</u>。把这些特性整合在一起，就形成了整个concurrent包得以实现的基石。
+
+​	<u>如果我们仔细分析concurrent包的源代码实现，会发现一个通用化的实现模式</u>。
 
 + **首先，声明共享变量为volatile。**
 
@@ -1620,7 +1610,7 @@ public class FinalExample {
 
 ​	在上图中，读对象的普通域的操作被处理器重排序到读对象引用之前。读普通域时，该域还没有被写线程A写入，这是一个错误的读取操作。而**读final域的重排序规则会把读对象final域的操作"限定"在读对象引用之后**，此时该final域已经被A线程初始化过了，这是一个正确的读取操作。
 
-​	**读final域的重排序规则可以确保：在读一个对象的final域之前，一定会先读包含这个final域的对象的引用**。在这个示例程序中，如果该引用不为null，那么引用对象的final域一定已经被A线程初始化过了。
+​	**<u>读final域的重排序规则可以确保：在读一个对象的final域之前，一定会先读包含这个final域的对象的引用</u>**。在这个示例程序中，如果该引用不为null，那么引用对象的final域一定已经被A线程初始化过了。
 
 ### 3.6.4 final域为引用类型
 
@@ -1660,7 +1650,7 @@ public class FinalReferenceExample {
 
 ​	如果想要确保读线程C看到写线程B对数组元素的写入，写线程B和读线程C之间需要使用**同步原语（lock或volatile）来确保内存可见性**。
 
-（换言之，final只保证构造函数内对final的使用与构造函数外第一次使用final对象/变量时不会有重排序，之后再修改final引用对象的值，JMM不再保证不会重排序。）
+（**换言之，final只保证构造函数内对final的使用与构造函数外第一次使用final对象/变量时不会有重排序，之后再修改final引用对象的值，JMM不再保证不会重排序。**）
 
 ### 3.6.5 为什么final引用不能从构造函数内"溢出"
 
@@ -1689,9 +1679,7 @@ public class FinalReferenceEscapeExample {
 
 ​	假设一个线程A执行writer()方法，另一个线程B执行reader()方法。这里的操作2使得对象还未完成构造前就为线程B可见。即使这里的操作2是构造函数的最后一步，且即使在程序中操作2排在操作1后面，执行read()方法的线程仍然可能无法看到final域被初始化后的值，因为这里的操作1和操作2之间可能被重排序。实际的执行时序可能如下图所示：
 
-![技术分享](http://static.oschina.net/uploads/img/201509/02112811_R6Ol.png)
-
-
+![img](https://static.oschina.net/uploads/img/201509/02112811_R6Ol.png)
 
 ​	在构造函数返回前，被构造对象的引用不能为其他线程所见，因为此时的final域可能还没有被初始化。在构造函数返回后，任意线程都将保证能看到final域正确初始化之后的值。
 
@@ -1750,7 +1738,7 @@ double area = pi * r * r;　 // C
 
 + **对于不会改变程序执行结果的重排序，JMM对编译器和处理器不做要求（JMM允许这种重排序）。**
 
-![img](https://ss0.bdstatic.com/94oJfD_bAAcT8t7mm9GUKT-xh_/timg?image&quality=100&size=b4000_4000&sec=1603787024&di=fd0860277e9990dd4861c164b30d35e5&src=http://pic4.zhimg.com/8bb99fb04ac47374d96a63d526e96a9b_r.jpg)
+![img](https://pic4.zhimg.com/8bb99fb04ac47374d96a63d526e96a9b_r.jpg)
 
 + JMM向程序员提供的happens-before规则能满足程序员的需求。JMM的happens-before规则不但简单易懂，而且也向程序员提供了足够强的内存可见性保证（有些内存可见性保证其实并不一定真实存在，比如上面的A happens-before B）。
 
@@ -1995,7 +1983,7 @@ public class InstanceFactory {
 2. **T是一个类，且T中声明的一个静态方法被调用。**
 
 3. T中声明的一个静态字段被赋值。
-4. T中声明的一个静态字段被使用，而且这个字段不是一个常量字段。
+4. <u>T中声明的一个静态字段被使用，而且这个字段不是一个常量字段</u>。
 5. T是一个顶级类（Top Level Class，见Java语言规范的§7.6），而且一个断言语句嵌套在T内部被执行。
 
 ​	在InstanceFactory示例代码中，首次执行getInstance()方法的线程将导致InstanceHolder类被初始化（符合情况4）。
@@ -2122,7 +2110,7 @@ public class InstanceFactory {
 | RMO          | ia64         | Y                 | Y                 | Y                            |                              | Y                            |
 | PowerPC      | PowerPC      | Y                 | Y                 | Y                            | Y                            | Y                            |
 
-​	从上表中可以看到，**所有处理器内存模型都允许写-读重排序**，原因在第1章已经说明过：它们都使用了写缓存区。**写缓存区可能导致写-读操作重排序。**同时，我们可以看到这些处理器内存模型**都允许更早读到当前处理器的写，原因同样是因为写缓存区**。**由于写缓存区仅对当前处理器可见，这个特性导致当前处理器可以比其他处理器先看到临时保存在自己写缓存区中的写。**
+​	从上表中可以看到，**所有处理器内存模型都允许写-读重排序**，原因在第1章已经说明过：它们都使用了写缓存区。**写缓存区(和MESI有关)可能导致写-读操作重排序。**同时，我们可以看到这些处理器内存模型**都允许更早读到当前处理器的写，原因同样是因为写缓存区**。**由于写缓存区仅对当前处理器可见，这个特性导致当前处理器可以比其他处理器先看到临时保存在自己写缓存区中的写(就算没有写缓存区，本身缓存行没其他CPU使用时，缓存行数据就可以仅更新当前缓存行，无需写回主存)。**
 
 ​	上表中的各种处理器内存模型，从上到下，模型由强变弱。越是追求性能的处理器，内存模型设计得会越弱。因为这些处理器希望内存模型对它们的束缚越少越好，这样它们就可以做尽可能多的优化来提高性能。
 
@@ -2716,6 +2704,7 @@ Count i = 540898082
 ​	Java支持多个线程同时访问一个对象或者对象的成员变量，由于每个线程可以拥有这个变量的拷贝（虽然对象以及成员变量分配的内存是在共享内存中的，但是每个执行的线程还是可以拥有一份拷贝，这样做的目的是加速程序的执行，这是现代多核处理器的一个显著特性），所以程序在执行过程中，一个线程看到的变量并不一定是最新的。
 
 ​	**关键字volatile可以用来修饰字段（成员变量），就是告知程序任何对该变量的访问均需要从共享内存中获取，而对它的改变必须同步刷新回共享内存，它能保证所有线程对变量访问的可见性**。
+
 ​	举个例子，定义一个表示程序是否运行的成员变量`boolean on=true`，那么另一个线程可能对它执行关闭动作（on=false），这里涉及多个线程对变量的访问，因此需要将其定义成为`volatile boolean on＝true`，这样其他线程对它进行改变时，可以让所有线程感知到变化，因为所有对on变量的访问和修改都需要以共享内存为准。但是，过多地使用volatile是不必要的，因为它会降低程序执行的效率。
 
 ​	**关键字synchronized可以修饰方法或者以同步块的形式来进行使用，它主要确保多个线程在同一个时刻，只能有一个线程处于方法或者同步块中，它保证了线程对变量访问的可见性和排他性。**
@@ -2981,7 +2970,7 @@ Repeat my words.
 
 ### 4.3.5 Thread.join()的使用
 
-​	如果一个线程A执行了**thread.join()语句，其含义是：当前线程A等待thread线程终止之后才从thread.join()返回**。线程Thread除了提供join()方法之外，还提供了join(long millis)和join(longmillis,int nanos)两个具备超时特性的方法。这两个超时方法表示，如果线程thread在给定的超时时间里没有终止，那么将会从该超时方法中返回。
+​	如果一个线程A执行了**thread.join()语句，其含义是：当前线程A等待thread线程终止之后才从thread.join()返回**。线程Thread除了提供join()方法之外，还提供了join(long millis)和join(long millis, int nanos)两个具备超时特性的方法。这两个超时方法表示，如果线程thread在给定的超时时间里没有终止，那么将会从该超时方法中返回。
 
 ​	在（代码清单4-13 Join.java）所示的例子中，创建了10个线程，编号0~9，每个线程调用前一个线程的join()方法，也就是线程0结束了，线程1才能从join()方法中返回，而线程0需要等待main线程结束。
 
@@ -3318,8 +3307,7 @@ public class DefaultThreadPool<Job extends Runnable> implements ThreadPool<Job> 
     initializeWokers(DEFAULT_WORKER_NUMBERS);
   }
   public DefaultThreadPool(int num) {
-    workerNum = num > MAX_WORKER_NUMBERS MAX_WORKER_NUMBERS : num < MIN_WORKER_
-      NUMBERS MIN_WORKER_NUMBERS : num;
+    workerNum = num > MAX_WORKER_NUMBERS ? MAX_WORKER_NUMBERS : num < MIN_WORKER_NUMBERS ? MIN_WORKER_NUMBERS : num;
     initializeWokers(workerNum);
   }
   public void execute(Job job) {
