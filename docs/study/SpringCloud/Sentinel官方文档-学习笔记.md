@@ -1,6 +1,8 @@
 # Sentinel官方文档-学习笔记
 
 > [Sentinel中文官方文档](https://sentinelguard.io/zh-cn/docs/introduction.html) <= 下面内容基本都摘自官方文档。
+>
+> [Sentinel 微服务保护 - 安浩阳 - 博客园 (cnblogs.com)](https://www.cnblogs.com/anhaoyang/p/sentinel-microservice-protection-1kmwvn.html)
 
 # 1. Sentinel介绍
 
@@ -1260,3 +1262,1041 @@ sentinel-demo-cluster 提供了嵌入模式和独立模式的示例：
 - `RequestProcessor`: 请求处理接口 (request -> response)
 
 ## 3.6 网关流量控制
+
+Sentinel 支持对 Spring Cloud Gateway、Zuul 等主流的 API Gateway 进行限流。
+
+![sentinel-api-gateway-common-arch](https://user-images.githubusercontent.com/9434884/58381714-266d7980-7ff3-11e9-8617-d0d7c325d703.png)
+
+Sentinel 1.6.0 引入了 Sentinel API Gateway Adapter Common 模块，此模块中包含网关限流的规则和自定义 API 的实体和管理逻辑：
+
+- `GatewayFlowRule`：网关限流规则，针对 API Gateway 的场景定制的限流规则，<u>可以针对不同 route 或自定义的 API 分组进行限流，支持针对请求中的参数、Header、来源 IP 等进行定制化的限流</u>。
+- `ApiDefinition`：用户自定义的 API 定义分组，可以看做是一些 URL 匹配的组合。比如我们可以定义一个 API 叫 `my_api`，请求 path 模式为 `/foo/**` 和 `/baz/**` 的都归到 `my_api` 这个 API 分组下面。限流的时候可以针对这个自定义的 API 分组维度进行限流。
+
+其中网关限流规则 `GatewayFlowRule` 的字段解释如下：
+
+- `resource`：资源名称，可以是网关中的 route 名称或者用户自定义的 API 分组名称。
+- `resourceMode`：规则是针对 API Gateway 的 route（`RESOURCE_MODE_ROUTE_ID`）还是用户在 Sentinel 中定义的 API 分组（`RESOURCE_MODE_CUSTOM_API_NAME`），默认是 route。
+- `grade`：限流指标维度，同限流规则的 `grade` 字段。
+- `count`：限流阈值
+- `intervalSec`：统计时间窗口，单位是秒，默认是 1 秒。
+- `controlBehavior`：流量整形的控制效果，同限流规则的 `controlBehavior` 字段，目前支持快速失败和匀速排队两种模式，默认是快速失败。
+- `burst`：应对突发请求时额外允许的请求数目。
+- `maxQueueingTimeoutMs`：匀速排队模式下的最长排队时间，单位是毫秒，仅在匀速排队模式下生效。
+- `paramItem`：参数限流配置。若不提供，则代表不针对参数进行限流，该网关规则将会被转换成普通流控规则；否则会转换成热点规则。其中的字段：
+  - `parseStrategy`：从请求中提取参数的策略，目前支持提取来源 IP（`PARAM_PARSE_STRATEGY_CLIENT_IP`）、Host（`PARAM_PARSE_STRATEGY_HOST`）、任意 Header（`PARAM_PARSE_STRATEGY_HEADER`）和任意 URL 参数（`PARAM_PARSE_STRATEGY_URL_PARAM`）四种模式。
+  - `fieldName`：若提取策略选择 Header 模式或 URL 参数模式，则需要指定对应的 header 名称或 URL 参数名称。
+  - `pattern`：参数值的匹配模式，只有匹配该模式的请求属性值会纳入统计和流控；若为空则统计该请求属性的所有值。（1.6.2 版本开始支持）
+  - `matchStrategy`：参数值的匹配策略，目前支持精确匹配（`PARAM_MATCH_STRATEGY_EXACT`）、子串匹配（`PARAM_MATCH_STRATEGY_CONTAINS`）和正则匹配（`PARAM_MATCH_STRATEGY_REGEX`）。（1.6.2 版本开始支持）
+
+用户可以通过 `GatewayRuleManager.loadRules(rules)` 手动加载网关规则，或通过 `GatewayRuleManager.register2Property(property)` 注册动态规则源动态推送（推荐方式）。
+
+### 3.6.1 Spring Cloud Gateway
+
+从 1.6.0 版本开始，Sentinel 提供了 Spring Cloud Gateway 的适配模块，可以提供两种资源维度的限流：
+
+- route 维度：即在 Spring 配置文件中配置的路由条目，资源名为对应的 routeId
+- 自定义 API 维度：用户可以利用 Sentinel 提供的 API 来自定义一些 API 分组
+
+使用时需引入以下模块（以 Maven 为例）：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.csp</groupId>
+    <artifactId>sentinel-spring-cloud-gateway-adapter</artifactId>
+    <version>x.y.z</version>
+</dependency>
+```
+
+使用时只需注入对应的 `SentinelGatewayFilter` 实例以及 `SentinelGatewayBlockExceptionHandler` 实例即可。比如：
+
+```java
+@Configuration
+public class GatewayConfiguration {
+
+    private final List<ViewResolver> viewResolvers;
+    private final ServerCodecConfigurer serverCodecConfigurer;
+
+    public GatewayConfiguration(ObjectProvider<List<ViewResolver>> viewResolversProvider,
+                                ServerCodecConfigurer serverCodecConfigurer) {
+        this.viewResolvers = viewResolversProvider.getIfAvailable(Collections::emptyList);
+        this.serverCodecConfigurer = serverCodecConfigurer;
+    }
+
+    @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE)
+    public SentinelGatewayBlockExceptionHandler sentinelGatewayBlockExceptionHandler() {
+        // Register the block exception handler for Spring Cloud Gateway.
+        return new SentinelGatewayBlockExceptionHandler(viewResolvers, serverCodecConfigurer);
+    }
+
+    @Bean
+    @Order(-1)
+    public GlobalFilter sentinelGatewayFilter() {
+        return new SentinelGatewayFilter();
+    }
+}
+```
+
+Demo 示例：[sentinel-demo-spring-cloud-gateway](https://github.com/alibaba/Sentinel/tree/master/sentinel-demo/sentinel-demo-spring-cloud-gateway)
+
+比如我们在 Spring Cloud Gateway 中配置了以下路由：
+
+```yaml
+server:
+  port: 8090
+spring:
+  application:
+    name: spring-cloud-gateway
+  cloud:
+    gateway:
+      enabled: true
+      discovery:
+        locator:
+          lower-case-service-id: true
+      routes:
+        # Add your routes here.
+        - id: product_route
+          uri: lb://product
+          predicates:
+            - Path=/product/**
+        - id: httpbin_route
+          uri: https://httpbin.org
+          predicates:
+            - Path=/httpbin/**
+          filters:
+            - RewritePath=/httpbin/(?<segment>.*), /$\{segment}
+```
+
+同时自定义了一些 API 分组：
+
+```java
+private void initCustomizedApis() {
+    Set<ApiDefinition> definitions = new HashSet<>();
+    ApiDefinition api1 = new ApiDefinition("some_customized_api")
+        .setPredicateItems(new HashSet<ApiPredicateItem>() {{
+            add(new ApiPathPredicateItem().setPattern("/product/baz"));
+            add(new ApiPathPredicateItem().setPattern("/product/foo/**")
+                .setMatchStrategy(SentinelGatewayConstants.PARAM_MATCH_STRATEGY_PREFIX));
+        }});
+    ApiDefinition api2 = new ApiDefinition("another_customized_api")
+        .setPredicateItems(new HashSet<ApiPredicateItem>() {{
+            add(new ApiPathPredicateItem().setPattern("/ahas"));
+        }});
+    definitions.add(api1);
+    definitions.add(api2);
+    GatewayApiDefinitionManager.loadApiDefinitions(definitions);
+}
+```
+
+那么这里面的 route ID（如 `product_route`）和 API name（如 `some_customized_api`）都会被标识为 Sentinel 的资源。比如访问网关的 URL 为 `http://localhost:8090/product/foo/22` 的时候，对应的统计会加到 `product_route` 和 `some_customized_api` 这两个资源上面，而 `http://localhost:8090/httpbin/json` 只会对应到 `httpbin_route` 资源上面。
+
+> **注意**：有的时候 Spring Cloud Gateway 会自己在 route 名称前面拼一个前缀，如 `ReactiveCompositeDiscoveryClient_xxx` 这种。请观察簇点链路页面实际的资源名。
+
+您可以在 `GatewayCallbackManager` 注册回调进行定制：
+
+- `setBlockHandler`：注册函数用于实现自定义的逻辑处理被限流的请求，对应接口为 `BlockRequestHandler`。默认实现为 `DefaultBlockRequestHandler`，当被限流时会返回类似于下面的错误信息：`Blocked by Sentinel: FlowException`。
+
+**注意**：
+
+- Sentinel 网关流控默认的粒度是 route 维度以及自定义 API 分组维度，默认**不支持 URL 粒度**。若通过 Spring Cloud Alibaba 接入，请将 `spring.cloud.sentinel.filter.enabled` 配置项置为 false（若在网关流控控制台上看到了 URL 资源，就是此配置项没有置为 false）。
+- 若使用 Spring Cloud Alibaba Sentinel 数据源模块，需要注意网关流控规则数据源类型是 `gw-flow`，若将网关流控规则数据源指定为 flow 则不生效。
+
+### 3.6.2 Zuul 1.x
+
+Sentinel 提供了 Zuul 1.x 的适配模块，可以为 Zuul Gateway 提供两种资源维度的限流：
+
+- route 维度：即在 Spring 配置文件中配置的路由条目，资源名为对应的 route ID（对应 `RequestContext` 中的 `proxy` 字段）
+- 自定义 API 维度：用户可以利用 Sentinel 提供的 API 来自定义一些 API 分组
+
+使用时需引入以下模块（以 Maven 为例）：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.csp</groupId>
+    <artifactId>sentinel-zuul-adapter</artifactId>
+    <version>x.y.z</version>
+</dependency>
+```
+
+若使用的是 Spring Cloud Netflix Zuul，我们可以直接在配置类中将三个 filter 注入到 Spring 环境中即可：
+
+```java
+@Configuration
+public class ZuulConfig {
+
+    @Bean
+    public ZuulFilter sentinelZuulPreFilter() {
+        // We can also provider the filter order in the constructor.
+        return new SentinelZuulPreFilter();
+    }
+
+    @Bean
+    public ZuulFilter sentinelZuulPostFilter() {
+        return new SentinelZuulPostFilter();
+    }
+
+    @Bean
+    public ZuulFilter sentinelZuulErrorFilter() {
+        return new SentinelZuulErrorFilter();
+    }
+}
+```
+
+Sentinel Zuul Adapter 生成的调用链路类似于下面，其中的资源名都是 route ID 或者自定义的 API 分组名称：
+
+```
+-EntranceNode: sentinel_gateway_context$$route$$another-route-b(t:0 pq:0.0 bq:0.0 tq:0.0 rt:0.0 prq:0.0 1mp:8 1mb:1 1mt:9)
+--another-route-b(t:0 pq:0.0 bq:0.0 tq:0.0 rt:0.0 prq:0.0 1mp:4 1mb:1 1mt:5)
+--another_customized_api(t:0 pq:0.0 bq:0.0 tq:0.0 rt:0.0 prq:0.0 1mp:4 1mb:0 1mt:4)
+-EntranceNode: sentinel_gateway_context$$route$$my-route-1(t:0 pq:0.0 bq:0.0 tq:0.0 rt:0.0 prq:0.0 1mp:6 1mb:0 1mt:6)
+--my-route-1(t:0 pq:0.0 bq:0.0 tq:0.0 rt:0.0 prq:0.0 1mp:2 1mb:0 1mt:2)
+--some_customized_api(t:0 pq:0.0 bq:0.0 tq:0.0 rt:0.0 prq:0.0 1mp:2 1mb:0 1mt:2)
+```
+
+发生限流之后的处理流程 ：
+
+- 发生限流之后可自定义返回参数，通过实现 `SentinelFallbackProvider` 接口，默认的实现是 `DefaultBlockFallbackProvider`。
+- 默认的 fallback route 的规则是 route ID 或自定义的 API 分组名称。
+
+比如：
+
+```java
+// 自定义 FallbackProvider 
+public class MyBlockFallbackProvider implements ZuulBlockFallbackProvider {
+
+    private Logger logger = LoggerFactory.getLogger(DefaultBlockFallbackProvider.class);
+    
+    // you can define route as service level 
+    @Override
+    public String getRoute() {
+        return "/book/app";
+    }
+
+    @Override
+        public BlockResponse fallbackResponse(String route, Throwable cause) {
+            RecordLog.info(String.format("[Sentinel DefaultBlockFallbackProvider] Run fallback route: %s", route));
+            if (cause instanceof BlockException) {
+                return new BlockResponse(429, "Sentinel block exception", route);
+            } else {
+                return new BlockResponse(500, "System Error", route);
+            }
+        }
+ }
+ 
+ // 注册 FallbackProvider
+ ZuulBlockFallbackManager.registerProvider(new MyBlockFallbackProvider());
+```
+
+限流发生之后的默认返回：
+
+```json
+{
+    "code":429,
+    "message":"Sentinel block exception",
+    "route":"/"
+}
+```
+
+**注意**：
+
+- Sentinel 网关流控默认的粒度是 route 维度以及自定义 API 分组维度，默认**不支持 URL 粒度**。若通过 Spring Cloud Alibaba 接入，请将 `spring.cloud.sentinel.filter.enabled` 配置项置为 false（若在网关流控控制台上看到了 URL 资源，就是此配置项没有置为 false）。
+- 若使用 Spring Cloud Alibaba Sentinel 数据源模块，需要注意网关流控规则数据源类型是 `gw-flow`，若将网关流控规则数据源指定为 flow 则不生效。
+
+### 3.6.3 Zuul 2.x
+
+> 注：从 1.7.2 版本开始支持，需要 Java 8 及以上版本。
+
+Sentinel 提供了 Zuul 2.x 的适配模块，可以为 Zuul Gateway 提供两种资源维度的限流：
+
+- route 维度：对应 SessionContext 中的 `routeVIP`
+- 自定义 API 维度：用户可以利用 Sentinel 提供的 API 来自定义一些 API 分组
+
+使用时需引入以下模块（以 Maven 为例）：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.csp</groupId>
+    <artifactId>sentinel-zuul2-adapter</artifactId>
+    <version>x.y.z</version>
+</dependency>
+```
+
+然后配置对应的 filter 即可：
+
+```java
+filterMultibinder.addBinding().toInstance(new SentinelZuulInboundFilter(500));
+filterMultibinder.addBinding().toInstance(new SentinelZuulOutboundFilter(500));
+filterMultibinder.addBinding().toInstance(new SentinelZuulEndpoint());
+```
+
+可以参考 [sentinel-demo-zuul2-gateway 示例](https://github.com/alibaba/Sentinel/tree/master/sentinel-demo/sentinel-demo-zuul2-gateway)。
+
+### 3.6.4 网关流控实现原理
+
+**当通过 `GatewayRuleManager` 加载网关流控规则（`GatewayFlowRule`）时，无论是否针对请求属性进行限流，Sentinel 底层都会将网关流控规则转化为热点参数规则（`ParamFlowRule`），存储在 `GatewayRuleManager` 中，与正常的热点参数规则相隔离。转换时 Sentinel 会根据请求属性配置，为网关流控规则设置参数索引（`idx`），并同步到生成的热点参数规则中**。
+
+外部请求进入 API Gateway 时会经过 Sentinel 实现的 filter，其中会依次进行 **路由/API 分组匹配**、**请求属性解析**和**参数组装**。Sentinel 会根据配置的网关流控规则来解析请求属性，并依照参数索引顺序组装参数数组，最终传入 `SphU.entry(res, args)` 中。Sentinel API Gateway Adapter Common 模块向 Slot Chain 中添加了一个 `GatewayFlowSlot`，专门用来做网关规则的检查。`GatewayFlowSlot` 会从 `GatewayRuleManager` 中提取生成的热点参数规则，根据传入的参数依次进行规则检查。若某条规则不针对请求属性，则会在参数最后一个位置置入预设的常量，达到普通流控的效果。
+
+![image](https://user-images.githubusercontent.com/9434884/58381786-5406f280-7ff4-11e9-9020-016ccaf7ab7d.png)
+
+### 3.6.5 网关流控控制台
+
+Sentinel 1.6.3 引入了网关流控控制台的支持，用户可以直接在 Sentinel 控制台上查看 API Gateway 实时的 route 和自定义 API 分组监控，管理网关规则和 API 分组配置。
+
+在 API Gateway 端，用户只需要在[原有启动参数](https://github.com/alibaba/Sentinel/wiki/控制台#32-配置启动参数)的基础上添加如下启动参数即可标记应用为 API Gateway 类型：
+
+```bash
+# 注：通过 Spring Cloud Alibaba Sentinel 自动接入的 API Gateway 整合则无需此参数
+-Dcsp.sentinel.app.type=1
+```
+
+添加正确的启动参数并有访问量后，我们就可以在 Sentinel 上面看到对应的 API Gateway 了。我们可以查看实时的 route 和自定义 API 分组的监控和调用信息：
+
+![sentinel-dashboard-api-gateway-route-list](https://sentinelguard.io/blog/zh-cn/img/sentinel-dashboard-api-gateway-route-list.png)
+
+我们可以在控制台配置自定义的 API 分组，将一些 URL 匹配模式归为一个 API 分组：
+
+![sentinel-dashboard-api-gateway-customized-api-group](https://sentinelguard.io/blog/zh-cn/img/sentinel-dashboard-api-gateway-customized-api-group.png)
+
+然后我们可以在控制台针对预设的 route ID 或自定义的 API 分组配置网关流控规则：
+
+![sentinel-dashboard-api-gateway-flow-rule](https://sentinelguard.io/blog/zh-cn/img/sentinel-dashboard-api-gateway-flow-rule.png)
+
+网关规则动态配置及网关集群流控可以参考 [AHAS Sentinel 网关流控](https://help.aliyun.com/document_detail/118482.html)。
+
+## 3.7 热点参数限流
+
+何为热点？热点即经常访问的数据。很多时候我们希望统计某个热点数据中访问频次最高的 Top K 数据，并对其访问进行限制。比如：
+
+- 商品 ID 为参数，统计一段时间内最常购买的商品 ID 并进行限制
+- 用户 ID 为参数，针对一段时间内频繁访问的用户 ID 进行限制
+
+热点参数限流会统计传入参数中的热点参数，并根据配置的限流阈值与模式，对包含热点参数的资源调用进行限流。热点参数限流可以看做是一种特殊的流量控制，仅对包含热点参数的资源调用生效。
+
+![Sentinel Parameter Flow Control](https://github.com/alibaba/Sentinel/wiki/image/sentinel-hot-param-overview-1.png)
+
+Sentinel 利用 **LRU 策略**统计最近最常访问的热点参数，结合**令牌桶算法**来进行参数级别的流控。
+
+### 3.7.1 基本使用
+
+要使用热点参数限流功能，需要引入以下依赖：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.csp</groupId>
+    <artifactId>sentinel-parameter-flow-control</artifactId>
+    <version>x.y.z</version>
+</dependency>
+```
+
+然后为对应的资源配置热点参数限流规则，并在 `entry` 的时候传入相应的参数，即可使热点参数限流生效。
+
+> 注：若自行扩展并注册了自己实现的 `SlotChainBuilder`，并希望使用热点参数限流功能，则可以在 chain 里面合适的地方插入 `ParamFlowSlot`。
+
+那么如何传入对应的参数以便 Sentinel 统计呢？我们可以通过 `SphU` 类里面几个 `entry` 重载方法来传入：
+
+```java
+public static Entry entry(String name, EntryType type, int count, Object... args) throws BlockException
+
+public static Entry entry(Method method, EntryType type, int count, Object... args) throws BlockException
+```
+
+其中最后的一串 `args` 就是要传入的参数，有多个就按照次序依次传入。比如要传入两个参数 `paramA` 和 `paramB`，则可以：
+
+```java
+// paramA in index 0, paramB in index 1.
+// 若需要配置例外项或者使用集群维度流控，则传入的参数只支持基本类型。
+SphU.entry(resourceName, EntryType.IN, 1, paramA, paramB);
+```
+
+<u>**注意**：若 entry 的时候传入了热点参数，那么 exit 的时候也一定要带上对应的参数（`exit(count, args)`），否则可能会有统计错误</u>。正确的示例：
+
+```java
+Entry entry = null;
+try {
+    entry = SphU.entry(resourceName, EntryType.IN, 1, paramA, paramB);
+    // Your logic here.
+} catch (BlockException ex) {
+    // Handle request rejection.
+} finally {
+    if (entry != null) {
+        entry.exit(1, paramA, paramB);
+    }
+}
+```
+
+对于 `@SentinelResource` 注解方式定义的资源，若注解作用的方法上有参数，Sentinel 会将它们作为参数传入 `SphU.entry(res, args)`。比如以下的方法里面 `uid` 和 `type` 会分别作为第一个和第二个参数传入 Sentinel API，从而可以用于热点规则判断：
+
+```java
+@SentinelResource("myMethod")
+public Result doSomething(String uid, int type) {
+  // some logic here...
+}
+```
+
+### 3.7.2 热点参数规则
+
+热点参数规则（`ParamFlowRule`）类似于流量控制规则（`FlowRule`）：
+
+|       属性        | 说明                                                         | 默认值   |
+| :---------------: | :----------------------------------------------------------- | :------- |
+|     resource      | 资源名，必填                                                 |          |
+|       count       | 限流阈值，必填                                               |          |
+|       grade       | 限流模式                                                     | QPS 模式 |
+|   durationInSec   | 统计窗口时间长度（单位为秒），1.6.0 版本开始支持             | 1s       |
+|  controlBehavior  | 流控效果（支持快速失败和匀速排队模式），1.6.0 版本开始支持   | 快速失败 |
+| maxQueueingTimeMs | 最大排队等待时长（仅在匀速排队模式生效），1.6.0 版本开始支持 | 0ms      |
+|     paramIdx      | 热点参数的索引，必填，对应 `SphU.entry(xxx, args)` 中的参数索引位置 |          |
+| paramFlowItemList | 参数例外项，可以针对指定的参数值单独设置限流阈值，不受前面 `count` 阈值的限制。**仅支持基本类型和字符串类型** |          |
+|    clusterMode    | 是否是集群参数流控规则                                       | `false`  |
+|   clusterConfig   | 集群流控相关配置                                             |          |
+
+我们可以通过 `ParamFlowRuleManager` 的 `loadRules` 方法更新热点参数规则，下面是一个示例：
+
+```java
+ParamFlowRule rule = new ParamFlowRule(resourceName)
+    .setParamIdx(0)
+    .setCount(5);
+// 针对 int 类型的参数 PARAM_B，单独设置限流 QPS 阈值为 10，而不是全局的阈值 5.
+ParamFlowItem item = new ParamFlowItem().setObject(String.valueOf(PARAM_B))
+    .setClassType(int.class.getName())
+    .setCount(10);
+rule.setParamFlowItemList(Collections.singletonList(item));
+
+ParamFlowRuleManager.loadRules(Collections.singletonList(rule));
+```
+
+### 3.7.3 示例
+
+> 示例可参见 [sentinel-demo-parameter-flow-control](https://github.com/alibaba/Sentinel/blob/master/sentinel-demo/sentinel-demo-parameter-flow-control/src/main/java/com/alibaba/csp/sentinel/demo/flow/param/ParamFlowQpsDemo.java)。
+
+## 3.8 注解支持
+
+Sentinel 提供了 `@SentinelResource` 注解用于定义资源，并提供了 AspectJ 的扩展用于自动定义资源、处理 `BlockException` 等。使用 [Sentinel Annotation AspectJ Extension](https://github.com/alibaba/Sentinel/tree/master/sentinel-extension/sentinel-annotation-aspectj) 的时候需要引入以下依赖：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.csp</groupId>
+    <artifactId>sentinel-annotation-aspectj</artifactId>
+    <version>x.y.z</version>
+</dependency>
+```
+
+### 3.8.1 @SentinelResource 注解
+
+> 注意：注解方式埋点不支持 private 方法。
+
+`@SentinelResource` 用于定义资源，并提供可选的异常处理和 fallback 配置项。 `@SentinelResource` 注解包含以下属性：
+
+- `value`：资源名称，必需项（不能为空）
+- `entryType`：entry 类型，可选项（默认为 `EntryType.OUT`）
+- `blockHandler` / `blockHandlerClass`: `blockHandler` 对应处理 `BlockException` 的函数名称，可选项。blockHandler 函数访问范围需要是 `public`，返回类型需要与原方法相匹配，参数类型需要和原方法相匹配并且最后加一个额外的参数，类型为 `BlockException`。<u>blockHandler 函数默认需要和原方法在同一个类中。若希望使用其他类的函数，则可以指定 `blockHandlerClass` 为对应的类的 `Class` 对象，注意对应的函数必需为 static 函数，否则无法解析</u>。
+- `fallback`：fallback 函数名称，可选项，用于在抛出异常的时候提供 fallback 处理逻辑。fallback 函数可以针对所有类型的异常（除了`exceptionsToIgnore`里面排除掉的异常类型）进行处理。fallback 函数签名和位置要求：
+  - **返回值类型必须与原函数返回值类型一致；**
+  - **方法参数列表需要和原函数一致，或者可以额外多一个 `Throwable` 类型的参数用于接收对应的异常。**
+  - **fallback 函数默认需要和原方法在同一个类中。若希望使用其他类的函数，则可以指定 `fallbackClass` 为对应的类的 `Class` 对象，注意对应的函数必需为 static 函数，否则无法解析。**
+- `defaultFallback`（since 1.6.0）：默认的 fallback 函数名称，可选项，通常用于通用的 fallback 逻辑（即可以用于很多服务或方法）。默认 fallback 函数可以针对所以类型的异常（除了`exceptionsToIgnore`里面排除掉的异常类型）进行处理。若同时配置了 fallback 和 defaultFallback，则只有 fallback 会生效。defaultFallback 函数签名要求：
+  - 返回值类型必须与原函数返回值类型一致；
+  - 方法参数列表需要为空，或者可以额外多一个 `Throwable` 类型的参数用于接收对应的异常。
+  - defaultFallback 函数默认需要和原方法在同一个类中。若希望使用其他类的函数，则可以指定 `fallbackClass` 为对应的类的 `Class` 对象，注意对应的函数必需为 static 函数，否则无法解析。
+- `exceptionsToIgnore`（since 1.6.0）：用于指定哪些异常被排除掉，不会计入异常统计中，也不会进入 fallback 逻辑中，而是会原样抛出。
+
+> 注：1.6.0 之前的版本 fallback 函数只针对降级异常（`DegradeException`）进行处理，**不能针对业务异常进行处理**。
+
+特别地，若 blockHandler 和 fallback 都进行了配置，则被限流降级而抛出 `BlockException` 时只会进入 `blockHandler` 处理逻辑。若未配置 `blockHandler`、`fallback` 和 `defaultFallback`，则被限流降级时会将 `BlockException` **直接抛出**。
+
+示例：
+
+```java
+public class TestService {
+
+    // 对应的 `handleException` 函数需要位于 `ExceptionUtil` 类中，并且必须为 static 函数.
+    @SentinelResource(value = "test", blockHandler = "handleException", blockHandlerClass = {ExceptionUtil.class})
+    public void test() {
+        System.out.println("Test");
+    }
+
+    // 原函数
+    @SentinelResource(value = "hello", blockHandler = "exceptionHandler", fallback = "helloFallback")
+    public String hello(long s) {
+        return String.format("Hello at %d", s);
+    }
+    
+    // Fallback 函数，函数签名与原函数一致或加一个 Throwable 类型的参数.
+    public String helloFallback(long s) {
+        return String.format("Halooooo %d", s);
+    }
+
+    // Block 异常处理函数，参数最后多一个 BlockException，其余与原函数一致.
+    public String exceptionHandler(long s, BlockException ex) {
+        // Do some log here.
+        ex.printStackTrace();
+        return "Oops, error occurred at " + s;
+    }
+}
+```
+
+从 1.4.0 版本开始，注解方式定义资源支持自动统计业务异常，无需手动调用 `Tracer.trace(ex)` 来记录业务异常。Sentinel 1.4.0 以前的版本需要自行调用 `Tracer.trace(ex)` 来记录业务异常。
+
+### 3.8.2 配置
+
+**AspectJ**
+
+若您的应用直接使用了 AspectJ，那么您需要在 `aop.xml` 文件中引入对应的 Aspect：
+
+```xml
+<aspects>
+    <aspect name="com.alibaba.csp.sentinel.annotation.aspectj.SentinelResourceAspect"/>
+</aspects>
+```
+
+**Spring AOP**
+
+若您的应用使用了 Spring AOP，您需要通过配置的方式将 `SentinelResourceAspect` 注册为一个 Spring Bean：
+
+```java
+@Configuration
+public class SentinelAspectConfiguration {
+
+    @Bean
+    public SentinelResourceAspect sentinelResourceAspect() {
+        return new SentinelResourceAspect();
+    }
+}
+```
+
+我们提供了 Spring AOP 的示例，可以参见 [sentinel-demo-annotation-spring-aop](https://github.com/alibaba/Sentinel/tree/master/sentinel-demo/sentinel-demo-annotation-spring-aop)。er/sentinel-demo/sentinel-demo-annotation-spring-aop)。
+
+## 3.9 动态规则扩展
+
+### 3.9.1 规则
+
+Sentinel 的理念是开发者只需要关注资源的定义，当资源定义成功后可以动态增加各种流控降级规则。Sentinel 提供两种方式修改规则：
+
+- 通过 API 直接修改 (`loadRules`)
+- 通过 `DataSource` 适配不同数据源修改
+
+通过 API 修改比较直观，可以通过以下几个 API 修改不同的规则：
+
+```Java
+FlowRuleManager.loadRules(List<FlowRule> rules); // 修改流控规则
+DegradeRuleManager.loadRules(List<DegradeRule> rules); // 修改降级规则
+```
+
+手动修改规则（硬编码方式）一般仅用于测试和演示，生产上一般通过动态规则源的方式来动态管理规则。
+
+### 3.9.2 DataSource 扩展
+
+上述 `loadRules()` 方法只接受内存态的规则对象，但更多时候规则存储在文件、数据库或者配置中心当中。`DataSource` 接口给我们提供了对接任意配置源的能力。相比直接通过 API 修改规则，实现 `DataSource` 接口是更加可靠的做法。
+
+我们推荐**通过控制台设置规则后将规则推送到统一的规则中心，客户端实现** `ReadableDataSource` **接口端监听规则中心实时获取变更**，流程如下：
+
+![push-rules-from-dashboard-to-config-center](https://user-images.githubusercontent.com/9434884/45406233-645e8380-b698-11e8-8199-0c917403238f.png)
+
+`DataSource` 扩展常见的实现方式有:
+
+- **拉模式**：客户端主动向某个规则管理中心定期轮询拉取规则，这个规则中心可以是 RDBMS、文件，甚至是 VCS 等。这样做的方式是简单，缺点是无法及时获取变更；
+- **推模式**：规则中心统一推送，客户端通过注册监听器的方式时刻监听变化，比如使用 [Nacos](https://github.com/alibaba/nacos)、Zookeeper 等配置中心。这种方式有更好的实时性和一致性保证。
+
+Sentinel 目前支持以下数据源扩展：
+
+- Pull-based: 动态文件数据源、[Consul](https://github.com/alibaba/Sentinel/tree/master/sentinel-extension/sentinel-datasource-consul), [Eureka](https://github.com/alibaba/Sentinel/tree/master/sentinel-extension/sentinel-datasource-eureka)
+- Push-based: [ZooKeeper](https://github.com/alibaba/Sentinel/tree/master/sentinel-extension/sentinel-datasource-zookeeper), [Redis](https://github.com/alibaba/Sentinel/tree/master/sentinel-extension/sentinel-datasource-redis), [Nacos](https://github.com/alibaba/Sentinel/tree/master/sentinel-extension/sentinel-datasource-nacos), [Apollo](https://github.com/alibaba/Sentinel/tree/master/sentinel-extension/sentinel-datasource-apollo), [etcd](https://github.com/alibaba/Sentinel/tree/master/sentinel-extension/sentinel-datasource-etcd)
+
+流量治理标准数据源：[OpenSergo](https://sentinelguard.io/zh-cn/docs/opensergo-data-source.html)
+
+####  拉模式扩展
+
+实现拉模式的数据源最简单的方式是继承 [`AutoRefreshDataSource`](https://github.com/alibaba/Sentinel/blob/master/sentinel-extension/sentinel-datasource-extension/src/main/java/com/alibaba/csp/sentinel/datasource/AutoRefreshDataSource.java) 抽象类，然后实现 `readSource()` 方法，在该方法里从指定数据源读取字符串格式的配置数据。比如 [基于文件的数据源](https://github.com/alibaba/Sentinel/blob/master/sentinel-demo/sentinel-demo-dynamic-file-rule/src/main/java/com/alibaba/csp/sentinel/demo/file/rule/FileDataSourceDemo.java)。
+
+#### 推模式扩展
+
+实现推模式的数据源最简单的方式是继承 [`AbstractDataSource`](https://github.com/alibaba/Sentinel/blob/master/sentinel-extension/sentinel-datasource-extension/src/main/java/com/alibaba/csp/sentinel/datasource/AbstractDataSource.java) 抽象类，在其构造方法中添加监听器，并实现 `readSource()` 从指定数据源读取字符串格式的配置数据。比如 [基于 Nacos 的数据源](https://github.com/alibaba/Sentinel/blob/master/sentinel-extension/sentinel-datasource-nacos/src/main/java/com/alibaba/csp/sentinel/datasource/nacos/NacosDataSource.java)。
+
+#### 注册数据源
+
+通常需要调用以下方法将数据源注册至指定的规则管理器中：
+
+```java
+ReadableDataSource<String, List<FlowRule>> flowRuleDataSource = new NacosDataSource<>(remoteAddress, groupId, dataId, parser);
+FlowRuleManager.register2Property(flowRuleDataSource.getProperty());
+```
+
+若不希望手动注册数据源，可以借助 Sentinel 的 `InitFunc` SPI 扩展接口。只需要实现自己的 `InitFunc` 接口，在 `init` 方法中编写注册数据源的逻辑。比如：
+
+```java
+package com.test.init;
+
+public class DataSourceInitFunc implements InitFunc {
+
+    @Override
+    public void init() throws Exception {
+        final String remoteAddress = "localhost";
+        final String groupId = "Sentinel:Demo";
+        final String dataId = "com.alibaba.csp.sentinel.demo.flow.rule";
+
+        ReadableDataSource<String, List<FlowRule>> flowRuleDataSource = new NacosDataSource<>(remoteAddress, groupId, dataId,
+            source -> JSON.parseObject(source, new TypeReference<List<FlowRule>>() {}));
+        FlowRuleManager.register2Property(flowRuleDataSource.getProperty());
+    }
+}
+```
+
+接着将对应的类名添加到位于资源目录（通常是 `resource` 目录）下的 `META-INF/services` 目录下的 `com.alibaba.csp.sentinel.init.InitFunc` 文件中，比如：
+
+```
+com.test.init.DataSourceInitFunc
+```
+
+这样，当初次访问任意资源的时候，Sentinel 就可以自动去注册对应的数据源了。
+
+### 3.9.3 示例
+
+#### API 模式：使用客户端规则 API 配置规则
+
+[Sentinel Dashboard](https://sentinelguard.io/zh-cn/docs/dashboard.html) 通过 Sentinel 客户端自带的规则 API 来实时查询和更改内存中的规则。
+
+注意: 要使客户端具备规则 API，需在客户端引入以下依赖：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.csp</groupId>
+    <artifactId>sentienl-http-simple-transport</artifactId>
+    <version>x.y.z</version>
+</dependency>
+```
+
+#### 拉模式：使用文件配置规则
+
+[这个示例](https://github.com/alibaba/Sentinel/blob/master/sentinel-demo/sentinel-demo-dynamic-file-rule/src/main/java/com/alibaba/csp/sentinel/demo/file/rule/FileDataSourceDemo.java)展示 Sentinel 是如何从文件获取规则信息的。[`FileRefreshableDataSource`](https://github.com/alibaba/Sentinel/blob/master/sentinel-extension/sentinel-datasource-extension/src/main/java/com/alibaba/csp/sentinel/datasource/FileRefreshableDataSource.java) 会周期性的读取文件以获取规则，当文件有更新时会及时发现，并将规则更新到内存中。使用时只需添加以下依赖：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.csp</groupId>
+    <artifactId>sentinel-datasource-extension</artifactId>
+    <version>x.y.z</version>
+</dependency>
+```
+
+#### 推模式：使用 Nacos 配置规则
+
+[Nacos](https://github.com/alibaba/Nacos) 是阿里中间件团队开源的服务发现和动态配置中心。Sentinel 针对 Nacos 作了适配，底层可以采用 Nacos 作为规则配置数据源。使用时只需添加以下依赖：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.csp</groupId>
+    <artifactId>sentinel-datasource-nacos</artifactId>
+    <version>x.y.z</version>
+</dependency>
+```
+
+然后创建 `NacosDataSource` 并将其注册至对应的 RuleManager 上即可。比如：
+
+```java
+// remoteAddress 代表 Nacos 服务端的地址
+// groupId 和 dataId 对应 Nacos 中相应配置
+ReadableDataSource<String, List<FlowRule>> flowRuleDataSource = new NacosDataSource<>(remoteAddress, groupId, dataId,
+    source -> JSON.parseObject(source, new TypeReference<List<FlowRule>>() {}));
+FlowRuleManager.register2Property(flowRuleDataSource.getProperty());
+```
+
+详细示例可以参见 [sentinel-demo-nacos-datasource](https://github.com/alibaba/Sentinel/tree/master/sentinel-demo/sentinel-demo-nacos-datasource)。
+
+#### 推模式：使用 ZooKeeper 配置规则
+
+Sentinel 针对 ZooKeeper 作了相应适配，底层可以采用 ZooKeeper 作为规则配置数据源。使用时只需添加以下依赖：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.csp</groupId>
+    <artifactId>sentinel-datasource-zookeeper</artifactId>
+    <version>x.y.z</version>
+</dependency>
+```
+
+然后创建 `ZookeeperDataSource` 并将其注册至对应的 RuleManager 上即可。比如：
+
+```java
+// remoteAddress 代表 ZooKeeper 服务端的地址
+// path 对应 ZK 中的数据路径
+ReadableDataSource<String, List<FlowRule>> flowRuleDataSource = new ZookeeperDataSource<>(remoteAddress, path, source -> JSON.parseObject(source, new TypeReference<List<FlowRule>>() {}));
+FlowRuleManager.register2Property(flowRuleDataSource.getProperty());
+```
+
+详细示例可以参见 [sentinel-demo-zookeeper-datasource](https://github.com/alibaba/Sentinel/tree/master/sentinel-demo/sentinel-demo-zookeeper-datasource)。
+
+#### 推模式：使用 Apollo 配置规则
+
+Sentinel 针对 [Apollo](https://github.com/ctripcorp/apollo) 作了相应适配，底层可以采用 Apollo 作为规则配置数据源。使用时只需添加以下依赖：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.csp</groupId>
+    <artifactId>sentinel-datasource-apollo</artifactId>
+    <version>x.y.z</version>
+</dependency>
+```
+
+然后创建 `ApolloDataSource` 并将其注册至对应的 RuleManager 上即可。比如：
+
+```java
+// namespaceName 对应 Apollo 的命名空间名称
+// ruleKey 对应规则存储的 key
+// defaultRules 对应连接不上 Apollo 时的默认规则
+ReadableDataSource<String, List<FlowRule>> flowRuleDataSource = new ApolloDataSource<>(namespaceName, ruleKey, defaultRules, source -> JSON.parseObject(source, new TypeReference<List<FlowRule>>() {}));
+FlowRuleManager.register2Property(flowRuleDataSource.getProperty());
+```
+
+详细示例可以参见 [sentinel-demo-apollo-datasource](https://github.com/alibaba/Sentinel/tree/master/sentinel-demo/sentinel-demo-apollo-datasource)。
+
+## 3.10 日志
+
+Sentinel 日志目录可通过 `csp.sentinel.log.dir` 启动参数进行配置，详情请参考[通用配置项文档](https://sentinelguard.io/zh-cn/docs/general-configuration.html)。
+
+### 3.10.1 拦截详情日志（block 日志）
+
+无论触发了限流、熔断降级还是系统保护，它们的秒级拦截详情日志都在 `${user_home}/logs/csp/sentinel-block.log`里。如果没有发生拦截，则该日志不会出现。日志格式如下:
+
+```
+2014-06-20 16:35:10|1|sayHello(java.lang.String,long),FlowException,default,origin|61,0
+2014-06-20 16:35:11|1|sayHello(java.lang.String,long),FlowException,default,origin|1,0
+```
+
+日志含义：
+
+| index |               例子                | 说明                                                         |
+| :---- | :-------------------------------: | :----------------------------------------------------------- |
+| 1     |       `2014-06-20 16:35:10`       | 时间戳                                                       |
+| 2     |                `1`                | 该秒发生的第一个资源                                         |
+| 3     | `sayHello(java.lang.String,long)` | 资源名称                                                     |
+| 4     |          `XXXException`           | 拦截的原因, 通常 `FlowException` 代表是被限流规则拦截，`DegradeException` 则表示被降级，`SystemBlockException` 则表示被系统保护拦截 |
+| 5     |             `default`             | 生效规则的调用来源（参数限流中代表生效的参数）               |
+| 6     |             `origin`              | 被拦截资源的调用者，可以为空                                 |
+| 7     |              `61,0`               | 61 被拦截的数量，０无意义可忽略                              |
+
+### 3.10.2 秒级监控日志
+
+所有的资源访问都会产生秒级监控日志，日志文件默认为 `${user_home}/logs/csp/${app_name}-${pid}-metrics.log`（会随时间滚动）。格式如下:
+
+```
+1532415661000|2018-07-24 15:01:01|sayHello(java.lang.String)|12|3|4|2|295|0|0|1
+```
+
+1. `1532415661000`：时间戳
+2. `2018-07-24 15:01:01`：格式化之后的时间戳
+3. `sayHello(java.lang.String)`：资源名
+4. `12`：表示到来的数量，即此刻通过 Sentinel 规则 check 的数量（passed QPS）
+5. `3`：实际该资源被拦截的数量（blocked QPS）
+6. `4`：每秒结束的资源个数（完成调用），包括正常结束和异常结束的情况（exit QPS）
+7. `2`：异常的数量
+8. `295`：资源的平均响应时间（RT）
+9. `0`: 该秒占用未来请求的数目（since 1.5.0）
+10. `0`: 最大并发数（预留用）
+11. `1`: 资源分类（since 1.7.0）
+
+### 3.10.3 业务日志
+
+其它的日志在 `${user_home}/logs/csp/sentinel-record.log.xxx` 里。该日志包含规则的推送、接收、处理等记录，排查问题的时候会非常有帮助。
+
+### 3.10.4 集群限流日志
+
+- `${log_dir}/sentinel-cluster-client.log`：Token Client 日志，会记录请求失败的信息
+
+### 3.10.5 SPI 扩展机制
+
+1.7.2 版本开始，Sentinel 支持 Logger 扩展机制，可以实现自定义的 Logger SPI 来将 record log 等日志自行处理。metric/block log 暂不支持定制。
+
+## 3.11 实时监控
+
+Sentinel 提供对所有资源的实时监控。如果需要实时监控，客户端需引入以下依赖（以 Maven 为例）：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.csp</groupId>
+    <artifactId>sentinel-transport-simple-http</artifactId>
+    <version>x.y.z</version>
+</dependency>
+```
+
+引入上述依赖后，客户端便会主动连接 Sentinel 控制台。通过 [Sentinel 控制台](https://sentinelguard.io/zh-cn/docs/dashboard.html) 即可查看客户端的实时监控。
+
+通常您并不需要关心以下 API，但是如果您对开发控制台感兴趣，以下为监控 API 的文档。
+
+### 3.11.1 簇点监控
+
+#### 获取簇点列表
+
+相关 API: `GET /clusterNode`
+
+当应用启动之后，可以运行下列命令，获得当前所有簇点（`ClusterNode`）的列表（JSON 格式）：
+
+```bash
+curl http://localhost:8719/clusterNode
+```
+
+结果示例：
+
+```javascript
+[
+ {"avgRt":0.0, //平均响应时间
+ "blockRequest":0, //每分钟拦截的请求个数
+ "blockedQps":0.0, //每秒拦截个数
+ "curThreadNum":0, //并发个数
+ "passQps":1.0, // 每秒成功通过请求
+ "passReqQps":1.0, //每秒到来的请求
+ "resourceName":"/registry/machine", 资源名称
+ "timeStamp":1529905824134, //时间戳
+ "totalQps":1.0, // 每分钟请求数
+ "totalRequest":193}, 
+  ....
+]
+```
+
+#### 查询某个簇点的详细信息
+
+可以用下面命令模糊查询该簇点的具体信息，其中 `id` 对应 resource name，支持模糊查询：
+
+```bash
+curl http://localhost:8719/cnode?id=xxxx
+```
+
+结果示例：
+
+```shell
+idx id                                thread    pass      blocked   success    total    aRt   1m-pass   1m-block   1m-all   exeption   
+6   /app/aliswitch2/machines.json     0         0         0         0          0        0     0         0          0        0          
+7   /app/sentinel-admin/machines.json 0         1         0         1          1        6     0         0          0        0          
+8   /identity/machine.json            0         0         0         0          0        0     0         0          0        0          
+9   /registry/machine                 0         2         0         2          2        1     192       0          192      0          
+10  /app/views/machine.html           0         1         0         1          1        2     0         0          0        0   
+```
+
+#### 簇点调用者统计信息
+
+可以用下列命令查询该簇点的调用者统计信息：
+
+```bash
+curl http://localhost:8719/origin?id=xxxx
+```
+
+结果示例：
+
+```
+id: nodeA
+idx origin  threadNum passedQps blockedQps totalQps aRt   1m-passed 1m-blocked 1m-total 
+1   caller1 0         0         0          0        0     0         0          0        
+2   caller2 0         0         0          0        0     0         0          0      
+```
+
+其中的 origin 由 `ContextUtil.enter(resourceName，origin)` 方法中的 `origin` 指定。
+
+### 3.11.2 链路监控
+
+我们可以通过命令　`curl http://localhost:8719/tree` 来查询链路入口的链路树形结构：
+
+```
+EntranceNode: machine-root(t:0 pq:1 bq:0 tq:1 rt:0 prq:1 1mp:0 1mb:0 1mt:0)
+-EntranceNode1: Entrance1(t:0 pq:1 bq:0 tq:1 rt:0 prq:1 1mp:0 1mb:0 1mt:0)
+--nodeA(t:0 pq:1 bq:0 tq:1 rt:0 prq:1 1mp:0 1mb:0 1mt:0)
+-EntranceNode2: Entrance1(t:0 pq:1 bq:0 tq:1 rt:0 prq:1 1mp:0 1mb:0 1mt:0)
+--nodeA(t:0 pq:1 bq:0 tq:1 rt:0 prq:1 1mp:0 1mb:0 1mt:0)
+
+t:threadNum  pq:passQps  bq:blockedQps  tq:totalQps  rt:averageRt  prq: passRequestQps 1mp:1m-passed 1mb:1m-blocked 1mt:1m-total
+```
+
+### 3.11.3 历史资源数据
+
+#### 资源的秒级日志
+
+所有资源的秒级日志在 `${home}/logs/csp/${appName}-${pid}-metrics.log.${date}.xx`。例如，该日志的名字可能为 `app-3518-metrics.log.2018-06-22.1`
+
+```
+1529573107000|2018-06-21 17:25:07|sayHello(java.lang.String,long)|10|3601|10|0|2
+```
+
+| index |               例子                | 说明                                             |
+| :---- | :-------------------------------: | :----------------------------------------------- |
+| 1     |          `1529573107000`          | 时间戳                                           |
+| 2     |       `2018-06-21 17:25:07`       | 日期                                             |
+| 3     | `sayHello(java.lang.String,long)` | 资源名称                                         |
+| 4     |               `10`                | **每秒通过的资源请求个数**                       |
+| 5     |              `3601`               | **每秒资源被拦截的个数**                         |
+| 6     |               `10`                | 每秒结束的资源个数，包括正常结束和异常结束的情况 |
+| 7     |                `0`                | 每秒资源的异常个数                               |
+| 8     |                `2`                | 资源平均响应时间                                 |
+
+#### 被拦截的秒级日志
+
+同样的，每秒的拦截日志也会出现在 `<用户目录>/logs/csp/sentinel-block.log` 文件下。如果没有发生拦截，则该日志不会出现。
+
+```
+2014-06-20 16:35:10|1|sayHello(java.lang.String,long),FlowException,default,origin|61,0
+2014-06-20 16:35:11|1|sayHello(java.lang.String,long),FlowException,default,origin|1,0
+```
+
+| index |               例子                | 说明                                                         |
+| :---- | :-------------------------------: | :----------------------------------------------------------- |
+| 1     |       `2014-06-20 16:35:10`       | 时间戳                                                       |
+| 2     |                `1`                | 该秒发生的第一个资源                                         |
+| 3     | `sayHello(java.lang.String,long)` | 资源名称                                                     |
+| 4     |          `XXXException`           | 拦截的原因, 通常 `FlowException` 代表是被限流规则拦截, `DegradeException` 则表示被降级，`SystemException` 则表示被系统保护拦截 |
+| 5     |             `default`             | 生效规则的调用应用                                           |
+| 6     |             `origin`              | 被拦截资源的调用者。可以为空                                 |
+| 7     |              `61,0`               | 61 被拦截的数量，０则代表可以忽略                            |
+
+#### 实时查询
+
+相关 API: `GET /metric`
+
+```shell
+curl http://localhost:8719/metric?identity=XXX&startTime=XXXX&endTime=XXXX&maxLines=XXXX
+```
+
+需指定以下 URL 参数：
+
+- `identity`：资源名称
+- `startTime`：开始时间（时间戳）
+- `endTime`：结束时间
+- `maxLines`：监控数据最大行数
+
+返回和 [资源的秒级日志](https://sentinelguard.io/zh-cn/docs/logs.html) 格式一样的内容。例如：
+
+```
+1529998904000|2018-06-26 15:41:44|abc|100|0|0|0|0
+1529998905000|2018-06-26 15:41:45|abc|4|5579|104|0|728
+1529998906000|2018-06-26 15:41:46|abc|0|15698|0|0|0
+1529998907000|2018-06-26 15:41:47|abc|0|19262|0|0|0
+1529998908000|2018-06-26 15:41:48|abc|0|19502|0|0|0
+1529998909000|2018-06-26 15:41:49|abc|0|18386|0|0|0
+1529998910000|2018-06-26 15:41:50|abc|0|19189|0|0|0
+1529998911000|2018-06-26 15:41:51|abc|0|16543|0|0|0
+1529998912000|2018-06-26 15:41:52|abc|0|18471|0|0|0
+1529998913000|2018-06-26 15:41:53|abc|0|19405|0|0|0
+```
+
+## 3.12 启动配置项
+
+### 3.12.1 配置方式
+
+Sentinel 提供如下的配置方式：
+
+- JVM -D 参数方式
+- properties 文件方式（1.7.0 版本开始支持）
+
+其中，`project.name` 参数只能通过 JVM -D 参数方式配置（since 1.8.0 取消该限制），其它参数支持所有的配置方式。
+
+**优先级顺序**：JVM -D 参数的优先级最高。若 properties 和 JVM 参数中有相同项的配置，以 JVM 参数配置的为准。
+
+用户可以通过 `-Dcsp.sentinel.config.file` 参数配置 properties 文件的路径，支持 classpath 路径配置（如 `classpath:sentinel.properties`）。默认 Sentinel 会尝试从 `classpath:sentinel.properties` 文件读取配置，读取编码默认为 UTF-8。
+
+> 注：1.7.0 以下版本可以通过旧的 `${user_home}/logs/csp/${project.name}.properties` 配置文件进行配置（除 `project.name` 和日志相关配置项）。
+
+> 注：若您的应用为 Spring Boot 或 Spring Cloud 应用，您可以使用 [Spring Cloud Alibaba](https://github.com/alibaba/spring-cloud-alibaba)，通过 Spring 配置文件来指定配置，详情请参考 [Spring Cloud Alibaba Sentinel 文档](https://github.com/alibaba/spring-cloud-alibaba/wiki/Sentinel)。
+
+### 3.12.2 配置项列表
+
+#### sentinel-core 的配置项
+
+**基础配置项**
+
+| 名称                                   | 含义                                                     | 类型     | 默认值                | 是否必需 | 备注                                                         |
+| -------------------------------------- | -------------------------------------------------------- | -------- | --------------------- | -------- | ------------------------------------------------------------ |
+| `project.name`                         | 指定应用的名称                                           | `String` | `null`                | 否       |                                                              |
+| `csp.sentinel.app.type`                | 指定应用的类型                                           | `int`    | 0 (`APP_TYPE_COMMON`) | 否       | 1.6.0 引入                                                   |
+| `csp.sentinel.metric.file.single.size` | 单个监控日志文件的大小                                   | `long`   | 52428800 (50MB)       | 否       |                                                              |
+| `csp.sentinel.metric.file.total.count` | 监控日志文件的总数上限                                   | `int`    | 6                     | 否       |                                                              |
+| `csp.sentinel.statistic.max.rt`        | 最大的有效响应时长（ms），超出此值则按照此值记录         | `int`    | 4900                  | 否       | 1.4.1 引入                                                   |
+| `csp.sentinel.spi.classloader`         | SPI 加载时使用的 ClassLoader，默认为给定类的 ClassLoader | `String` | `default`             | 否       | 若配置 `context` 则使用 thread context ClassLoader。1.7.0 引入 |
+
+其中 `project.name` 项用于指定应用名（appName）。若未指定，则默认解析 main 函数的类名作为应用名。**实际项目使用中建议手动指定应用名**。
+
+**日志相关配置项**
+
+| 名称                           | 含义                                                         | 类型      | 默认值                   | 是否必需 | 备注       |
+| ------------------------------ | ------------------------------------------------------------ | --------- | ------------------------ | -------- | ---------- |
+| `csp.sentinel.log.dir`         | Sentinel 日志文件目录                                        | `String`  | `${user.home}/logs/csp/` | 否       | 1.3.0 引入 |
+| `csp.sentinel.log.use.pid`     | 日志文件名中是否加入进程号，用于单机部署多个应用的情况       | `boolean` | `false`                  | 否       | 1.3.0 引入 |
+| `csp.sentinel.log.output.type` | Record 日志输出的类型，`file` 代表输出至文件，`console` 代表输出至终端 | `String`  | `file`                   | 否       | 1.6.2 引入 |
+
+> **注意**：若需要在单台机器上运行相同服务的多个实例，则需要加入 `-Dcsp.sentinel.log.use.pid=true` 来保证不同实例日志的独立性。
+
+#### sentinel-transport-common 的配置项
+
+| 名称                                 | 含义                                                         | 类型     | 默认值 | 是否必需                                                     |
+| ------------------------------------ | ------------------------------------------------------------ | -------- | ------ | ------------------------------------------------------------ |
+| `csp.sentinel.dashboard.server`      | 控制台的地址，指定控制台后客户端会自动向该地址发送心跳包。地址格式为：`hostIp:port` | `String` | `null` | 是                                                           |
+| `csp.sentinel.heartbeat.interval.ms` | 心跳包发送周期，单位毫秒                                     | `long`   | `null` | 非必需，若不进行配置，则会从相应的 `HeartbeatSender` 中提取默认值 |
+| `csp.sentinel.api.port`              | 本地启动 HTTP API Server 的端口号                            | `int`    | 8719   | 否                                                           |
+| `csp.sentinel.heartbeat.client.ip`   | 指定心跳包中本机的 IP                                        | `String` | -      | 若不指定则通过 `HostNameUtil` 解析；该配置项多用于多网卡环境 |
+
+> 注：`csp.sentinel.api.port` 可不提供，默认为 8719，若端口冲突会自动向下探测可用的端口。
+
+# 4. Sentinel控制台
+
+> 需要的时候查查文档就好了
+
+# 5. OpenSergo 动态规则源
+
+Sentinel 2.0 将作为 [OpenSergo 流量治理](https://opensergo.io/zh-cn/)的标准实现，原生支持 OpenSergo 流量治理相关 CRD 配置及能力，结合 Sentinel 提供的各框架的适配模块，让 Dubbo, Spring Cloud Alibaba, gRPC, CloudWeGo 等20+框架能够无缝接入到 OpenSergo 生态中，用统一的 CRD 来配置流量路由、流控降级、服务容错等治理规则。无论是 Java 还是 Go 还是 Mesh 服务，无论是 HTTP 请求还是 RPC 调用，还是数据库 SQL 访问，用户都可以用统一的容错治理规则 CRD 来给微服务架构中的每一环配置治理，来保障服务链路的稳定性。
+
+Sentinel 社区提供对接 OpenSergo spec 的动态数据源模块 [`sentinel-datasource-opensergo`](https://github.com/alibaba/Sentinel/tree/master/sentinel-extension/sentinel-datasource-opensergo)，只需要按照 Sentinel 数据源的方式接入即可。
+
+> 注意：该适配模块目前还在 beta 阶段。目前 Sentinel OpenSergo 数据源支持流控规则、匀速排队规则以及熔断规则。
+
+![image](https://sentinelguard.io/img/opensergo/sentinel-opensergo-datasource-arch.jpg)
+
+以 Java 版本为例，首先 Maven 引入依赖：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.csp</groupId>
+    <artifactId>sentinel-datasource-opensergo</artifactId>
+    <!-- 对应 Sentinel 1.8.6 版本 -->
+    <version>0.1.0-beta</version>
+</dependency>
+```
+
+然后在项目合适的位置（如 Spring 初始化 hook 或 Sentinel `InitFunc` 中）中创建并注册 Sentinel OpenSergo 数据源。在应用启动前，确保 OpenSergo 控制面及 CRD 已经部署在 Kubernetes 集群中，可以参考[控制面快速部署文档](https://opensergo.io/zh-cn/docs/quick-start/opensergo-control-plane/)。
+
+```java
+// 传入 OpenSergo Control Plane 的 endpoint，以及希望监听的应用名.
+// 在我们的例子中，假定应用名为 foo-app
+OpenSergoDataSourceGroup openSergo = new OpenSergoDataSourceGroup("localhost", 10246, "default", "foo-app");
+// 初始化 OpenSergo 数据源
+openSergo.start();
+
+// 订阅 OpenSergo 流控规则，并注册数据源到 Sentinel 流控规则数据源中
+FlowRuleManager.register2Property(openSergo.subscribeFlowRules());
+```
+
+启动应用后，即可编写 [FaultToleranceRule、RateLimitStrategy 等 CR YAML](https://github.com/opensergo/opensergo-specification/blob/main/specification/zh-Hans/fault-tolerance.md) 来动态配置流控容错规则，通过 kubectl apply 到集群中即可生效。
+
+Sentinel 社区提供了一个 [Spring Boot 应用接入 OpenSergo 数据源的 demo](https://github.com/alibaba/Sentinel/blob/master/sentinel-demo/sentinel-demo-opensergo-datasource/README.zh-cn.md)，可作参考。
+
+# 6. 开源框架适配
+
+- 云原生微服务体系
+  - Spring Boot/Spring Cloud
+  - Quarkus
+- Web 适配
+  - Web Servlet
+  - Spring Web
+  - Spring WebFlux
+  - JAX-RS (Java EE)
+- RPC 适配
+  - Apache Dubbo
+  - gRPC
+  - Feign
+  - SOFARPC
+- HTTP client 适配
+  - Apache HttpClient
+  - OkHttp
+- Reactive 适配
+  - Reactor
+- API Gateway 适配
+  - Spring Cloud Gateway
+  - Netflix Zuul 1.x
+  - Netflix Zuul 2.x
+- Apache RocketMQ
+
+> **注：适配模块仅提供相应适配功能，若希望接入 Sentinel 控制台，请务必参考 [Sentinel 控制台文档](https://sentinelguard.io/zh-cn/docs/dashboard.html)。**
