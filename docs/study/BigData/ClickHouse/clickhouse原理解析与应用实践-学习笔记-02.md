@@ -5405,3 +5405,13 @@ INSERT INTO TABLE test_backup_0206 SELECT * FROM remote('ch5.nauu.com:9000',
 ## 11.6 本章小结
 
 ​	通过对本章的学习，大家可进一步了解ClickHouse的安全性和健壮性。本章首先站在安全的角度介绍了用户的定义方法和权限的设置方法。在权限设置方面，ClickHouse分别从连接访问、资源访问、查询操作和数据权限等几个维度出发，提供了一个较为立体的权限控制体系。接着站在系统运行的角度介绍了如何通过熔断机制保护ClickHouse系统资源不会被过度使用。最后站在运维的角度介绍了数据的多种备份方法以及如何通过系统表和查询日志，实现对日常运行情况的监控。
+
+# X. 网文搜集
+
+> [Doris 与 ClickHouse 的深度对比及选型建议_doris和clickhouse-CSDN博客](https://blog.csdn.net/u011250186/article/details/135963133) => 很全面，推荐阅读
+>
+> [实时OLAP都选Clickhouse？我们用Doris明明也很香_数据 (sohu.com)](https://www.sohu.com/a/451440153_411876)
+>
+> [Apache Druid 简介 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/82038648)
+>
+> [干货高能！ClickHouse性能优化，看这一篇就够了 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/667086347)

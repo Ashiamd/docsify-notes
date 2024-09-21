@@ -10100,6 +10100,35 @@ class Solution {
 }
 ```
 
+代码2：快速选择
+
+```java
+class Solution {
+  public int findKthLargest(int[] nums, int k) {
+    int len = nums.length;
+    return quickSelect(nums, 0, len-1, len-k);
+  }
+
+  public int quickSelect(int[] nums, int l, int r, int k) {
+    if(l == r) {
+      return nums[k];
+    } 
+    int base = nums[l], x = l-1, y = r+1;
+    while(x < y) {
+      do --y; while(nums[y] > base);
+      do ++x; while(nums[x] < base);
+      if(x < y) {
+        nums[x] ^= nums[y];
+        nums[y] ^= nums[x];
+        nums[x] ^= nums[y];
+      }
+    }
+    if(y < k) return quickSelect(nums, y+1,r, k);
+    return quickSelect(nums, l, y, k);
+  }
+}
+```
+
 ## 25. K 个一组翻转链表
 
 语言：java
@@ -10547,6 +10576,172 @@ class Solution {
       }
     }
     return nums[left] == target ? left : -1;
+  }
+}
+```
+
+## 面试题 08.09. 括号
+
+语言：java
+
+思路：回溯算法，类似组合问题，需要注意的就是加入右括号的时机
+
+代码（1ms，72.52%）：
+
+```java
+class Solution {
+  public List<String> generateParenthesis(int n) {
+    List<String> result = new ArrayList<>();
+    backTracking(result, new StringBuilder(), n, n);
+    return result;
+  }
+
+  public void backTracking(List<String> result, StringBuilder sb, int left,int right) {
+    if(left == 0 && right == 0) {
+      result.add(sb.toString());
+    }
+    if(left > 0) {
+      sb.append('(');
+      backTracking(result, sb, left-1, right);
+      sb.deleteCharAt(sb.length()-1);
+    }
+    if(right > 0 && right > left) {
+      sb.append(')');
+      backTracking(result, sb, left, right-1);
+      sb.deleteCharAt(sb.length()-1);
+    }
+  }
+}
+```
+
+## 74. 搜索二维矩阵
+
+语言：java
+
+思路：就是有序数组变成二维而已，二分查找完事了
+
+代码：
+
+```java
+class Solution {
+  public boolean searchMatrix(int[][] matrix, int target) {
+    int x = matrix.length, y = matrix[0].length, n = x * y;
+    if(target < matrix[0][0] || target > matrix[x-1][y-1]) {
+      return false;
+    }
+    int left = 0, right = n, mid = 0, cur = 0;
+    while(left <= right) {
+      mid = left + (right - left) / 2;
+      // 主要难点在于这个 二维坐标 转成 一维坐标
+      cur = matrix[mid / y][mid % y];
+      if(cur == target) {
+        return true;
+      } else if (cur < target) {
+        left = mid + 1;
+      } else {
+        right = mid -1;
+      }
+    }
+    return false;
+  }
+}
+```
+
+## 240. 搜索二维矩阵 II
+
+语言：java
+
+思路：从左下角出发，根据节点大小判断往哪边走就行
+
+代码（6ms，99.91%）：
+
+```java
+class Solution {
+  public boolean searchMatrix(int[][] matrix, int target) {
+    int x = matrix.length, y = matrix[0].length;
+    if(matrix[0][0] > target || target > matrix[x-1][y-1]) {
+      return false;
+    }
+    int i = x-1, j = 0; 
+    while(i >= 0 && j < y) {
+      if(matrix[i][j] == target) {
+        return true;
+      } else if (matrix[i][j] > target) {
+        --i;
+      } else {
+        ++j;
+      }
+    }
+    return false;
+  }
+}
+```
+
+## LCR 070. 有序数组中的单一元素
+
+语言：java
+
+思路：二分查找，需要注意mid为偶数和奇数的处理不同，还有就是right初始值
+
+代码（0ms，100%）：要求O(logN)时间复杂度 + O(1)空间复杂度，不然实际也可以直接用异或位运算
+
+```java
+class Solution {
+  public int singleNonDuplicate(int[] nums) {
+    int len = nums.length, left = 0, right = len-1, mid = 0;
+    while (left < right) {
+      mid = left + (right - left) / 2;
+      // mid 偶数
+      if (mid % 2 == 0 && nums[mid] == nums[mid + 1]
+          || mid % 2 == 1 && nums[mid] == nums[mid - 1]) {
+        left = mid + 1;
+      } else {
+        right = mid;
+      }
+    }
+    return nums[left];
+  }
+}
+```
+
+## 92. 反转链表 II
+
+语言：java
+
+思路：找到需要翻转的开始位置的前一个节点，然后对后续的链表进行翻转
+
+代码（0ms，100%）：
+
+```java
+/**
+ * Definition for singly-linked list.
+ * public class ListNode {
+ *     int val;
+ *     ListNode next;
+ *     ListNode() {}
+ *     ListNode(int val) { this.val = val; }
+ *     ListNode(int val, ListNode next) { this.val = val; this.next = next; }
+ * }
+ */
+class Solution {
+  public ListNode reverseBetween(ListNode head, int left, int right) {
+    ListNode preHead = new ListNode(), preResult = preHead;
+    preHead.next = head;
+    int start = 1;
+    while(start++ < left) {
+      preHead = preHead.next;
+    }
+    ListNode cur = preHead.next, pre = null, next = null;
+    while(left <= right) {
+      next = cur.next;
+      cur.next = pre;
+      pre = cur;
+      cur = next;
+      ++left;
+    }
+    preHead.next.next = next;
+    preHead.next = pre;
+    return preResult.next;
   }
 }
 ```
