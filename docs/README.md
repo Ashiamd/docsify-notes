@@ -36,6 +36,7 @@
 * [计算广告](https://ashiamd.github.io/docsify-notes/#/study/计算广告/README.md)
 * [文件管理](https://ashiamd.github.io/docsify-notes/#/study/文件管理/README.md)
 * [编程范式(ProgrammingParadigm)](https://ashiamd.github.io/docsify-notes/#/study/编程范式(ProgrammingParadigm)/README.md)
+* [通用架构知识](https://ashiamd.github.io/docsify-notes/#/study/通用架构知识/README.md)
 * [DataBase](https://ashiamd.github.io/docsify-notes/#/study/DataBase/README.md)
 * [Elastic-Stack](https://ashiamd.github.io/docsify-notes/#/study/Elastic-Stack/README.md)
 
